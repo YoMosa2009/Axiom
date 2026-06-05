@@ -6,7 +6,7 @@ Runs entirely on your machine — no subscriptions, no cloud dependency, no data
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-v0.01%20Pre--release-orange)
+![Release](https://img.shields.io/badge/release-V1.2-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 <img width="1906" height="1026" alt="Axiom screenshot" src="https://github.com/user-attachments/assets/07bbb46d-1bc8-42d7-a16c-5912d2f874d8" />
@@ -49,6 +49,7 @@ No cost, no subscription, you control the key.
 - LaTeX math rendering for equations and formulas
 - Thinking mode with forced chain-of-thought reasoning
 - Document attachment and analysis
+- Artifact Rendering
 
 **Workplace Council Mode**
 - Three-role pipeline: Architect plans, Builder implements, Critic reviews
@@ -57,6 +58,7 @@ No cost, no subscription, you control the key.
 - Session memory (Hippocampus) for persistent context
 - Study session for pre-processing documents
 - Task history, diff view, and workspace templates
+- Qwen3-Coder-480B-A35B-Instruct as the council AI model
 
 ---
 
