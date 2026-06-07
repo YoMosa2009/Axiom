@@ -17,6 +17,7 @@ Runs entirely on your machine — no subscriptions, no cloud dependency, no data
 
 - [What Makes Axiom Different](#what-makes-axiom-different)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Default Model — Edios 1](#default-model--edios-1)
 - [System Requirements](#system-requirements)
 - [Getting Started](#getting-started)
@@ -59,6 +60,20 @@ No cost, no subscription, you control the key.
 - Study session for pre-processing documents
 - Task history, diff view, and workspace templates
 - Qwen3-Coder-480B-A35B-Instruct as the council AI model
+
+---
+
+## Screenshots
+
+**Neuron — Live Neural Map**  
+A real-time visual map of active sessions, tool usage, and AI activity across Chat, Workplace, Documents, Study, and Calculator.
+
+<img width="1907" height="995" alt="Neuron tab showing live neural map with connected nodes for Chat, Workplace, Documents, Study, and Calculator" src="https://github.com/user-attachments/assets/5a58cc02-dc01-440b-a145-b32844e675f8" />
+
+**Workplace Council Mode**  
+The three-role council pipeline — Architect, Builder, and Critic — with the Project Canvas, Live Activity feed, and per-role context controls.
+
+<img width="1886" height="986" alt="Axiom Workplace showing council roles, project canvas, and live activity panel" src="https://github.com/user-attachments/assets/99db5dac-67c9-4aac-9415-bb9a30c4f0b7" />
 
 ---
 
