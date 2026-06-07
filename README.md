@@ -68,12 +68,12 @@ No cost, no subscription, you control the key.
 **Neuron — Live Neural Map**  
 A real-time visual map of active sessions, tool usage, and AI activity across Chat, Workplace, Documents, Study, and Calculator.
 
-<img width="1907" height="995" alt="Neuron tab showing live neural map with connected nodes for Chat, Workplace, Documents, Study, and Calculator" src="https://github.com/user-attachments/assets/5a58cc02-dc01-440b-a145-b32844e675f8" />
+<img width="1907" height="995" alt="Neuron tab showing live neural map with connected nodes for Chat, Workplace, Documents, Study, and Calculator" src="https://github.com/user-attachments/assets/99db5dac-67c9-4aac-9415-bb9a30c4f0b7" />
 
 **Workplace Council Mode**  
 The three-role council pipeline — Architect, Builder, and Critic — with the Project Canvas, Live Activity feed, and per-role context controls.
 
-<img width="1886" height="986" alt="Axiom Workplace showing council roles, project canvas, and live activity panel" src="https://github.com/user-attachments/assets/99db5dac-67c9-4aac-9415-bb9a30c4f0b7" />
+<img width="1886" height="986" alt="Axiom Workplace showing council roles, project canvas, and live activity panel" src="https://github.com/user-attachments/assets/5a58cc02-dc01-440b-a145-b32844e675f8" />
 
 ---
 
