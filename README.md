@@ -35,7 +35,7 @@ GGUF models on your own hardware. Your conversations stay on your machine. Alway
 
 For users who want access to more powerful models, Axiom includes optional cloud mode
 via OpenRouter — giving you free access to Edios 1 (GPTOSS 120B, a 120B reasoning AI model)
-and Hepha 1 (Kimi K2's reasoning AI model for coding) with your own API key.
+and Hepha 1 (Qwen 3's 480B parameter coding & reasoning AI model for coding) with your own API key.
 No cost, no subscription, you control the key.
 
 ---
