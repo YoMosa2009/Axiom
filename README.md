@@ -4,7 +4,7 @@
 A free, local-first AI assistant for Windows built around a multi-model council pipeline.  
 Runs entirely on your machine — no subscriptions, no cloud dependency, no data leaving your device.
 
-![License](https://img.shields.io/badge/license-MIT-blue)
+![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Release](https://img.shields.io/badge/release-V1.2-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
@@ -128,7 +128,9 @@ Your settings, chat history, and workspace sessions are preserved between update
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+CC BY-NC-ND 4.0 — see [LICENSE](LICENSE) for details.
+
+The source code is publicly viewable, but it may not be redistributed, modified, or used commercially without explicit permission from the author.
 
 ---
 
