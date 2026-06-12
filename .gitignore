@@ -1,0 +1,8 @@
+.vs/ 
+.claude/ 
+ChatHistory/ 
+axiom_data.db 
+axiom_data.db-shm 
+axiom_data.db-wal 
+bin/ 
+obj/
