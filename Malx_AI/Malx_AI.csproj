@@ -1,0 +1,52 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationIcon>Assets\Malx_Logo.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AvalonEdit" Version="6.3.1" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <PackageReference Include="LLamaSharp" Version="0.26.0" />
+    <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.26.0" />
+    <PackageReference Include="Markdig" Version="0.37.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2957.106" />
+    <PackageReference Include="Python.Included" Version="3.13.1" />
+    <PackageReference Include="System.Data.SQLite" Version="1.0.118.0" />
+    <PackageReference Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="KaTeX\**\*.*" />
+    <Content Include="KaTeX\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Assets\Logo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\Malx_Logo.ico" />
+    <None Remove="Assets\Malx_Logo2.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Malx_Logo.ico" />
+    <Resource Include="Assets\Malx_Logo2.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Logo.cs" />
+  </ItemGroup>
+
+</Project>

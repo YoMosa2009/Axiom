@@ -1,0 +1,1189 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Data;
+using System.Globalization;
+using System.Collections.Specialized;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using Microsoft.Win32;
+using LLama;
+using LLama.Common;
+using LLama.Sampling;
+using LLama.Transformers;
+
+namespace Malx_AI
+{
+    public partial class MainWindow
+    {
+        private sealed class CloudToolExecutionResult
+        {
+            public string Name { get; init; } = string.Empty;
+            public string Result { get; init; } = string.Empty;
+        }
+
+        private sealed class CloudToolCallLoopResult
+        {
+            public string ResponseText { get; init; } = string.Empty;
+            public string ReasoningText { get; init; } = string.Empty;
+            public int ToolCallCount { get; init; }
+        }
+
+        private sealed class CloudChatRequestContext
+        {
+            public string SystemPrompt { get; init; } = string.Empty;
+            public string FinalUserMessage { get; init; } = string.Empty;
+            public List<ChatMessage> SelectedHistoryMessages { get; init; } = new();
+            public List<OpenRouterMessage> ConversationHistory { get; init; } = new();
+            public bool ThinkingEnabled { get; init; }
+        }
+
+        private bool HasVisionAttachmentForCloudTurn()
+        {
+            return _cloudModeActive && _chatDocuments.Any(doc => doc.IsImage && !string.IsNullOrWhiteSpace(doc.Base64Data));
+        }
+
+        private async Task<string> GenerateSingleTurnCloudResponseAsync(string systemPrompt, string userPrompt, CancellationToken token)
+        {
+            if (!_openRouterChatService.HasValidKey)
+                return string.Empty;
+
+            string effectiveSystemPrompt = string.IsNullOrWhiteSpace(systemPrompt)
+                ? BuildDefaultAssistantSystemPrompt()
+                : systemPrompt.Trim();
+
+            OpenRouterChatResponse response = await _openRouterChatService.SendConversationAsync(
+                new List<OpenRouterMessage> { new("user", userPrompt) },
+                effectiveSystemPrompt,
+                false,
+                _selectedOpenRouterModelId,
+                null,
+                token);
+
+            return response.Text;
+        }
+
+        private void LoadOpenRouterSettings()
+        {
+            string selectedModel = _database?.GetSetting(OpenRouterModelSettingKey) ?? string.Empty;
+            _selectedOpenRouterModelId = _openRouterChatService.NormalizeSelectableModelId(selectedModel);
+
+            UpdateOpenRouterDetectedModelUi();
+            ResetOpenRouterKeyStatusIndicator();
+        }
+
+        private void LoadStoredOpenRouterApiKey()
+        {
+            try
+            {
+                string? storedKey = _database?.LoadOpenRouterApiKey();
+                if (string.IsNullOrWhiteSpace(storedKey))
+                {
+                    _openRouterChatService.SetApiKey(string.Empty);
+                    _cloudModeActive = false;
+                    UpdateOpenRouterDetectedModelUi();
+                    return;
+                }
+
+                _openRouterChatService.SetApiKey(storedKey);
+                _cloudModeActive = _openRouterChatService.HasValidKey;
+                if (OpenRouterApiKeyPasswordBox != null)
+                    OpenRouterApiKeyPasswordBox.Password = storedKey;
+
+                UpdateOpenRouterDetectedModelUi();
+            }
+            catch (Exception ex)
+            {
+                _openRouterChatService.SetApiKey(string.Empty);
+                _cloudModeActive = false;
+                UpdateOpenRouterDetectedModelUi();
+                _ = BackendLogService.LogErrorAsync("MainWindow.LoadStoredOpenRouterApiKey", ex);
+            }
+        }
+
+        private void LocalModeButton_Click(object sender, RoutedEventArgs e)
+        {
+            _cloudModeActive = false;
+            RefreshCloudModeToggleUi();
+            RefreshInferenceSettingsUi();
+            UpdateHeaderDisplay();
+        }
+
+        private void CloudModeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_openRouterChatService.HasValidKey)
+            {
+                _cloudModeActive = false;
+                RefreshCloudModeToggleUi();
+                RefreshInferenceSettingsUi();
+                UpdateHeaderDisplay();
+                return;
+            }
+
+            _cloudModeActive = true;
+            RefreshCloudModeToggleUi();
+            RefreshInferenceSettingsUi();
+            UpdateHeaderDisplay();
+        }
+
+        private void EidosModelButton_Click(object sender, RoutedEventArgs e)
+        {
+            SelectCloudModel(OpenRouterChatService.Eidos1ModelId);
+        }
+
+        private void HephaModelButton_Click(object sender, RoutedEventArgs e)
+        {
+            SelectCloudModel(OpenRouterChatService.Hepha1ModelId);
+        }
+
+        private void SelectCloudModel(string modelId)
+        {
+            _selectedOpenRouterModelId = _openRouterChatService.NormalizeSelectableModelId(modelId);
+            _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
+            UpdateOpenRouterDetectedModelUi();
+            RefreshCloudModeToggleUi();
+            RefreshInferenceSettingsUi();
+            UpdateHeaderDisplay();
+
+            string label = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+            AddChatMessage("system", $"Cloud model set to {label}.");
+        }
+
+        private void OpenRouterApiKeyPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+        {
+            if (!_isTestingOpenRouterKey)
+                ResetOpenRouterKeyStatusIndicator();
+        }
+
+        private void OpenRouterUsageTrack_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            UpdateOpenRouterUsageProgressBar();
+        }
+
+        private async void SaveOpenRouterKeyButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SaveOpenRouterKeyButton == null)
+                return;
+
+            string apiKey = OpenRouterApiKeyPasswordBox?.Password ?? string.Empty;
+            _database?.SaveOpenRouterApiKey(apiKey);
+            _openRouterChatService.SetApiKey(apiKey);
+            RefreshCloudModeToggleUi();
+            UpdateOpenRouterDetectedModelUi();
+
+            _isTestingOpenRouterKey = true;
+            SaveOpenRouterKeyButton.IsEnabled = false;
+            if (OpenRouterKeyTestingText != null)
+                OpenRouterKeyTestingText.Visibility = Visibility.Visible;
+            if (OpenRouterKeyStatusText != null)
+                OpenRouterKeyStatusText.Visibility = Visibility.Collapsed;
+
+            bool isValid = false;
+            try
+            {
+                // TestConnectionAsync validates the key and fetches available models — no extra probe needed.
+                // ValidateModelAvailabilityAsync was removed: it sent a full chat completion request that
+                // could take 30-60 seconds and caused the wrong model to be stored as the detected model.
+                isValid = await _openRouterChatService.TestConnectionAsync();
+            }
+            finally
+            {
+                _isTestingOpenRouterKey = false;
+                SaveOpenRouterKeyButton.IsEnabled = true;
+                if (OpenRouterKeyTestingText != null)
+                    OpenRouterKeyTestingText.Visibility = Visibility.Collapsed;
+            }
+
+            UpdateOpenRouterDetectedModelUi();
+            SetOpenRouterKeyValidationStatus(isValid);
+            if (!isValid)
+                _cloudModeActive = false;
+            else
+            {
+                _cloudModeActive = true;
+                _selectedOpenRouterModelId = _openRouterChatService.NormalizeSelectableModelId(_selectedOpenRouterModelId);
+                _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
+            }
+
+            RefreshCloudModeToggleUi();
+            UpdateHeaderDisplay();
+
+            if (isValid)
+                await LoadOpenRouterUsageAsync();
+            else
+                ResetOpenRouterUsageUi();
+        }
+
+        private void ClearOpenRouterKeyButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (OpenRouterApiKeyPasswordBox != null)
+                OpenRouterApiKeyPasswordBox.Password = string.Empty;
+
+            _database?.SaveOpenRouterApiKey(string.Empty);
+            _openRouterChatService.SetApiKey(string.Empty);
+            _cloudModeActive = false;
+            _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
+            _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
+            ResetOpenRouterKeyStatusIndicator();
+            ResetOpenRouterUsageUi();
+            UpdateOpenRouterDetectedModelUi();
+            RefreshCloudModeToggleUi();
+            UpdateHeaderDisplay();
+        }
+
+        private async void RefreshOpenRouterUsageButton_Click(object sender, RoutedEventArgs e)
+        {
+            await LoadOpenRouterUsageAsync();
+        }
+
+        private void RefreshCloudModeToggleUi()
+        {
+            _localModeButton ??= FindName("LocalModeButton") as Button;
+            _cloudModeButton ??= FindName("CloudModeButton") as Button;
+            _eidosModelButton ??= FindName("EidosModelButton") as Button;
+            _hephaModelButton ??= FindName("HephaModelButton") as Button;
+
+            bool hasValidKey = _openRouterChatService.HasValidKey;
+            if (!hasValidKey)
+                _cloudModeActive = false;
+
+            // Show cloud model selector (Eidos / Hepha) only when in cloud mode
+            if (FindName("CloudModelSelectorBorder") is Border cloudSelectorBorder)
+                cloudSelectorBorder.Visibility = _cloudModeActive ? Visibility.Visible : Visibility.Collapsed;
+
+            if (_localModeButton != null)
+            {
+                bool isSelected = !_cloudModeActive;
+                _localModeButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#B8924A" : "Transparent"));
+                _localModeButton.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#EDE8E3" : "#8A8279"));
+                _localModeButton.BorderBrush = Brushes.Transparent;
+                _localModeButton.BorderThickness = new Thickness(0);
+            }
+
+            if (_cloudModeButton != null)
+            {
+                _cloudModeButton.IsEnabled = hasValidKey;
+                _cloudModeButton.ToolTip = hasValidKey
+                    ? "Use OpenRouter cloud inference"
+                    : "Add an OpenRouter API key in Settings to enable cloud mode";
+                _cloudModeButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(_cloudModeActive ? "#B8924A" : "Transparent"));
+                _cloudModeButton.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(_cloudModeActive ? "#EDE8E3" : "#8A8279"));
+                _cloudModeButton.BorderBrush = Brushes.Transparent;
+                _cloudModeButton.BorderThickness = new Thickness(0);
+            }
+
+            RefreshCloudModelSelectionUi(_eidosModelButton, OpenRouterChatService.Eidos1ModelId, hasValidKey);
+            RefreshCloudModelSelectionUi(_hephaModelButton, OpenRouterChatService.Hepha1ModelId, hasValidKey);
+            RefreshInferenceSettingsUi();
+
+            UpdateHeaderDisplay();
+            UpdateUIState(!_isProcessing);
+            UpdateTokenUsageIndicator();
+            UpdateOpenRouterUsageVisibility();
+        }
+
+        private void RefreshCloudModelSelectionUi(Button? button, string modelId, bool hasValidKey)
+        {
+            if (button == null)
+                return;
+
+            bool isSelected = string.Equals(_selectedOpenRouterModelId, modelId, StringComparison.OrdinalIgnoreCase);
+            bool isAvailable = hasValidKey && _openRouterChatService.IsSelectableModelAvailable(modelId);
+            button.IsEnabled = hasValidKey;
+            button.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#B8924A" : "Transparent"));
+            button.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#EDE8E3" : "#8A8279"));
+            button.BorderBrush = Brushes.Transparent;
+            button.BorderThickness = new Thickness(0);
+            button.Opacity = isAvailable || !hasValidKey ? 1.0 : 0.45;
+            button.ToolTip = !hasValidKey
+                ? "Add an OpenRouter API key in Settings to enable cloud models"
+                : isAvailable
+                    ? _openRouterChatService.DescribeModelSelection(modelId)
+                    : $"{_openRouterChatService.ResolveModelLabel(modelId)} is not available on this OpenRouter key.";
+        }
+
+        private void ResetOpenRouterKeyStatusIndicator()
+        {
+            if (OpenRouterKeyTestingText != null)
+                OpenRouterKeyTestingText.Visibility = Visibility.Collapsed;
+
+            if (OpenRouterKeyStatusText != null)
+            {
+                OpenRouterKeyStatusText.Text = string.Empty;
+                OpenRouterKeyStatusText.Visibility = Visibility.Collapsed;
+                OpenRouterKeyStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#8A8279"));
+            }
+        }
+
+        private async Task EnsureOpenRouterUsageLoadedAsync()
+        {
+            TextBlock? usageTextBlock = FindName("OpenRouterUsageText") as TextBlock;
+
+            if (!_openRouterChatService.HasValidKey)
+            {
+                ResetOpenRouterUsageUi();
+                return;
+            }
+
+            if (_isFetchingOpenRouterUsage)
+                return;
+
+            string currentText = usageTextBlock?.Text ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(currentText)
+                && !string.Equals(currentText, "0 / 0 requests", StringComparison.Ordinal)
+                && !string.Equals(currentText, "Unable to fetch usage. Check the key.", StringComparison.Ordinal))
+            {
+                UpdateOpenRouterUsageVisibility();
+                return;
+            }
+
+            await LoadOpenRouterUsageAsync();
+        }
+
+        private async Task LoadOpenRouterUsageAsync()
+        {
+            TextBlock? usageTextBlock = FindName("OpenRouterUsageText") as TextBlock;
+            Button? refreshButton = FindName("RefreshOpenRouterUsageButton") as Button;
+            Border? usageFillBar = FindName("OpenRouterUsageFillBar") as Border;
+
+            if (!_openRouterChatService.HasValidKey)
+            {
+                ResetOpenRouterUsageUi();
+                return;
+            }
+
+            if (_isFetchingOpenRouterUsage)
+                return;
+
+            _isFetchingOpenRouterUsage = true;
+            UpdateOpenRouterUsageVisibility();
+
+            if (usageTextBlock != null)
+                usageTextBlock.Text = "Fetching usage";
+
+            if (refreshButton != null)
+                refreshButton.IsEnabled = false;
+
+            try
+            {
+                OpenRouterKeyInfo keyInfo = await _openRouterChatService.FetchKeyInfoAsync();
+                if (!keyInfo.FetchSucceeded)
+                {
+                    SetOpenRouterUsageFailureState();
+                    return;
+                }
+
+                if (keyInfo.IsUnlimited)
+                {
+                    _openRouterUsagePercent = 0;
+                    if (usageTextBlock != null)
+                        usageTextBlock.Text = "Free tier — no request cap on this key";
+                    if (usageFillBar != null)
+                        usageFillBar.Background = GetOpenRouterUsageBrush(0);
+                    UpdateOpenRouterUsageProgressBar();
+                    return;
+                }
+
+                int used = Math.Max(0, keyInfo.RequestsUsed);
+                int limit = Math.Max(1, keyInfo.RequestsLimit);
+                _openRouterUsagePercent = Math.Clamp(used * 100d / limit, 0d, 100d);
+
+                if (usageTextBlock != null)
+                    usageTextBlock.Text = $"{used} / {limit} requests";
+
+                if (usageFillBar != null)
+                    usageFillBar.Background = GetOpenRouterUsageBrush(_openRouterUsagePercent);
+
+                UpdateOpenRouterUsageProgressBar();
+            }
+            finally
+            {
+                _isFetchingOpenRouterUsage = false;
+                if (refreshButton != null)
+                    refreshButton.IsEnabled = true;
+                UpdateOpenRouterUsageVisibility();
+            }
+        }
+
+        private void ResetOpenRouterUsageUi()
+        {
+            TextBlock? usageTextBlock = FindName("OpenRouterUsageText") as TextBlock;
+            Border? usageFillBar = FindName("OpenRouterUsageFillBar") as Border;
+            Button? refreshButton = FindName("RefreshOpenRouterUsageButton") as Button;
+
+            _isFetchingOpenRouterUsage = false;
+            _openRouterUsagePercent = 0;
+
+            if (usageTextBlock != null)
+                usageTextBlock.Text = "0 / 0 requests";
+
+            if (usageFillBar != null)
+                usageFillBar.Background = GetOpenRouterUsageBrush(0);
+
+            if (refreshButton != null)
+                refreshButton.IsEnabled = true;
+
+            UpdateOpenRouterUsageProgressBar();
+            UpdateOpenRouterUsageVisibility();
+        }
+
+        private void SetOpenRouterUsageFailureState()
+        {
+            TextBlock? usageTextBlock = FindName("OpenRouterUsageText") as TextBlock;
+            Border? usageFillBar = FindName("OpenRouterUsageFillBar") as Border;
+
+            _openRouterUsagePercent = 0;
+
+            if (usageTextBlock != null)
+                usageTextBlock.Text = "Unable to fetch usage. Check the key.";
+
+            if (usageFillBar != null)
+                usageFillBar.Background = GetOpenRouterUsageBrush(0);
+
+            UpdateOpenRouterUsageProgressBar();
+        }
+
+        private void UpdateOpenRouterUsageVisibility()
+        {
+            StackPanel? usagePanel = FindName("OpenRouterUsagePanel") as StackPanel;
+            if (usagePanel == null)
+                return;
+
+            usagePanel.Visibility = _openRouterChatService.HasValidKey
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        private void UpdateOpenRouterUsageProgressBar()
+        {
+            Border? usageFillBar = FindName("OpenRouterUsageFillBar") as Border;
+            Border? usageTrack = FindName("OpenRouterUsageTrack") as Border;
+            if (usageFillBar == null || usageTrack == null)
+                return;
+
+            double trackWidth = Math.Max(0, usageTrack.ActualWidth);
+            usageFillBar.Width = trackWidth <= 0
+                ? 0
+                : trackWidth * (_openRouterUsagePercent / 100d);
+        }
+
+        private static Brush GetOpenRouterUsageBrush(double percent)
+        {
+            string color = percent switch
+            {
+                >= 85d => "#FF3B3B",
+                >= 60d => "#F97316",
+                _ => "#22C55E"
+            };
+
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
+        }
+
+        private void SetOpenRouterKeyValidationStatus(bool isValid)
+        {
+            if (OpenRouterKeyStatusText == null)
+                return;
+
+            OpenRouterKeyStatusText.Text = isValid
+                ? "Valid"
+                : _openRouterChatService.LastTestFailureReason switch
+                {
+                    OpenRouterConnectionTestFailureReason.InvalidKey => "Invalid key",
+                    OpenRouterConnectionTestFailureReason.RequestFormatError => "Request format error, check logs",
+                    OpenRouterConnectionTestFailureReason.RateLimited => "Rate limited, try again shortly",
+                    OpenRouterConnectionTestFailureReason.ProviderUnavailable => "Provider/model temporarily unavailable, retrying or switch models",
+                    OpenRouterConnectionTestFailureReason.NetworkError => "Connection failed, check your network",
+                    _ => "Test failed, check logs"
+                };
+            OpenRouterKeyStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isValid ? "#22C55E" : "#FF3B3B"));
+            OpenRouterKeyStatusText.Visibility = Visibility.Visible;
+        }
+
+        private void UpdateOpenRouterDetectedModelUi()
+        {
+            string selectedLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+            if (OpenRouterDetectedModelText != null)
+                OpenRouterDetectedModelText.Text = selectedLabel;
+
+            if (OpenRouterDetectedModelIdText != null)
+                OpenRouterDetectedModelIdText.Text = _openRouterChatService.DescribeModelSelection(_selectedOpenRouterModelId);
+        }
+
+        private string BuildCloudIdentitySystemInstruction()
+        {
+            string selectedLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+            return $"[AXIOM IDENTITY] You are the {selectedLabel} cloud AI profile inside the Axiom app. If the user asks what AI you are, say you are {selectedLabel} in Axiom. If the user asks who made you or what app this is, say you are being provided through the Axiom app. Keep identity answers short, factual, and consistent with the selected Axiom profile name.";
+        }
+
+        private List<OpenRouterMessage> BuildOpenRouterConversationHistory(List<ChatMessage> selectedHistoryMessages)
+        {
+            var history = new List<OpenRouterMessage>();
+            int tokenBudget = CloudHistoryTokenBudget;
+
+            foreach (ChatMessage message in selectedHistoryMessages ?? [])
+            {
+                if (message == null || string.IsNullOrWhiteSpace(message.Content))
+                    continue;
+
+                int messageTokens = _openRouterChatService.EstimateTokenCount(message.Content);
+                if (history.Count > 0 && tokenBudget - messageTokens < 0)
+                    continue;
+
+                if (string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
+                {
+                    history.Add(new OpenRouterMessage("user", message.Content));
+                    tokenBudget -= messageTokens;
+                }
+                else if (string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                {
+                    string cleanedAssistant = CleanAssistantContentForOpenRouterHistory(message.Content);
+                    if (!string.IsNullOrWhiteSpace(cleanedAssistant))
+                    {
+                        history.Add(new OpenRouterMessage("assistant", cleanedAssistant));
+                        tokenBudget -= _openRouterChatService.EstimateTokenCount(cleanedAssistant);
+                    }
+                }
+            }
+
+            return history;
+        }
+
+        private static string CleanCloudReasoningForDisplay(string reasoning)
+        {
+            if (string.IsNullOrWhiteSpace(reasoning))
+                return string.Empty;
+
+            string cleaned = CleanOutputTokens(reasoning);
+            cleaned = StripThinkBlocksAndLeadingBlankLines(cleaned);
+            cleaned = Regex.Replace(cleaned, @"(?:\r?\n){3,}", Environment.NewLine + Environment.NewLine);
+            return cleaned.Trim();
+        }
+
+        private static string CleanAssistantContentForOpenRouterHistory(string content)
+        {
+            string cleaned = SanitizeAssistantContentForInference(content);
+            if (string.IsNullOrWhiteSpace(cleaned))
+                return string.Empty;
+
+            cleaned = CloudHistoryBracketedMetadataBlockRegex.Replace(cleaned, string.Empty);
+            cleaned = CloudHistoryPlainMetadataBlockRegex.Replace(cleaned, string.Empty);
+            cleaned = Regex.Replace(cleaned, @"(?:\r?\n){3,}", Environment.NewLine + Environment.NewLine);
+            return cleaned.Trim();
+        }
+
+        private string BuildCloudModelSystemInstruction(string userMsg)
+        {
+            string selectedLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha1ModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[MODEL PROFILE: HEPHA 1] You are operating in Axiom's Hepha 1 cloud profile. Prioritize code correctness, deterministic tool usage, compact structured outputs, and environment-aware solutions that work cleanly with the app's Python sandbox, web retrieval, imported documents, and persisted chat state. When tool-produced context is present, treat it as authoritative and integrate it directly without re-describing internal plumbing.";
+            }
+
+            string taskBias = IsCodingRequest(userMsg)
+                ? "When coding is requested, stay implementation-first and keep code directly usable."
+                : "Favor strong reasoning, concise execution-ready answers, and efficient use of supplied context blocks.";
+
+            return $"[MODEL PROFILE: {selectedLabel.ToUpperInvariant()}] You are operating in Axiom's {selectedLabel} cloud profile. Optimize for the app's backend pipeline: use tool outputs, imported document context, web-grounding blocks, persona memory, and calculator/python results as high-priority signals. {taskBias} Do not expose internal chain-of-thought unless explicitly requested by the product behavior.";
+        }
+
+        private static string TrimForInlineError(string message, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return "Cloud request failed.";
+
+            string normalized = message.Trim();
+            return normalized.Length <= maxLength
+                ? normalized
+                : normalized[..maxLength];
+        }
+
+        private static IReadOnlyList<OpenRouterToolDefinition> BuildCloudToolDefinitions()
+        {
+            return
+            [
+                new OpenRouterToolDefinition(
+                    "web_search",
+                    "Search the web for current information and return relevant snippets.",
+                    new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["query"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "The web search query to run."
+                            }
+                        },
+                        ["required"] = new JsonArray("query"),
+                        ["additionalProperties"] = false
+                    }),
+                new OpenRouterToolDefinition(
+                    "run_python",
+                    "Execute Python code in the existing sandbox and return stdout/stderr.",
+                    new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["code"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "The Python code to execute."
+                            }
+                        },
+                        ["required"] = new JsonArray("code"),
+                        ["additionalProperties"] = false
+                    }),
+                new OpenRouterToolDefinition(
+                    "calculate",
+                    "Evaluate a math or unit conversion expression with the existing calculator.",
+                    new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["expression"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "The expression or conversion to evaluate."
+                            }
+                        },
+                        ["required"] = new JsonArray("expression"),
+                        ["additionalProperties"] = false
+                    })
+            ];
+        }
+
+        private async Task<CloudToolCallLoopResult> RunCloudToolCallingLoopAsync(
+            string userMsg,
+            string systemPrompt,
+            List<OpenRouterMessage> conversationHistory,
+            bool thinkingEnabled,
+            Action<string>? onToken,
+            CancellationToken token)
+        {
+            List<OpenRouterMessage> messages = new(conversationHistory ?? []);
+            // PreserveFullText: keeps the active user message (which may carry attached document
+            // context) intact through tool-loop iterations, where it stops being the final message.
+            messages.Add(new OpenRouterMessage("user", userMsg, PreserveFullText: true));
+
+            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions();
+            var reasoningParts = new List<string>();
+            int toolCallCount = 0;
+            bool pythonSessionStarted = false;
+
+            try
+            {
+                for (int iteration = 0; iteration < CloudToolLoopIterationLimit; iteration++)
+                {
+                    OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
+                        messages,
+                        systemPrompt,
+                        thinkingEnabled,
+                        _selectedOpenRouterModelId,
+                        tools,
+                        onToken,
+                        token);
+
+                    if (!string.IsNullOrWhiteSpace(response.Reasoning))
+                        reasoningParts.Add(response.Reasoning.Trim());
+
+                    if (response.ToolCalls == null || response.ToolCalls.Count == 0)
+                    {
+                        return new CloudToolCallLoopResult
+                        {
+                            ResponseText = response.Text,
+                            ReasoningText = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal)),
+                            ToolCallCount = toolCallCount
+                        };
+                    }
+
+                    toolCallCount += response.ToolCalls.Count;
+                    messages.Add(new OpenRouterMessage("assistant", response.Text ?? string.Empty, null, response.ToolCalls));
+
+                    foreach (OpenRouterToolCall toolCall in response.ToolCalls)
+                    {
+                        if (string.Equals(toolCall?.Name, "run_python", StringComparison.OrdinalIgnoreCase) && !pythonSessionStarted)
+                        {
+                            await _pythonExecutionService.StartPersistentSessionAsync(token);
+                            pythonSessionStarted = true;
+                        }
+
+                        CloudToolExecutionResult executionResult = await ExecuteCloudToolCallAsync(toolCall, userMsg, token);
+                        string boundedToolResult = BuildCloudToolResultMessage(executionResult.Result, toolCall.Name);
+                        messages.Add(new OpenRouterMessage("tool", boundedToolResult, toolCall.Id));
+                    }
+                }
+
+                // Iteration budget exhausted. Instead of discarding the turn (and every tool result
+                // gathered so far), run one final pass with tools disabled so the model must
+                // synthesize an answer from the evidence already in the conversation.
+                await BackendLogService.LogEventAsync(
+                    "CloudToolLoopBudgetExhausted",
+                    $"ToolCalls:{toolCallCount}\nIterationLimit:{CloudToolLoopIterationLimit}\nForcing final no-tools synthesis pass.");
+
+                OpenRouterChatResponse finalResponse = await _openRouterChatService.SendConversationStreamAsync(
+                    messages,
+                    systemPrompt,
+                    thinkingEnabled,
+                    _selectedOpenRouterModelId,
+                    null,
+                    onToken,
+                    token);
+
+                if (!string.IsNullOrWhiteSpace(finalResponse.Reasoning))
+                    reasoningParts.Add(finalResponse.Reasoning.Trim());
+
+                return new CloudToolCallLoopResult
+                {
+                    ResponseText = finalResponse.Text,
+                    ReasoningText = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal)),
+                    ToolCallCount = toolCallCount
+                };
+            }
+            finally
+            {
+                if (pythonSessionStarted)
+                    await _pythonExecutionService.EndPersistentSessionAsync(CancellationToken.None);
+            }
+        }
+
+        private static string BuildCloudToolResultMessage(string toolResult, string toolName)
+        {
+            string normalized = (toolResult ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+                return "Tool returned no output. If needed, summarize that no evidence or result was produced.";
+
+            if (normalized.Length <= CloudToolResultCharacterLimit)
+                return normalized;
+
+            string displayName = string.IsNullOrWhiteSpace(toolName) ? "tool" : toolName.Trim();
+            string truncated = normalized[..CloudToolResultCharacterLimit].TrimEnd();
+            return truncated + $"\n\n[TOOL RESULT TRUNCATED] The {displayName} output exceeded {CloudToolResultCharacterLimit} characters. Use the retained portion above as the primary evidence and synthesize from it instead of asking the tool to repeat the same large output unless a narrower follow-up query is required.";
+        }
+
+        private async Task<CloudToolExecutionResult> ExecuteCloudToolCallAsync(OpenRouterToolCall toolCall, string originalUserMessage, CancellationToken token)
+        {
+            if (toolCall == null || string.IsNullOrWhiteSpace(toolCall.Name))
+                return new CloudToolExecutionResult { Result = "Tool call was empty." };
+
+            string normalizedName = toolCall.Name.Trim();
+
+            try
+            {
+                using JsonDocument argsDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(toolCall.ArgumentsJson) ? "{}" : toolCall.ArgumentsJson);
+                JsonElement root = argsDocument.RootElement;
+
+                if (string.Equals(normalizedName, "web_search", StringComparison.OrdinalIgnoreCase))
+                {
+                    StartToolActivityIndicator("Searching the web");
+                    string query = root.TryGetProperty("query", out JsonElement queryElement) ? queryElement.GetString() ?? string.Empty : string.Empty;
+                    string data = await _webSearchService.SearchTopSnippetsForNormalChatAsync(query, token);
+                    return new CloudToolExecutionResult
+                    {
+                        Name = normalizedName,
+                        Result = string.IsNullOrWhiteSpace(data) ? "No web results were found." : data
+                    };
+                }
+
+                if (string.Equals(normalizedName, "run_python", StringComparison.OrdinalIgnoreCase))
+                {
+                    StartToolActivityIndicator("Running Python");
+                    string code = root.TryGetProperty("code", out JsonElement codeElement) ? codeElement.GetString() ?? string.Empty : string.Empty;
+                    PythonCodeExecutionOutcome outcome = await ExecuteAndRepairPythonCodeAsync(code, string.Empty, originalUserMessage, token, true);
+                    return new CloudToolExecutionResult
+                    {
+                        Name = normalizedName,
+                        Result = string.IsNullOrWhiteSpace(outcome.ExecutionResult) ? "Python completed with no output." : outcome.ExecutionResult
+                    };
+                }
+
+                if (string.Equals(normalizedName, "calculate", StringComparison.OrdinalIgnoreCase))
+                {
+                    StartToolActivityIndicator("Calculating");
+                    string expression = root.TryGetProperty("expression", out JsonElement expressionElement) ? expressionElement.GetString() ?? string.Empty : string.Empty;
+                    if (!CalculatorToolAgent.TryEvaluateExpression(expression, out string resultText))
+                        resultText = "Calculator could not evaluate the requested expression.";
+
+                    return new CloudToolExecutionResult
+                    {
+                        Name = normalizedName,
+                        Result = resultText
+                    };
+                }
+
+                return new CloudToolExecutionResult
+                {
+                    Name = normalizedName,
+                    Result = $"Unsupported tool: {normalizedName}"
+                };
+            }
+            catch (Exception ex)
+            {
+                return new CloudToolExecutionResult
+                {
+                    Name = normalizedName,
+                    Result = $"Tool execution failed: {ex.Message}"
+                };
+            }
+            finally
+            {
+                StopToolActivityIndicator();
+            }
+        }
+
+        private async Task HandleCloudChatRequestAsync(string userMsg, CancellationToken token)
+        {
+            if (!_openRouterChatService.HasValidKey)
+                throw new InvalidOperationException("Add a valid OpenRouter API key in Settings to enable cloud mode.");
+
+            CloudChatRequestContext requestContext = await PrepareCloudChatRequestContextAsync(userMsg, token).ConfigureAwait(false);
+            var streamedResponseBuilder = new StringBuilder();
+            bool firstTokenReceived = false;
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _currentStreamingMessage = new ChatMessage("assistant", string.Empty)
+                {
+                    ModelLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId),
+                    PreferPlainTextRendering = false
+                };
+                _currentStreamingMessage.IsThinkingInProgress = true;
+                _currentStreamingMessage.IsStreaming = true;
+                _chatMessages.Add(_currentStreamingMessage);
+            }, System.Windows.Threading.DispatcherPriority.Background);
+
+            try
+            {
+                DateTime requestStartUtc = DateTime.UtcNow;
+
+                CloudToolCallLoopResult toolLoopResult = await RunCloudToolCallingLoopAsync(
+                    requestContext.FinalUserMessage,
+                    requestContext.SystemPrompt,
+                    requestContext.ConversationHistory,
+                    requestContext.ThinkingEnabled,
+                    tokenChunk =>
+                    {
+                        if (string.IsNullOrEmpty(tokenChunk))
+                            return;
+
+                        lock (streamedResponseBuilder)
+                        {
+                            streamedResponseBuilder.Append(tokenChunk);
+                        }
+
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            if (_currentStreamingMessage == null)
+                                return;
+
+                            if (!firstTokenReceived)
+                            {
+                                firstTokenReceived = true;
+                                _currentStreamingMessage.IsThinkingInProgress = false;
+                                _currentStreamingMessage.PreferPlainTextRendering = true;
+                            }
+
+                            _currentStreamingMessage.SetStreamingContent(streamedResponseBuilder.ToString());
+                            ScrollChatToEnd();
+                        }, System.Windows.Threading.DispatcherPriority.Background);
+                    },
+                    token);
+
+                await BackendLogService.LogEventAsync(
+                    "OpenRouterLatency",
+                    $"Model:{_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)}\nThinking:{requestContext.ThinkingEnabled}\nHistoryMessages:{requestContext.ConversationHistory.Count}\nPromptChars:{requestContext.FinalUserMessage.Length}\nToolCalls:{toolLoopResult.ToolCallCount}\nElapsedMs:{(DateTime.UtcNow - requestStartUtc).TotalMilliseconds:F0}");
+
+                _tokenCount = Math.Max(1, (toolLoopResult.ResponseText?.Length ?? 0) / 4);
+
+                await FinalizeCloudStreamingMessageAsync(toolLoopResult.ResponseText, toolLoopResult.ReasoningText, generationStopped: false);
+
+                AddChatMessage("system", $"Tokens: {_tokenCount}  •  Mode: Cloud ({_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)})");
+                _currentStreamingMessage = null;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // User pressed the Stop button — handle gracefully.
+                string partialResponse;
+                lock (streamedResponseBuilder)
+                {
+                    partialResponse = streamedResponseBuilder.ToString();
+                }
+
+                if (string.IsNullOrWhiteSpace(partialResponse))
+                {
+                    if (_currentStreamingMessage != null)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            _currentStreamingMessage.IsThinkingInProgress = false;
+                            _currentStreamingMessage.IsStreaming = false;
+                            _chatMessages.Remove(_currentStreamingMessage);
+                        }, System.Windows.Threading.DispatcherPriority.Background);
+                        _currentStreamingMessage = null;
+                    }
+
+                    return;
+                }
+
+                _tokenCount = Math.Max(1, partialResponse.Length / 4);
+                await FinalizeCloudStreamingMessageAsync(partialResponse, string.Empty, generationStopped: true);
+                _currentStreamingMessage = null;
+            }
+            catch (OperationCanceledException)
+            {
+                // HttpClient.Timeout fired (not user stop) — show a visible error instead of
+                // silently removing the message. The model took too long to start responding.
+                if (_currentStreamingMessage != null)
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        _currentStreamingMessage.IsThinkingInProgress = false;
+                        _currentStreamingMessage.IsStreaming = false;
+                        _chatMessages.Remove(_currentStreamingMessage);
+                    }, System.Windows.Threading.DispatcherPriority.Background);
+                    _currentStreamingMessage = null;
+                }
+
+                string selectedLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+                throw new InvalidOperationException($"{selectedLabel} timed out waiting for a response. The model may be overloaded — wait a moment and try again.");
+            }
+            catch
+            {
+                if (_currentStreamingMessage != null)
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        _currentStreamingMessage.IsThinkingInProgress = false;
+                        _currentStreamingMessage.IsStreaming = false;
+                        _chatMessages.Remove(_currentStreamingMessage);
+                    }, System.Windows.Threading.DispatcherPriority.Background);
+                    _currentStreamingMessage = null;
+                }
+
+                throw;
+            }
+        }
+
+        private async Task FinalizeCloudStreamingMessageAsync(string responseText, string reasoningText, bool generationStopped)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_currentStreamingMessage == null)
+                    return;
+
+                string cleanedResponse = string.IsNullOrWhiteSpace(responseText)
+                    ? string.Empty
+                    : StripThinkBlocksAndLeadingBlankLines(CleanOutputTokens(responseText));
+
+                if (generationStopped && !string.IsNullOrWhiteSpace(cleanedResponse))
+                    cleanedResponse = AppendGenerationStoppedLabel(cleanedResponse);
+
+                _currentStreamingMessage.FinalizeStreamingContent(string.IsNullOrWhiteSpace(cleanedResponse)
+                    ? EmptyStrippedResponseInlineHtml
+                    : cleanedResponse);
+                _currentStreamingMessage.ThinkingContent = CleanCloudReasoningForDisplay(reasoningText);
+                _currentStreamingMessage.ThinkingHeaderText = !string.IsNullOrWhiteSpace(reasoningText) ? "View reasoning" : "Thinking";
+                _currentStreamingMessage.IsThinkingInProgress = false;
+                _currentStreamingMessage.IsThinkingExpanded = false;
+                _currentStreamingMessage.IsStreaming = false;
+                _currentStreamingMessage.PreferPlainTextRendering = false;
+                _currentStreamingMessage.ModelLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+
+                var activeBranch = _branches.FirstOrDefault(b => b.Id == _activeBranchId);
+                if (activeBranch != null)
+                {
+                    activeBranch.Messages.Add(new ChatMessageState
+                    {
+                        Id = _currentStreamingMessage.Id,
+                        Role = _currentStreamingMessage.Role,
+                        Content = _currentStreamingMessage.Content,
+                        ThinkingContent = _currentStreamingMessage.ThinkingContent,
+                        ThinkingHeaderText = _currentStreamingMessage.ThinkingHeaderText,
+                        ModelLabel = _currentStreamingMessage.ModelLabel,
+                        Timestamp = _currentStreamingMessage.Timestamp
+                    });
+                }
+
+                ScrollChatToEnd();
+            }, System.Windows.Threading.DispatcherPriority.Background);
+        }
+
+        private static string AppendGenerationStoppedLabel(string content)
+        {
+            string normalized = (content ?? string.Empty).TrimEnd();
+            if (string.IsNullOrWhiteSpace(normalized))
+                return string.Empty;
+
+            return normalized + "\n\n<sub>Generation stopped.</sub>";
+        }
+
+        private async Task<CloudChatRequestContext> PrepareCloudChatRequestContextAsync(string userMsg, CancellationToken token)
+        {
+            NormalChatUiSnapshot uiSnapshot = await CaptureNormalChatUiSnapshotAsync(userMsg);
+
+            // Proactive web search — mirrors local-mode behavior so the web toggle and [web] marker
+            // work identically in cloud mode. Cloud also has a web_search tool for reactive searches,
+            // but proactive injection is needed when the user explicitly enables the toggle.
+            string webContext = await TryBuildWebContextAsync(userMsg, false, token);
+            string personaContext = await _personaMemoryService.GetRelevantContextAsync(userMsg, 150, 350, token);
+
+            return await Task.Run(() =>
+            {
+                bool thinkingEnabled = _normalThinkingModeEnabled;
+                string systemPrompt = string.IsNullOrWhiteSpace(uiSnapshot.SystemPromptText) ? BuildDefaultAssistantSystemPrompt() : uiSnapshot.SystemPromptText.Trim();
+                string cloudModelInstruction = BuildCloudModelSystemInstruction(userMsg);
+                if (!string.IsNullOrWhiteSpace(cloudModelInstruction))
+                    systemPrompt += "\n\n" + cloudModelInstruction;
+
+                string cloudIdentityInstruction = BuildCloudIdentitySystemInstruction();
+                if (!string.IsNullOrWhiteSpace(cloudIdentityInstruction))
+                    systemPrompt += "\n\n" + cloudIdentityInstruction;
+
+                // Inject hippocampus context (prior research sessions) into the cloud system prompt
+                if (!string.IsNullOrWhiteSpace(uiSnapshot.HippocampusContext))
+                    systemPrompt += "\n\n[FROM PRIOR RESEARCH SESSIONS]\n" + uiSnapshot.HippocampusContext + "\n[/FROM PRIOR RESEARCH SESSIONS]";
+
+                if (!string.IsNullOrWhiteSpace(personaContext))
+                    systemPrompt += "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]";
+
+                if (!string.IsNullOrWhiteSpace(uiSnapshot.AttachedDocumentMemory))
+                    systemPrompt += "\n\n" + uiSnapshot.AttachedDocumentMemory;
+
+                string codingInstruction = BuildCloudCodingSystemInstruction(userMsg);
+                if (!string.IsNullOrWhiteSpace(codingInstruction))
+                    systemPrompt += "\n\n" + codingInstruction;
+
+                systemPrompt = AppendSystemInstruction(systemPrompt, LocalMathLatexInstruction);
+
+                // Pass webContext so proactive search results are grounded into this turn's system prompt
+                systemPrompt = AppendSingleTurnSystemTail(systemPrompt, webContext, thinkingEnabled);
+
+                systemPrompt = _openRouterChatService.BuildSystemPromptForModel(_selectedOpenRouterModelId, systemPrompt);
+                systemPrompt = AppendAttachedDocumentContextToSystemPrompt(systemPrompt, uiSnapshot.DocumentContext);
+
+                List<ChatMessage> historyMessages = uiSnapshot.CurrentStreamingMessageId.HasValue
+                    ? uiSnapshot.ChatMessages.Where(msg => msg.Id != uiSnapshot.CurrentStreamingMessageId.Value).ToList()
+                    : uiSnapshot.ChatMessages;
+                List<ChatMessage> selectedHistoryMessages = SelectRelevantChatHistory(userMsg, historyMessages, uiSnapshot.ContextSize, uiSnapshot.ChatDocuments);
+                List<OpenRouterMessage> conversationHistory = BuildOpenRouterConversationHistory(selectedHistoryMessages);
+
+                return new CloudChatRequestContext
+                {
+                    SystemPrompt = systemPrompt,
+                    FinalUserMessage = userMsg,
+                    SelectedHistoryMessages = selectedHistoryMessages,
+                    ConversationHistory = conversationHistory,
+                    ThinkingEnabled = thinkingEnabled
+                };
+            }, token).ConfigureAwait(false);
+        }
+
+        private void UpdateCloudContextNotice(int usedTokens)
+        {
+            Border? cloudContextNoticeBorder = FindName("CloudContextNoticeBorder") as Border;
+            TextBlock? cloudContextNoticeText = FindName("CloudContextNoticeText") as TextBlock;
+            if (cloudContextNoticeBorder == null || cloudContextNoticeText == null)
+                return;
+
+            int contextWindow = _openRouterChatService.GetApproximateContextWindowTokens(_selectedOpenRouterModelId);
+            int percentUsed = contextWindow <= 0
+                ? 0
+                : (int)Math.Clamp(Math.Round(usedTokens * 100d / contextWindow), 0, 100);
+
+            if (percentUsed < CloudContextNoticeThresholdPercent)
+            {
+                cloudContextNoticeBorder.Visibility = Visibility.Collapsed;
+                cloudContextNoticeText.Text = string.Empty;
+                return;
+            }
+
+            string modelLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+            string levelText;
+            string foregroundColor;
+            string borderColor;
+
+            if (percentUsed >= CloudContextCriticalThresholdPercent)
+            {
+                levelText = "Cloud context nearly full";
+                foregroundColor = "#FFB4B4";
+                borderColor = "#FF3B3B";
+            }
+            else
+            {
+                levelText = "Cloud context getting full";
+                foregroundColor = "#EDE8E3";
+                borderColor = "#B8924A";
+            }
+
+            cloudContextNoticeText.Text = $"{levelText} · {modelLabel} is using an estimated {usedTokens:N0} of {contextWindow:N0} tokens in this chat ({percentUsed}%).";
+            cloudContextNoticeText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(foregroundColor));
+            cloudContextNoticeBorder.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(borderColor));
+            cloudContextNoticeBorder.Visibility = Visibility.Visible;
+        }
+
+        private static bool IsPythonCodingRequest(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            return PythonIntentPhrases.Any(signal => message.Contains(signal, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string BuildCloudCodingSystemInstruction(string userMessage)
+        {
+            if (!IsCodingRequest(userMessage))
+                return string.Empty;
+
+            var builder = new StringBuilder();
+            builder.AppendLine("[CODE QUALITY RULES] For coding tasks, return syntactically valid, directly usable code.");
+            builder.AppendLine("Do not assume hidden setup, predeclared variables, or prior execution state.");
+            builder.AppendLine("Never reference a variable, function, class, module, placeholder, or identifier unless it is declared, assigned, or imported in the code you output.");
+            builder.AppendLine("If the user asks for code, prefer complete runnable code over pseudocode unless they explicitly ask for a partial snippet.");
+
+            if (IsPythonCodingRequest(userMessage))
+            {
+                builder.AppendLine("[PYTHON RUNTIME RULES] When generating Python code, produce one self-contained Python 3 script unless the user explicitly asks for a different format.");
+                builder.AppendLine("Declare every variable before first use.");
+                builder.AppendLine("Include every required import.");
+                builder.AppendLine("If user input is needed, read it with input() and assign it before using it.");
+                builder.AppendLine("Do not use placeholder identifiers like name, x, y, data, value, args, or result unless you define them first.");
+                builder.AppendLine("The script must run as-is when pasted into a standard online Python compiler or interpreter.");
+                builder.AppendLine("Before finishing, verify that every identifier referenced in the script is either imported, assigned, defined as a function/class, or provided by Python builtins.");
+                builder.AppendLine("Do not output example placeholders such as print(name), hello(name), user_name = name, or f'Hello {name}' unless name is explicitly assigned earlier in the script or read from input().");
+                builder.AppendLine("For simple script requests, return a single complete code block and no extra prose unless the user explicitly asks for explanation.");
+            }
+
+            return builder.ToString().Trim();
+        }
+
+        private void RefreshNormalWebToggleUi()
+        {
+            _normalWebSearchToggleButton ??= FindName("NormalWebSearchToggleButton") as Button;
+
+            if (_normalWebSearchToggleButton == null)
+                return;
+
+            _normalWebSearchToggleButton.Opacity = _normalWebSearchEnabled ? 1.0 : 0.45;
+            _normalWebSearchToggleButton.ToolTip = _normalWebSearchEnabled
+                ? "Normal chat web search enabled"
+                : "Normal chat web search disabled";
+        }
+    }
+}
