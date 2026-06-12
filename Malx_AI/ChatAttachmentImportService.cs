@@ -1,0 +1,470 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+
+namespace Malx_AI
+{
+    public sealed class ChatAttachmentImportResult
+    {
+        public ChatDocumentAttachment Attachment { get; init; } = new();
+        public string SummaryLabel { get; init; } = string.Empty;
+    }
+
+    public static class ChatAttachmentImportService
+    {
+        private static readonly HashSet<string> TextFileExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".txt", ".md", ".markdown", ".json", ".jsonc", ".xml", ".yaml", ".yml", ".toml", ".csv", ".log", ".ini", ".config", ".conf", ".env", ".properties",
+            ".cs", ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css", ".scss", ".less", ".sql", ".py", ".java", ".cpp", ".cc", ".c", ".h", ".hpp",
+            ".go", ".rs", ".rb", ".php", ".swift", ".kt", ".kts", ".vb", ".r", ".pl", ".lua", ".dart", ".scala", ".groovy", ".m", ".mm",
+            ".ps1", ".psm1", ".bat", ".cmd", ".sh", ".bash", ".zsh", ".fish",
+            ".xaml", ".axaml", ".csproj", ".vbproj", ".fsproj", ".props", ".targets", ".sln", ".slnx", ".gradle", ".cmake", ".dockerfile", ".editorconfig", ".gitignore", ".gitattributes",
+            ".tex", ".bib", ".rst", ".adoc", ".org", ".srt", ".vtt", ".diff", ".patch", ".graphql", ".proto", ".http", ".rest"
+        };
+
+        private static readonly HashSet<string> ImageFileExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"
+        };
+
+        private static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [".png"] = "image/png",
+            [".jpg"] = "image/jpeg",
+            [".jpeg"] = "image/jpeg",
+            [".webp"] = "image/webp",
+            [".gif"] = "image/gif",
+            [".bmp"] = "image/bmp"
+        };
+
+        private const int MaxVisionBytes = 6 * 1024 * 1024;
+        private static readonly Regex XmlTagRegex = new("<[^>]+>", RegexOptions.Compiled);
+        private static readonly Regex MultiWhitespaceRegex = new(@"[ \t]{2,}", RegexOptions.Compiled);
+        private static readonly Regex ExcessBlankLinesRegex = new(@"(\r?\n){3,}", RegexOptions.Compiled);
+
+        public static async Task<ChatAttachmentImportResult> ImportAsync(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException("File path is required.", nameof(filePath));
+
+            if (!File.Exists(filePath))
+                throw new FileNotFoundException("Attachment file not found.", filePath);
+
+            string extension = Path.GetExtension(filePath);
+            string fileName = Path.GetFileName(filePath);
+            var info = new FileInfo(filePath);
+
+            if (string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                string text = await PdfExtractor.ExtractTextFromPdfAsync(filePath);
+                return new ChatAttachmentImportResult
+                {
+                    Attachment = new ChatDocumentAttachment
+                    {
+                        Name = fileName,
+                        Content = text,
+                        Kind = "text",
+                        MimeType = "application/pdf",
+                        FileSizeBytes = info.Length,
+                        ImportedAt = DateTime.Now
+                    },
+                    SummaryLabel = "pdf"
+                };
+            }
+
+            if (ImageFileExtensions.Contains(extension))
+            {
+                byte[] bytes = await File.ReadAllBytesAsync(filePath);
+                if (bytes.Length > MaxVisionBytes)
+                    throw new InvalidOperationException($"Image is too large for vision import ({bytes.Length / 1024 / 1024.0:F1} MB). Use an image under 6 MB.");
+
+                string mimeType = MimeTypes.TryGetValue(extension, out string? mappedMimeType)
+                    ? mappedMimeType
+                    : "application/octet-stream";
+
+                return new ChatAttachmentImportResult
+                {
+                    Attachment = new ChatDocumentAttachment
+                    {
+                        Name = fileName,
+                        Content = BuildImageSummary(fileName, bytes.Length, mimeType),
+                        Kind = "image",
+                        MimeType = mimeType,
+                        Base64Data = Convert.ToBase64String(bytes),
+                        FileSizeBytes = bytes.Length,
+                        ImportedAt = DateTime.Now
+                    },
+                    SummaryLabel = "image"
+                };
+            }
+
+            if (string.Equals(extension, ".csv", StringComparison.OrdinalIgnoreCase))
+            {
+                string csv = await File.ReadAllTextAsync(filePath);
+                string normalized = ConvertDelimitedTextToStructuredText(fileName, csv, ',');
+                return CreateTextResult(fileName, normalized, "text/csv", info.Length, "csv");
+            }
+
+            if (string.Equals(extension, ".tsv", StringComparison.OrdinalIgnoreCase))
+            {
+                string tsv = await File.ReadAllTextAsync(filePath);
+                string normalized = ConvertDelimitedTextToStructuredText(fileName, tsv, '\t');
+                return CreateTextResult(fileName, normalized, "text/tab-separated-values", info.Length, "tsv");
+            }
+
+            if (string.Equals(extension, ".rtf", StringComparison.OrdinalIgnoreCase))
+            {
+                string rtf = await File.ReadAllTextAsync(filePath);
+                string plain = StripRtfControlCodes(rtf);
+                return CreateTextResult(fileName, plain, "application/rtf", info.Length, "document");
+            }
+
+            if (string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase))
+            {
+                string workbookText = await Task.Run(() => ExtractXlsxAsStructuredText(filePath));
+                return CreateTextResult(fileName, workbookText, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", info.Length, "spreadsheet");
+            }
+
+            if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                string documentText = await Task.Run(() => ExtractDocxText(filePath));
+                return CreateTextResult(fileName, documentText, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", info.Length, "document");
+            }
+
+            if (TextFileExtensions.Contains(extension) || string.IsNullOrWhiteSpace(extension))
+            {
+                string text = await File.ReadAllTextAsync(filePath);
+                return CreateTextResult(fileName, text, ResolveTextMimeType(extension), info.Length, "text");
+            }
+
+            // Unknown extension: sniff the content and import as plain text when it looks textual,
+            // so config files, exports, and source in unrecognized formats still work.
+            if (await LooksLikeTextFileAsync(filePath))
+            {
+                string text = await File.ReadAllTextAsync(filePath);
+                return CreateTextResult(fileName, text, "text/plain", info.Length, "text");
+            }
+
+            throw new NotSupportedException($"Unsupported file type: {extension} (binary content could not be read as text)");
+        }
+
+        private static ChatAttachmentImportResult CreateTextResult(string fileName, string text, string mimeType, long fileSizeBytes, string summaryLabel)
+        {
+            string normalized = NormalizeExtractedText(text);
+            if (string.IsNullOrWhiteSpace(normalized))
+                throw new InvalidOperationException("The file did not contain extractable text.");
+
+            return new ChatAttachmentImportResult
+            {
+                Attachment = new ChatDocumentAttachment
+                {
+                    Name = fileName,
+                    Content = normalized,
+                    Kind = "text",
+                    MimeType = mimeType,
+                    FileSizeBytes = fileSizeBytes,
+                    ImportedAt = DateTime.Now
+                },
+                SummaryLabel = summaryLabel
+            };
+        }
+
+        private static string ResolveTextMimeType(string extension)
+        {
+            return extension?.ToLowerInvariant() switch
+            {
+                ".md" or ".markdown" => "text/markdown",
+                ".json" or ".jsonc" => "application/json",
+                ".xml" => "application/xml",
+                ".yaml" or ".yml" => "application/yaml",
+                ".html" or ".htm" => "text/html",
+                _ => "text/plain"
+            };
+        }
+
+        private static readonly Regex RtfControlWordRegex = new(@"\\[a-zA-Z]+-?\d*\s?|[{}]|\\'[0-9a-fA-F]{2}|\\\*", RegexOptions.Compiled);
+
+        private static string StripRtfControlCodes(string rtf)
+        {
+            if (string.IsNullOrWhiteSpace(rtf))
+                return string.Empty;
+
+            // Remove embedded binary/object groups before stripping control words.
+            string withoutObjects = Regex.Replace(rtf, @"\{\\\*?\\(fonttbl|colortbl|stylesheet|info|pict|object|themedata)[\s\S]*?\}", " ", RegexOptions.IgnoreCase);
+            string text = RtfControlWordRegex.Replace(withoutObjects, " ");
+            return NormalizeExtractedText(text);
+        }
+
+        private static async Task<bool> LooksLikeTextFileAsync(string filePath)
+        {
+            try
+            {
+                const int sampleSize = 8192;
+                byte[] buffer = new byte[sampleSize];
+                int read;
+                await using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, sampleSize, useAsync: true))
+                {
+                    read = await stream.ReadAsync(buffer.AsMemory(0, sampleSize));
+                }
+
+                if (read == 0)
+                    return false;
+
+                int suspicious = 0;
+                for (int i = 0; i < read; i++)
+                {
+                    byte b = buffer[i];
+                    if (b == 0)
+                        return false; // NUL byte: almost certainly binary
+                    if (b < 0x09 || (b > 0x0D && b < 0x20))
+                        suspicious++;
+                }
+
+                return suspicious < read / 50; // tolerate <2% odd control bytes
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string BuildImageSummary(string fileName, int byteCount, string mimeType)
+        {
+            return $"[IMAGE ATTACHMENT]\nName: {fileName}\nType: {mimeType}\nSize: {byteCount / 1024.0:F1} KB\nAnalyzable by a vision-capable model (local mmproj or cloud).";
+        }
+
+        private static string ConvertDelimitedTextToStructuredText(string fileName, string content, char delimiter)
+        {
+            using var reader = new StringReader(content ?? string.Empty);
+            var rows = new List<List<string>>();
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+                rows.Add(ParseDelimitedLine(line, delimiter));
+
+            if (rows.Count == 0)
+                return string.Empty;
+
+            int columnCount = rows.Max(r => r.Count);
+            var headers = rows[0]
+                .Select((value, index) => string.IsNullOrWhiteSpace(value) ? $"Column {index + 1}" : value.Trim())
+                .ToList();
+
+            while (headers.Count < columnCount)
+                headers.Add($"Column {headers.Count + 1}");
+
+            const int maxStructuredRows = 500;
+            var builder = new StringBuilder();
+            builder.AppendLine($"Spreadsheet import: {fileName}");
+            builder.AppendLine($"Rows: {Math.Max(0, rows.Count - 1)}, Columns: {columnCount}");
+            if (rows.Count - 1 > maxStructuredRows)
+                builder.AppendLine($"(showing first {maxStructuredRows} rows)");
+            builder.AppendLine();
+
+            for (int rowIndex = 1; rowIndex < rows.Count && rowIndex <= maxStructuredRows; rowIndex++)
+            {
+                builder.AppendLine($"Row {rowIndex}:");
+                List<string> row = rows[rowIndex];
+                for (int colIndex = 0; colIndex < columnCount; colIndex++)
+                {
+                    string header = headers[colIndex];
+                    string value = colIndex < row.Count ? row[colIndex] : string.Empty;
+                    builder.AppendLine($"- {header}: {value}");
+                }
+                builder.AppendLine();
+            }
+
+            return builder.ToString().Trim();
+        }
+
+        private static List<string> ParseDelimitedLine(string line, char delimiter)
+        {
+            var values = new List<string>();
+            if (line == null)
+                return values;
+
+            var builder = new StringBuilder();
+            bool inQuotes = false;
+
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (c == '"')
+                {
+                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        builder.Append('"');
+                        i++;
+                    }
+                    else
+                    {
+                        inQuotes = !inQuotes;
+                    }
+                }
+                else if (c == delimiter && !inQuotes)
+                {
+                    values.Add(builder.ToString().Trim());
+                    builder.Clear();
+                }
+                else
+                {
+                    builder.Append(c);
+                }
+            }
+
+            values.Add(builder.ToString().Trim());
+            return values;
+        }
+
+        private static string ExtractDocxText(string filePath)
+        {
+            using var archive = ZipFile.OpenRead(filePath);
+            ZipArchiveEntry? documentEntry = archive.GetEntry("word/document.xml");
+            if (documentEntry == null)
+                throw new InvalidOperationException("The Word document body could not be found.");
+
+            using var stream = documentEntry.Open();
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            string xml = reader.ReadToEnd();
+            string text = XmlTagRegex.Replace(xml, " ");
+            return NormalizeExtractedText(System.Net.WebUtility.HtmlDecode(text));
+        }
+
+        private static string ExtractXlsxAsStructuredText(string filePath)
+        {
+            using var archive = ZipFile.OpenRead(filePath);
+            Dictionary<int, string> sharedStrings = LoadSharedStrings(archive);
+            var sheetEntries = archive.Entries
+                .Where(e => e.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase) && e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(e => e.FullName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (sheetEntries.Count == 0)
+                throw new InvalidOperationException("The spreadsheet does not contain readable worksheet data.");
+
+            var builder = new StringBuilder();
+            for (int i = 0; i < sheetEntries.Count; i++)
+            {
+                string sheetText = ExtractWorksheetText(sheetEntries[i], sharedStrings, i + 1);
+                if (string.IsNullOrWhiteSpace(sheetText))
+                    continue;
+
+                if (builder.Length > 0)
+                    builder.AppendLine().AppendLine();
+
+                builder.Append(sheetText.Trim());
+            }
+
+            return NormalizeExtractedText(builder.ToString());
+        }
+
+        private static Dictionary<int, string> LoadSharedStrings(ZipArchive archive)
+        {
+            ZipArchiveEntry? sharedStringsEntry = archive.GetEntry("xl/sharedStrings.xml");
+            if (sharedStringsEntry == null)
+                return new Dictionary<int, string>();
+
+            using var stream = sharedStringsEntry.Open();
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            string xml = reader.ReadToEnd();
+            MatchCollection matches = Regex.Matches(xml, @"<si[\s\S]*?</si>", RegexOptions.IgnoreCase);
+            var result = new Dictionary<int, string>();
+            int index = 0;
+            foreach (Match match in matches)
+            {
+                string plain = XmlTagRegex.Replace(match.Value, " ");
+                result[index++] = NormalizeExtractedText(System.Net.WebUtility.HtmlDecode(plain));
+            }
+            return result;
+        }
+
+        private static string ExtractWorksheetText(ZipArchiveEntry sheetEntry, Dictionary<int, string> sharedStrings, int sheetNumber)
+        {
+            using var stream = sheetEntry.Open();
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            string xml = reader.ReadToEnd();
+
+            MatchCollection rowMatches = Regex.Matches(xml, @"<row[^>]*>(?<row>[\s\S]*?)</row>", RegexOptions.IgnoreCase);
+            if (rowMatches.Count == 0)
+                return string.Empty;
+
+            var rows = new List<List<string>>();
+            foreach (Match rowMatch in rowMatches)
+            {
+                var values = new List<string>();
+                MatchCollection cellMatches = Regex.Matches(rowMatch.Groups["row"].Value, @"<c(?<attrs>[^>]*)>(?<body>[\s\S]*?)</c>", RegexOptions.IgnoreCase);
+                foreach (Match cellMatch in cellMatches)
+                {
+                    string attrs = cellMatch.Groups["attrs"].Value;
+                    string body = cellMatch.Groups["body"].Value;
+                    string type = Regex.Match(attrs, "\\bt=\"(?<type>[^\"]+)\"", RegexOptions.IgnoreCase).Groups["type"].Value;
+                    string value = Regex.Match(body, @"<v>(?<value>[\s\S]*?)</v>", RegexOptions.IgnoreCase).Groups["value"].Value;
+                    string inline = Regex.Match(body, @"<t[^>]*>(?<value>[\s\S]*?)</t>", RegexOptions.IgnoreCase).Groups["value"].Value;
+
+                    string resolved = type.Equals("s", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out int sharedIndex)
+                        ? sharedStrings.TryGetValue(sharedIndex, out string? sharedValue) ? sharedValue : value
+                        : !string.IsNullOrWhiteSpace(inline) ? inline : value;
+
+                    values.Add(System.Net.WebUtility.HtmlDecode(resolved).Trim());
+                }
+
+                rows.Add(values);
+            }
+
+            if (rows.Count == 0)
+                return string.Empty;
+
+            var builder = new StringBuilder();
+            builder.AppendLine($"Worksheet {sheetNumber}:");
+            builder.Append(ConvertDelimitedRowsToStructuredText(rows));
+            return builder.ToString();
+        }
+
+        private static string ConvertDelimitedRowsToStructuredText(List<List<string>> rows)
+        {
+            int columnCount = rows.Max(r => r.Count);
+            List<string> headers = rows[0]
+                .Select((value, index) => string.IsNullOrWhiteSpace(value) ? $"Column {index + 1}" : value.Trim())
+                .ToList();
+
+            while (headers.Count < columnCount)
+                headers.Add($"Column {headers.Count + 1}");
+
+            const int maxStructuredRows = 500;
+            var builder = new StringBuilder();
+            builder.AppendLine($"Rows: {Math.Max(0, rows.Count - 1)}, Columns: {columnCount}");
+            if (rows.Count - 1 > maxStructuredRows)
+                builder.AppendLine($"(showing first {maxStructuredRows} rows)");
+            builder.AppendLine();
+
+            for (int rowIndex = 1; rowIndex < rows.Count && rowIndex <= maxStructuredRows; rowIndex++)
+            {
+                builder.AppendLine($"Row {rowIndex}:");
+                for (int colIndex = 0; colIndex < columnCount; colIndex++)
+                {
+                    string header = headers[colIndex];
+                    string value = colIndex < rows[rowIndex].Count ? rows[rowIndex][colIndex] : string.Empty;
+                    builder.AppendLine($"- {header}: {value}");
+                }
+                builder.AppendLine();
+            }
+
+            return builder.ToString().Trim();
+        }
+
+        private static string NormalizeExtractedText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+            normalized = MultiWhitespaceRegex.Replace(normalized, " ");
+            normalized = ExcessBlankLinesRegex.Replace(normalized, "\n\n");
+            return normalized.Trim();
+        }
+    }
+}
