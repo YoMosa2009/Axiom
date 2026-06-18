@@ -128,14 +128,14 @@ namespace Malx_AI
 
     public sealed class WorkspaceAdvancedStatePersistence
     {
-        private readonly string _path = Path.Combine("ChatHistory", "workplace_advanced_state.json");
+        private readonly string _path = Path.Combine(AppDataPaths.ChatHistory, "workplace_advanced_state.json");
         private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
         public string LastLoadStatusMessage { get; private set; } = string.Empty;
         public bool LastLoadRecovered { get; private set; }
 
         public void Save(WorkspaceAdvancedStateSnapshot snapshot)
         {
-            Directory.CreateDirectory("ChatHistory");
+            Directory.CreateDirectory(AppDataPaths.ChatHistory);
             AtomicFileWriter.WriteAllText(_path, JsonSerializer.Serialize(snapshot, WriteOptions));
         }
 
@@ -150,14 +150,14 @@ namespace Malx_AI
 
     public sealed class ChatAdvancedStatePersistence
     {
-        private readonly string _path = Path.Combine("ChatHistory", "chat_advanced_state.json");
+        private readonly string _path = Path.Combine(AppDataPaths.ChatHistory, "chat_advanced_state.json");
         private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
         public string LastLoadStatusMessage { get; private set; } = string.Empty;
         public bool LastLoadRecovered { get; private set; }
 
         public void Save(ChatAdvancedStateSnapshot snapshot)
         {
-            Directory.CreateDirectory("ChatHistory");
+            Directory.CreateDirectory(AppDataPaths.ChatHistory);
             AtomicFileWriter.WriteAllText(_path, JsonSerializer.Serialize(snapshot, WriteOptions));
         }
 

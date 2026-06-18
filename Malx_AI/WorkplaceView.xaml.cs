@@ -200,10 +200,24 @@ namespace Malx_AI
                 .Replace(AgenticPauseRule, BuildCloudCouncilToolsNote(), StringComparison.Ordinal)
                 .Replace("use the pause tools below", "use the tools provided", StringComparison.Ordinal)
                 .Replace("except through WEB_SEARCH", "except through the web_search tool", StringComparison.Ordinal);
+            if (role == CouncilRole.Builder)
+            {
+                cloudSystemPrompt += "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
+                    "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory) BEFORE you write your deliverable, " +
+                    "whenever you need a real fact, number, computation, conversion, or current detail. Never guess or fabricate values you could verify with a tool. " +
+                    "If proactive web evidence is partial, off-topic, or missing the user's named entities, call a narrower web_search before writing the final deliverable instead of treating the mismatched evidence as a reason to refuse the whole answer. " +
+                    "For stable non-current background context, you may use the prompt, council plan, project knowledge, session memory, or general knowledge when not contradicted by source evidence. " +
+                    "Gather every tool result you need first, then produce EXACTLY ONE final Builder deliverable that already incorporates those results. " +
+                    "Once you begin writing the final deliverable, stop calling tools — do not restart, revise, repeat, or continue after it is complete.";
+            }
             string adaptedSystemPrompt = _openRouterChatService.BuildSystemPromptForModel(
                 OpenRouterChatService.WorkplaceCouncilDefaultModelId,
                 cloudSystemPrompt);
 
+            // Every cloud role — Builder included — now gets the full tool surface so it can ground
+            // facts/math through the Agentic Pause tools. The remake-loop that originally forced the
+            // Builder tool-free is contained by the substantial-deliverable guard in the tool loop,
+            // which ignores tool calls emitted after a real Builder answer has already streamed.
             IReadOnlyList<OpenRouterToolDefinition> tools = BuildCouncilCloudToolDefinitions();
 
             // Bounded retry around transient free-tier rate limits. When every fallback model is 429,
@@ -214,7 +228,7 @@ namespace Malx_AI
             {
                 try
                 {
-                    return await RunCloudCouncilRoleToolLoopAsync(roleName, adaptedSystemPrompt, tools, userPayload, streamingCard, token);
+                    return await RunCloudCouncilRoleToolLoopAsync(role, roleName, adaptedSystemPrompt, tools, userPayload, streamingCard, token);
                 }
                 catch (OpenRouterRateLimitedException rateLimited)
                     when (attempt < CloudCouncilRateLimitRetryLimit && !token.IsCancellationRequested)
@@ -240,6 +254,7 @@ namespace Malx_AI
         // Runs one cloud council role through the native tool-calling loop, streaming into the card.
         // Separated from ExecuteCouncilRoleCloudAsync so the rate-limit retry wrapper can re-invoke it.
         private async Task<ReasoningParser.ParsedResponse> RunCloudCouncilRoleToolLoopAsync(
+            CouncilRole role,
             string roleName,
             string adaptedSystemPrompt,
             IReadOnlyList<OpenRouterToolDefinition> tools,
@@ -258,20 +273,29 @@ namespace Malx_AI
             var reasoningParts = new List<string>();
             string finalText = string.Empty;
             int toolCallCount = 0;
+            IReadOnlyList<string> stopSequences = BuildCloudCouncilRoleStopSequences(role);
+            int maxTokens = GetCloudCouncilRoleMaxTokens(role);
+            bool forceNoToolsSynthesisAfterBuilderGrounding = false;
+            int executedToolCount = 0;
 
             for (int iteration = 0; iteration < CloudCouncilToolLoopIterationLimit; iteration++)
             {
                 // Fresh buffer per iteration so intermediate (tool-call) turns don't leave stale
                 // partial text on the card before the final answer streams in.
                 var textBuilder = new StringBuilder();
+                IReadOnlyList<OpenRouterToolDefinition>? toolsForThisPass = forceNoToolsSynthesisAfterBuilderGrounding
+                    ? null
+                    : tools;
                 OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
                     adaptedSystemPrompt,
                     false,
                     OpenRouterChatService.WorkplaceCouncilDefaultModelId,
-                    tools,
+                    toolsForThisPass,
                     onToken: t =>
                     {
+                        // Padding sentinels ("<pad>" spam) are already suppressed at the stream source,
+                        // so the accumulated text is safe to show live without per-token cleanup.
                         textBuilder.Append(t);
                         string current = textBuilder.ToString();
                         _ = Dispatcher.InvokeAsync(() =>
@@ -280,7 +304,9 @@ namespace Malx_AI
                             ChatScrollViewer?.ScrollToEnd();
                         }, DispatcherPriority.Background);
                     },
-                    token);
+                    token,
+                    maxTokens,
+                    stopSequences);
 
                 if (!string.IsNullOrWhiteSpace(response.Reasoning))
                     reasoningParts.Add(response.Reasoning.Trim());
@@ -291,6 +317,24 @@ namespace Malx_AI
                     break;
                 }
 
+                bool builderHasGroundingToolCall = role == CouncilRole.Builder
+                    && response.ToolCalls.Any(IsBuilderGroundingToolCall);
+
+                if (role == CouncilRole.Builder
+                    && !builderHasGroundingToolCall
+                    && (response.Text?.Trim().Length ?? 0) >= BuilderFinalDeliverableMinChars)
+                {
+                    // Builder is the deliverable-producing role. Some OpenRouter models stream a
+                    // complete answer and then also emit tool calls; treating that as an intermediate
+                    // tool turn clears the visible Builder card and asks the model to remake the same
+                    // output. Once a SUBSTANTIAL deliverable has streamed, keep it and ignore the late
+                    // non-grounding tool calls. Grounding calls (web/calculator/python) must still run:
+                    // otherwise the Builder can keep a hallucinated draft and skip the evidence it asked for.
+                    finalText = response.Text ?? string.Empty;
+                    LogActivity($"{roleName}: ignored {response.ToolCalls.Count} late tool call(s) after substantial Builder output ({response.Text?.Trim().Length ?? 0} chars).");
+                    break;
+                }
+
                 // Tool-call turn: record the assistant turn (with its tool calls), run each tool,
                 // and feed the results back so the model can continue with grounded data.
                 toolCallCount += response.ToolCalls.Count;
@@ -298,12 +342,29 @@ namespace Malx_AI
 
                 foreach (OpenRouterToolCall toolCall in response.ToolCalls)
                 {
+                    executedToolCount++;
+                    UpdateCloudCouncilToolStatus(toolCall, executedToolCount);
                     string toolResult = await ExecuteCouncilCloudToolAsync(toolCall, token);
                     messages.Add(new OpenRouterMessage("tool", BuildCouncilCloudToolResultMessage(toolResult, toolCall?.Name), toolCall?.Id));
+                    UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, CloudCouncilToolLoopIterationLimit)}/{CloudCouncilToolLoopIterationLimit} pauses used");
                 }
 
-                // Carry the last turn's visible text forward as a fallback if the loop is exhausted.
-                finalText = response.Text ?? finalText;
+                if (builderHasGroundingToolCall)
+                {
+                    // The text before a grounding tool call is only a draft. Force the next pass to
+                    // synthesize from the returned evidence without more tool calls, instead of using
+                    // the pre-tool draft as the final answer or entering a search/remake loop.
+                    messages.Add(new OpenRouterMessage(
+                        "user",
+                        "Use the tool result(s) above to produce the final Builder deliverable now. Do not call more tools. Do not repeat the tool payload. Integrate only claims supported by the sources/results, and state any remaining evidence gap plainly."));
+                    forceNoToolsSynthesisAfterBuilderGrounding = true;
+                    finalText = string.Empty;
+                }
+                else
+                {
+                    // Carry the last turn's visible text forward as a fallback if the loop is exhausted.
+                    finalText = response.Text ?? finalText;
+                }
             }
 
             if (toolCallCount > 0)
@@ -312,9 +373,15 @@ namespace Malx_AI
             // Tool-loop budget exhausted with no final answer text: force one synthesis pass with
             // tools disabled so the role still produces usable output from the gathered evidence,
             // instead of handing the pipeline an empty answer that trips the reasoning fallback.
-            if (string.IsNullOrWhiteSpace(finalText) && toolCallCount > 0)
+            if (string.IsNullOrWhiteSpace(finalText) && (toolCallCount > 0 || role == CouncilRole.Builder))
             {
                 LogActivity($"{roleName}: tool loop ended without final text — running forced no-tools synthesis pass.");
+                if (role == CouncilRole.Builder && toolCallCount == 0)
+                {
+                    messages.Add(new OpenRouterMessage(
+                        "user",
+                        "Your previous Builder turn produced no deliverable or only a completion marker. Produce the final Builder deliverable now. Do not call tools. Do not output only 'BUILDER OUTPUT COMPLETE'."));
+                }
                 var forcedTextBuilder = new StringBuilder();
                 OpenRouterChatResponse forcedFinal = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
@@ -332,7 +399,9 @@ namespace Malx_AI
                             ChatScrollViewer?.ScrollToEnd();
                         }, DispatcherPriority.Background);
                     },
-                    token);
+                    token,
+                    maxTokens,
+                    stopSequences);
 
                 if (!string.IsNullOrWhiteSpace(forcedFinal.Reasoning))
                     reasoningParts.Add(forcedFinal.Reasoning.Trim());
@@ -340,7 +409,7 @@ namespace Malx_AI
                 finalText = forcedFinal.Text ?? string.Empty;
             }
 
-            string content = StripAgenticMarkers(finalText).Trim();
+            string content = NormalizeCloudCouncilRoleOutput(role, StripAgenticMarkers(finalText)).Trim();
             string reasoning = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal));
             bool reasoningFallback = false;
             if (string.IsNullOrWhiteSpace(content) && !string.IsNullOrWhiteSpace(reasoning))
@@ -358,6 +427,7 @@ namespace Malx_AI
                 streamingCard.Content = cardContent;
                 ChatScrollViewer?.ScrollToEnd();
             }, DispatcherPriority.Background);
+            UpdateAgenticPauseStatus(string.Empty);
 
             return new ReasoningParser.ParsedResponse
             {
@@ -366,6 +436,102 @@ namespace Malx_AI
                 HasThinking = reasoningFallback,
                 IsReasoningFallback = reasoningFallback
             };
+        }
+
+        private static int GetCloudCouncilRoleMaxTokens(CouncilRole role)
+        {
+            return role switch
+            {
+                CouncilRole.Builder => 4096,
+                CouncilRole.Architect => 2048,
+                CouncilRole.Critic => 2048,
+                _ => 2048
+            };
+        }
+
+        private static bool IsBuilderGroundingToolCall(OpenRouterToolCall toolCall)
+        {
+            string name = toolCall?.Name?.Trim() ?? string.Empty;
+            return name.Equals("web_search", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("calculate", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("run_python", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void UpdateCloudCouncilToolStatus(OpenRouterToolCall toolCall, int currentToolCount)
+        {
+            string name = toolCall?.Name?.Trim() ?? "tool";
+            string detail = ExtractCloudToolStatusDetail(toolCall);
+            string label = name.ToLowerInvariant() switch
+            {
+                "web_search" => "Searching the web" + detail,
+                "run_python" => "Running Python sandbox",
+                "calculate" => "Calculating" + detail,
+                "search_session_memory" => "Searching session memory" + detail,
+                _ => "Running " + name + detail
+            };
+
+            UpdateAgenticPauseStatus($"Agentic Pause {Math.Min(currentToolCount, CloudCouncilToolLoopIterationLimit)}/{CloudCouncilToolLoopIterationLimit} - {label}");
+        }
+
+        private static string ExtractCloudToolStatusDetail(OpenRouterToolCall? toolCall)
+        {
+            if (toolCall == null || string.IsNullOrWhiteSpace(toolCall.ArgumentsJson))
+                return string.Empty;
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(toolCall.ArgumentsJson);
+                JsonElement root = doc.RootElement;
+                string value = string.Empty;
+                if (root.TryGetProperty("query", out JsonElement query))
+                    value = query.GetString() ?? string.Empty;
+                else if (root.TryGetProperty("expression", out JsonElement expression))
+                    value = expression.GetString() ?? string.Empty;
+
+                value = value.Trim();
+                if (value.Length == 0)
+                    return string.Empty;
+                if (value.Length > 48)
+                    value = value[..48] + "...";
+                return ": " + value;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static IReadOnlyList<string> BuildCloudCouncilRoleStopSequences(CouncilRole role)
+        {
+            string marker = GetRoleCompletionMarker(role);
+            var stops = new List<string>
+            {
+                HandoffEndToken,
+                "<|endoftext|>",
+                "<|eot_id|>",
+                "<end_of_turn>"
+            };
+
+            if (!string.IsNullOrWhiteSpace(marker))
+            {
+                stops.Add(marker);
+                stops.Add("\n" + marker);
+            }
+
+            return stops;
+        }
+
+        private static string NormalizeCloudCouncilRoleOutput(CouncilRole role, string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            string cleaned = StripSpecialTokenText(text).Trim();
+            string marker = GetRoleCompletionMarker(role);
+            if (!string.IsNullOrWhiteSpace(marker) && TryExtractWithMarker(cleaned, marker, out string markerCleaned))
+                cleaned = markerCleaned;
+
+            return TrimRepeatedRestartTail(cleaned).Trim();
         }
 
         // Cloud-only tool surface for council roles. web_search is advertised only when the user's
@@ -379,7 +545,7 @@ namespace Malx_AI
             {
                 defs.Add(new OpenRouterToolDefinition(
                     "web_search",
-                    "Search the web for current information and return relevant snippets.",
+                    "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets.",
                     new JsonObject
                     {
                         ["type"] = "object",
@@ -388,7 +554,7 @@ namespace Malx_AI
                             ["query"] = new JsonObject
                             {
                                 ["type"] = "string",
-                                ["description"] = "The web search query to run."
+                                ["description"] = "A concise search query focused on the user's actual question, such as what X is, what X does to Y, how X works, latest status, docs, or news."
                             }
                         },
                         ["required"] = new JsonArray("query"),
@@ -475,6 +641,12 @@ namespace Malx_AI
                         return "Web search is disabled by the user. Answer from your existing knowledge and the provided context, and state this limitation if it affects the answer.";
                     string query = root.TryGetProperty("query", out JsonElement q) ? q.GetString() ?? string.Empty : string.Empty;
                     string data = await ExecuteWebSearchAsync(query, token);
+                    if (HasWebSearchEvidence(data))
+                    {
+                        _latestCouncilReactiveWebContext = MergeCouncilWebContexts(_latestCouncilReactiveWebContext, data);
+                        if (_activeCouncilRunContext != null)
+                            _activeCouncilRunContext.WebContext = MergeCouncilWebContexts(_activeCouncilRunContext.WebContext, data);
+                    }
                     return string.IsNullOrWhiteSpace(data) ? "No web results were found." : data;
                 }
 
@@ -528,6 +700,15 @@ namespace Malx_AI
             string normalized = (toolResult ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized))
                 return "Tool returned no output. Summarize that no evidence or result was produced.";
+
+            bool isWebSearch = string.Equals(toolName?.Trim(), "web_search", StringComparison.OrdinalIgnoreCase);
+            if (isWebSearch && HasWebSearchEvidence(normalized))
+            {
+                normalized =
+                    "[WEB TOOL RESULT RULE]\n" +
+                    "Use this web_search result as source evidence only for claims it directly supports. Cite source titles/hosts or URLs for current/source-backed claims. Do not add unsupported current facts from memory, and do not treat off-topic results as support.\n\n" +
+                    normalized;
+            }
 
             if (normalized.Length <= CloudCouncilToolResultCharacterLimit)
                 return normalized;
@@ -610,6 +791,8 @@ namespace Malx_AI
             public string ArchitectOutput { get; set; } = "";
             public string BuilderOutput { get; set; } = "";
             public string CriticReview { get; set; } = "";
+            public string WebContext { get; set; } = "";
+            public bool WebGroundingRequired { get; set; }
             public string ArchitectThinking { get; set; } = "";
             public string BuilderThinking { get; set; } = "";
             public string CriticThinking { get; set; } = "";
@@ -718,20 +901,131 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(strategicQuery))
                 strategicQuery = combined;
 
+            bool requiresGrounding = _webSearchService.RequiresFreshOrSourceBackedGrounding(combined);
             string data = await ExecuteWebSearchAsync(strategicQuery, token);
             if (string.IsNullOrWhiteSpace(data)
                 || data.Contains("no usable results", StringComparison.OrdinalIgnoreCase)
                 || data.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
                 || data.Contains("disabled by user", StringComparison.OrdinalIgnoreCase))
             {
-                return string.Empty;
+                return requiresGrounding
+                    ? BuildWebSearchStatusBlock(strategicQuery, string.IsNullOrWhiteSpace(data) ? "No usable web evidence returned." : data)
+                    : string.Empty;
             }
 
-            // ExecuteWebSearchAsync already applies PreparePromptContext when data > 2200.
+            // ExecuteWebSearchAsync already applies PreparePromptContext when data > 4200.
             // Avoid calling it again here — double-truncation would discard the structural
             // markers and corrupt the priority-ordered evidence digest.
 
-            return "[WEB-ONLY ANSWERING RULE] Web search is enabled and the evidence below is the authoritative current source material for this run. Answer using only the information in [[WEB SEARCH DATA]]. Prefer High confidence sources over Medium confidence ones, and ignore Low confidence sources unless the user explicitly asks for them. Do not add facts from model training data, prior memory, or assumptions that are not present in the sources. Do not use fallback phrases like 'as of my last update' when [[WEB SEARCH DATA]] is present. If the evidence is partial, answer with the strongest supported facts first and then briefly state what remains unconfirmed. For broad current-information requests, summarize the strongest supported developments from the provided sources instead of declaring the web data unusable. If sources conflict, report the conflict explicitly instead of guessing. Cite source titles or hosts naturally when stating factual claims, and do not make any unsupported claim that cannot be tied to a provided source.\n" + data;
+            return "[WEB GROUNDING RULE] Web search is enabled and the evidence below is the authoritative source material for current, online, source-backed, or recently changed claims that it actually covers. Current UTC date: " + DateTime.UtcNow.ToString("yyyy-MM-dd") + ". Prefer High confidence sources over Medium confidence ones, and ignore Low confidence sources unless the user explicitly asks for them. Do not add current/source-backed claims from model training data, prior memory, or assumptions when they are not present in the sources. Stable non-current background context may come from the prompt, council plan, project knowledge, or general knowledge when it is not contradicted by the web evidence. Do not treat off-topic web results as evidence for the user's named entities; if the evidence is partial or mismatched, answer the supported portions first and briefly state what remains unconfirmed. For broad current-information requests, summarize the strongest supported developments from the provided sources instead of declaring the web data unusable. If sources conflict, report the conflict explicitly instead of guessing. Cite source titles or hosts naturally for source-backed/current claims, and do not make unsupported current claims that cannot be tied to a provided source.\n" + data;
+        }
+
+        private static bool HasWebSearchEvidence(string webContext)
+        {
+            return !string.IsNullOrWhiteSpace(webContext)
+                && webContext.Contains("[[WEB SEARCH DATA]]", StringComparison.OrdinalIgnoreCase)
+                && webContext.Contains("[[END WEB SEARCH DATA]]", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool HasCouncilWebEvidenceForRun(CouncilRunContext runContext)
+        {
+            return HasWebSearchEvidence(runContext?.WebContext ?? string.Empty)
+                || HasWebSearchEvidence(_latestCouncilReactiveWebContext);
+        }
+
+        private static string MergeCouncilWebContexts(string existingContext, string newContext)
+        {
+            string existing = (existingContext ?? string.Empty).Trim();
+            string incoming = (newContext ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(incoming))
+                return existing;
+            if (string.IsNullOrWhiteSpace(existing))
+                return incoming;
+            if (existing.Contains(incoming, StringComparison.OrdinalIgnoreCase))
+                return existing;
+            return existing + "\n\n" + incoming;
+        }
+
+        private static string BuildWebSearchStatusBlock(string query, string status)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Search attempted: " + (query ?? string.Empty).Trim());
+            sb.AppendLine("Status: " + (status ?? string.Empty).Trim());
+            sb.AppendLine("No authoritative [[WEB SEARCH DATA]] is available for current or source-backed factual claims.");
+            return BuildLabeledBlock("WEB SEARCH STATUS", sb.ToString());
+        }
+
+        private string BuildCouncilWebSystemNote(string webContext, bool webGroundingRequired)
+        {
+            string webLookupInstruction = _isCloudModeEnabled
+                ? "use the web_search tool when it is available"
+                : "use WEB_SEARCH through Agentic Pause";
+
+            if (HasWebSearchEvidence(webContext))
+            {
+                return "\n[REAL-TIME DATA RULE] [WEB SEARCH DATA] is provided in payload. It overrides background knowledge for current, online, source-backed, or recently changed claims that it actually covers. Prefer High confidence sources over Medium confidence ones, ignore Low confidence sources unless explicitly requested, and do not invent current/source-backed facts beyond the provided evidence. Verify that the evidence is about the user's named entities before using it; off-topic results are not support. Stable non-current background context may come from the prompt, council plan, project knowledge, or general knowledge when it is not contradicted by the web evidence. If the provided web evidence does not cover a required current/source-backed fact, " + webLookupInstruction + " before finalizing. If the evidence is partial, conflicting, or mismatched, answer the confirmed portions and explicitly describe the gap or conflict. For broad current-information requests, summarize the strongest supported developments from the available web evidence.\n";
+            }
+
+            if (_isWebSearchEnabled && webGroundingRequired)
+            {
+                return "\n[WEB EVIDENCE REQUIRED] This request needs current, online, official, or source-backed facts, but no authoritative [[WEB SEARCH DATA]] is present yet. Before answering those current/source-backed claims, " + webLookupInstruction + ". If the lookup still returns no usable evidence, do not answer those current/source-backed claims from memory; state that the web lookup did not return usable evidence and answer only stable background or non-current portions supported by the prompt or general knowledge.\n";
+            }
+
+            return _isWebSearchEnabled
+                ? "\n[WEB SEARCH AVAILABLE] The Web Search button is enabled. If the task requires current, online, recently changed, obscure, technical, legal, financial, medical, documentation, pricing, version, release, policy, or source-backed information not already present in the payload, " + webLookupInstruction + " before answering those claims. Do not guess or use stale background knowledge for such details, but stable non-current background context is allowed when it is not contradicted by sources.\n"
+                : "";
+        }
+
+        private string BuildBuilderWebPauseSystemNote()
+        {
+            return _isWebSearchEnabled && !_isCloudModeEnabled
+                ? "\n[BUILDER AGENTIC PAUSE RULE] Builder deliverables may require current online or source-backed facts. Before producing the final Builder output, check whether every current/source-backed detail needed by the Architect plan is already supported by [[WEB SEARCH DATA]] or the payload. If not, output exactly one internal pause command on its own line: [PAUSE: WEB_SEARCH | concise query focused on the missing fact]. After the result returns, continue with the deliverable grounded in that result. Stable non-current background context may come from the prompt, council plan, project knowledge, or general knowledge when not contradicted by source evidence. This internal pause command is allowed even though the final visible Builder answer must not contain tool syntax.\n"
+                : "";
+        }
+
+        private static bool BuilderStatesWebEvidenceUnavailable(string output)
+        {
+            string lower = (output ?? string.Empty).ToLowerInvariant();
+            return lower.Contains("web lookup did not return usable evidence", StringComparison.Ordinal)
+                || lower.Contains("web search did not return usable evidence", StringComparison.Ordinal)
+                || lower.Contains("could not verify", StringComparison.Ordinal)
+                || lower.Contains("not confirmed by the web evidence", StringComparison.Ordinal)
+                || lower.Contains("no usable web evidence", StringComparison.Ordinal);
+        }
+
+        private static string BuildWebEvidenceUnavailableBuilderFallback(CouncilRunContext context)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("I could not produce a source-grounded current answer because the web lookup did not return usable evidence for this request.");
+            sb.AppendLine();
+            sb.AppendLine("What is safe to say: the prompt requires current or source-backed facts, and no authoritative web evidence was available to the Builder in this run.");
+            sb.AppendLine("What is not safe to add: current facts, release details, prices, policies, legal/medical/financial claims, URLs, documentation details, or dates from model memory.");
+            if (!string.IsNullOrWhiteSpace(context.UserPrompt))
+                sb.AppendLine("Requested topic: " + context.UserPrompt.Trim());
+            return sb.ToString().Trim();
+        }
+
+        private static void AppendCouncilWebContext(StringBuilder payload, CouncilRunContext runContext)
+        {
+            if (payload == null || string.IsNullOrWhiteSpace(runContext?.WebContext))
+                return;
+
+            payload.AppendLine(runContext.WebContext.Trim());
+            if (HasWebSearchEvidence(runContext.WebContext))
+            {
+                payload.AppendLine(BuildLabeledBlock("WEB ANSWERING CONTRACT",
+                    "Use [[WEB SEARCH DATA]] as the authority for current, online, source-backed, or recently changed claims that it actually covers. " +
+                    "Use the source titles/hosts, URLs, and dates attached to the evidence for those claims. Do not use off-topic web results as support for the user's named entities. " +
+                    "Stable non-current background context may come from the prompt, council plan, project knowledge, or general knowledge when not contradicted by web evidence. " +
+                    "If a required current/source-backed detail is not confirmed, run a narrower lookup when tools are available; otherwise state the specific gap instead of filling it in."));
+            }
+            else if (runContext.WebGroundingRequired)
+            {
+                payload.AppendLine(BuildLabeledBlock("WEB ANSWERING CONTRACT",
+                    "No usable web evidence is available yet for a source-backed/current request. " +
+                    "Do not provide current facts, release details, prices, policies, legal/medical/financial claims, URLs, or documentation details from memory. " +
+                    "Use a web lookup once if possible; if it still fails, state the evidence gap instead of guessing. Stable non-current background context remains allowed when clearly separate from unsupported current claims."));
+            }
         }
 
         private sealed class CachedModelEntry : IDisposable
@@ -792,6 +1086,33 @@ namespace Malx_AI
                 freeBytes += kv.Value.SizeBytes;
                 LogActivity($"Evicted cached model '{Path.GetFileName(kv.Key)}' to free memory for '{Path.GetFileName(incomingPath)}'.");
             }
+        }
+
+        // Council-local self-healing for native GPU aborts. A llama.cpp CUDA illegal-memory-access
+        // during decode (the documented Pascal/8GB instability) kills the whole process with no
+        // catchable exception, so we cannot recover in-flight — we recover on the NEXT load. When a
+        // model has any recorded GPU strike (left by this role's decode-forensics marker), load this
+        // council role on CPU, which is stable everywhere. The council is intentionally more
+        // conservative than normal chat's reduced-GPU ladder: it loads several 8B role models on one
+        // 8GB card, where the weights — not the KV cache — dominate VRAM, so shrinking the context
+        // barely helps and tends to just crash again. Going straight to CPU stops the crash on the
+        // very next run instead of after another 1–2 process deaths. Pure decision: it adjusts ONLY
+        // this role's plan inputs and never mutates the global compute mode (normal chat stays GPU).
+        // The strike clears when the user re-selects GPU Accelerated in Settings (normal-chat path),
+        // which lets them retry the council on GPU deliberately.
+        private (InferenceComputeMode Mode, uint Context) ResolveCouncilCrashRecovery(string modelPath, uint requestedContext)
+        {
+            if (InferenceBackendService.CurrentMode != InferenceComputeMode.GpuAccelerated
+                || !NativeBackendInit.GpuConfigured
+                || string.IsNullOrWhiteSpace(modelPath))
+                return (InferenceBackendService.CurrentMode, requestedContext);
+
+            if (NativeCrashLedger.GetGpuStrikes(modelPath) <= 0)
+                return (InferenceComputeMode.GpuAccelerated, requestedContext);
+
+            LogActivity($"Council: '{Path.GetFileName(modelPath)}' has a prior GPU crash strike; loading this role on CPU for stability.");
+            AppendChat("warning", $"'{Path.GetFileName(modelPath)}' crashed on the GPU before — loading this council role on CPU for stability (no more hard crashes). Re-select GPU Accelerated in Settings to retry it on GPU.");
+            return (InferenceComputeMode.CpuOnly, requestedContext);
         }
 
         private async Task<string> ExecuteBuilderPythonWithSingleRetryAsync(string code, string errorText, CouncilRunContext runContext, CancellationToken token)
@@ -957,6 +1278,7 @@ namespace Malx_AI
             _systemNotifications.Clear();
             _chatHistory.Clear();
             _documents.Clear();
+            _documentContextEngaged = false;
             _conceptTags.Clear();
             _documentRetriever.ClearChunks();
             _semanticMemory.Clear();
@@ -1054,6 +1376,11 @@ namespace Malx_AI
         private readonly DocumentRetriever _documentRetriever = new();
         private readonly SemanticProjectMemory _semanticMemory = new();
         private readonly ObservableCollection<DocumentInfo> _documents = new();
+        // Sticky document grounding: once a turn has used the attached document(s), later turns keep
+        // grounding in them even when the follow-up doesn't name the file or use a doc keyword
+        // ("what about the budget section?", "tell me more about that"). Reset when documents are
+        // cleared. Without this, follow-ups silently lost the document and the model answered blind.
+        private bool _documentContextEngaged;
         private readonly ObservableCollection<ConceptTagViewModel> _conceptTags = new();
         private readonly ObservableCollection<string> _activityLogs = new();
         private readonly Dictionary<CouncilRole, CouncilModelConfig> _council = new();
@@ -1096,7 +1423,11 @@ namespace Malx_AI
         // legitimately need a research → compute → verify chain; the forced no-tools synthesis pass
         // still guarantees usable output if the budget is exhausted.
         private const int CloudCouncilToolLoopIterationLimit = 6;
-        private const int CloudCouncilToolResultCharacterLimit = 6000;
+        private const int CloudCouncilToolResultCharacterLimit = 14000;
+        // Above this many visible characters, Builder text accompanying tool calls is treated as the
+        // finished deliverable (late tool calls ignored). Below it, the text is a pre-tool lead-in and
+        // the tool call is allowed to run so the Builder can ground facts/math before writing.
+        private const int BuilderFinalDeliverableMinChars = 400;
         // Bounded retry for transient free-tier 429s so a throttle does not abort the whole relay.
         private const int CloudCouncilRateLimitRetryLimit = 2;
         private const int DefaultCloudCouncilRateLimitWaitSeconds = 6;
@@ -1153,7 +1484,7 @@ namespace Malx_AI
         private readonly ObservableCollection<WorkplaceChatMessage> _chatCards = new();
         private readonly Dictionary<string, WorkplaceChatMessage> _streamingCouncilCards = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, CachedModelEntry> _modelCache = new(StringComparer.OrdinalIgnoreCase);
-        private const string CouncilKvStateFolder = "ChatHistory\\CouncilKvStates";
+        private static readonly string CouncilKvStateFolder = Path.Combine(AppDataPaths.ChatHistory, "CouncilKvStates");
         private const string DefaultFirstRunQwen3Guidance = "First run: load Qwen3-4B-Q4_K_M.gguf from Hugging Face (about 2.5 GB) to use the default Axiom Qwen3-4B workplace model profile.";
         private readonly System.Windows.Threading.DispatcherTimer _progressTimer = new();
         private readonly Stopwatch _pipelineStopwatch = new();
@@ -1217,10 +1548,29 @@ namespace Malx_AI
 
         private AgenticPauseEngine? _agenticPauseEngine;
         private bool _isWebSearchEnabled = true;
+        private string _activeCouncilWebPrompt = "";
+        private string _latestCouncilReactiveWebContext = "";
+        private CouncilRunContext? _activeCouncilRunContext;
         private DateTime _lastWebStatusStamp = DateTime.MinValue;
         private const string AttachedDocumentHeaderLine = "ATTACHED DOCUMENT — YOU MUST READ AND USE THIS";
         private const string AttachedDocumentEndLine = "END OF DOCUMENT";
         private const string AttachedDocumentRequiredReferenceInstruction = "The user has attached a document. Your response must directly reference and use the content of the attached document. If the user's request relates to the document in any way, base your answer on the document content. Do not ignore the document.";
+
+        // Shared grounding directive emitted next to the document text in every document-task
+        // Builder payload (single-pass, document-retrieval, and long-form continuation paths) so the
+        // grounding rule is identical everywhere. It must do TWO jobs at once: keep the answer faithful
+        // to the source (no fabricated facts) AND elicit genuine synthesis. Earlier wording ("base your
+        // answer ONLY on the text", "you may quote short phrases verbatim") over-anchored small local
+        // models, which then transcribed source spans instead of summarizing — the "grab and drop"
+        // failure. This phrasing instead tells the model to read, understand, and answer in its OWN
+        // words while staying grounded, and explicitly forbids copying long passages.
+        private const string DocumentGroundingInstruction =
+            "GROUNDING RULE: Read and understand the document text above, then answer in your OWN words as a real, " +
+            "coherent summary/analysis. Do NOT copy, paste, or transcribe whole sentences or long passages from the " +
+            "document, and do not return disconnected fragments of it — synthesize and explain the content instead. " +
+            "Keep every statement faithful to the source: use the real names, facts, figures, dates, and terminology " +
+            "from the text, and do NOT introduce any fact, name, date, number, event, or claim that the document does " +
+            "not support. If the document lacks something needed to answer, say so plainly instead of inventing it.";
 
         private static bool IsQwen3Model(string modelFilePath)
         {
@@ -1255,8 +1605,11 @@ namespace Malx_AI
                 {
                     Temperature = temperature,
                     MinP = minP,
-                    TopP = 1.0f,
-                    TopK = -1,
+                    // Bounded top-k/top-p instead of full-vocabulary sampling (was -1 / 1.0).
+                    // Quality-neutral, but much cheaper per token on large-vocab models — a
+                    // direct win for every council role on both CPU and GPU.
+                    TopP = 0.95f,
+                    TopK = 40,
                     RepeatPenalty = 1.1f
                 }
             };
@@ -1576,6 +1929,13 @@ namespace Malx_AI
             CodeOutputPanel.BeginAnimation(OpacityProperty, opacityAnimation);
         }
 
+        // Set by the host (MainWindow). On a single GPU the Normal-Chat model and the council
+        // role models compete for the same VRAM/RAM, so a LOCAL council run asks the host to
+        // release the chat model before loading its own role models — otherwise loading a second
+        // large model on top of the resident chat model fails with a "Failed to load model"
+        // relay error. The host restores the chat model when the user returns to the chat view.
+        public Func<CancellationToken, Task>? ReleaseHostChatModelAsync { get; set; }
+
         public void InitializeWithSession(InteractiveExecutor executor, uint contextSize)
         {
             _contextSize = Math.Clamp(Math.Max(contextSize, MinRoleContext), MinRoleContext, MaxRoleContext);
@@ -1617,63 +1977,83 @@ namespace Malx_AI
         private uint GetOptimizedContextForModel(CouncilRole role, uint fallback)
         {
             _council.TryGetValue(role, out var cfg);
-            string modelName = cfg?.ModelPath ?? cfg?.DisplayName ?? "";
-
-            // File-size ceiling: mirrors HardwareProfiler's KV-cache safety limits.
-            // Larger model files leave less VRAM for the KV cache, so cap accordingly.
-            uint fileSizeCeiling = MaxRoleContext;
             string? modelPath = cfg?.ModelPath;
+            string modelName = modelPath ?? cfg?.DisplayName ?? "";
+
+            // Largest context worth REQUESTING for this model file. Bigger files leave less room for
+            // the KV cache, so larger models aspire to less. These are deliberately far more generous
+            // than the old fixed 6144/8192/4096 values, which capped the window well below what modern
+            // models and typical hardware support and were a primary source of mid-conversation context
+            // loss (truncated documents/history → hallucination). The REAL ceiling is still enforced
+            // downstream by HardwareProfiler's memory math (weights + KV priced against actual free
+            // VRAM/RAM), and on flash-attention GPUs the q8_0 KV cache lets far more of this window
+            // actually fit — so requesting big here is safe: it can only be granted when it fits.
+            uint fileSizeCeiling = MaxRoleContext;
             if (!string.IsNullOrWhiteSpace(modelPath) && File.Exists(modelPath))
             {
                 long fileBytes = new FileInfo(modelPath).Length;
                 fileSizeCeiling = fileBytes switch
                 {
-                    > 16L * 1024 * 1024 * 1024 => 2048u,  // >16 GB
-                    > 8L * 1024 * 1024 * 1024  => 3072u,  // >8 GB
-                    > 4L * 1024 * 1024 * 1024  => 6144u,  // >4 GB
-                    _                           => 8192u   // ≤4 GB
+                    > 16L * 1024 * 1024 * 1024 => 6144u,   // >16 GB (70B-class)
+                    > 8L * 1024 * 1024 * 1024  => 12288u,  // >8 GB  (13-34B-class)
+                    > 4L * 1024 * 1024 * 1024  => 24576u,  // >4 GB  (7-9B-class)
+                    _                           => MaxRoleContext  // ≤4 GB (1-4B-class): let the trained window govern
                 };
             }
 
-            uint optimized;
-            if (IsQwen3Model(modelName))
-            {
-                optimized = role switch
-                {
-                    CouncilRole.Architect => 6144,
-                    CouncilRole.Builder => 8192,
-                    CouncilRole.Critic => 4096,
-                    _ => 8192
-                };
-            }
-            else if (TryGetModelParamBillions(modelName, out double sizeB))
-            {
-                // Base context by parameter count, then adjust per-role demand
-                uint baseCtx = sizeB switch
-                {
-                    <= 1.5 => 3072,
-                    <= 2.0 => 4096,
-                    <= 3.5 => 5120,
-                    <= 5.0 => 6144,
-                    <= 9.0 => 8192,
-                    _      => fallback
-                };
-                optimized = role switch
-                {
-                    CouncilRole.Builder   => Math.Min(baseCtx + 2048, MaxRoleContext), // Builder needs more context for code + docs
-                    CouncilRole.Critic    => (uint)Math.Max((int)baseCtx - 1024, (int)MinRoleContext), // Critic can work with less
-                    _                     => baseCtx
-                };
-            }
-            else
-            {
-                optimized = fallback;
-            }
+            // Aspire to the model's OWN trained context window — never beyond it (running past the
+            // trained length needs RoPE/YaRN scaling and degrades quality), and never beyond the
+            // file-size ceiling above.
+            uint trainedCtx = ResolveTrainedContextLength(modelPath, modelName);
+            uint aspiration = Math.Min(trainedCtx, fileSizeCeiling);
 
-            // Apply file-size ceiling so auto-tuned values stay within hardware limits
-            optimized = Math.Min(optimized, fileSizeCeiling);
+            // Without flash attention (CPU, or a pre-Turing GPU) the KV cache stays f16, so a very
+            // large window steals GPU layers / RAM and slows generation. Stay near the proven
+            // GPU-friendly size there; only FA-capable setups push the window high.
+            bool faCapable = !string.IsNullOrWhiteSpace(modelPath) && HardwareProfiler.SupportsFlashAttention(modelPath);
+            if (!faCapable)
+                aspiration = Math.Min(aspiration, 12288u);
+
+            // Role weighting as a FRACTION of the aspiration so it scales with the model: the Builder
+            // needs the most (documents, code, prior output); the Critic the least (bounded review);
+            // the Architect sits between. Roles load sequentially, so this trades per-role speed, not
+            // shared VRAM.
+            double roleFraction = role switch
+            {
+                CouncilRole.Builder => 1.00,
+                CouncilRole.Architect => 0.75,
+                CouncilRole.Critic => 0.50,
+                _ => 0.75
+            };
+            uint optimized = (uint)Math.Round(aspiration * roleFraction);
 
             return Math.Clamp(optimized, MinRoleContext, MaxRoleContext);
+        }
+
+        // Reads the model's trained context length from its GGUF header (the authoritative value),
+        // falling back to a conservative modern default when the header cannot be read. Bounded by
+        // MaxRoleContext. Lets the per-role window size to the model itself rather than a fixed guess.
+        private static uint ResolveTrainedContextLength(string? modelPath, string modelName)
+        {
+            if (!string.IsNullOrWhiteSpace(modelPath) && File.Exists(modelPath))
+            {
+                try
+                {
+                    GgufModelMetadata? meta = GgufMetadataReader.TryRead(modelPath);
+                    if (meta != null && meta.ContextLength >= 2048)
+                        return (uint)Math.Min(meta.ContextLength, (int)MaxRoleContext);
+                }
+                catch
+                {
+                    // Header unreadable — fall through to the size-based default.
+                }
+            }
+
+            // No header: most current local instruct models train at >=32k, but stay a little
+            // conservative for very small models where the header was the only strong signal.
+            if (TryGetModelParamBillions(modelName, out double sizeB) && sizeB <= 2.0)
+                return 16384u;
+            return Math.Min(32768u, MaxRoleContext);
         }
 
         private static bool TryGetModelParamBillions(string modelPath, out double billions)
@@ -2073,7 +2453,7 @@ namespace Malx_AI
             return (sb.ToString().Trim(), fileNames.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
         }
 
-        private static string BuildAttachedDocumentSystemPromptBlock(string documentContent, IReadOnlyCollection<string> documentFileNames)
+        private static string BuildAttachedDocumentSystemPromptBlock(string documentContent, IReadOnlyCollection<string> documentFileNames, int maxChars)
         {
             if (string.IsNullOrWhiteSpace(documentContent))
                 return string.Empty;
@@ -2082,30 +2462,61 @@ namespace Malx_AI
                 ? string.Join(", ", documentFileNames.Where(name => !string.IsNullOrWhiteSpace(name)).Take(6))
                 : "AttachedDocument.txt";
 
+            // Cap the document copy that goes into the SYSTEM prompt. An uncapped document
+            // dominates the system message, which (a) pushes the role text and the user's actual
+            // request out of the model's focus — small local models then echo the role/environment
+            // briefing instead of answering — and (b) can overflow the context window outright.
+            string body = documentContent.Trim();
+            if (maxChars > 0 && body.Length > maxChars)
+                body = body[..maxChars] + "\n[...document truncated here; the full text is also provided in the task payload]";
+
             return string.Join("\n",
                 AttachedDocumentHeaderLine,
                 fileName,
-                documentContent.Trim(),
+                body,
                 AttachedDocumentEndLine).Trim();
         }
 
-        private static string ComposeCouncilSystemPrompt(string systemPrompt, CouncilRole role, CouncilRunContext? context)
+        // Char budget for the document copy embedded in a role's SYSTEM prompt, scaled to the role's
+        // context window. The Builder receives the full (separately capped) document in its USER payload
+        // via BuildDocumentContentBlock, so it needs no system-prompt copy at all — a second uncapped
+        // copy there only doubles context pressure and crowds out the actual task.
+        private int GetSystemPromptDocumentBudgetChars(CouncilRole role)
+        {
+            int ctxTokens = (int)GetRoleContextSize(role);
+            double fraction = role switch
+            {
+                CouncilRole.Architect => 0.40,
+                CouncilRole.Critic => 0.22,
+                _ => 0.0 // Builder: document lives in the user payload instead.
+            };
+            return (int)(ctxTokens * fraction * AvgCharsPerToken);
+        }
+
+        private static string ComposeCouncilSystemPrompt(string systemPrompt, CouncilRole role, CouncilRunContext? context, int documentCharBudget)
         {
             string prompt = (systemPrompt ?? string.Empty).Trim();
             if (context == null || string.IsNullOrWhiteSpace(context.DocumentContent))
                 return prompt;
 
-            string documentBlock = BuildAttachedDocumentSystemPromptBlock(context.DocumentContent, context.DocumentFileNames);
-            if (string.IsNullOrWhiteSpace(documentBlock))
-                return prompt;
+            // When the budget is zero (e.g. the Builder, which gets the document in its user payload)
+            // the document body is omitted from the system prompt, but the "a document is attached"
+            // instruction is still emitted so the role knows to ground its answer in it.
+            string documentBlock = documentCharBudget > 0
+                ? BuildAttachedDocumentSystemPromptBlock(context.DocumentContent, context.DocumentFileNames, documentCharBudget)
+                : string.Empty;
 
             var sb = new StringBuilder();
-            sb.Append(documentBlock);
+            if (!string.IsNullOrWhiteSpace(documentBlock))
+                sb.Append(documentBlock);
 
             if (!string.IsNullOrWhiteSpace(prompt))
             {
-                sb.AppendLine();
-                sb.AppendLine();
+                if (sb.Length > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine();
+                }
                 sb.Append(prompt);
             }
 
@@ -2177,6 +2588,7 @@ namespace Malx_AI
         private void ClearDocuments_Click(object sender, RoutedEventArgs e)
         {
             _documents.Clear();
+            _documentContextEngaged = false;
             _conceptTags.Clear();
             _documentRetriever.ClearChunks();
             _semanticMemory.Clear();
@@ -2395,9 +2807,17 @@ namespace Malx_AI
                     HardwareInfoBlock.Text = "Runtime: web tool engaged by council";
                 }, DispatcherPriority.Background);
 
-                string searchQuery = _webSearchService.BuildStrategicSearchQuery(query);
+                string rawQuery = (query ?? string.Empty).Trim();
+                if (WebSearchService.LooksLikeLowSpecificitySearchQuery(rawQuery)
+                    && !string.IsNullOrWhiteSpace(_activeCouncilWebPrompt))
+                {
+                    rawQuery = (_activeCouncilWebPrompt + " " + rawQuery).Trim();
+                    LogActivity("Web search query expanded with active council prompt for specificity.");
+                }
+
+                string searchQuery = _webSearchService.BuildStrategicSearchQuery(rawQuery);
                 if (string.IsNullOrWhiteSpace(searchQuery))
-                    searchQuery = query?.Trim() ?? string.Empty;
+                    searchQuery = rawQuery;
 
                 LogActivity($"Web search query: {(searchQuery.Length > 96 ? searchQuery[..96] + "..." : searchQuery)}");
                 string data = await _webSearchService.SearchTopSnippetsAsync(searchQuery, token);
@@ -2422,8 +2842,9 @@ namespace Malx_AI
                     return "Web search returned no usable results.";
                 }
 
-                if (data.Length > 2200)
-                    data = _webSearchService.PreparePromptContext(data, 2200);
+                int promptContextLimit = CanUseCloudCouncil ? 12000 : 4200;
+                if (data.Length > promptContextLimit)
+                    data = _webSearchService.PreparePromptContext(data, promptContextLimit);
 
                 LogActivity("Web search data fetched.");
                 if (ShouldEmitWebStatus())
@@ -2431,6 +2852,10 @@ namespace Malx_AI
                     await Dispatcher.InvokeAsync(() => AppendChat("memory", "🌐 Web search data fetched and injected into council context."), DispatcherPriority.Background);
                 }
                 return data;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -3022,6 +3447,12 @@ namespace Malx_AI
                     return true;
             }
 
+            // Sticky grounding: the user deliberately attached the document and a prior turn already
+            // worked with it, so keep referencing it for natural follow-ups that don't repeat a doc
+            // keyword or the filename. The user removes the attachment when they're done with it.
+            if (_documentContextEngaged)
+                return true;
+
             return false;
         }
 
@@ -3517,11 +3948,13 @@ namespace Malx_AI
                     CouncilRole.Builder =>
                         "\n[DOCUMENT TASK] The document text is provided in [[DOCUMENT CONTENT]] in your payload. " +
                         "ANTI-DRIFT: You are the BUILDER — do NOT output a numbered plan or step list. Start directly with your content. " +
-                        "Execute the Architect's plan by working directly with the provided text. " +
+                        "Read and understand the document, then carry out the user's request by writing a genuine summary/answer " +
+                        "in your OWN words — synthesize and explain the content. Do NOT copy, paste, or transcribe sentences or " +
+                        "long passages from the source, and do not just stitch together fragments of it. " +
                         "Write your response as prose or structured content — NOT as code unless explicitly requested. " +
                         "You MUST NOT claim the document was not provided, cannot be accessed, or is unavailable. " +
                         "The full text IS in your payload. Any claim otherwise is a hallucination. " +
-                        "Ground every statement in the actual document text. Do not fabricate content.",
+                        "Keep every statement faithful to the document and do not fabricate content not present in it.",
                     CouncilRole.Critic =>
                         "\n[DOCUMENT TASK] The document text is provided in [[DOCUMENT CONTENT]] in your payload. " +
                         "Verify the Builder's output in this priority order: " +
@@ -3710,42 +4143,47 @@ namespace Malx_AI
                 return "\n[STRUCTURED OUTPUT CONTRACT] Output only a numbered plan. Every line must follow 'N. concrete implementation step'. " +
                            "When the request implies a renderable artifact, explicitly plan toward a single HTML, SVG, or chart implementation that will render in Project Canvas. " +
                            "No prose paragraphs, no code, no markdown fences, and no echoed payload labels. " +
-                       $"End with '{ArchitectCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                       $"End with '{ArchitectCompletionMarker}' on its own line.";
 
             if (taskType == CouncilTaskType.Document)
                 return "\n[STRUCTURED OUTPUT CONTRACT] Output only a numbered plan where each step describes a specific operation on the document content " +
                        "provided in [[DOCUMENT CONTENT]]. Each step must name what content to extract, analyze, or synthesize. " +
                        "Do NOT include steps about opening files, reading documents, or using tools. No prose paragraphs, no code, and no echoed payload labels. " +
-                       $"End with '{ArchitectCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                       $"End with '{ArchitectCompletionMarker}' on its own line.";
 
             return "\n[STRUCTURED OUTPUT CONTRACT] Output only a numbered plan where each step names a CONTENT SECTION or SUBTOPIC to cover " +
                    "using the source material already provided in [[PROJECT KNOWLEDGE BASE]]. " +
                    "Do NOT include procedural steps like opening files, reading documents, extracting text, or using tools — " +
                    "the document text is already provided. Plan what to WRITE, not how to READ. No prose paragraphs, no code, and no echoed payload labels. " +
-                   $"End with '{ArchitectCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                   $"End with '{ArchitectCompletionMarker}' on its own line.";
         }
 
-        private static string BuildBuilderContract(CouncilTaskType taskType)
+        private static string BuildBuilderContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false)
         {
             const string antiEcho = "Do NOT echo, restate, or reproduce any input labels, headers, [[BLOCK]] markers, or pipeline metadata in your output. " +
                 "Start directly with your implementation content.";
 
-            if (taskType == CouncilTaskType.Coding)
+            // An artifact-canvas request is a code-fenced renderable deliverable even when DetectTaskType
+            // classified it as Research/Analysis/General (e.g. "visualize the analysis", "make a report
+            // dashboard"). It MUST use the code/artifact contract — the prose contract below would tell it
+            // "no code fences", which fights the artifact boost and makes the Builder emit a plan/prose
+            // instead of a renderable artifact.
+            if (taskType == CouncilTaskType.Coding || isArtifactCanvasRequest)
                 return $"\n[STRUCTURED OUTPUT CONTRACT] Output exactly one executable implementation in markdown code fences with no prose before or after. " +
                        $"If the user asked for a visual artifact, output one complete self-contained artifact implementation such as HTML, SVG, or chart-producing code rather than prose. " +
                        $"No summaries, no explanations, no bullet lists, and no duplicate alternative versions. {antiEcho} " +
-                       $"End with '{BuilderCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                       $"End with '{BuilderCompletionMarker}' on its own line.";
 
             if (taskType == CouncilTaskType.Document)
                 return $"\n[STRUCTURED OUTPUT CONTRACT] Output the requested content derived from the provided document text. " +
                        $"Write prose or structured content only — no code unless explicitly requested. " +
                        $"Every claim must be grounded in the provided document text. No generic disclaimers and no tool/file-operation narration. {antiEcho} " +
-                       $"End with '{BuilderCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                       $"End with '{BuilderCompletionMarker}' on its own line.";
 
             return $"\n[STRUCTURED OUTPUT CONTRACT] Output task-aligned prose only — no code fences, no source code, no variable assignments, " +
                    $"no function definitions, and no programming syntax unless the user explicitly requested code. " +
                    $"For calculations, use plain mathematical notation and natural language (e.g., 'Volume = 5 × 100 = 500 liters'). {antiEcho} " +
-                   $"End with '{BuilderCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                   $"End with '{BuilderCompletionMarker}' on its own line.";
         }
 
         private static string BuildCriticContract(CouncilTaskType taskType)
@@ -3753,7 +4191,7 @@ namespace Malx_AI
             if (taskType == CouncilTaskType.Coding)
                 return "\n[OUTPUT CONTRACT] Output EITHER a numbered findings list where every item contains: Location, Problem, Fix; " +
                        "OR a single line 'No issues found.'. " +
-                       $"End with '{CriticCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                       $"End with '{CriticCompletionMarker}' on its own line.";
 
             if (taskType == CouncilTaskType.Document)
                 return "\n[OUTPUT CONTRACT] Output EITHER a numbered findings list where each item contains: " +
@@ -3761,11 +4199,11 @@ namespace Malx_AI
                        "OR a single line 'No issues found.'. " +
                        "Severity levels: CRITICAL (hallucinated content not in document), HIGH (user request not fulfilled), " +
                        "MEDIUM (plan step missed), LOW (minor omission). " +
-                       $"End with '{CriticCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                       $"End with '{CriticCompletionMarker}' on its own line.";
 
             return "\n[OUTPUT CONTRACT] Output EITHER a numbered findings list where each item contains: Reference (topic/section/step), Issue, Fix; " +
                    "OR a single line 'No issues found.'. " +
-                   $"End with '{CriticCompletionMarker}' on its own line, then output '{HandoffEndToken}' on its own line.";
+                   $"End with '{CriticCompletionMarker}' on its own line.";
         }
 
         private static bool TryExtractWithMarker(string text, string marker, out string cleaned)
@@ -4142,7 +4580,9 @@ namespace Malx_AI
             if (lowerQuery.Contains("key points") || lowerQuery.Contains("highlights") || lowerQuery.Contains("main points"))
             {
                 var bullets = scored.Take(8).Select(s => $"- {s}");
-                return $"Source: {docLabel}\n\nKey points:\n" + string.Join("\n", bullets);
+                return $"Source: {docLabel}\n\nSource-grounded fallback key points:\n" +
+                       string.Join("\n", bullets) +
+                       "\n\nNote: The local model did not produce a reliable synthesized answer, so this fallback shows representative source-supported points instead of inventing content.";
             }
 
             var summarySentences = scored.Take(6).ToList();
@@ -4150,11 +4590,12 @@ namespace Malx_AI
 
             if (lowerQuery.Contains("analy") || lowerQuery.Contains("evaluate") || lowerQuery.Contains("critique"))
             {
-                return $"Source: {docLabel}\n\nAnalysis:\n{summary}\n\nObserved themes:\n" +
-                       string.Join("\n", scored.Skip(2).Take(4).Select(s => $"- {s}"));
+                return $"Source: {docLabel}\n\nSource-grounded fallback analysis:\n{summary}\n\nObserved source points:\n" +
+                       string.Join("\n", scored.Skip(2).Take(4).Select(s => $"- {s}")) +
+                       "\n\nNote: The local model did not produce a reliable synthesized answer, so this fallback stays close to the source text instead of inventing unsupported analysis.";
             }
 
-            return $"Source: {docLabel}\n\nSummary:\n{summary}";
+            return $"Source: {docLabel}\n\nSource-grounded fallback summary:\n{summary}\n\nNote: The local model did not produce a reliable synthesized answer, so this fallback shows representative source-supported content instead of inventing a summary.";
         }
 
         private static string BuildDeterministicDocumentCritic(CouncilRunContext context)
@@ -4199,51 +4640,30 @@ namespace Malx_AI
             return sb.ToString().Trim();
         }
 
+        // Last-resort recovery for document answers. ONLY substitutes when the model produced nothing
+        // usable (empty or placeholder/low-value text); a real answer — even a short, concise summary —
+        // is returned exactly as the model wrote it.
+        //
+        // This deliberately no longer "expands" a short-but-good answer by appending verbatim source
+        // sentences ("Additional verified source synthesis: ..."). That padding was the user-visible
+        // "grab and drop": any concise summary under a word threshold got real document sentences stapled
+        // onto it. Length targets are now satisfied by re-prompting the MODEL (the long-form continuation
+        // pass), never by pasting raw source text.
         private static string BuildDeterministicDocumentQualityPass(CouncilRunContext context)
         {
             if (string.IsNullOrWhiteSpace(context.BuilderOutput))
                 return BuildDeterministicDocumentResponse(context.UserPrompt, context.DocumentContent, context.DocumentFileNames);
 
             string output = context.BuilderOutput.Trim();
-            int requestedWords = TryGetRequestedWordTarget(context.UserPrompt, context.Objective);
-            int minDesiredWords = requestedWords > 0
-                ? Math.Max(120, (int)(requestedWords * 0.75))
-                : 160;
 
-            bool needsExpansion = IsLowValueDocumentOutput(output, context.DocumentFileNames)
-                || CountWords(output) < minDesiredWords;
-            if (!needsExpansion)
-                return output;
-
-            string deterministic = BuildDeterministicDocumentResponse(context.UserPrompt, context.DocumentContent, context.DocumentFileNames).Trim();
-            if (string.IsNullOrWhiteSpace(deterministic))
-                return output;
-
-            if (string.Equals(output, deterministic, StringComparison.OrdinalIgnoreCase))
-                return deterministic;
-
-            bool outputLooksUsable = !IsLowValueDocumentOutput(output, context.DocumentFileNames)
-                && output.Length >= 120;
-            if (!outputLooksUsable)
-                return deterministic;
-
-            var merged = new StringBuilder();
-            merged.AppendLine(output);
-            merged.AppendLine();
-            merged.AppendLine("Additional verified source synthesis:");
-
-            foreach (string line in deterministic.Split('\n'))
+            // Only genuinely empty/placeholder output is replaced; a usable summary stays untouched.
+            if (IsLowValueDocumentOutput(output, context.DocumentFileNames))
             {
-                string trimmed = line.Trim();
-                if (string.IsNullOrWhiteSpace(trimmed))
-                    continue;
-                if (output.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                merged.AppendLine(trimmed.StartsWith("-") ? trimmed : $"- {trimmed}");
+                string deterministic = BuildDeterministicDocumentResponse(context.UserPrompt, context.DocumentContent, context.DocumentFileNames).Trim();
+                return string.IsNullOrWhiteSpace(deterministic) ? output : deterministic;
             }
 
-            return merged.ToString().Trim();
+            return output;
         }
 
         private static int TryGetRequestedWordTarget(string userQuery, string objective)
@@ -4424,6 +4844,26 @@ namespace Malx_AI
             }
 
             return warnings;
+        }
+
+        // Faithfulness guard for document answers. Returns true ONLY when the Builder output explicitly
+        // (and falsely) claims the document is unavailable — a definite hallucination, since the full text
+        // was provided in the payload, and one where substituting a grounded extract is genuinely better
+        // than delivering a false refusal.
+        //
+        // A previous version ALSO flagged answers whose substantive vocabulary barely overlapped the
+        // source (a lexical-containment ratio) and replaced them with a verbatim sentence dump. That
+        // remedy was worse than the disease: a faithful abstractive summary can legitimately score low,
+        // and the "replacement" was itself the copy-and-paste-fragments behavior users complained about.
+        // Normal Chat ships the model's answer with no such guard and summarizes reliably, so the routine
+        // synthesis is now trusted; only the unambiguous false-unavailability claim is intercepted here.
+        private static bool IsUngroundedDocumentOutput(string builderOutput, string documentContent)
+        {
+            if (string.IsNullOrWhiteSpace(builderOutput) || string.IsNullOrWhiteSpace(documentContent))
+                return false;
+
+            return DetectDocumentHallucinations(builderOutput, documentContent)
+                .Any(w => w.Contains("falsely claims document is unavailable", StringComparison.OrdinalIgnoreCase));
         }
 
         private static List<(string Section, int TokenEstimate)> SplitDocumentForSegmentedProcessing(string documentContent, int maxTokensPerSegment)
@@ -4757,6 +5197,9 @@ namespace Malx_AI
                 return true;
 
             string trimmed = output.Trim();
+            if (LooksLikeCompletionMarkerOnlyText(trimmed))
+                return true;
+
             if (trimmed.Length < 8)
                 return true;
 
@@ -4772,6 +5215,22 @@ namespace Malx_AI
             }
 
             return false;
+        }
+
+        private static bool LooksLikeCompletionMarkerOnlyText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return true;
+
+            string normalized = Regex.Replace(text.Trim(), @"[\[\]\(\)\{\}`'""\s_\-:.!]+", " ").Trim();
+            normalized = Regex.Replace(normalized, @"\s+", " ").ToUpperInvariant();
+            if (normalized.Length == 0)
+                return true;
+
+            return normalized is ArchitectCompletionMarker or BuilderCompletionMarker or CriticCompletionMarker
+                || normalized == "BUILDER OUTPUT IS COMPLETE"
+                || normalized == "BUILDER COMPLETE"
+                || normalized == "OUTPUT COMPLETE";
         }
 
         private static bool TryNormalizeCriticReview(string raw, CouncilTaskType taskType, out string normalized, out bool markerFound)
@@ -4897,6 +5356,8 @@ namespace Malx_AI
             if (context.BuilderTruncationRecovery) flags.Add("Builder truncation recovered");
             if (context.StaticValidationIssuesFound) flags.Add("Static validation issues");
             if (context.SandboxExceptionsFound) flags.Add("Sandbox exceptions");
+            if (context.WebGroundingRequired && HasWebSearchEvidence(context.WebContext)) flags.Add("Web evidence attached");
+            if (context.WebGroundingRequired && !HasWebSearchEvidence(context.WebContext)) flags.Add("Web evidence required but unavailable");
 
             return flags.Count == 0
                 ? ""
@@ -4926,10 +5387,12 @@ namespace Malx_AI
                 sb.AppendLine(state.CalculatorContext.Trim());
             }
 
-            if (!string.IsNullOrWhiteSpace(state.WebContext))
+            if (role != CouncilRole.Builder && !string.IsNullOrWhiteSpace(state.WebContext))
             {
                 sb.AppendLine(state.WebContext.Trim());
-                sb.AppendLine(BuildLabeledBlock("WEB ANSWERING CONTRACT", "Use only facts explicitly present in [[WEB SEARCH DATA]] for factual or current claims. Do not use prior council outputs, memory, or background knowledge to add unsupported details. If the evidence is incomplete, provide the supported facts first and clearly note the gap. For broad current-information requests, synthesize the strongest supported developments from the available sources. If the evidence conflicts, report the conflict instead of guessing."));
+                sb.AppendLine(HasWebSearchEvidence(state.WebContext)
+                    ? BuildLabeledBlock("WEB ANSWERING CONTRACT", "Use [[WEB SEARCH DATA]] as authority for current, online, source-backed, or recently changed claims that it actually covers. Do not use prior council outputs, memory, or background knowledge to add unsupported current/source-backed details. Stable non-current background context is allowed when not contradicted by the sources. If evidence is incomplete or off-topic, provide supported facts first and clearly note the gap. For broad current-information requests, synthesize the strongest supported developments from available sources. If evidence conflicts, report the conflict instead of guessing.")
+                    : BuildLabeledBlock("WEB ANSWERING CONTRACT", "Web search was attempted but no usable evidence is present. Flag any current, source-backed, legal, medical, financial, release, pricing, policy, URL, or documentation claim that the Builder states from memory. Do not penalize clearly separated stable non-current background context unless it conflicts with provided evidence."));
             }
 
             if (role == CouncilRole.Builder)
@@ -5020,7 +5483,7 @@ namespace Malx_AI
                 : BuildLabeledBlock("PRIOR KNOWLEDGE", compact);
         }
 
-        private static string CapOversizedInjectionBlock(string prompt, string label)
+        private static string CapOversizedInjectionBlock(string prompt, string label, int maxChars)
         {
             if (string.IsNullOrWhiteSpace(prompt) || string.IsNullOrWhiteSpace(label))
                 return prompt;
@@ -5029,12 +5492,12 @@ namespace Malx_AI
             return Regex.Replace(prompt, pattern, match =>
             {
                 string body = match.Groups["body"].Value.Trim();
-                if (body.Length <= 1200)
+                if (body.Length <= maxChars)
                     return match.Value;
 
-                int cut = body.LastIndexOf(' ', 1200);
+                int cut = body.LastIndexOf(' ', maxChars);
                 if (cut <= 0)
-                    cut = 1200;
+                    cut = maxChars;
 
                 string truncated = body[..cut].TrimEnd() + "...";
                 return $"[[{label}]]\n{truncated}\n[[END {label}]]";
@@ -5045,7 +5508,20 @@ namespace Malx_AI
         {
             string result = prompt ?? string.Empty;
             foreach (string label in CappedInjectionLabels)
-                result = CapOversizedInjectionBlock(result, label);
+            {
+                // The retrieved knowledge base is the PRIMARY grounding source on the (fallback) path that
+                // uses it, and its size is already bounded upstream by the chunk count. Capping it to the
+                // same 1200 chars as transient tool blocks (web/calculator/prior-knowledge) gutted that
+                // grounding right before inference and invited the model to fill the gaps — so give it a
+                // much larger ceiling. The per-role token-budget guard in ExecuteCouncilRoleAsync still
+                // prevents an actual context overflow.
+                int maxChars = string.Equals(label, "PROJECT KNOWLEDGE BASE", StringComparison.OrdinalIgnoreCase)
+                    ? 6000
+                    : string.Equals(label, "WEB SEARCH DATA", StringComparison.OrdinalIgnoreCase)
+                        ? 4200
+                    : 1200;
+                result = CapOversizedInjectionBlock(result, label, maxChars);
+            }
             return result;
         }
 
@@ -5557,6 +6033,23 @@ namespace Malx_AI
             AppendChat("user", userQuery);
             _chatHistory.Add(("user", userQuery));
 
+            // On a single GPU the Normal-Chat model and the council role models compete for the
+            // same VRAM/RAM. Loading role models on top of a still-resident chat model is the
+            // "Failed to load model" relay error (a second copy of an 8B model overflows VRAM,
+            // the plan drops to CPU, and the CPU copy then overflows RAM). For a LOCAL run, free
+            // the chat model first; MainWindow restores it when the user returns to the chat view.
+            if (!_isCloudModeEnabled && ReleaseHostChatModelAsync != null)
+            {
+                try
+                {
+                    await ReleaseHostChatModelAsync(CancellationToken.None);
+                }
+                catch (Exception releaseEx)
+                {
+                    LogActivity($"Chat model release before relay skipped: {releaseEx.Message}");
+                }
+            }
+
             StartPipelineProgress();
 
             string objective = ReadObjectiveText();
@@ -5572,6 +6065,10 @@ namespace Malx_AI
             bool documentsLoaded = _documents.Count > 0;
             bool shouldUseDocuments = ShouldUseDocumentContext(userQuery, objective);
             bool isDocumentTask = documentsLoaded && shouldUseDocuments;
+            // Engage sticky grounding so subsequent follow-up turns keep using the document even when
+            // they don't name it (see ShouldUseDocumentContext).
+            if (isDocumentTask)
+                _documentContextEngaged = true;
             string calculatorContext = "";
             if (CalculatorToolAgent.TryBuildContext($"{userQuery}\n{objective}", out var calcContext, out var calcSignal))
             {
@@ -5590,6 +6087,12 @@ namespace Malx_AI
             string preferredArtifactFormatHint = isArtifactCanvasRequest
                 ? GetPreferredArtifactFormatHint(userQuery, objective, canvasViewportWidth)
                 : string.Empty;
+            string webGroundingPrompt = string.IsNullOrWhiteSpace(objective)
+                ? userQuery
+                : $"{userQuery}\n{objective}";
+            bool webGroundingRequired = _isWebSearchEnabled
+                && _webSearchService.RequiresFreshOrSourceBackedGrounding(webGroundingPrompt);
+            _activeCouncilWebPrompt = webGroundingPrompt;
 
             var runContext = new CouncilRunContext
             {
@@ -5603,8 +6106,11 @@ namespace Malx_AI
                 PreferredArtifactFormatHint = preferredArtifactFormatHint,
                 CanvasViewportWidth = canvasViewportWidth,
                 CanvasViewportHeight = canvasViewportHeight,
+                WebGroundingRequired = webGroundingRequired,
                 IsCloudExecution = CanUseCloudCouncil
             };
+            _latestCouncilReactiveWebContext = string.Empty;
+            _activeCouncilRunContext = runContext;
 
             // Artifact iteration: when this is a canvas request and the canvas already holds a real
             // artifact (not the placeholder), capture it so the Builder edits the existing artifact
@@ -5660,6 +6166,9 @@ namespace Malx_AI
                     if (!string.IsNullOrWhiteSpace(proactiveWebContext))
                     {
                         contextState.WebContext = proactiveWebContext;
+                        runContext.WebContext = proactiveWebContext;
+                        if (!HasWebSearchEvidence(proactiveWebContext))
+                            AppendChat("warning", "Web search returned no usable evidence; current/source-backed facts will not be answered from memory.");
                         AppendChat("memory", "🌐 Web search context attached to this council run.");
                     }
                 }
@@ -5751,22 +6260,20 @@ namespace Malx_AI
 
                 string sharedVocabularySection = BuildSharedVocabularySection(runContext.SharedVocabulary);
                 string sharedVocabularySystemNote = "\n[SHARED VOCABULARY]\nUse these terms exactly as named by the user. Do not rename identifiers unless explicitly instructed.\n" + sharedVocabularySection;
-                string webSearchSystemNote = !string.IsNullOrWhiteSpace(contextState.WebContext)
-                    ? "\n[REAL-TIME DATA RULE] [WEB SEARCH DATA] is provided in payload. When present, it overrides background knowledge for current factual claims. Use only that web evidence for time-sensitive or factual assertions, prefer High confidence sources over Medium confidence ones, ignore Low confidence sources unless explicitly requested, do not invent facts beyond the provided evidence, and if the evidence is partial or conflicting, answer with the confirmed portion and explicitly describe the gap or conflict. For broad current-information requests, summarize the strongest supported developments from the available web evidence.\n"
-                    : "";
-                string baseKnowledgeBlock = runContext.IsDocumentTask && !string.IsNullOrWhiteSpace(runContext.DocumentContent)
-                    ? BuildDocumentContentBlock(runContext.DocumentContent)
-                    : (finalChunks.Count > 0 ? BuildLabeledBlock("PROJECT KNOWLEDGE BASE", knowledgePacket) : "");
-                string baseSharedPayload = BuildCouncilBaseSharedPayload(runContext, sharedVocabularySection, baseKnowledgeBlock, contextState.WebContext);
-                bool canUseBaseStateVault = _chatHistory.Count >= 6 || finalChunks.Count > 0 || runContext.IsDocumentTask;
-                if (canUseBaseStateVault)
-                {
-                    baseStateVault = await CreateCouncilBaseStateVaultAsync(baseSharedPayload, token);
-                }
-                else
-                {
-                    LogActivity("Base state bootstrap skipped for lightweight run to reduce startup latency and avoid duplicate model spin-up.");
-                }
+                string webSearchSystemNote = BuildCouncilWebSystemNote(contextState.WebContext, runContext.WebGroundingRequired);
+                string builderWebPauseSystemNote = BuildBuilderWebPauseSystemNote();
+                // Base-state vault DISABLED: it pre-loaded shared content into each role's KV cache
+                // (via LoadState) but the per-role token-budget check (ExecuteCouncilRoleAsync) only
+                // counts system+payload, NOT those already-resident base-state tokens. The real
+                // decode therefore overflowed the context → llama_decode 'InvalidInputBatch' →
+                // batch-recovery retry → cascading model-reload failure ("Failed to load model").
+                // It was only ever a latency optimization (each role payload already carries its own
+                // content, so simple runs work without it), and on a memory-constrained GPU the
+                // extra per-role load+decode+state-save was itself heavy VRAM churn. Leaving it off
+                // makes local council runs reliable; re-enabling needs base-state tokens folded into
+                // the budget AND headroom verified against the role context window first.
+                baseStateVault = null;
+                LogActivity("Base state bootstrap disabled — each role decodes its own payload (avoids KV-budget overflow on local models).");
 
                 // ═══════════════════════════════════════════════════════
                 // STAGE 1 — Architect: receives decomposed input
@@ -5830,7 +6337,7 @@ namespace Malx_AI
                                 : ""))
                         + webSearchSystemNote
                         + sharedVocabularySystemNote;
-                    architectSystem = ComposeCouncilSystemPrompt(architectSystem, CouncilRole.Architect, runContext);
+                    architectSystem = ComposeCouncilSystemPrompt(architectSystem, CouncilRole.Architect, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Architect));
                     if (IsQwen3Model(architectConfig.ModelPath ?? string.Empty))
                         architectSystem = BuildQwen3SystemPrompt(architectSystem, false);
 
@@ -5846,7 +6353,8 @@ namespace Malx_AI
                     string architectPayload = BuildPipelineStateHeader("", "")
                         + recentConversation
                         + architectPriorKnowledge
-                        + BuildRolePrimedPayload(CouncilRole.Architect, taskType, BuildRoleIsolatedPayload(CouncilRole.Architect, contextState));
+                        + BuildRolePrimedPayload(CouncilRole.Architect, taskType, BuildRoleIsolatedPayload(CouncilRole.Architect, contextState))
+                        + BuildCouncilClosingAnchor(CouncilRole.Architect);
 
                     var architectResult = await ExecuteCouncilRoleAsync(
                         CouncilRole.Architect, architectSystem, architectPayload, token, null, baseStateVault, true);
@@ -6023,10 +6531,11 @@ namespace Malx_AI
                             ? "\n" + runContext.PythonSystemPromptInjection
                             : "")
                         + (runContext.CalculatorUsed ? "\n[CALCULATOR TOOL] Treat [[CALCULATOR TOOL RESULTS]] as authoritative computed values. Reuse them consistently in output." : "")
-                        + BuildBuilderContract(taskType)
+                        + BuildBuilderContract(taskType, runContext.IsArtifactCanvasRequest)
                         + webSearchSystemNote
+                        + builderWebPauseSystemNote
                         + sharedVocabularySystemNote;
-                    builderSystem = ComposeCouncilSystemPrompt(builderSystem, CouncilRole.Builder, runContext);
+                    builderSystem = ComposeCouncilSystemPrompt(builderSystem, CouncilRole.Builder, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Builder));
                     if (IsQwen3Model(builderConfig.ModelPath ?? string.Empty))
                         builderSystem = BuildQwen3SystemPrompt(builderSystem, false);
 
@@ -6038,12 +6547,15 @@ namespace Malx_AI
                     string previousBuilderOutput = GetPreviousRoleOutput("builder");
 
                     bool useSegmented = taskType == CouncilTaskType.Coding
+                        && !runContext.IsArtifactCanvasRequest   // a canvas artifact is ONE self-contained file — segmenting it emits partial code chunks that never render
                         && (runContext.Complexity == TaskComplexity.Complex || (runContext.Complexity != TaskComplexity.Simple && runContext.ArchitectStepCount > 4))
                         && !string.IsNullOrWhiteSpace(runContext.ArchitectOutput);
 
                     int builderContextBudget = (int)GetRoleContextSize(CouncilRole.Builder);
                     int documentTokens = runContext.IsDocumentTask ? EstimateTokenCount(runContext.DocumentContent) : 0;
-                    bool useSegmentedDocument = runContext.IsDocumentTask
+                    // Document doesn't fit one full-context pass → retrieve the relevant sections and
+                    // answer in ONE pass (RAG), rather than truncating to the head in the normal path.
+                    bool useDocumentRetrieval = runContext.IsDocumentTask
                         && !string.IsNullOrWhiteSpace(runContext.DocumentContent)
                         && documentTokens > (int)((builderContextBudget - 900) * 0.6);
 
@@ -6053,10 +6565,10 @@ namespace Malx_AI
                         builderOutput = await ExecuteSegmentedBuilderAsync(
                             runContext, builderSystem, knowledgePacket, finalChunks.Count > 0, builderPriorKnowledge, token, baseStateVault);
                     }
-                    else if (useSegmentedDocument)
+                    else if (useDocumentRetrieval)
                     {
-                        LogActivity($"Segmented document build: document ~{documentTokens} tokens exceeds 60% safe context budget.");
-                        builderOutput = await ExecuteSegmentedDocumentBuilderAsync(runContext, builderSystem, builderPriorKnowledge, token, baseStateVault);
+                        LogActivity($"Document retrieval build: document ~{documentTokens} tokens exceeds one-pass budget — selecting relevant sections for a single pass.");
+                        builderOutput = await ExecuteDocumentRetrievalBuilderAsync(runContext, builderSystem, builderPriorKnowledge, token, baseStateVault);
                     }
                     else
                     {
@@ -6087,20 +6599,30 @@ namespace Malx_AI
                         if (fewShotPrefix.Length > 0)
                             builderPayload.AppendLine(fewShotPrefix);
 
+                        AppendCouncilWebContext(builderPayload, runContext);
                         builderPayload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, taskType, BuildRoleIsolatedPayload(CouncilRole.Builder, contextState)));
 
                         if (runContext.IsDocumentTask && !string.IsNullOrWhiteSpace(runContext.DocumentContent))
                         {
                             int maxDocChars = Math.Max(1600, (((int)GetRoleContextSize(CouncilRole.Builder) - 900) * 4));
                             builderPayload.AppendLine(BuildDocumentContentBlock(runContext.DocumentContent, maxDocChars));
+                            builderPayload.AppendLine(DocumentGroundingInstruction);
                         }
                         else if (finalChunks.Count > 0)
                         {
                             builderPayload.AppendLine(BuildLabeledBlock("PROJECT KNOWLEDGE BASE", knowledgePacket));
                         }
 
+                        builderPayload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: _isWebSearchEnabled && !_isCloudModeEnabled));
+
                         var builderResult = await ExecuteCouncilRoleAsync(
-                            CouncilRole.Builder, builderSystem, builderPayload.ToString(), token, null, baseStateVault, true);
+                            CouncilRole.Builder,
+                            builderSystem,
+                            builderPayload.ToString(),
+                            token,
+                            runContext.IsDocumentTask ? 0.25f : null,
+                            baseStateVault,
+                            true);
                         builderOutput = builderResult.Answer;
                         builderReasoningFallback = builderResult.IsReasoningFallback;
                     }
@@ -6128,7 +6650,13 @@ namespace Malx_AI
                         correctionPayload.AppendLine(sharedVocabularySection);
                         if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
                             correctionPayload.AppendLine(builderPriorKnowledge);
-                        if (taskType == CouncilTaskType.Coding)
+                        AppendCouncilWebContext(correctionPayload, runContext);
+                        if (runContext.IsArtifactCanvasRequest)
+                        {
+                            correctionPayload.AppendLine("ROLE CORRECTION: Builder must output the renderable artifact as exactly ONE ```html, ```svg, or ```python code fence with NOTHING outside the fence. " +
+                                "Do NOT output a numbered plan, a step list, prose, or any restatement of the request or the Architect's plan.");
+                        }
+                        else if (taskType == CouncilTaskType.Coding)
                         {
                             correctionPayload.AppendLine("ROLE CORRECTION: Builder must output executable code only. No prose.");
                         }
@@ -6151,7 +6679,13 @@ namespace Malx_AI
                         correctionPayload.AppendLine(BuildLabeledBlock("PREVIOUS BUILDER OUTPUT", builderOutput));
 
                         var builderRetry = await ExecuteCouncilRoleAsync(
-                            CouncilRole.Builder, builderSystem, correctionPayload.ToString(), token, null, baseStateVault, true);
+                            CouncilRole.Builder,
+                            builderSystem,
+                            correctionPayload.ToString(),
+                            token,
+                            runContext.IsDocumentTask ? 0.2f : null,
+                            baseStateVault,
+                            true);
                         builderOutput = builderRetry.Answer;
                         builderReasoningFallback = builderRetry.IsReasoningFallback;
 
@@ -6170,15 +6704,28 @@ namespace Malx_AI
                                 LogActivity("Builder correction failed strict validation; applying resilient fallback instead of terminating pipeline.");
                                 AppendChat("warning", "Builder output required automatic recovery. Applying resilient fallback output.");
 
-                                string rawFallback = taskType == CouncilTaskType.Coding
+                                // Artifact requests are code-fenced deliverables — extract the code, never
+                                // strip it as if it were prose, so the artifact-recovery stage below can
+                                // still find a renderable artifact in the corrected output.
+                                string rawFallback = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
                                     ? StripChatFromCode(builderOutput)
                                     : StripMarkdownFences(builderOutput);
 
                                 if (runContext.IsDocumentTask)
                                 {
-                                    builderContractCleaned = BuildDeterministicDocumentResponse(runContext.UserPrompt, runContext.DocumentContent, runContext.DocumentFileNames);
+                                    string? regenerated = await TryRegenerateWeakDocumentOutputAsync(
+                                        runContext,
+                                        builderSystem,
+                                        pipelineStateHeader,
+                                        sharedVocabularySection,
+                                        builderPriorKnowledge,
+                                        builderOutput,
+                                        token,
+                                        baseStateVault);
+                                    builderContractCleaned = regenerated
+                                        ?? BuildDeterministicDocumentResponse(runContext.UserPrompt, runContext.DocumentContent, runContext.DocumentFileNames);
                                 }
-                                else if (taskType != CouncilTaskType.Coding)
+                                else if (taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest)
                                 {
                                     string candidate = string.IsNullOrWhiteSpace(rawFallback) ? builderOutput : rawFallback;
                                     if (IsDegenerateBuilderOutput(candidate, taskType))
@@ -6224,6 +6771,18 @@ namespace Malx_AI
                     builderOutput = builderContractCleaned;
                     builderOutput = PostProcessBuilderOutput(builderOutput, runContext);
 
+                    if (runContext.WebGroundingRequired
+                        && !HasCouncilWebEvidenceForRun(runContext)
+                        && taskType != CouncilTaskType.Coding
+                        && !runContext.IsArtifactCanvasRequest
+                        && !BuilderStatesWebEvidenceUnavailable(builderOutput))
+                    {
+                        LogActivity("Builder attempted a current/source-backed answer without usable web evidence; replacing with evidence-gap response.");
+                        AppendChat("warning", "Web evidence was required but unavailable, so unsupported current factual claims were suppressed.");
+                        builderOutput = BuildWebEvidenceUnavailableBuilderFallback(runContext);
+                        builderReasoningFallback = false;
+                    }
+
                     // Run multi-stage artifact recovery for all artifact canvas requests, not just
                     // small local models. Cloud and large local models can also drift to prose.
                     // Stage 2 (prose extraction) rescues buried HTML/SVG from explanatory wrappers.
@@ -6245,9 +6804,42 @@ namespace Malx_AI
 
                     if (runContext.IsDocumentTask && IsLowValueDocumentOutput(builderOutput, runContext.DocumentFileNames))
                     {
-                        LogActivity("Builder document output was low-value/placeholder; applying silent deterministic document quality recovery.");
+                        LogActivity("Builder document output was low-value/placeholder; attempting grounded regeneration.");
                         runContext.BuilderOutput = builderOutput;
-                        builderOutput = BuildDeterministicDocumentQualityPass(runContext);
+                        string? regenerated = await TryRegenerateWeakDocumentOutputAsync(
+                            runContext,
+                            builderSystem,
+                            pipelineStateHeader,
+                            sharedVocabularySection,
+                            builderPriorKnowledge,
+                            builderOutput,
+                            token,
+                            baseStateVault);
+                        if (!string.IsNullOrWhiteSpace(regenerated))
+                        {
+                            builderOutput = regenerated;
+                            builderReasoningFallback = false;
+                            LogActivity("Builder document output regenerated after weak first pass.");
+                        }
+                        else
+                        {
+                            AppendChat("warning", "The local model produced a weak document answer after retry, so a source-grounded fallback was used.");
+                            builderOutput = BuildDeterministicDocumentQualityPass(runContext);
+                        }
+                    }
+                    else if (runContext.IsDocumentTask
+                        && !string.IsNullOrWhiteSpace(runContext.DocumentContent)
+                        && IsUngroundedDocumentOutput(builderOutput, runContext.DocumentContent))
+                    {
+                        // The model falsely claimed the document was missing/unavailable even though its
+                        // full text was in the payload — a refusal, not an answer. Substitute a grounded
+                        // extract so the user gets real content instead of a false "I can't read the file".
+                        // (Faithful-but-paraphrased summaries are NOT intercepted here anymore; only this
+                        // unambiguous refusal is — see IsUngroundedDocumentOutput.)
+                        LogActivity("Builder falsely claimed the document was unavailable; substituting source-grounded extractive synthesis.");
+                        AppendChat("warning", "The drafted answer claimed the document couldn't be read even though its full text was provided, so it was replaced with a summary built directly from the source text.");
+                        runContext.BuilderOutput = builderOutput;
+                        builderOutput = BuildDeterministicDocumentResponse(runContext.UserPrompt, runContext.DocumentContent, runContext.DocumentFileNames);
                     }
 
                     if (taskType != CouncilTaskType.Coding)
@@ -6269,6 +6861,7 @@ namespace Malx_AI
                                 continuationPayload.AppendLine(sharedVocabularySection);
                                 if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
                                     continuationPayload.AppendLine(builderPriorKnowledge);
+                                AppendCouncilWebContext(continuationPayload, runContext);
                                 continuationPayload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, taskType, ""));
                                 continuationPayload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
                                 continuationPayload.AppendLine(BuildLabeledBlock("ARCHITECT PLAN", runContext.ArchitectOutput));
@@ -6277,12 +6870,21 @@ namespace Malx_AI
                                     "Do not restart from the beginning and do not repeat existing paragraphs. Output continuation text only.");
 
                                 if (runContext.IsDocumentTask && !string.IsNullOrWhiteSpace(runContext.DocumentContent))
+                                {
                                     continuationPayload.AppendLine(BuildDocumentContentBlock(runContext.DocumentContent, 8000));
+                                    continuationPayload.AppendLine(DocumentGroundingInstruction);
+                                }
                                 else if (finalChunks.Count > 0)
                                     continuationPayload.AppendLine(BuildLabeledBlock("PROJECT KNOWLEDGE BASE", knowledgePacket));
 
                                 var continuationResult = await ExecuteCouncilRoleAsync(
-                                    CouncilRole.Builder, builderSystem, continuationPayload.ToString(), token, null, baseStateVault, true);
+                                    CouncilRole.Builder,
+                                    builderSystem,
+                                    continuationPayload.ToString(),
+                                    token,
+                                    runContext.IsDocumentTask ? 0.25f : null,
+                                    baseStateVault,
+                                    true);
                                 string continuationText = continuationResult.Answer
                                     .Replace(BuilderCompletionMarker, "", StringComparison.Ordinal)
                                     .Trim();
@@ -6586,7 +7188,7 @@ namespace Malx_AI
                         + webSearchSystemNote
                         + "\nIf any PIPELINE HEALTH flag is true, increase scrutiny and verify Builder output against Architect plan step-by-step."
                         + (runContext.Complexity == TaskComplexity.Complex ? "\n[COMPLEX TASK MODE] Perform requirement-by-requirement verification against every requirement item." : "");
-                    criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext);
+                    criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
                     if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? string.Empty))
                         criticSystem = BuildQwen3SystemPrompt(criticSystem, false);
 
@@ -6600,7 +7202,8 @@ namespace Malx_AI
                     string criticPayloadStr = criticStateHeader
                         + criticPriorKnowledge
                         + BuildPipelineHealthSection(runContext)
-                        + BuildRolePrimedPayload(CouncilRole.Critic, taskType, BuildCriticPayload(runContext, sandboxResult));
+                        + BuildRolePrimedPayload(CouncilRole.Critic, taskType, BuildCriticPayload(runContext, sandboxResult))
+                        + BuildCouncilClosingAnchor(CouncilRole.Critic);
                     string previousCriticOutput = GetPreviousRoleOutput("critic");
 
                     var criticResult = await ExecuteCouncilRoleAsync(
@@ -6738,7 +7341,12 @@ namespace Malx_AI
                     // ═══════════════════════════════════════════════════════════════
                     // STAGE 4 — Weighted confidence routing after Critic
                     // ═══════════════════════════════════════════════════════════════
-                    if (hasBuilder && criticDetectedIssues)
+                    if (CanUseCloudCouncil && hasBuilder && criticDetectedIssues)
+                    {
+                        LogActivity("Cloud council: Critic found issues; keeping Builder output and skipping automatic rewrite to avoid repeated cloud Builder remakes.");
+                        AppendChat("warning", "Critic found issues, but cloud mode kept the current Builder output instead of auto-rewriting it. Use Refine or Re-run Builder if you want a deliberate revision.");
+                    }
+                    else if (hasBuilder && criticDetectedIssues)
                     {
                         int issueCount = criticReport.Issues.Count;
                         LogActivity($"Critic findings count: {issueCount}.");
@@ -6786,6 +7394,7 @@ namespace Malx_AI
                                     : "\n[TARGETED PATCH MODE] Fix ONLY the specific issues listed below. " +
                                       "Output the complete corrected final response text (not code) and preserve unaffected content. " +
                                       "Do not output a diff and do not include explanations about what changed.");
+                            patchSystem += webSearchSystemNote + builderWebPauseSystemNote;
                             if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty))
                                 patchSystem = BuildQwen3SystemPrompt(patchSystem, false);
 
@@ -6796,6 +7405,7 @@ namespace Malx_AI
                             patchPayload.AppendLine(sharedVocabularySection);
                             if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
                                 patchPayload.AppendLine(builderPriorKnowledge);
+                            AppendCouncilWebContext(patchPayload, runContext);
                             patchPayload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, taskType, ""));
                             patchPayload.AppendLine(BuildLabeledBlock("BUILDER OUTPUT", runContext.BuilderOutput));
                             patchPayload.AppendLine(BuildLabeledBlock("CRITIC FINDINGS", runContext.CriticReview));
@@ -6807,6 +7417,14 @@ namespace Malx_AI
                             var patchResult = await ExecuteCouncilRoleAsync(
                                 CouncilRole.Builder, patchSystem, patchPayload.ToString(), token, null, baseStateVault, true);
                             string patchedOutput = PostProcessBuilderOutput(patchResult.Answer, runContext);
+                            if (runContext.WebGroundingRequired
+                                && !HasCouncilWebEvidenceForRun(runContext)
+                                && taskType != CouncilTaskType.Coding
+                                && !runContext.IsArtifactCanvasRequest
+                                && !BuilderStatesWebEvidenceUnavailable(patchedOutput))
+                            {
+                                patchedOutput = BuildWebEvidenceUnavailableBuilderFallback(runContext);
+                            }
                             builderReasoningFallback = patchResult.IsReasoningFallback;
 
                             // Post-patch verification for coding tasks
@@ -6933,6 +7551,7 @@ namespace Malx_AI
                                       "Do NOT patch inline. Produce a complete replacement response text. " +
                                       "Address every numbered finding from the Critic and preserve factual grounding. " +
                                       "Output ONLY the corrected final response — no change log or commentary.");
+                            revisionBuilderSystem += webSearchSystemNote + builderWebPauseSystemNote;
                             if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty))
                                 revisionBuilderSystem = BuildQwen3SystemPrompt(revisionBuilderSystem, false);
 
@@ -6943,6 +7562,7 @@ namespace Malx_AI
                             revisionPayload.AppendLine(sharedVocabularySection);
                             if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
                                 revisionPayload.AppendLine(builderPriorKnowledge);
+                            AppendCouncilWebContext(revisionPayload, runContext);
                             revisionPayload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, taskType, ""));
                             revisionPayload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
 
@@ -6965,9 +7585,23 @@ namespace Malx_AI
                             }
 
                             var revisedBuilderResult = await ExecuteCouncilRoleAsync(
-                                CouncilRole.Builder, revisionBuilderSystem, revisionPayload.ToString(), token, null, baseStateVault, true);
+                                CouncilRole.Builder,
+                                revisionBuilderSystem,
+                                revisionPayload.ToString(),
+                                token,
+                                runContext.IsDocumentTask ? 0.25f : null,
+                                baseStateVault,
+                                true);
                             string revisedBuilderOutput = revisedBuilderResult.Answer;
                             revisedBuilderOutput = PostProcessBuilderOutput(revisedBuilderOutput, runContext);
+                            if (runContext.WebGroundingRequired
+                                && !HasCouncilWebEvidenceForRun(runContext)
+                                && taskType != CouncilTaskType.Coding
+                                && !runContext.IsArtifactCanvasRequest
+                                && !BuilderStatesWebEvidenceUnavailable(revisedBuilderOutput))
+                            {
+                                revisedBuilderOutput = BuildWebEvidenceUnavailableBuilderFallback(runContext);
+                            }
                             builderReasoningFallback = revisedBuilderResult.IsReasoningFallback;
 
                             LogActivity($"Builder revision complete ({revisedBuilderOutput.Length} chars). Routing output...");
@@ -7033,7 +7667,7 @@ namespace Malx_AI
                         + objectiveClause
                         + (runContext.IsArtifactCanvasRequest && IsSmallLocalCouncilModel(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? GetEffectiveRoleConfig(CouncilRole.Critic).DisplayName, _isCloudModeEnabled) ? BuildSmallModelArtifactAssist(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
                         + BuildCriticContract(taskType);
-                    criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext);
+                    criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
                     if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? string.Empty))
                         criticSystem = BuildQwen3SystemPrompt(criticSystem, false);
                     string criticOnlyPrior = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(runContext.UserPrompt + "\n" + runContext.ArchitectOutput, 5));
@@ -7041,7 +7675,8 @@ namespace Malx_AI
                         + sharedVocabularySection
                         + criticOnlyPrior
                         + BuildPipelineHealthSection(runContext)
-                        + BuildRolePrimedPayload(CouncilRole.Critic, taskType, BuildCriticPayload(runContext, ""));
+                        + BuildRolePrimedPayload(CouncilRole.Critic, taskType, BuildCriticPayload(runContext, ""))
+                        + BuildCouncilClosingAnchor(CouncilRole.Critic);
                     var criticOnlyResult = await ExecuteCouncilRoleAsync(
                         CouncilRole.Critic, criticSystem, criticPayloadStr, token, null, baseStateVault, true);
                     criticOutput = criticOnlyResult.Answer;
@@ -7157,6 +7792,8 @@ namespace Malx_AI
                 FinalizeOrphanStreamingCards();
                 _builderPythonSandboxPreamble = string.Empty;
                 _activePythonSandboxPreamble = string.Empty;
+                _activeCouncilWebPrompt = string.Empty;
+                _activeCouncilRunContext = null;
                 CleanupCouncilBaseStateVault(baseStateVault);
                 StopPipelineProgress();
                 _nextPromptPriorityChunks.Clear();
@@ -7291,6 +7928,7 @@ namespace Malx_AI
                 segmentPayload.AppendLine(sharedVocabularySection);
                 if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
                     segmentPayload.AppendLine(priorKnowledgeBlock);
+                AppendCouncilWebContext(segmentPayload, runContext);
                 if (fewShotPrefix.Length > 0 && i == 0)
                     segmentPayload.AppendLine(fewShotPrefix);
 
@@ -7364,64 +8002,297 @@ namespace Malx_AI
             return assembledCode.ToString() + "\n" + BuilderCompletionMarker;
         }
 
-        private async Task<string> ExecuteSegmentedDocumentBuilderAsync(
+        // Analyzes an attached document too large for a single full-context pass. Instead of one model
+        // pass PER chunk (a map-reduce — N slow generations that dominated the ~10-minute Builder time),
+        // this is retrieval-augmented generation: it selects the chunks that best fit ONE pass (the
+        // request-relevant ones for a question; an even spread for a summary) and answers once. One pass
+        // is faster on EVERY machine — GPU or CPU, large or small VRAM — and is the standard way to
+        // ground an answer in a document that doesn't fit the context window. The context is right-sized
+        // to the selected content, which also leaves more VRAM for model layers on memory-limited cards,
+        // with no GPU-architecture-specific branching.
+        private async Task<string> ExecuteDocumentRetrievalBuilderAsync(
             CouncilRunContext runContext, string builderSystem, string priorKnowledgeBlock, CancellationToken token, CouncilBaseStateVault? baseStateVault)
         {
             int builderContext = (int)GetRoleContextSize(CouncilRole.Builder);
-            int promptOverhead = 900;
-            int maxDocTokens = Math.Max(256, (int)((builderContext - promptOverhead) * 0.6));
-            var docSegments = SplitDocumentForSegmentedProcessing(runContext.DocumentContent, maxDocTokens);
-            string pipelineStateHeader = BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(runContext.ArchitectOutput), "");
-            string sharedVocabularySection = BuildSharedVocabularySection(runContext.SharedVocabulary);
 
-            if (docSegments.Count <= 1)
+            // Budget the window by its REAL fixed costs first, then give what's left to source content.
+            // The Builder system prompt (environment briefing + output contract + role boosts) is roughly
+            // 1.5-2.5k tokens — far more than the ~900 the old "(ctx - 900) * 0.62" reserve assumed.
+            // Under-counting it let content + system overflow the window, so the budget guard in
+            // ExecuteCouncilRoleAsync truncated the payload tail and dropped [[ORIGINAL REQUEST]] / the
+            // plan; the model then "summarized" with no idea what was asked. Measuring the overhead keeps
+            // both the document AND the request inside the window.
+            int builderSystemTokens = EstimateTokenCount(builderSystem);
+            int builderFramingTokens = EstimateTokenCount(runContext.UserPrompt)
+                + EstimateTokenCount(runContext.ArchitectOutput)
+                + 700;  // analysis instruction + block labels + chat-template overhead
+            const int builderGenerationReserve = 900;
+            int builderFixedOverhead = builderSystemTokens + builderFramingTokens + builderGenerationReserve;
+            int contentTokenBudget = Math.Max(512, builderContext - builderFixedOverhead);
+            int chunkTokens = Math.Clamp(contentTokenBudget / 4, 400, 1200);
+            var chunks = SplitDocumentForSegmentedProcessing(runContext.DocumentContent, chunkTokens);
+            var selected = SelectChunksForSinglePass(chunks, runContext.UserPrompt, contentTokenBudget);
+
+            bool coveredWhole = selected.Count >= chunks.Count;
+            int selectedTokens = selected.Sum(c => c.TokenEstimate);
+            if (coveredWhole)
             {
-                var payload = new StringBuilder();
-                payload.AppendLine(pipelineStateHeader);
-                payload.AppendLine(sharedVocabularySection);
-                if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
-                    payload.AppendLine(priorKnowledgeBlock);
-                payload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, runContext.TaskType, ""));
-                payload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
-                payload.AppendLine(BuildLabeledBlock("ARCHITECT PLAN", runContext.ArchitectOutput));
-                payload.AppendLine(BuildDocumentContentBlock(runContext.DocumentContent));
-                var single = await ExecuteCouncilRoleAsync(CouncilRole.Builder, builderSystem, payload.ToString(), token, null, baseStateVault, true);
-                return single.Answer + "\n" + BuilderCompletionMarker;
+                LogActivity($"Document retrieval builder: whole document fits one pass ({chunks.Count} chunk(s), ~{selectedTokens}t).");
+            }
+            else
+            {
+                LogActivity($"Document retrieval builder: selected {selected.Count}/{chunks.Count} chunks (~{selectedTokens}t) for one focused pass.");
+                AppendChat("system", $"The document is long; this answer focuses on the {selected.Count} most relevant of {chunks.Count} sections. Ask about a specific section to cover the rest.");
+            }
+            RelayStatusBlock.Text = "Relay: Builder is analyzing the document...";
+
+            var combined = new StringBuilder();
+            foreach (var chunk in selected)
+            {
+                if (combined.Length > 0)
+                    combined.AppendLine().AppendLine();
+                combined.Append(chunk.Section);
             }
 
-            var assembled = new StringBuilder();
+            var payload = new StringBuilder();
+            payload.AppendLine(BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(runContext.ArchitectOutput), ""));
+            payload.AppendLine(BuildSharedVocabularySection(runContext.SharedVocabulary));
+            if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
+                payload.AppendLine(priorKnowledgeBlock);
+            AppendCouncilWebContext(payload, runContext);
+            payload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, runContext.TaskType, ""));
+            payload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
+            payload.AppendLine(BuildLabeledBlock("ARCHITECT PLAN", runContext.ArchitectOutput));
+            payload.AppendLine(BuildLabeledBlock(coveredWhole ? "DOCUMENT CONTENT" : "MOST RELEVANT DOCUMENT SECTIONS", combined.ToString()));
+            // Comprehension + STRICT grounding: a weak local model otherwise paraphrases loosely and
+            // fills gaps with plausible-but-fabricated content. Tell it to read and understand, answer in
+            // its own words, but treat the text above as the ONLY source of truth (DocumentGroundingInstruction)
+            // and, on partial coverage, scope the answer honestly instead of inventing the missing sections.
+            string analysisInstruction =
+                "Read and UNDERSTAND the document text above, then answer [[ORIGINAL REQUEST]] in your own words. " +
+                DocumentGroundingInstruction;
+            if (!coveredWhole)
+                analysisInstruction += " These are the sections most relevant to the request, not the whole document; " +
+                    "answer only from what is shown here, and do not invent the contents of sections that are not included.";
+            payload.AppendLine(analysisInstruction);
+            payload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: _isWebSearchEnabled && !_isCloudModeEnabled));
 
-            for (int i = 0; i < docSegments.Count; i++)
+            // Right-size the context to this pass's real need (selected content + the measured fixed
+            // overhead computed above), never above the role default. A smaller window costs nothing here
+            // yet frees the VRAM a full window's KV cache would reserve, so more of the model stays on the
+            // GPU on memory-limited machines. Because the overhead now includes the real system prompt and
+            // request, this no longer under-sizes the window and forces a tail truncation that would drop
+            // the request. Purely content-driven — no GPU model/architecture checks.
+            int neededContext = Math.Clamp(selectedTokens + builderFixedOverhead, (int)MinRoleContext, builderContext);
+            int? contextOverride = neededContext < builderContext ? neededContext : (int?)null;
+
+            var result = await ExecuteCouncilRoleAsync(
+                CouncilRole.Builder, builderSystem, payload.ToString(), token, 0.25f, baseStateVault, true,
+                contextSizeOverride: contextOverride);
+            return result.Answer + "\n" + BuilderCompletionMarker;
+        }
+
+        private async Task<string?> TryRegenerateWeakDocumentOutputAsync(
+            CouncilRunContext runContext,
+            string builderSystem,
+            string pipelineStateHeader,
+            string sharedVocabularySection,
+            string priorKnowledgeBlock,
+            string previousOutput,
+            CancellationToken token,
+            CouncilBaseStateVault? baseStateVault)
+        {
+            if (string.IsNullOrWhiteSpace(runContext.DocumentContent))
+                return null;
+
+            int builderContext = (int)GetRoleContextSize(CouncilRole.Builder);
+            int builderSystemTokens = EstimateTokenCount(builderSystem);
+            int fixedOverhead = builderSystemTokens
+                + EstimateTokenCount(runContext.UserPrompt)
+                + EstimateTokenCount(runContext.ArchitectOutput)
+                + EstimateTokenCount(previousOutput)
+                + 900;
+            int contentTokenBudget = Math.Max(512, builderContext - fixedOverhead);
+            int chunkTokens = Math.Clamp(contentTokenBudget / 4, 400, 1000);
+            var chunks = SplitDocumentForSegmentedProcessing(runContext.DocumentContent, chunkTokens);
+            var selected = SelectChunksForSinglePass(chunks, runContext.UserPrompt, contentTokenBudget);
+            if (selected.Count == 0)
+                return null;
+
+            var source = new StringBuilder();
+            foreach (var chunk in selected)
             {
-                LogActivity($"Document segmented builder: segment {i + 1}/{docSegments.Count} (~{docSegments[i].TokenEstimate} tokens)");
-                RelayStatusBlock.Text = $"Relay: Builder document segment {i + 1}/{docSegments.Count}...";
-
-                var payload = new StringBuilder();
-                payload.AppendLine(pipelineStateHeader);
-                payload.AppendLine(sharedVocabularySection);
-                if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
-                    payload.AppendLine(priorKnowledgeBlock);
-                payload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, runContext.TaskType, ""));
-                payload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
-                payload.AppendLine(BuildLabeledBlock("ARCHITECT PLAN", runContext.ArchitectOutput));
-                payload.AppendLine(BuildLabeledBlock($"DOCUMENT SEGMENT {i + 1}/{docSegments.Count}", docSegments[i].Section));
-                payload.AppendLine(BuildLabeledBlock("PRIOR OUTPUT", assembled.ToString()));
-
-                string segmentSystem = builderSystem +
-                    "\n[DOCUMENT SEGMENT MODE] Work ONLY on the provided [[DOCUMENT SEGMENT]] while maintaining continuity with [[PRIOR OUTPUT]]. " +
-                    "Do not claim missing document access. Do not write code unless explicitly asked.";
-
-                var result = await ExecuteCouncilRoleAsync(CouncilRole.Builder, segmentSystem, payload.ToString(), token, null, baseStateVault, true);
-                string part = result.Answer.Replace(BuilderCompletionMarker, "", StringComparison.Ordinal).Trim();
-                if (part.Length > 0)
-                {
-                    if (assembled.Length > 0)
-                        assembled.AppendLine().AppendLine();
-                    assembled.Append(part);
-                }
+                if (source.Length > 0)
+                    source.AppendLine().AppendLine();
+                source.Append(chunk.Section);
             }
 
-            return assembled.ToString() + "\n" + BuilderCompletionMarker;
+            var payload = new StringBuilder();
+            payload.AppendLine(pipelineStateHeader);
+            payload.AppendLine(sharedVocabularySection);
+            if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
+                payload.AppendLine(priorKnowledgeBlock);
+            AppendCouncilWebContext(payload, runContext);
+            payload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, runContext.TaskType, ""));
+            payload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
+            payload.AppendLine(BuildLabeledBlock("ARCHITECT PLAN", runContext.ArchitectOutput));
+            payload.AppendLine(BuildLabeledBlock("PREVIOUS WEAK OUTPUT", previousOutput));
+            payload.AppendLine(BuildLabeledBlock(
+                selected.Count >= chunks.Count ? "DOCUMENT CONTENT" : "DOCUMENT SECTIONS FOR REGENERATION",
+                source.ToString()));
+            payload.AppendLine("Regenerate the final answer from the document text above. The previous output was too thin, fragmentary, or copied too much source text. Write a coherent answer in your own words, cover the user's request directly, and do not paste disconnected source sentences.");
+            payload.AppendLine(DocumentGroundingInstruction);
+            payload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: _isWebSearchEnabled && !_isCloudModeEnabled));
+
+            int selectedTokens = selected.Sum(c => c.TokenEstimate);
+            int neededContext = Math.Clamp(selectedTokens + fixedOverhead, (int)MinRoleContext, builderContext);
+            int? contextOverride = neededContext < builderContext ? neededContext : (int?)null;
+
+            var retry = await ExecuteCouncilRoleAsync(
+                CouncilRole.Builder,
+                builderSystem,
+                payload.ToString(),
+                token,
+                0.2f,
+                baseStateVault,
+                true,
+                maxGenerationTokensOverride: 2048,
+                contextSizeOverride: contextOverride);
+
+            if (!TryNormalizeBuilderOutput(retry.Answer, runContext.TaskType, out string cleaned, out _))
+                return null;
+
+            cleaned = PostProcessBuilderOutput(cleaned, runContext);
+            if (IsLowValueDocumentOutput(cleaned, runContext.DocumentFileNames)
+                || IsUngroundedDocumentOutput(cleaned, runContext.DocumentContent))
+            {
+                return null;
+            }
+
+            return cleaned;
+        }
+
+        // Selects the chunks for a SINGLE document pass, packed to `tokenBudget`. For a request with
+        // content keywords it keeps the most relevant chunks; for a generic request (e.g. "summarize")
+        // where nothing scores, it keeps an even spread across the document for breadth. The document
+        // opening is always included, and the result is returned in document order so the pass reads
+        // coherently. Any chunk dropped is content this one pass won't see — the deliberate cost of a
+        // single fast pass over a document larger than the context window.
+        private static List<(string Section, int TokenEstimate)> SelectChunksForSinglePass(
+            List<(string Section, int TokenEstimate)> chunks, string query, int tokenBudget)
+        {
+            if (chunks.Count == 0)
+                return chunks;
+            if (chunks.Sum(c => c.TokenEstimate) <= tokenBudget)
+                return chunks; // whole document fits — use all of it, in order.
+
+            var keywords = ExtractQueryKeywords(query);
+            double maxScore = 0;
+            var scored = new List<(int Index, double Score)>(chunks.Count);
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                string lower = chunks[i].Section.ToLowerInvariant();
+                double hits = keywords.Sum(k => CountOccurrences(lower, k));
+                double density = hits / Math.Max(1.0, chunks[i].Section.Length / 1000.0);
+                scored.Add((i, density));
+                maxScore = Math.Max(maxScore, density);
+            }
+
+            // Relevance order when the request names something narrow in the document; otherwise an
+            // even spread so broad summaries sample the whole document instead of just dense keyword
+            // pockets.
+            bool broadCoverageRequest = IsBroadDocumentCoverageRequest(query);
+            List<int> order = maxScore > 0 && !broadCoverageRequest
+                ? scored.OrderByDescending(s => s.Score).Select(s => s.Index).ToList()
+                : EvenlySpreadIndices(chunks.Count);
+
+            var picked = new HashSet<int> { 0 };               // always keep the document opening
+            int used = chunks[0].TokenEstimate;
+            foreach (int idx in order)
+            {
+                if (picked.Contains(idx))
+                    continue;
+                if (used + chunks[idx].TokenEstimate > tokenBudget)
+                    continue;
+                picked.Add(idx);
+                used += chunks[idx].TokenEstimate;
+            }
+
+            return Enumerable.Range(0, chunks.Count).Where(picked.Contains).Select(i => chunks[i]).ToList();
+        }
+
+        // Orders indices so a budget-limited prefix samples ACROSS the document (0, then evenly stepped
+        // sections, then the remainder) rather than only its head.
+        private static List<int> EvenlySpreadIndices(int count)
+        {
+            var ordered = new List<int>();
+            var seen = new HashSet<int>();
+            int step = Math.Max(1, count / 8);
+            for (int i = 0; i < count; i += step)
+                if (seen.Add(i)) ordered.Add(i);
+            for (int i = 0; i < count; i++)
+                if (seen.Add(i)) ordered.Add(i);
+            return ordered;
+        }
+
+        private static readonly HashSet<string> ExcerptRankStopWords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "the","a","an","and","or","but","of","to","in","on","for","with","that","this","these","those",
+            "is","are","was","were","be","been","it","its","as","at","by","from","into","about","what","which",
+            "who","whom","how","why","when","where","please","can","could","would","should","does","summarize",
+            "summary","explain","describe","give","tell","write","make","provide","document","file","text"
+        };
+
+        private static bool IsBroadDocumentCoverageRequest(string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return true;
+
+            string lower = query.ToLowerInvariant();
+            string[] broadSignals =
+            [
+                "summarize", "summarise", "summary", "overview", "key points",
+                "main points", "highlights", "review this", "review the document",
+                "explain this", "explain the document", "break down"
+            ];
+
+            if (!broadSignals.Any(signal => lower.Contains(signal, StringComparison.Ordinal)))
+                return false;
+
+            string[] narrowSignals =
+            [
+                "specific", "section", "chapter", "page ", "figure", "table",
+                "quote", "extract", "compare", "contrast", "find ", "where ",
+                "when ", "who ", "how many", "what does", "what do they say about"
+            ];
+
+            return !narrowSignals.Any(signal => lower.Contains(signal, StringComparison.Ordinal));
+        }
+
+        private static List<string> ExtractQueryKeywords(string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return new List<string>();
+
+            return query.ToLowerInvariant()
+                .Split(new[] { ' ', '\t', '\n', '\r', ',', '.', ';', ':', '!', '?', '"', '\'', '(', ')', '[', ']', '/', '\\', '-' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(w => w.Length >= 4 && !ExcerptRankStopWords.Contains(w))
+                .Distinct()
+                .Take(24)
+                .ToList();
+        }
+
+        private static int CountOccurrences(string haystack, string needle)
+        {
+            if (string.IsNullOrEmpty(needle))
+                return 0;
+            int count = 0, idx = 0;
+            while ((idx = haystack.IndexOf(needle, idx, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                idx += needle.Length;
+            }
+            return count;
         }
 
         // ═══════════════════════════════════════════════
@@ -7435,13 +8306,15 @@ namespace Malx_AI
 
             // Strip echoed pipeline metadata FIRST — models often regurgitate [[LABEL]] blocks,
             // pipeline state headers, role reminders, and other structural payload content.
-            string output = StripPipelineMetadata(raw);
+            string output = TrimRepeatedRestartTail(StripPipelineMetadata(raw));
 
-            // For coding tasks, extract code from fenced blocks (before markers get stripped).
-            // StripChatFromCode properly extracts content between ``` fences and strips chat preamble.
-            // StripMarkdownFences only removes ``` lines but keeps all surrounding prose — causing
-            // "mixed" output when models include explanations alongside code in revision mode.
-            if (context.TaskType == CouncilTaskType.Coding)
+            // For coding tasks AND artifact-canvas requests, extract code from fenced blocks (before
+            // markers get stripped). StripChatFromCode properly extracts content between ``` fences and
+            // strips chat preamble. StripMarkdownFences only removes ``` lines but keeps all surrounding
+            // prose — causing "mixed" output when models include explanations alongside code. Artifact
+            // requests are code-fenced HTML/SVG deliverables, so they must take the code path; the prose
+            // sanitizer below would strip lines (import/from/etc.) and corrupt the artifact.
+            if (context.TaskType == CouncilTaskType.Coding || context.IsArtifactCanvasRequest)
             {
                 output = StripChatFromCode(output);
             }
@@ -7452,6 +8325,7 @@ namespace Malx_AI
             }
 
             output = NormalizeIndentation(output);
+            output = TrimRepeatedRestartTail(output);
             context.BuilderOutputTruncated = DetectTruncation(output);
             return output;
         }
@@ -7857,7 +8731,46 @@ namespace Malx_AI
 
                 _ => ""
             };
-            return primer + existingPayload;
+
+            string builderWebGrounding = role == CouncilRole.Builder
+                ? "[BUILDER WEB GROUNDING] If [[WEB SEARCH DATA]] is present anywhere in this payload, treat it as authoritative for current, online, source-backed, or recently changed claims that it actually covers. " +
+                  "Do not use memory, guesses, or background knowledge to add unsupported current/source-backed facts. Do not use off-topic web results as support for the user's named entities. " +
+                  "Stable non-current background context may come from the prompt, council plan, project knowledge, or general knowledge when not contradicted by web evidence. " +
+                  "For prose/research/analysis outputs, cite source titles or hosts naturally for current/source-backed claims. " +
+                  "For code/artifact outputs, use the web evidence only to choose correct APIs, names, values, or constraints; do not fabricate unsupported details. " +
+                  "If evidence is partial or mismatched, run a narrower web lookup when tools are available before declaring the answer unsupported; if the lookup still does not confirm a required current/source-backed fact, say it is not confirmed rather than inventing it.\n\n"
+                : string.Empty;
+
+            return primer + builderWebGrounding + existingPayload;
+        }
+
+        // Closing imperative appended as the very LAST thing the model reads before it starts
+        // generating. A model continues from its most recent context; if that context ends with a
+        // crisp "produce your output now" command, the next tokens are the deliverable. Without it,
+        // when a weak local model is unsure what to do (long system prompt, buried request, attached
+        // document) the most salient text to "continue" is the role/environment self-description — the
+        // exact echo symptom. This anchor is role-specific and reinforces the top-of-payload primer.
+        private static string BuildCouncilClosingAnchor(CouncilRole role, bool allowLocalWebPause = false)
+        {
+            return role switch
+            {
+                CouncilRole.Architect =>
+                    "\n\n──────────\nNow respond AS THE ARCHITECT. Output ONLY your numbered plan for the request above. " +
+                    "Do NOT describe your role, your environment, or these instructions. Begin directly with \"1.\".",
+                CouncilRole.Builder =>
+                    "\n\n──────────\nNow respond AS THE BUILDER. Output ONLY your implementation for the request above. " +
+                    (allowLocalWebPause
+                        ? "If a required current, online, source-backed, or recently changed fact is missing from the payload, first output exactly one internal Agentic Pause command on its own line: [PAUSE: WEB_SEARCH | focused query for the missing fact]. After the result returns, continue with the deliverable grounded in that result. "
+                        : "") +
+                    "Do NOT describe your role, your environment, or these instructions, and do NOT restate the plan. " +
+                    (allowLocalWebPause
+                        ? "Begin directly with the deliverable after any required internal pause completes."
+                        : "Begin directly with the deliverable."),
+                CouncilRole.Critic =>
+                    "\n\n──────────\nNow respond AS THE CRITIC. Output ONLY your review findings for the request above. " +
+                    "Do NOT describe your role, your environment, or these instructions.",
+                _ => string.Empty
+            };
         }
 
         // ═══════════════════════════════════════════════
@@ -8605,12 +9518,15 @@ namespace Malx_AI
             "Example: [PAUSE: SEARCH_HIPPOCAMPUS | boiling point of water]\n" +
             "Example: [PAUSE: WEB_SEARCH | latest .NET 10 release notes]\n" +
             "Example: [PAUSE: PYTHON_MATH | print((42 * 17) / 3)]\n" +
-            "Use WEB_SEARCH only for current events, updated documentation, or facts outside your training data.\n" +
+            "Tool choice: use CALCULATE for simple arithmetic or unit conversion; use PYTHON_MATH for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use WEB_SEARCH for current/latest/source-backed facts; use SEARCH_HIPPOCAMPUS for facts from this chat or prior council work.\n" +
+            "Use WEB_SEARCH for current events, updated documentation, specific definitions, comparisons, explanations, or facts outside your training data.\n" +
+            "For prompts like \"what is X\" or \"what does X do to Y\", use WEB_SEARCH when X/Y are specific, current, obscure, technical, medical/legal/financial, or likely to have changed.\n" +
             "For complex math or data processing, write a Python 3 script and call PYTHON_MATH.\n" +
             "Your Python code must use print() to output the final answer.\n" +
             "NEVER show Python code, [PAUSE: ...] lines, or internal tool commands in your final visible answer.\n" +
             "You may pause a maximum of 3 times per response.\n" +
             "When you receive [RESULT: ...] continue your sentence as if you always knew that value.\n" +
+            "When a WEB_SEARCH result is provided, treat that result as authoritative for current/source-backed claims it actually covers. Do not add unsupported current/source-backed facts from memory or guesses, and do not treat off-topic web results as support.\n" +
             "Do NOT output [PAUSE: ...] lines for things you already know with certainty.";
 
         // ── Cloud-native tools note ── replaces AgenticPauseRule for cloud council roles.
@@ -8622,21 +9538,24 @@ namespace Malx_AI
         private string BuildCloudCouncilToolsNote()
         {
             string webSearchEntry = _isWebSearchEnabled
-                ? "web_search (current events or facts outside your training data), "
+                ? "web_search (definitions, explanations, comparisons, documentation, current events, or facts outside your training data), "
                 : string.Empty;
             string webDisabledNote = _isWebSearchEnabled
                 ? string.Empty
                 : "Web search is currently disabled by the user — do not attempt web lookups; state the limitation if current information would change the answer.\n";
             return
                 "\n\nTOOLS AVAILABLE:\n" +
-                "You can call real tools directly when you need a fact, number, or current information. Do NOT guess and do NOT fabricate numbers or facts.\n" +
+                "You can call real tools directly when you need a current/source-backed fact, definition, explanation, comparison, number, documentation detail, or current information. Do NOT guess and do NOT fabricate numbers or source-backed facts.\n" +
                 "Available tools: " + webSearchEntry +
                 "run_python (execute Python 3 for math or data processing; print() the final answer), " +
                 "calculate (evaluate a math or unit-conversion expression), " +
                 "search_session_memory (recall facts, prior plans, and outputs stored earlier in this workplace session).\n" +
                 webDisabledNote +
+                "Tool choice: use calculate for simple arithmetic or unit conversion; use run_python for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use web_search for current/latest/source-backed facts; use search_session_memory for facts from this chat or prior council work.\n" +
+                "Tool results only cover the specific current/source-backed claim or computation they actually address; off-topic web results are not support for the user's named entities.\n" +
                 "Issue a normal tool call when you need one — the system runs it and returns the result, which you must treat as authoritative grounded fact.\n" +
                 "NEVER write [PAUSE: ...] or [RESULT: ...] lines, raw tool commands, or Python code in your final visible answer.\n" +
+                "For prompts like \"what is X\" or \"what does X do to Y\", call web_search when X/Y are specific, current, obscure, technical, medical/legal/financial, or likely to have changed.\n" +
                 "Do NOT call tools for things you already know with certainty.";
         }
 
@@ -8826,7 +9745,7 @@ namespace Malx_AI
                         };
                     }
 
-                    using var baseContext = await Task.Run(() => model!.CreateContext(plan.Parameters), token);
+                    using var baseContext = await Task.Run(() => LlamaContextFactory.CreateContext(model!, plan.Parameters), token);
                     var baseExecutor = new InteractiveExecutor(baseContext);
                     var baseSession = new LLama.ChatSession(baseExecutor);
                     baseSession.WithHistoryTransform(new PromptTemplateTransformer(model!, withAssistant: true));
@@ -8877,7 +9796,9 @@ namespace Malx_AI
             CouncilBaseStateVault? baseStateVault = null,
             bool loadBaseState = false,
             bool allowBatchRecovery = true,
-            bool showLiveCard = true)
+            bool showLiveCard = true,
+            int? maxGenerationTokensOverride = null,
+            int? contextSizeOverride = null)
         {
             if (_isCloudModeEnabled)
             {
@@ -8918,7 +9839,7 @@ namespace Malx_AI
                     2048,
                     gemmaRoleTemp,
                     0.05f,
-                    new[] { "<turn|>", "<|/channel|>" },
+                    new[] { "<end_of_turn>" },
                     token);
 
                 string roleMarker = GetRoleCompletionMarker(role);
@@ -8987,14 +9908,34 @@ namespace Malx_AI
                     string preview = BuildLiveStreamPreview(current);
                     _ = Dispatcher.InvokeAsync(() =>
                     {
-                        if (liveCard != null)
+                        // Only update while this is still the ACTIVE streaming card. Once AppendChat
+                        // finalizes it (and removes it from _streamingCouncilCards), a late throttled
+                        // preview must not revert the finalized full answer back to a truncated "…" tail.
+                        if (liveCard != null
+                            && _streamingCouncilCards.TryGetValue(liveRoleKey, out var activeCard)
+                            && ReferenceEquals(activeCard, liveCard))
                             liveCard.Content = preview;
                     }, DispatcherPriority.Background);
                 };
             }
 
-            uint roleContext = GetRoleContextSize(role);
+            // A caller-supplied context override lets the document map-reduce request a smaller context
+            // than the role default. On GPUs without flash attention (Pascal/Maxwell, or any Gemma) the
+            // KV cache stays f16, so a large context steals enough VRAM to push layers onto the CPU; a
+            // smaller context on a FRESH load fits more layers on the GPU and runs far faster.
+            uint roleContext = contextSizeOverride is int ctxOverride && ctxOverride > 0
+                ? (uint)Math.Clamp(ctxOverride, (int)MinRoleContext, (int)MaxRoleContext)
+                : GetRoleContextSize(role);
             string cacheKey = config.ModelPath!;
+
+            // Self-healing GPU-crash recovery for the council. A llama.cpp native abort (CUDA
+            // illegal memory access during decode — the documented Pascal/8GB instability) kills the
+            // whole process with no catchable exception. Normal chat already steps a struck model
+            // down (smaller GPU context, then CPU) via the crash ledger; the council path never did,
+            // so the Builder crashed hard on every run with no recovery. Mirror that here so a model
+            // that has crashed on GPU loads at reduced VRAM pressure and, if it keeps dying, on CPU.
+            var (recoveryMode, recoveryContext) = ResolveCouncilCrashRecovery(cacheKey, roleContext);
+            roleContext = recoveryContext;
 
             // Cache-aware planning. A fresh CreatePlan probes CURRENT free VRAM — which
             // already contains this model's own weights when they are cached. The old
@@ -9003,14 +9944,14 @@ namespace Malx_AI
             // 0 layers → mismatch → evicted the GPU-resident weights and reloaded the
             // model from disk CPU-only). Symptom: GPU active for the first stage, then
             // 0% GPU with the CPU pegged for the rest of the run.
-            bool wantGpu = InferenceBackendService.CurrentMode == InferenceComputeMode.GpuAccelerated
+            bool wantGpu = recoveryMode == InferenceComputeMode.GpuAccelerated
                 && NativeBackendInit.GpuConfigured;
             bool reuseCachedWeights = _modelCache.TryGetValue(cacheKey, out var cachedEntry)
                 && (cachedEntry!.GpuLayerCount > 0) == wantGpu;
 
             var plan = reuseCachedWeights
                 ? InferenceBackendService.CreatePlanForCachedWeights(cacheKey, roleContext, cachedEntry!.GpuLayerCount)
-                : InferenceBackendService.CreatePlan(config.ModelPath, roleContext, InferenceBackendService.CurrentMode);
+                : InferenceBackendService.CreatePlan(config.ModelPath, roleContext, recoveryMode);
             HardwareInfoBlock.Text = $"Runtime: adaptive context | Backend: {plan.BackendName}";
 
             LogActivity($"{roleName}: ctx={plan.Parameters.ContextSize}, gpu_layers={plan.Parameters.GpuLayerCount}, backend={plan.BackendName}");
@@ -9023,6 +9964,15 @@ namespace Malx_AI
             LLamaWeights? model = null;
             LLamaContext? context = null;
             InteractiveExecutor? executor = null;
+
+            // Cover model load + context creation with crash forensics, not just the decode.
+            // A native abort during init (e.g. a CUDA OOM that ggml turns into abort() instead of
+            // a catchable error) happens BEFORE the decode marker is dropped, so without this it
+            // would leave no record — never self-heal — and crash on every launch. Stamp the
+            // PLANNED backend so a death here is attributed to GPU and steps the model down next
+            // launch (ResolveCouncilCrashRecovery). EndDecode below clears it on a clean init.
+            NativeDecodeForensics.SetActiveModel(config.ModelPath!, plan.UsingGpu, plan.Parameters.GpuLayerCount);
+            NativeDecodeForensics.BeginDecode($"Workplace.{roleName}.Init", 0, (int)plan.Parameters.ContextSize, config.DisplayName);
 
             try
             {
@@ -9060,7 +10010,7 @@ namespace Malx_AI
                     LogActivity($"{roleName}: Model loaded and cached.");
                 }
 
-                context = await Task.Run(() => model!.CreateContext(plan.Parameters), token);
+                context = await Task.Run(() => LlamaContextFactory.CreateContext(model!, plan.Parameters), token);
                 if (loadBaseState && baseStateVault != null && baseStateVault.RoleStatePaths.TryGetValue(role, out string? baseStatePath) && !string.IsNullOrWhiteSpace(baseStatePath))
                 {
                     try
@@ -9109,7 +10059,7 @@ namespace Malx_AI
                     SizeBytes = cpuIncomingBytes
                 };
 
-                context = await Task.Run(() => model!.CreateContext(cpuPlan.Parameters), token);
+                context = await Task.Run(() => LlamaContextFactory.CreateContext(model!, cpuPlan.Parameters), token);
                 if (loadBaseState && baseStateVault != null && baseStateVault.RoleStatePaths.TryGetValue(role, out string? baseStatePath) && !string.IsNullOrWhiteSpace(baseStatePath))
                 {
                     try
@@ -9124,11 +10074,28 @@ namespace Malx_AI
                 executor = new InteractiveExecutor(context);
                 LogActivity($"{roleName}: CPU fallback session ready and cached.");
             }
+            finally
+            {
+                // Clear the init forensics marker whether init succeeded or threw a catchable
+                // error (GPU init falling back to CPU, or even a CPU init failure); only a true
+                // native abort — process death, where no managed code runs — leaves it behind for
+                // the next launch to record a strike and step the model down.
+                NativeDecodeForensics.EndDecode();
+            }
 
             if (executor == null || model == null)
             {
                 throw new InvalidOperationException("Failed to initialize inference session.");
             }
+
+            // Stamp the ACTUAL loaded backend for crash forensics. Read the layer count from the
+            // cache entry, which reflects the real load (the GPU-init catch above can quietly fall
+            // back to a CPU plan), so a native abort during this role's decode is attributed to the
+            // right model+backend and recorded as a GPU strike on the next launch.
+            int loadedGpuLayers = _modelCache.TryGetValue(cacheKey, out var loadedEntry) && loadedEntry != null
+                ? loadedEntry.GpuLayerCount
+                : plan.Parameters.GpuLayerCount;
+            NativeDecodeForensics.SetActiveModel(config.ModelPath!, loadedGpuLayers > 0, loadedGpuLayers);
 
             // Use ChatSession + PromptTemplateTransformer so the model's native chat
             // template is applied and special tokens (<|im_start|>, <|im_end|>, etc.)
@@ -9190,13 +10157,23 @@ namespace Malx_AI
                 {
                     LogActivity($"{roleName}: Payload too large (~{promptTokenEstimate} tokens for ctx {contextBudget}). Truncating to {maxPayloadChars} chars.");
                     AppendChat("warning", $"{roleName}: Prompt trimmed to fit context window ({contextBudget} tokens).");
-                    userPayload = userPayload[..maxPayloadChars] + "\n[...truncated to fit context window]";
+                    // Keep the TAIL, not the head: the user's actual request ([[USER PROMPT]]) and the
+                    // closing answer anchor live at the end of the payload, while the head is front
+                    // matter (pipeline header, recent conversation, prior knowledge). Discarding the tail
+                    // was leaving the model with only framing text to continue — which is exactly why it
+                    // echoed its role/environment instead of answering.
+                    userPayload = "[...earlier context truncated to fit context window]\n" + userPayload[^maxPayloadChars..];
                     promptTokenEstimate = CountTokensWithContext(context, systemPrompt) + CountTokensWithContext(context, userPayload);
                     availableForGeneration = contextBudget - promptTokenEstimate - templateOverhead;
                 }
             }
 
             int roleGenerationCap = role == CouncilRole.Builder ? 4096 : 2048;
+            // A caller-supplied per-call ceiling (the segmented-document Builder uses this to keep each
+            // segment concise) tightens the role cap, but never below the role's minimum so a fit-to-
+            // context truncation still leaves room to answer.
+            if (maxGenerationTokensOverride is int genCapOverride)
+                roleGenerationCap = Math.Min(roleGenerationCap, Math.Max(minGenTokens, genCapOverride));
             int maxGenTokens = Math.Clamp(availableForGeneration, minGenTokens, roleGenerationCap);
             LogActivity($"{roleName}: Context budget — prompt ~{promptTokenEstimate + templateOverhead}t, gen {maxGenTokens}t, ctx {contextBudget}t");
 
@@ -9204,7 +10181,21 @@ namespace Malx_AI
             IReadOnlyList<PromptInjectionBlockInfo> priorInjectionInfos = CollectPromptInjectionInfos(_chatHistory);
             userPayload = ApplyPreInferenceContextReduction(userPayload, priorInjectionInfos, _lastRunContext?.UserPrompt ?? userPayload);
 
-            var antiPrompts = new List<string> { "<|endoftext|>", "<|im_start|>", "<|eot_id|>", "<|start_header_id|>", "### Instruction:" };
+            // Cross-family turn terminators MUST be stop sequences here. The council path was
+            // missing "<|im_end|>" (only normal chat had it), so a ChatML role that emitted its
+            // turn-end token — naturally OR because the old contract told it to type one — did not
+            // stop: it leaked the literal token into the message and kept generating, re-typing its
+            // whole answer past the turn boundary until the token cap. Listing every family's
+            // terminator is the cheap, decisive fix for both the leak and the runaway re-type loop.
+            var antiPrompts = new List<string>
+            {
+                "<|im_end|>", "<|endoftext|>", "<|im_start|>", "<|eot_id|>", "<|start_header_id|>",
+                "<end_of_turn>",          // Gemma 1/2/3
+                "<|end_of_text|>",        // Llama 3 / Granite
+                "<|end_of_role|>",        // Granite role turns
+                "<|endofturn|>",          // misc ChatML variants
+                "### Instruction:"
+            };
             foreach (var ap in GetAntiPrompts(activeFormat))
             {
                 if (!antiPrompts.Contains(ap, StringComparer.Ordinal))
@@ -9218,6 +10209,13 @@ namespace Malx_AI
             bool strictChatMl = IsStrictChatMlModel(config.DisplayName);
             int tokenCount = 0;
             var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            // Drop a crash-forensics marker for the duration of this role's native decode. If a
+            // CUDA illegal-memory-access (or any native abort) kills the process here, the marker
+            // survives to the next launch, which records a GPU strike so ResolveCouncilCrashRecovery
+            // steps this model down. EndDecode (in the finally) removes it on any clean/cancelled exit,
+            // so only a true process death leaves it behind — no false strikes from Stop.
+            NativeDecodeForensics.BeginDecode($"Workplace.{roleName}", promptTokenEstimate + templateOverhead, contextBudget, config.DisplayName);
             try
             {
                 if (_agenticPauseEngine == null)
@@ -9322,6 +10320,7 @@ namespace Malx_AI
             finally
             {
                 sw.Stop();
+                NativeDecodeForensics.EndDecode();
                 context?.Dispose();
             }
 
@@ -9384,19 +10383,22 @@ namespace Malx_AI
 
         private static class Gemma4Formatter
         {
-            private const string TurnOpen = "<|turn>";
-            private const string TurnClose = "<turn|>";
-            private const string ThinkControlToken = "<|channel|>thought";
+            private const string TurnOpen = "<start_of_turn>";
+            private const string TurnClose = "<end_of_turn>";
 
+            // Gemma's chat format uses <start_of_turn>/<end_of_turn> and has NO system role — the
+            // system text is folded into the first user turn (exactly as llama.cpp's built-in gemma
+            // template does). The previous implementation emitted invented tokens (<|turn>, <turn|>,
+            // <|channel|>thought) that the tokenizer does not recognize as turn boundaries, so the
+            // model never saw a turn structure and continued/echoed the system text instead of
+            // answering the request.
             public static string BuildPrompt(string systemPrompt, string userPayload)
             {
                 var sb = new StringBuilder();
-                sb.Append(TurnOpen).Append("system\n");
-                sb.Append(ThinkControlToken).Append('\n');
-                sb.Append(systemPrompt).Append('\n');
-                sb.Append(TurnClose).Append('\n');
                 sb.Append(TurnOpen).Append("user\n");
-                sb.Append(userPayload).Append('\n');
+                if (!string.IsNullOrWhiteSpace(systemPrompt))
+                    sb.Append(systemPrompt.Trim()).Append("\n\n");
+                sb.Append((userPayload ?? string.Empty).Trim());
                 sb.Append(TurnClose).Append('\n');
                 sb.Append(TurnOpen).Append("model\n");
                 return sb.ToString();
@@ -9407,7 +10409,7 @@ namespace Malx_AI
         {
             return format switch
             {
-                PromptFormat.Gemma4 => new[] { "<turn|>", "<|/channel|>" },
+                PromptFormat.Gemma4 => new[] { "<end_of_turn>" },
                 PromptFormat.Llama3 => new[] { "<|eot_id|>", "<|start_header_id|>" },
                 PromptFormat.Alpaca => new[] { "### Instruction:", "### Input:" },
                 _ => new[] { "<|im_start|>" }
@@ -9491,6 +10493,10 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(raw))
                 return "⏳ Generating...";
 
+            // The live card renders raw stream tokens before the final-output cleaner runs, so strip
+            // any turn-terminator/role tokens here too — this is where the user saw "<|im_end|>" leak.
+            raw = StripSpecialTokenText(raw);
+
             int openIdx = raw.LastIndexOf("<think>", StringComparison.OrdinalIgnoreCase);
             int closeIdx = raw.LastIndexOf("</think>", StringComparison.OrdinalIgnoreCase);
             bool insideThinking = openIdx >= 0 && closeIdx < openIdx;
@@ -9566,7 +10572,11 @@ namespace Malx_AI
                 if (webView == null)
                     return;
 
-                await webView.EnsureCoreWebView2Async();
+                var webViewEnvironment = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(
+                    browserExecutableFolder: null,
+                    userDataFolder: AppDataPaths.WebView2UserData,
+                    options: WebView2GpuPolicy.CreateEnvironmentOptions());
+                await webView.EnsureCoreWebView2Async(webViewEnvironment);
                 webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
                 webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
@@ -9796,9 +10806,17 @@ namespace Malx_AI
                 manager.GetDefinition("C#");
         }
 
-        private static string CleanModelOutput(string raw)
+        // Removes leaked chat-template special tokens (turn terminators / role headers) a model can
+        // emit as literal text when its template is mismatched or it was over-instructed. Shared by
+        // the final-output cleaner and the live streaming preview so neither shows raw tokens. The
+        // earlier list only covered ChatML/Llama tags; Gemma (<end_of_turn>) and Granite
+        // (<|end_of_role|>, <|end_of_text|>) leaks slipped through into visible role messages.
+        private static string StripSpecialTokenText(string text)
         {
-            string cleaned = raw
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            string stripped = text
                 .Replace("<|im_end|>", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("<|im_start|>", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("<|endoftext|>", "", StringComparison.OrdinalIgnoreCase)
@@ -9806,9 +10824,22 @@ namespace Malx_AI
                 .Replace("<|start_header_id|>", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("<|end_header_id|>", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("<|begin_of_text|>", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("<|end_of_text|>", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("<|end_of_role|>", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("<|endofturn|>", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("<end_of_turn>", "", StringComparison.OrdinalIgnoreCase)
+                .Replace("<start_of_turn>", "", StringComparison.OrdinalIgnoreCase)
                 .Replace("<|turn>", "", StringComparison.OrdinalIgnoreCase)
-                .Replace("<turn|>", "", StringComparison.OrdinalIgnoreCase)
-                .Trim();
+                .Replace("<turn|>", "", StringComparison.OrdinalIgnoreCase);
+
+            // Collapse padding-sentinel runs (e.g. Gemma's literal "<pad>") a mismatched-template or
+            // degenerate model can stream as visible text — the "<pad><pad>…" council spam.
+            return OpenRouterChatService.StripPadSentinelTokens(stripped);
+        }
+
+        private static string CleanModelOutput(string raw)
+        {
+            string cleaned = StripSpecialTokenText(raw).Trim();
 
             // Strip stray role headers the model may echo
             foreach (var tag in new[] { "system", "user", "assistant" })
@@ -9821,7 +10852,37 @@ namespace Malx_AI
             // user-visible content.
             cleaned = Regex.Replace(cleaned, @"\[SYSTEM OVERRIDE:[^\]]*\]", string.Empty, RegexOptions.IgnoreCase);
 
+            // A runaway role can begin re-typing its answer; the stream guard cuts it off
+            // mid-restart, leaving a duplicated tail. Drop it so the answer appears once.
+            cleaned = TrimRepeatedRestartTail(cleaned.Trim());
+
             return cleaned.Trim();
+        }
+
+        // The stream-level runaway guard (AgenticPauseEngine.LooksLikeRunawayRepetition) stops a
+        // role that starts re-typing its answer from the top, but it fires mid-restart — leaving a
+        // trailing fragment that duplicates content already present above. If a long suffix of the
+        // text also occurs verbatim earlier, the model was restarting; drop the duplicated tail so
+        // the user (and the Project Canvas) sees the answer exactly once and the bounded retry does
+        // not re-loop on a bloated payload. Conservative 200-char minimum: a verbatim suffix that
+        // long almost never recurs in genuine output, so this only collapses real restarts.
+        private static string TrimRepeatedRestartTail(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length < 600)
+                return text;
+
+            int n = text.Length;
+            int maxSuffix = Math.Min(3000, n / 2);
+            for (int suffixLen = maxSuffix; suffixLen >= 200; suffixLen -= 32)
+            {
+                int tailStart = n - suffixLen;
+                string suffix = text.Substring(tailStart, suffixLen);
+                // Match must lie entirely before the trailing suffix (no overlap).
+                if (text.IndexOf(suffix, 0, tailStart, StringComparison.Ordinal) >= 0)
+                    return text[..tailStart].TrimEnd();
+            }
+
+            return text;
         }
 
         private static string StripChatFromCode(string builderOutput)
@@ -10725,7 +11786,7 @@ namespace Malx_AI
 
         private void ExportPerformanceLog_Click(object sender, RoutedEventArgs e)
         {
-            string dir = Path.Combine("ChatHistory", "WorkplaceExports");
+            string dir = Path.Combine(AppDataPaths.ChatHistory, "WorkplaceExports");
             Directory.CreateDirectory(dir);
             string path = Path.Combine(dir, $"performance_log_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
             var sb = new StringBuilder();
@@ -10934,6 +11995,24 @@ namespace Malx_AI
             DisposeModelCache();
         }
 
+        /// <summary>
+        /// Clears any GPU crash strikes recorded against the configured council role models.
+        /// Called when the user EXPLICITLY re-selects GPU mode in Settings — the deliberate
+        /// "retry the GPU" signal. ResolveCouncilCrashRecovery steps a struck model down to CPU
+        /// and the council never auto-clears strikes (a per-turn clear would oscillate GPU↔CPU),
+        /// so without this an explicit GPU re-select cleared only the normal-chat model and left
+        /// the council pinned to CPU with no recovery. Mirrors the normal-chat clear in
+        /// ReloadModelWithCurrentModeAsync.
+        /// </summary>
+        public void ClearCouncilGpuStrikes()
+        {
+            foreach (var cfg in _council.Values)
+            {
+                if (!string.IsNullOrWhiteSpace(cfg?.ModelPath))
+                    NativeCrashLedger.RegisterCleanRun(cfg.ModelPath!);
+            }
+        }
+
         private async void StudySessionButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isStudySessionRunning)
@@ -10987,6 +12066,21 @@ namespace Malx_AI
             _studySessionProcessedDocumentCount = 0;
             _studySessionDomainDefinitionCount = 0;
             _studySessionCts = new CancellationTokenSource();
+
+            // A local Study Session loads council role models, which on a single GPU must not sit
+            // on top of the resident Normal-Chat model (the "Failed to load model" error). Free
+            // the chat model first; MainWindow restores it on return to the chat view.
+            if (!_isCloudModeEnabled && ReleaseHostChatModelAsync != null)
+            {
+                try
+                {
+                    await ReleaseHostChatModelAsync(CancellationToken.None);
+                }
+                catch (Exception releaseEx)
+                {
+                    LogActivity($"Chat model release before study session skipped: {releaseEx.Message}");
+                }
+            }
 
             // Start each Study Session from a clean study-memory baseline so
             // old studied documents do not bleed into later study runs.
@@ -11561,22 +12655,46 @@ namespace Malx_AI
             return total;
         }
 
+        private int GetContextCompressionThresholdTokens()
+        {
+            int architectContext = (int)GetRoleContextSize(CouncilRole.Architect);
+            int builderContext = (int)GetRoleContextSize(CouncilRole.Builder);
+            int criticContext = (int)GetRoleContextSize(CouncilRole.Critic);
+            int limitingContext = Math.Max((int)MinRoleContext, Math.Min(architectContext, Math.Min(builderContext, criticContext)));
+
+            int reservedForCurrentTurn = CanUseCloudCouncil
+                ? Math.Min(12000, Math.Max(4000, limitingContext / 8))
+                : Math.Min(1800, Math.Max(900, limitingContext / 5));
+            int usableHistoryWindow = Math.Max(ContextCompressionThreshold, limitingContext - reservedForCurrentTurn);
+            double triggerRatio = CanUseCloudCouncil ? 0.55 : 0.45;
+
+            return Math.Max(ContextCompressionThreshold, (int)(usableHistoryWindow * triggerRatio));
+        }
+
+        private int GetRecentMessagesToKeepAfterCompression()
+        {
+            return CanUseCloudCouncil ? 10 : 6;
+        }
+
         private async Task CompressChatHistoryIfNeededAsync(CancellationToken token)
         {
             int totalTokens = EstimateTotalHistoryTokens();
-            // Cloud council has ~131k-token windows, so history can stay richer for much longer
-            // before compression needs to discard detail. Local threshold is unchanged.
-            int compressionThreshold = CanUseCloudCouncil ? ContextCompressionThreshold * 4 : ContextCompressionThreshold;
+            int compressionThreshold = GetContextCompressionThresholdTokens();
             if (totalTokens <= compressionThreshold || _chatHistory.Count < 4)
             {
                 return;
             }
 
-            int messagesToCompress = Math.Max(2, _chatHistory.Count / 2);
+            int recentMessagesToKeep = GetRecentMessagesToKeepAfterCompression();
+            int messagesToCompress = Math.Max(2, _chatHistory.Count - recentMessagesToKeep);
+            if (messagesToCompress >= _chatHistory.Count)
+                messagesToCompress = Math.Max(2, _chatHistory.Count / 2);
             var oldMessages = _chatHistory.Take(messagesToCompress).ToList();
 
             var summaryInput = new StringBuilder();
-            summaryInput.AppendLine("Summarize this conversation concisely, preserving key decisions and facts:");
+            summaryInput.AppendLine("Summarize this conversation for future council context.");
+            summaryInput.AppendLine("Preserve: user requirements, decisions, constraints, source-backed facts with dates/sources, tool results, code/API details, unresolved issues, and any explicit user preferences.");
+            summaryInput.AppendLine("Discard: greetings, duplicated role chatter, failed drafts, repeated boilerplate, and low-value status messages.");
             foreach (var msg in oldMessages)
             {
                 summaryInput.AppendLine($"[{msg.Role}] {msg.Content}");
@@ -11597,7 +12715,7 @@ namespace Malx_AI
                 {
                     OpenRouterChatResponse cloudSummary = await _openRouterChatService.SendConversationAsync(
                         new List<OpenRouterMessage> { new("user", summaryInput.ToString()) },
-                        "You are a context summarizer. Compress the conversation into a brief factual summary. Keep critical decisions and requirements. Be concise.",
+                        "You are a context compactor for a multi-role AI council. Keep durable facts, requirements, constraints, tool results, source-backed evidence, and unresolved tasks. Remove repetition and chatter. Be concise but not lossy.",
                         false,
                         OpenRouterChatService.WorkplaceCouncilDefaultModelId,
                         null,
@@ -11618,7 +12736,7 @@ namespace Malx_AI
                     var config = _council.Values.First(c => c.ModelPath == summarizerModelPath);
                     var summaryResult = await ExecuteCouncilRoleAsync(
                         _council.First(kv => kv.Value.ModelPath == summarizerModelPath).Key,
-                        "You are a context summarizer. Compress the conversation into a brief factual summary. Keep critical decisions and requirements. Be concise.",
+                        "You are a context compactor for a multi-role AI council. Keep durable facts, requirements, constraints, tool results, source-backed evidence, and unresolved tasks. Remove repetition and chatter. Be concise but not lossy.",
                         summaryInput.ToString(),
                         token,
                         showLiveCard: false);
@@ -11766,7 +12884,7 @@ namespace Malx_AI
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(_council[CouncilRole.Builder].ModelPath))
+            if (string.IsNullOrWhiteSpace(_council[CouncilRole.Builder].ModelPath) && !CanUseCloudCouncil)
             {
                 AppendChat("warning", "Builder model is not configured.");
                 return;
@@ -11776,6 +12894,14 @@ namespace Malx_AI
             SendButton.IsEnabled = false;
             StopButton.IsEnabled = true;
             _cancellationTokenSource = new CancellationTokenSource();
+            string previousActiveCouncilWebPrompt = _activeCouncilWebPrompt;
+            string previousReactiveWebContext = _latestCouncilReactiveWebContext;
+            CouncilRunContext? previousActiveRunContext = _activeCouncilRunContext;
+            _latestCouncilReactiveWebContext = string.Empty;
+            _activeCouncilRunContext = _lastRunContext;
+            _activeCouncilWebPrompt = string.IsNullOrWhiteSpace(_lastRunContext.Objective)
+                ? _lastRunContext.UserPrompt
+                : $"{_lastRunContext.UserPrompt}\n{_lastRunContext.Objective}";
 
             try
             {
@@ -11792,18 +12918,25 @@ namespace Malx_AI
 
                 string builderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                     + objectiveClause
-                    + GetTaskTypeBoost(_lastRunContext.TaskType, CouncilRole.Builder)
+                    + (_lastRunContext.IsArtifactCanvasRequest
+                        ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, _lastRunContext)
+                        : GetTaskTypeBoost(_lastRunContext.TaskType, CouncilRole.Builder))
                     + (_lastRunContext.IsCalculationTask ? GetCalculationBoost(CouncilRole.Builder, _lastRunContext.TaskType) : "")
-                    + BuildBuilderContract(_lastRunContext.TaskType)
+                    + BuildBuilderContract(_lastRunContext.TaskType, _lastRunContext.IsArtifactCanvasRequest)
+                    + BuildCouncilWebSystemNote(_lastRunContext.WebContext, _lastRunContext.WebGroundingRequired)
+                    + BuildBuilderWebPauseSystemNote()
                     + "\n[SHARED VOCABULARY]\nUse user terms exactly as named.";
-                builderSystem = ComposeCouncilSystemPrompt(builderSystem, CouncilRole.Builder, _lastRunContext);
+                builderSystem = ComposeCouncilSystemPrompt(builderSystem, CouncilRole.Builder, _lastRunContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Builder));
 
                 string sharedVocabularySection = BuildSharedVocabularySection(_lastRunContext.SharedVocabulary);
                 string pipelineState = BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(_lastRunContext.ArchitectOutput), "");
 
                 var payload = new StringBuilder();
+                if (_lastRunContext.IsArtifactCanvasRequest)
+                    payload.AppendLine(BuildCanvasArtifactAnchorBlock(_lastRunContext));
                 payload.AppendLine(pipelineState);
                 payload.AppendLine(sharedVocabularySection);
+                AppendCouncilWebContext(payload, _lastRunContext);
                 payload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, _lastRunContext.TaskType, ""));
                 payload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", _lastRunContext.UserPrompt));
                 if (!string.IsNullOrWhiteSpace(_lastRunContext.ArchitectOutput))
@@ -11818,16 +12951,32 @@ namespace Malx_AI
                 {
                     payload.AppendLine(BuildLabeledBlock("PROJECT KNOWLEDGE BASE", knowledge));
                 }
+                payload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: _isWebSearchEnabled && !_isCloudModeEnabled));
 
-                var result = await ExecuteCouncilRoleAsync(CouncilRole.Builder, builderSystem, payload.ToString(), _cancellationTokenSource.Token);
+                var result = await ExecuteCouncilRoleAsync(
+                    CouncilRole.Builder,
+                    builderSystem,
+                    payload.ToString(),
+                    _cancellationTokenSource.Token,
+                    _lastRunContext.IsDocumentTask ? 0.25f : null);
                 if (!TryNormalizeBuilderOutput(result.Answer, _lastRunContext.TaskType, out string rerunBuilderCleaned, out bool _))
                 {
                     throw new InvalidOperationException("Builder re-run output missing completion marker.");
                 }
                 string rerunOutput = PostProcessBuilderOutput(rerunBuilderCleaned, _lastRunContext);
+                if (_lastRunContext.WebGroundingRequired
+                    && !HasCouncilWebEvidenceForRun(_lastRunContext)
+                    && _lastRunContext.TaskType != CouncilTaskType.Coding
+                    && !_lastRunContext.IsArtifactCanvasRequest
+                    && !BuilderStatesWebEvidenceUnavailable(rerunOutput))
+                {
+                    rerunOutput = BuildWebEvidenceUnavailableBuilderFallback(_lastRunContext);
+                }
                 _lastRunContext.BuilderOutput = rerunOutput;
 
-                if (_lastRunContext.TaskType == CouncilTaskType.Coding)
+                bool rerunToCanvas = _lastRunContext.TaskType == CouncilTaskType.Coding
+                    || (_lastRunContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(rerunOutput, null).SupportsPreview);
+                if (rerunToCanvas)
                 {
                     UpdateProjectCanvas(rerunOutput);
                     AppendChat("builder", "Builder re-run output sent to Project Canvas.");
@@ -11837,7 +12986,7 @@ namespace Malx_AI
                     AppendChat("builder", rerunOutput);
                 }
 
-                _lastFinalOutput = _lastRunContext.TaskType == CouncilTaskType.Coding ? ProjectCanvasEditor.Text : rerunOutput;
+                _lastFinalOutput = rerunToCanvas ? ProjectCanvasEditor.Text : rerunOutput;
                 SavePersistedSession();
             }
             catch (Exception ex)
@@ -11849,6 +12998,9 @@ namespace Malx_AI
                 _isProcessing = false;
                 SendButton.IsEnabled = true;
                 StopButton.IsEnabled = false;
+                _activeCouncilWebPrompt = previousActiveCouncilWebPrompt;
+                _latestCouncilReactiveWebContext = previousReactiveWebContext;
+                _activeCouncilRunContext = previousActiveRunContext;
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
                 RelayStatusBlock.Text = "Relay: Idle";
@@ -11894,12 +13046,13 @@ namespace Malx_AI
                     + GetTaskTypeBoost(_lastRunContext.TaskType, CouncilRole.Critic)
                     + (_lastRunContext.IsCalculationTask ? GetCalculationBoost(CouncilRole.Critic) : "")
                     + BuildCriticContract(_lastRunContext.TaskType);
-                criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, _lastRunContext);
+                criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, _lastRunContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
 
                 string payload = BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(_lastRunContext.ArchitectOutput), BuildBuilderSummaryFromCode(_lastRunContext.BuilderOutput))
                     + BuildSharedVocabularySection(_lastRunContext.SharedVocabulary)
                     + BuildPipelineHealthSection(_lastRunContext)
-                    + BuildRolePrimedPayload(CouncilRole.Critic, _lastRunContext.TaskType, BuildCriticPayload(_lastRunContext, _lastSandboxOutput));
+                    + BuildRolePrimedPayload(CouncilRole.Critic, _lastRunContext.TaskType, BuildCriticPayload(_lastRunContext, _lastSandboxOutput))
+                    + BuildCouncilClosingAnchor(CouncilRole.Critic);
                 var result = await ExecuteCouncilRoleAsync(CouncilRole.Critic, criticSystem, payload, _cancellationTokenSource.Token);
                 if (!TryNormalizeCriticReview(result.Answer, _lastRunContext.TaskType, out string rerunCriticCleaned, out bool _))
                 {
@@ -11968,7 +13121,7 @@ namespace Malx_AI
             string safe = string.Join("_", Regex.Matches(_lastRunContext.UserPrompt, @"\b\w+\b").Select(m => m.Value).Take(5));
             if (string.IsNullOrWhiteSpace(safe)) safe = "council_export";
             string fileName = $"{safe}_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}";
-            string folder = Path.Combine("ChatHistory", "WorkplaceExports");
+            string folder = Path.Combine(AppDataPaths.ChatHistory, "WorkplaceExports");
             Directory.CreateDirectory(folder);
             string path = Path.Combine(folder, fileName);
 

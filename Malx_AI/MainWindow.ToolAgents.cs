@@ -761,6 +761,10 @@ namespace Malx_AI
 
                 return data;
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 await BackendLogService.LogEventAsync("ToolFailReadOnly", $"Tool:WebSearch\nPrompt:{userQuery}\nQuery:{searchQuery}\nError:{ex.Message}");

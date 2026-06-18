@@ -16,6 +16,45 @@ namespace Malx_AI
         public int HeadCountKv { get; init; }
 
         /// <summary>
+        /// Number of layers that actually allocate an attention KV cache. Equals BlockCount
+        /// for a standard transformer. For HYBRID models (Nemotron-H, Jamba, Falcon-H,
+        /// Mamba-2 hybrids) only a few layers use attention — the rest are Mamba/SSM/recurrent
+        /// layers whose state does NOT grow with context — so this is much smaller than
+        /// BlockCount. Parsed from the per-layer head_count_kv array; 0 when not a hybrid
+        /// (the file exposed head_count_kv as a scalar), which callers read as "all layers".
+        /// </summary>
+        public int AttentionLayerCount { get; init; }
+
+        /// <summary>Per-head key/value dimension in elements, when the file states it explicitly
+        /// (some models, esp. hybrids, set head_dim ≠ embedding_length / head_count). 0 = unknown.</summary>
+        public int KeyLength { get; init; }
+        public int ValueLength { get; init; }
+
+        /// <summary>
+        /// Sliding-window size in tokens for interleaved sliding-window-attention (iSWA)
+        /// models (e.g. Gemma 2/3). 0 when the model does not use sliding window attention.
+        /// </summary>
+        public int SlidingWindow { get; init; }
+
+        /// <summary>
+        /// True for models that interleave sliding-window and full attention layers. These
+        /// allocate TWO KV caches (a full cache + an SWA cache), and partially offloading
+        /// them — splitting either cache across CPU and GPU — has produced CUDA illegal
+        /// memory access aborts. Such models must be either fully offloaded or run on CPU.
+        /// </summary>
+        public bool IsSlidingWindowAttention => SlidingWindow > 0;
+
+        /// <summary>
+        /// True for HYBRID recurrent models (Mamba/SSM mixed with attention: nemotron_h, jamba,
+        /// falcon_h, …) — detected by only some layers carrying an attention KV head count.
+        /// These keep a per-sequence recurrent-state ("rs") cache and, like sliding-window
+        /// models, are fragile under PARTIAL offload: splitting their SSM layers across CPU and
+        /// GPU has produced CUDA illegal-memory-access aborts during decode. They should be fully
+        /// offloaded or run on CPU — never partially split.
+        /// </summary>
+        public bool IsHybridRecurrent => AttentionLayerCount > 0 && AttentionLayerCount < BlockCount;
+
+        /// <summary>
         /// Bytes of KV-cache required per context token at f16 precision (K + V).
         /// Null when the file did not expose enough attention geometry.
         /// </summary>
@@ -23,12 +62,37 @@ namespace Malx_AI
         {
             get
             {
-                if (BlockCount <= 0 || EmbeddingLength <= 0 || HeadCount <= 0)
+                if (BlockCount <= 0 || HeadCount <= 0)
                     return null;
 
                 int kvHeads = HeadCountKv > 0 ? HeadCountKv : HeadCount;
-                long headDim = EmbeddingLength / HeadCount;
-                return 2L /*K+V*/ * BlockCount * headDim * kvHeads * 2 /*f16 bytes*/;
+
+                // Hybrid Mamba/attention models charge KV only on their attention layers; the
+                // rest keep a per-sequence recurrent state that does not scale with context.
+                // Counting every block (the old behavior) over-estimated KV by ~the hybrid
+                // ratio (~64× on Nemotron-H 4B), which blocked full GPU offload and stranded
+                // layers on the CPU. Standard transformers leave AttentionLayerCount == 0 and
+                // take the original BlockCount path below — this is byte-identical for them.
+                bool hybrid = AttentionLayerCount > 0 && AttentionLayerCount < BlockCount;
+                int attnLayers = hybrid ? AttentionLayerCount : BlockCount;
+
+                long kDim, vDim;
+                if (hybrid && KeyLength > 0)
+                {
+                    kDim = KeyLength;
+                    vDim = ValueLength > 0 ? ValueLength : KeyLength;
+                }
+                else
+                {
+                    if (EmbeddingLength <= 0)
+                        return null;
+                    kDim = vDim = EmbeddingLength / HeadCount;
+                }
+
+                if (kDim <= 0)
+                    return null;
+
+                return (long)attnLayers * (kDim + vDim) * kvHeads * 2L /*f16 bytes*/;
             }
         }
     }
@@ -82,7 +146,8 @@ namespace Malx_AI
                     return null;
 
                 string architecture = "";
-                int blockCount = 0, contextLength = 0, embeddingLength = 0, headCount = 0, headCountKv = 0;
+                int blockCount = 0, contextLength = 0, embeddingLength = 0, headCount = 0, headCountKv = 0, slidingWindow = 0;
+                int attentionLayerCount = 0, keyLength = 0, valueLength = 0;
 
                 for (ulong i = 0; i < kvCount; i++)
                 {
@@ -95,12 +160,36 @@ namespace Malx_AI
                         continue;
                     }
 
+                    // Hybrid Mamba/attention models (Nemotron-H, Jamba, …) expose
+                    // head_count_kv as a PER-LAYER array: 0 for every recurrent/SSM layer,
+                    // a nonzero KV-head count for the few real attention layers. It must be
+                    // parsed as an array, not an integer — the generic path skipped it TWICE
+                    // (TryReadIntegerValue's default skip + the loop's trailing skip), which
+                    // desynced the parser and made TryRead return null for the whole model.
+                    if (valueType == 9 && key.EndsWith(".attention.head_count_kv", StringComparison.Ordinal))
+                    {
+                        if (TryReadIntArray(reader, out int[] perLayerKv))
+                        {
+                            int attn = 0, repKv = 0;
+                            foreach (int c in perLayerKv)
+                            {
+                                if (c > 0) { attn++; repKv = Math.Max(repKv, c); }
+                            }
+                            attentionLayerCount = attn;
+                            if (repKv > 0) headCountKv = repKv;
+                        }
+                        continue;
+                    }
+
                     bool isWanted =
                         key.EndsWith(".block_count", StringComparison.Ordinal) ||
                         key.EndsWith(".context_length", StringComparison.Ordinal) ||
                         key.EndsWith(".embedding_length", StringComparison.Ordinal) ||
                         key.EndsWith(".attention.head_count", StringComparison.Ordinal) ||
-                        key.EndsWith(".attention.head_count_kv", StringComparison.Ordinal);
+                        key.EndsWith(".attention.head_count_kv", StringComparison.Ordinal) ||
+                        key.EndsWith(".attention.key_length", StringComparison.Ordinal) ||
+                        key.EndsWith(".attention.value_length", StringComparison.Ordinal) ||
+                        key.EndsWith(".attention.sliding_window", StringComparison.Ordinal);
 
                     if (isWanted && TryReadIntegerValue(reader, valueType, out long value))
                     {
@@ -109,6 +198,9 @@ namespace Malx_AI
                         else if (key.EndsWith(".embedding_length", StringComparison.Ordinal)) embeddingLength = (int)value;
                         else if (key.EndsWith(".attention.head_count_kv", StringComparison.Ordinal)) headCountKv = (int)value;
                         else if (key.EndsWith(".attention.head_count", StringComparison.Ordinal)) headCount = (int)value;
+                        else if (key.EndsWith(".attention.key_length", StringComparison.Ordinal)) keyLength = (int)value;
+                        else if (key.EndsWith(".attention.value_length", StringComparison.Ordinal)) valueLength = (int)value;
+                        else if (key.EndsWith(".attention.sliding_window", StringComparison.Ordinal)) slidingWindow = (int)value;
                         continue;
                     }
 
@@ -125,10 +217,14 @@ namespace Malx_AI
                     ContextLength = contextLength,
                     EmbeddingLength = embeddingLength,
                     HeadCount = headCount,
-                    HeadCountKv = headCountKv
+                    HeadCountKv = headCountKv,
+                    AttentionLayerCount = attentionLayerCount,
+                    KeyLength = keyLength,
+                    ValueLength = valueLength,
+                    SlidingWindow = slidingWindow
                 };
 
-                Debug.WriteLine($"[GgufMetadataReader] {Path.GetFileName(modelPath)}: arch={architecture}, layers={blockCount}, trainedCtx={contextLength}, kv/token={meta.KvBytesPerTokenF16}");
+                Debug.WriteLine($"[GgufMetadataReader] {Path.GetFileName(modelPath)}: arch={architecture}, layers={blockCount}, attnLayers={attentionLayerCount}, trainedCtx={contextLength}, kv/token={meta.KvBytesPerTokenF16}, swa={slidingWindow}");
                 return meta;
             }
             catch (Exception ex)
@@ -165,6 +261,44 @@ namespace Malx_AI
                     value = 0;
                     return false;
             }
+        }
+
+        /// <summary>
+        /// Reads a GGUF integer array (the element-type + count header has NOT been consumed
+        /// yet — this reads it). Returns the values widened to int. Returns false (and leaves
+        /// the stream wherever it got to) only for an implausible length or a non-integer
+        /// element type; the sole caller (head_count_kv) is always a small integer array.
+        /// </summary>
+        private static bool TryReadIntArray(BinaryReader reader, out int[] values)
+        {
+            values = Array.Empty<int>();
+
+            uint elemType = reader.ReadUInt32();
+            ulong count = reader.ReadUInt64();
+            if (count > (1 << 20))
+                return false;
+
+            // Per-layer arrays are small integers; bail on anything else rather than guess.
+            var result = new int[(int)count];
+            for (ulong i = 0; i < count; i++)
+            {
+                switch (elemType)
+                {
+                    case 0: result[i] = reader.ReadByte(); break;       // uint8
+                    case 1: result[i] = reader.ReadSByte(); break;      // int8
+                    case 2: result[i] = reader.ReadUInt16(); break;     // uint16
+                    case 3: result[i] = reader.ReadInt16(); break;      // int16
+                    case 4: result[i] = (int)reader.ReadUInt32(); break; // uint32
+                    case 5: result[i] = reader.ReadInt32(); break;       // int32
+                    case 10: result[i] = (int)reader.ReadUInt64(); break; // uint64
+                    case 11: result[i] = (int)reader.ReadInt64(); break;  // int64
+                    default:
+                        return false;
+                }
+            }
+
+            values = result;
+            return true;
         }
 
         private static void SkipValue(BinaryReader reader, uint valueType)

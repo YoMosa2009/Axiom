@@ -27,7 +27,10 @@ namespace Malx_AI
         // appended, the payload message is no longer the *final* message, and history trimming
         // previously capped it at the per-message limit — silently severing artifact iteration,
         // document grounding, and council role context from iteration 2 onward.
-        bool PreserveFullText = false);
+        bool PreserveFullText = false,
+        // data: URLs for attached images; emitted as multipart image_url content parts so
+        // vision-capable cloud models can actually see image attachments.
+        IReadOnlyList<string>? ImageDataUrls = null);
 
     public sealed record OpenRouterChatResponse(
         string Text,
@@ -155,17 +158,33 @@ namespace Malx_AI
         private static readonly Regex TokenWordRegex = new(@"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", RegexOptions.Compiled);
         private static readonly Regex RetryAfterSecondsRegex = new("\"retry_after_seconds\"\\s*:\\s*(?<value>\\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const int TransientOpenRouterRetryLimit = 1;
+        // Some routed free-tier providers — notably Gemma-family fallbacks, whose tokenizer pad token
+        // is the literal "<pad>" — can degenerate into emitting an endless run of padding/sentinel
+        // tokens instead of real content. That is the "<pad><pad><pad>…" council Builder failure: the
+        // model produces no answer, just sentinels. These tokens never carry meaning, so they are
+        // stripped from every text surface, and a sustained run mid-stream is treated as a provider
+        // degeneration that trips the model-fallback chain.
+        private static readonly Regex PadSentinelTokenRegex = new(
+            @"<\s*\|?\s*/?\s*pad\s*/?\s*\|?\s*>|\[\s*PAD\s*\]|<\|endofpad\|>",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        // This many consecutive content deltas that are PURE padding sentinels (nothing left after
+        // stripping) while no real answer has accumulated marks the provider as degenerate.
+        private const int PadDegenerationConsecutiveDeltaLimit = 24;
         // Context budgets. All routed models expose ~131k-token windows, so these caps exist only to
         // stop runaway growth — not to shave intentional pipeline content. The old caps (3,200-char
         // system prompt / 2,400 chars per message / 14,000 chars total) silently severed council role
         // boosts, document context, and artifact-iteration payloads that the app deliberately built.
-        private const int SystemPromptCharacterLimit = 12000;
+        // The system prompt cap must comfortably exceed the normal-chat cloud document budget
+        // (document context is appended at the *end* of the system prompt — a tail-truncating
+        // cap below that budget silently severs attached documents from the model).
+        private const int SystemPromptCharacterLimit = 80000;
         private const int PerHistoryMessageCharacterLimit = 8000;
         private const int ConversationHistoryCharacterBudget = 48000;
         private const int ConversationHistoryMessageLimit = 24;
         private string _apiKey = string.Empty;
         private List<(string Id, string Label, bool IsFree)> _availableModels = new();
         private readonly Dictionary<string, HashSet<string>> _modelSupportedParameters = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _imageInputModelIds = new(StringComparer.OrdinalIgnoreCase);
 
         static OpenRouterChatService()
         {
@@ -493,7 +512,9 @@ namespace Malx_AI
             string modelId = DefaultModelId,
             IReadOnlyList<OpenRouterToolDefinition>? tools = null,
             Action<string>? onToken = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            int? maxTokensOverride = null,
+            IReadOnlyList<string>? stopSequences = null)
         {
             return await SendMessageStreamInternalAsync(
                 messages,
@@ -503,7 +524,10 @@ namespace Malx_AI
                 tools,
                 onToken,
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                cancellationToken);
+                cancellationToken,
+                null,
+                maxTokensOverride,
+                stopSequences);
         }
 
         public async Task<bool> ValidateModelAvailabilityAsync(string modelId, CancellationToken cancellationToken = default)
@@ -718,7 +742,9 @@ namespace Malx_AI
             Action<string>? onToken,
             HashSet<string> attemptedModelIds,
             CancellationToken cancellationToken,
-            string? originalModelLabel = null)
+            string? originalModelLabel = null,
+            int? maxTokensOverride = null,
+            IReadOnlyList<string>? stopSequences = null)
         {
             if (!HasValidKey)
                 throw new InvalidOperationException("A valid OpenRouter API key is required.");
@@ -750,9 +776,10 @@ namespace Malx_AI
                     thinkingEnabled,
                     temperature,
                     topP,
-                    8192,
+                    maxTokensOverride is int tokenLimit && tokenLimit > 0 ? tokenLimit : 8192,
                     tools,
-                    stream: true);
+                    stream: true,
+                    stopSequences);
 
                 response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
@@ -783,7 +810,7 @@ namespace Malx_AI
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
                         {
                             await BackendLogService.LogEventAsync("OpenRouterFallback", $"Primary:{requestedModelProfile.AliasLabel}\nFallback:{ResolveModelLabel(fallbackModelId)}\nStatus:{(int)response.StatusCode} ({response.StatusCode})\nBody:{Truncate(retryBody, 400)}");
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
                         }
                     }
 
@@ -807,6 +834,8 @@ namespace Malx_AI
             var textBuilder = new StringBuilder();
             var reasoningBuilder = new StringBuilder();
             var toolCallAccumulators = new Dictionary<int, StreamingToolCallAccumulator>();
+            int consecutivePadDeltas = 0;
+            bool padDegenerationDetected = false;
 
             try
             {
@@ -852,8 +881,29 @@ namespace Malx_AI
                         string contentDelta = ExtractContentText(contentElement, includeReasoningParts: false);
                         if (!string.IsNullOrEmpty(contentDelta))
                         {
-                            textBuilder.Append(contentDelta);
-                            onToken?.Invoke(contentDelta);
+                            // Suppress padding sentinels so "<pad>" spam never reaches the UI or the
+                            // accumulated answer. A delta that is pure padding leaves an empty string.
+                            string sanitizedDelta = StripPadSentinelTokens(contentDelta);
+                            if (sanitizedDelta.Length > 0)
+                            {
+                                textBuilder.Append(sanitizedDelta);
+                                onToken?.Invoke(sanitizedDelta);
+                                consecutivePadDeltas = 0;
+                            }
+                            else
+                            {
+                                // Entire delta was padding. If a provider streams nothing but pad
+                                // tokens while no real answer has formed, abandon it mid-stream so the
+                                // model-fallback chain can try a different model instead of returning
+                                // the empty "<pad>…" degeneration.
+                                if (++consecutivePadDeltas >= PadDegenerationConsecutiveDeltaLimit
+                                    && textBuilder.Length < 40
+                                    && toolCallAccumulators.Count == 0)
+                                {
+                                    padDegenerationDetected = true;
+                                    break;
+                                }
+                            }
                         }
 
                         string reasoningFromContent = ExtractReasoningPartsFromContent(contentElement);
@@ -881,6 +931,17 @@ namespace Malx_AI
 
                     AppendStreamingToolCalls(delta, toolCallAccumulators);
                 }
+                }
+
+                // Provider degenerated into pure padding with no usable answer — switch models.
+                if (padDegenerationDetected && textBuilder.Length < 40 && toolCallAccumulators.Count == 0)
+                {
+                    string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
+                    await BackendLogService.LogEventAsync(
+                        "OpenRouterPadDegeneration",
+                        $"Model:{requestedModelProfile.AliasLabel}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}");
+                    if (!string.IsNullOrWhiteSpace(fallbackModelId))
+                        return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
                 }
 
                 SetDetectedModel(requestedModelProfile.AliasId, requestedModelProfile.AliasLabel);
@@ -923,6 +984,7 @@ namespace Malx_AI
 
                 var models = new List<(string Id, string Label, bool IsFree)>();
                 _modelSupportedParameters.Clear();
+                _imageInputModelIds.Clear();
                 foreach (JsonElement item in data.EnumerateArray())
                 {
                     if (!item.TryGetProperty("id", out JsonElement idElement))
@@ -950,6 +1012,15 @@ namespace Malx_AI
                         }
 
                         _modelSupportedParameters[id] = supportedParameters;
+                    }
+
+                    if (item.TryGetProperty("architecture", out JsonElement architectureElement)
+                        && architectureElement.ValueKind == JsonValueKind.Object
+                        && architectureElement.TryGetProperty("input_modalities", out JsonElement inputModalitiesElement)
+                        && inputModalitiesElement.ValueKind == JsonValueKind.Array
+                        && inputModalitiesElement.EnumerateArray().Any(m => string.Equals(m.GetString(), "image", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _imageInputModelIds.Add(id);
                     }
                 }
 
@@ -986,7 +1057,8 @@ namespace Malx_AI
             double topP,
             int maxTokens,
             IReadOnlyList<OpenRouterToolDefinition>? tools,
-            bool stream = false)
+            bool stream = false,
+            IReadOnlyList<string>? stopSequences = null)
         {
             JsonArray messagePayload = BuildMessages(messages, systemPrompt);
             JsonObject payload = new()
@@ -1002,6 +1074,10 @@ namespace Malx_AI
 
             if (SupportsParameter(modelId, "top_p"))
                 payload["top_p"] = topP;
+
+            JsonArray stopPayload = BuildStopPayload(stopSequences);
+            if (stopPayload.Count > 0)
+                payload["stop"] = stopPayload;
 
             // Only send the reasoning parameter when the user actually enables thinking mode.
             // Sending reasoning:{effort:"low"} on every request causes providers that don't
@@ -1024,6 +1100,24 @@ namespace Malx_AI
             };
             ApplyHeaders(request);
             return request;
+        }
+
+        private static JsonArray BuildStopPayload(IReadOnlyList<string>? stopSequences)
+        {
+            var payload = new JsonArray();
+            if (stopSequences == null || stopSequences.Count == 0)
+                return payload;
+
+            foreach (string stop in stopSequences
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.TrimEnd('\r', '\n'))
+                .Distinct(StringComparer.Ordinal)
+                .Take(8))
+            {
+                payload.Add(stop);
+            }
+
+            return payload;
         }
 
         private static JsonArray BuildMessages(List<OpenRouterMessage> conversationMessages, string systemPrompt)
@@ -1060,6 +1154,27 @@ namespace Malx_AI
                     && string.IsNullOrWhiteSpace(message.Text))
                 {
                     messageObject["content"] = JsonValue.Create((string?)null);
+                }
+                else if (string.Equals(normalizedRole, "user", StringComparison.OrdinalIgnoreCase)
+                    && message.ImageDataUrls?.Count > 0)
+                {
+                    var contentParts = new JsonArray
+                    {
+                        new JsonObject { ["type"] = "text", ["text"] = message.Text ?? string.Empty }
+                    };
+                    foreach (string imageDataUrl in message.ImageDataUrls)
+                    {
+                        if (string.IsNullOrWhiteSpace(imageDataUrl))
+                            continue;
+
+                        contentParts.Add(new JsonObject
+                        {
+                            ["type"] = "image_url",
+                            ["image_url"] = new JsonObject { ["url"] = imageDataUrl }
+                        });
+                    }
+
+                    messageObject["content"] = contentParts;
                 }
                 else
                 {
@@ -1151,7 +1266,7 @@ namespace Malx_AI
                 if (!preserveWhole && trimmed.Count > 0 && totalChars + text.Length + toolChars > maxChars)
                     continue;
 
-                trimmed.Add(new OpenRouterMessage(message.Role, text, message.ToolCallId, message.ToolCalls, message.PreserveFullText));
+                trimmed.Add(message with { Text = text });
                 totalChars += text.Length + toolChars;
             }
 
@@ -1215,12 +1330,18 @@ namespace Malx_AI
             return repaired;
         }
 
+        // Strips meaningless padding/sentinel tokens (e.g. Gemma's literal "<pad>") that a degenerate
+        // provider can leak into visible content. Runs of them collapse to nothing so callers never
+        // render or persist the "<pad><pad>…" spam.
+        internal static string StripPadSentinelTokens(string text)
+            => string.IsNullOrEmpty(text) ? text ?? string.Empty : PadSentinelTokenRegex.Replace(text, string.Empty);
+
         private static string ExtractMessageContent(JsonElement message)
         {
             if (!message.TryGetProperty("content", out JsonElement content))
                 return string.Empty;
 
-            return ExtractContentText(content, includeReasoningParts: false);
+            return StripPadSentinelTokens(ExtractContentText(content, includeReasoningParts: false));
         }
 
         private static string ExtractReasoningContent(JsonElement firstChoice, JsonElement message)
@@ -1658,6 +1779,24 @@ namespace Malx_AI
             DetectedModelLabel = DefaultModelLabel;
             _availableModels = new List<(string Id, string Label, bool IsFree)>();
             _modelSupportedParameters.Clear();
+        }
+
+        /// <summary>
+        /// True when the selected model (or any API model behind its alias profile) advertises
+        /// image input modality on OpenRouter. Used to decide whether image attachments are
+        /// actually transmitted — and whether the system prompt may claim they are visible.
+        /// </summary>
+        public bool SupportsImageInput(string modelId)
+        {
+            if (_imageInputModelIds.Count == 0)
+                return false;
+
+            string normalized = (modelId ?? string.Empty).Trim();
+            if (_imageInputModelIds.Contains(normalized))
+                return true;
+
+            OpenRouterModelProfile profile = FindModelProfile(normalized);
+            return profile != null && profile.AllApiModelIds.Any(_imageInputModelIds.Contains);
         }
 
         private bool SupportsParameter(string modelId, string parameterName)

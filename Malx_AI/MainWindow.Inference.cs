@@ -220,6 +220,27 @@ namespace Malx_AI
             };
         }
 
+        /// <summary>
+        /// How many tokens to reserve for the model's reply on the LOCAL path. On a small
+        /// context window (common when a big model is squeezed onto limited VRAM) a fixed
+        /// 2,048-token reserve leaves almost nothing for an attached document — the document
+        /// budget then collapses to its floor and the model sees only a sliver of the file.
+        /// When a document is attached we deliberately trade some reply headroom for document
+        /// room: a "summarize this file" answer is short, but it must actually see the file.
+        /// This is the single source of truth shared by the document budget, the inference
+        /// MaxTokens, and the prompt fit-guards so all three agree.
+        /// </summary>
+        private static int ComputeLocalMaxGenerationTokens(int contextSize, bool documentAttached)
+        {
+            if (contextSize >= 8192)
+                return 2048;
+            if (contextSize >= 6144)
+                return documentAttached ? 1536 : 2048;
+            if (contextSize >= 4096)
+                return documentAttached ? 1024 : 1536;
+            return documentAttached ? 768 : 1024;
+        }
+
         private static InferenceParams CreateGenericInferenceParams(int maxTokens, IEnumerable<string> antiPrompts, float temperature, float minP)
         {
             return new InferenceParams
@@ -230,8 +251,12 @@ namespace Malx_AI
                 {
                     Temperature = temperature,
                     MinP = minP,
-                    TopP = 1.0f,
-                    TopK = -1,
+                    // TopK/TopP were -1 / 1.0, i.e. sample over the ENTIRE vocabulary every
+                    // token. On large-vocab models (Gemma's is ~256k) that is a real per-token
+                    // cost on both CPU and GPU. A 40-token top-k plus 0.95 nucleus is the
+                    // standard quality-neutral default and shrinks the candidate set ~1000x.
+                    TopP = 0.95f,
+                    TopK = 40,
                     RepeatPenalty = 1.1f
                 }
             };
@@ -379,8 +404,11 @@ namespace Malx_AI
                 // the planner sees that memory as gone and resolves to few/zero GPU layers.
                 WorkplaceViewControl?.ReleaseCachedCouncilModels();
 
+                // CreatePlan probes hardware via external processes (powershell/nvidia-smi)
+                // — run it off the dispatcher so the import click doesn't freeze the UI.
                 uint requestedContext = GetDefaultContextForModel(openFileDialog.FileName);
-                var plan = InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceBackendService.CurrentMode);
+                var recovery = ResolveCrashRecoveryPlan(openFileDialog.FileName, InferenceBackendService.CurrentMode, requestedContext);
+                var plan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, recovery.Context, recovery.Mode));
                 AppendSystemMessage($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
 
                 try
@@ -391,7 +419,7 @@ namespace Malx_AI
                 {
                     await BackendLogService.LogErrorAsync("MainWindow.GPUInit", ex);
                     AppendSystemMessage($"GPU init failed ({ex.Message}). Retrying with CPU fallback...");
-                    var cpuPlan = InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly);
+                    var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly));
                     await InitializeModelSessionAsync(cpuPlan);
                     AppendSystemMessage("Fallback mode active: CPU");
                 }
@@ -400,7 +428,7 @@ namespace Malx_AI
                     await BackendLogService.LogErrorAsync("MainWindow.ModelInit", ex);
                     AppendSystemMessage($"Model initialization failed ({GetMostRelevantError(ex)}). Retrying in CPU safe mode...");
 
-                    var cpuPlan = InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly);
+                    var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly));
                     await InitializeModelSessionAsync(cpuPlan);
                     AppendSystemMessage("Fallback mode active: CPU");
                 }
@@ -434,10 +462,91 @@ namespace Malx_AI
                 _activeModelParams = plan.Parameters;
                 _model = await Task.Run(() => LLamaWeights.LoadFromFile(plan.Parameters));
                 await TryLoadMmprojWeightsAsync(plan.Parameters.ModelPath, plan.UsingGpu);
-                var context = await Task.Run(() => _model.CreateContext(plan.Parameters));
+                var context = await Task.Run(() => LlamaContextFactory.CreateContext(_model, plan.Parameters));
                 _executor = CreateLocalExecutor(context);
             });
+
+            // Stamp the loaded model+backend into the decode forensics so a native abort's
+            // marker identifies exactly what died — the crash ledger reads it next launch.
+            NativeDecodeForensics.SetActiveModel(plan.Parameters.ModelPath, plan.UsingGpu, plan.Parameters.GpuLayerCount);
             RebuildChatSession();
+        }
+
+        /// <summary>
+        /// If a model previously died under GPU (recorded by the crash ledger), force this load
+        /// onto CPU so the app cannot relaunch straight back into the same crash. A clean run
+        /// clears the strike; an explicit GPU toggle (ReloadModelWithCurrentModeAsync) counts as
+        /// a user retry and clears it too.
+        /// </summary>
+        // Decides how to (re)load a model that has crashed under GPU before, balancing the user's
+        // GPU preference against stability. A native CUDA crash on the 2nd turn is almost always
+        // VRAM exhaustion as the KV cache grows, so the first recovery step is NOT to abandon the
+        // GPU — it is to retry on the GPU with a SMALLER context window (smaller KV cache, lower
+        // per-decode VRAM pressure), which keeps GPU-class speed. Only a model that keeps crashing
+        // is dropped to CPU. Returns the compute mode AND the context to request.
+        private (InferenceComputeMode Mode, uint Context) ResolveCrashRecoveryPlan(
+            string modelPath, InferenceComputeMode requested, uint requestedContext)
+        {
+            if (requested != InferenceComputeMode.GpuAccelerated || string.IsNullOrWhiteSpace(modelPath))
+                return (requested, requestedContext);
+
+            int strikes = NativeCrashLedger.GetGpuStrikes(modelPath);
+            if (strikes <= 0)
+                return (requested, requestedContext);
+
+            // First/second strike: keep the GPU but shrink the context. A clean GPU turn clears
+            // the strike (back to the full context next load); each further crash shrinks it more.
+            if (strikes <= 2)
+            {
+                uint reduced = strikes == 1
+                    ? (uint)Math.Max(4096, requestedContext / 2)
+                    : (uint)Math.Max(2560, requestedContext / 4);
+
+                if (reduced < requestedContext)
+                {
+                    AppendSystemMessage(
+                        $"⚠ \"{Path.GetFileName(modelPath)}\" crashed during GPU generation before " +
+                        $"(at {requestedContext} ctx). Retrying on GPU with a smaller context window " +
+                        $"({reduced} tokens) to reduce VRAM pressure. If it keeps crashing it will load on CPU.");
+                    return (InferenceComputeMode.GpuAccelerated, reduced);
+                }
+            }
+
+            // Repeated GPU crashes (or the context is already minimal): the GPU is genuinely
+            // unstable for this model on this machine. Load on CPU — stable everywhere — and keep
+            // the Settings combo honest so the user can deliberately re-select GPU to force a retry.
+            InferenceBackendService.CurrentMode = InferenceComputeMode.CpuOnly;
+            SyncProcessingModeComboTo(InferenceComputeMode.CpuOnly);
+            AppendSystemMessage(
+                $"⚠ \"{Path.GetFileName(modelPath)}\" crashed repeatedly during GPU generation. " +
+                "Loading on CPU for stability — select GPU Accelerated in Settings to force a GPU retry.");
+            return (InferenceComputeMode.CpuOnly, requestedContext);
+        }
+
+        // Reflects the actual loaded compute mode back into the Settings combo WITHOUT triggering a
+        // reload. Without this, the combo keeps showing the saved preference (e.g. "GPU Accelerated")
+        // after the crash guard quietly loaded on CPU, so re-selecting GPU is a no-op (the index
+        // never changes, SelectionChanged never fires) and the user can never escape CPU mode.
+        private void SyncProcessingModeComboTo(InferenceComputeMode mode)
+        {
+            void Apply()
+            {
+                if (ProcessingModeCombo == null)
+                    return;
+
+                int target = mode == InferenceComputeMode.GpuAccelerated ? 1 : 0;
+                if (ProcessingModeCombo.SelectedIndex == target)
+                    return;
+
+                _suppressProcessingModeComboReload = true;
+                try { ProcessingModeCombo.SelectedIndex = target; }
+                finally { _suppressProcessingModeComboReload = false; }
+            }
+
+            if (Dispatcher.CheckAccess())
+                Apply();
+            else
+                Dispatcher.Invoke(Apply);
         }
 
         // Creates the chat executor, attaching the multimodal projector when one is loaded
@@ -645,15 +754,29 @@ namespace Malx_AI
             // Free the old KV-cache BEFORE allocating a new one. The previous pattern kept
             // both alive simultaneously, which caused double-peak VRAM usage that crashes
             // on models ≥7B where free VRAM is tight after weight loading.
-            var oldExecutor = _executor;
-            _executor = null;
-            _chatSession = null;
-            try { oldExecutor?.Context?.Dispose(); } catch { }
+            //
+            // Disposing the old context and creating its replacement are native-context
+            // mutations: hold the native-decode gate so a background KV SaveState (fired
+            // from the previous turn's persistence) or any other surface cannot be reading
+            // this context while it is torn down — concurrent access aborts llama.cpp
+            // natively (ucrtbase 0xc0000409). The caller replays history under the same
+            // gate afterwards, so no decode runs before this completes.
+            await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, async () =>
+            {
+                var oldExecutor = _executor;
+                _executor = null;
+                _chatSession = null;
+                try { oldExecutor?.Context?.Dispose(); } catch { }
 
-            var newContext = await Task.Run(() => _model.CreateContext(_activeModelParams), token).ConfigureAwait(false);
-            var newExecutor = CreateLocalExecutor(newContext);
-            _executor = newExecutor;
-            _chatSession = new LLama.ChatSession(newExecutor);
+                var newContext = await Task.Run(() => LlamaContextFactory.CreateContext(_model, _activeModelParams), token).ConfigureAwait(false);
+                var newExecutor = CreateLocalExecutor(newContext);
+                _executor = newExecutor;
+            }).ConfigureAwait(false);
+
+            if (_executor == null)
+                return;
+
+            _chatSession = new LLama.ChatSession(_executor);
             _chatSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
             _chatSession.AddSystemMessage(systemPrompt);
         }
@@ -723,28 +846,22 @@ namespace Malx_AI
             return modelName.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Returns a safe context size to request for a model before loading it,
-        // based purely on file size. BuildSafeModelParams enforces the same caps,
-        // but setting the slider here lets the user see what was actually used.
+        // Returns the context size to REQUEST for a model before loading it. The request
+        // is an upper bound, not an allocation: BuildSafeModelParams shrinks it from real
+        // memory math (GGUF KV geometry vs. free VRAM/RAM). The old file-size table here
+        // pre-capped large models at 2-3k tokens regardless of available memory — a 9B
+        // quant over 8 GB was stranded at 3,072 even on machines that fit 8k+ comfortably.
         private uint GetDefaultContextForModel(string modelFilePath)
         {
             if (IsQwen3Model(modelFilePath)) return 8192u;
 
-            try
-            {
-                long fileBytes = new FileInfo(modelFilePath).Length;
-                return fileBytes switch
-                {
-                    > 16L * 1024 * 1024 * 1024 => 2048u,
-                    > 8L * 1024 * 1024 * 1024  => 3072u,
-                    > 4L * 1024 * 1024 * 1024  => 6144u,
-                    _                           => 8192u
-                };
-            }
-            catch
-            {
-                return 4096u;
-            }
+            // Prefer the model's trained context from the GGUF header, capped at 16k —
+            // beyond that the KV cache dominates desktop memory for little chat benefit.
+            GgufModelMetadata? meta = GgufMetadataReader.TryRead(modelFilePath);
+            if (meta?.ContextLength is > 0)
+                return (uint)Math.Clamp(meta.ContextLength, 1024, 16384);
+
+            return 8192u;
         }
 
         private static bool IsMmprojFile(string modelPath)
@@ -892,30 +1009,59 @@ namespace Malx_AI
 
             // Context allocation reserves the full KV cache (potentially GBs of VRAM) —
             // never run it synchronously on the UI thread.
-            using var tempContext = await Task.Run(() => _model.CreateContext(_activeModelParams), token).ConfigureAwait(false);
+            using var tempContext = await Task.Run(() => LlamaContextFactory.CreateContext(_model, _activeModelParams), token).ConfigureAwait(false);
             var tempExecutor = new InteractiveExecutor(tempContext);
 
             if (isStrictChatMl || isGemma4)
             {
-                string prompt = isGemma4
-                    ? Gemma4Formatter.BuildPrompt(systemPrompt, new List<(string Role, string Content)>(), userPrompt, false)
-                    : BuildStrictChatMlPrompt(systemPrompt, userPrompt);
+                string prompt = FitLocalPromptToContextWindow(
+                    systemPrompt,
+                    new List<(string Role, string Content)>(),
+                    userPrompt,
+                    isGemma4,
+                    inferenceParams);
 
+                int isolatedPromptTokens = CountLocalPromptTokens(prompt);
+                EnsureLocalPromptFitsOrThrow(isolatedPromptTokens, "NormalChat.IsolatedStrictPrompt");
+                NativeDecodeForensics.BeginDecode("NormalChat.IsolatedStrictPrompt", isolatedPromptTokens, GetLoadedLocalContextSize(), _modelName);
+                try
+                {
+                    return await StreamInferenceAsync(
+                        () => tempExecutor.InferAsync(prompt, inferenceParams, token),
+                        responseBuilder,
+                        thinkingModeEnabled,
+                        token);
+                }
+                finally
+                {
+                    NativeDecodeForensics.EndDecode();
+                }
+            }
+
+            // This session decodes system prompt + user turn natively — fit them to the
+            // context window first; an oversized decode aborts the entire process.
+            ChatSessionPromptPlan isolatedPlan = FitChatSessionPlanToContextWindow(
+                systemPrompt,
+                new List<ChatMessage>(),
+                userPrompt,
+                inferenceParams);
+
+            var tempSession = new LLama.ChatSession(tempExecutor);
+            tempSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
+            tempSession.AddSystemMessage(isolatedPlan.SystemPrompt);
+            NativeDecodeForensics.BeginDecode("NormalChat.IsolatedSessionTurn", isolatedPlan.EstimatedPromptTokens, GetLoadedLocalContextSize(), _modelName);
+            try
+            {
                 return await StreamInferenceAsync(
-                    () => tempExecutor.InferAsync(prompt, inferenceParams, token),
+                    () => tempSession.ChatAsync(new ChatHistory.Message(AuthorRole.User, isolatedPlan.UserMessage), isolatedPlan.InferenceParams, token),
                     responseBuilder,
                     thinkingModeEnabled,
                     token);
             }
-
-            var tempSession = new LLama.ChatSession(tempExecutor);
-            tempSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
-            tempSession.AddSystemMessage(systemPrompt);
-            return await StreamInferenceAsync(
-                () => tempSession.ChatAsync(new ChatHistory.Message(AuthorRole.User, userPrompt), inferenceParams, token),
-                responseBuilder,
-                thinkingModeEnabled,
-                token);
+            finally
+            {
+                NativeDecodeForensics.EndDecode();
+            }
         }
 
         private static string AppendSingleTurnSystemTail(string systemPrompt, string webSourcesBlock, bool thinkingModeEnabled)
@@ -1137,6 +1283,250 @@ namespace Malx_AI
         {
             string capped = CapOversizedInjections(prompt);
             return PruneStaleToolInjections(capped, injections, currentUserMessage);
+        }
+
+        private static readonly Regex LocalDocumentContextBlockRegex = new(@"\[\[DOCUMENT CONTEXT\]\]\s*(?<body>[\s\S]*?)\s*\[\[END DOCUMENT CONTEXT\]\]", RegexOptions.Compiled);
+
+        private int CountLocalPromptTokens(string prompt)
+        {
+            try
+            {
+                var context = _executor?.Context;
+                if (context != null)
+                    return context.Tokenize(prompt ?? string.Empty, addBos: true, special: true).Length;
+            }
+            catch
+            {
+                // Fall through to the conservative character estimate.
+            }
+
+            return (prompt?.Length ?? 0) / 3;
+        }
+
+        private static string ShrinkDocumentContextBlock(string systemPrompt)
+        {
+            Match match = LocalDocumentContextBlockRegex.Match(systemPrompt ?? string.Empty);
+            if (!match.Success)
+                return systemPrompt ?? string.Empty;
+
+            string body = match.Groups["body"].Value;
+            if (body.Length <= 1000)
+                return systemPrompt!;
+
+            string truncated = body[..(body.Length / 2)].TrimEnd()
+                + "\n[...document context truncated to fit the model's context window]";
+            return systemPrompt!.Remove(match.Index, match.Length)
+                .Insert(match.Index, $"[[DOCUMENT CONTEXT]]\n{truncated}\n[[END DOCUMENT CONTEXT]]");
+        }
+
+        /// <summary>
+        /// Guarantees the rendered single-shot prompt fits the loaded model's context window.
+        /// An oversized decode does not throw — llama.cpp asserts and aborts the entire process
+        /// (ucrtbase 0xc0000409) — so this trims, in order: oldest history turns, the document
+        /// context block, then system/user text, until the prompt plus the generation reserve fit.
+        /// </summary>
+        private string FitLocalPromptToContextWindow(
+            string systemPrompt,
+            List<(string Role, string Content)> historyTurns,
+            string userPrompt,
+            bool isGemma4,
+            InferenceParams inferenceParams)
+        {
+            int contextSize = GetLoadedLocalContextSize();
+            int generationReserve = Math.Clamp(inferenceParams?.MaxTokens ?? 2048, 256, 2048);
+            int promptBudget = contextSize - generationReserve - 64;
+            if (promptBudget < 512)
+                promptBudget = Math.Max(384, contextSize / 2);
+
+            string system = systemPrompt ?? string.Empty;
+            var turns = new List<(string Role, string Content)>(historyTurns ?? []);
+            string user = userPrompt ?? string.Empty;
+
+            string BuildPrompt() => isGemma4
+                ? Gemma4Formatter.BuildPrompt(system, turns, user, false)
+                : BuildStrictChatMlPrompt(system, turns, user);
+
+            string prompt = BuildPrompt();
+            int initialTokens = CountLocalPromptTokens(prompt);
+            if (initialTokens <= promptBudget)
+                return prompt;
+
+            while (turns.Count > 0)
+            {
+                turns.RemoveAt(0);
+                prompt = BuildPrompt();
+                if (CountLocalPromptTokens(prompt) <= promptBudget)
+                {
+                    LogLocalPromptFitGuard(contextSize, promptBudget, initialTokens, prompt, historyTurns?.Count - turns.Count ?? 0);
+                    return prompt;
+                }
+            }
+
+            for (int attempt = 0; attempt < 8; attempt++)
+            {
+                // The document block now lives in the user turn; shrink it there first, then
+                // fall back to the system prompt (older callers may still place it there).
+                string shrunkUser = ShrinkDocumentContextBlock(user);
+                string shrunkSystem = ShrinkDocumentContextBlock(system);
+                if (string.Equals(shrunkUser, user, StringComparison.Ordinal)
+                    && string.Equals(shrunkSystem, system, StringComparison.Ordinal))
+                    break;
+
+                user = shrunkUser;
+                system = shrunkSystem;
+                prompt = BuildPrompt();
+                if (CountLocalPromptTokens(prompt) <= promptBudget)
+                {
+                    LogLocalPromptFitGuard(contextSize, promptBudget, initialTokens, prompt, historyTurns?.Count ?? 0);
+                    return prompt;
+                }
+            }
+
+            int tokens = CountLocalPromptTokens(prompt);
+            while (tokens > promptBudget && system.Length > 800)
+            {
+                system = system[..(system.Length * 3 / 4)];
+                prompt = BuildPrompt();
+                tokens = CountLocalPromptTokens(prompt);
+            }
+
+            while (tokens > promptBudget && user.Length > 400)
+            {
+                user = user[..(user.Length * 3 / 4)];
+                prompt = BuildPrompt();
+                tokens = CountLocalPromptTokens(prompt);
+            }
+
+            LogLocalPromptFitGuard(contextSize, promptBudget, initialTokens, prompt, historyTurns?.Count ?? 0);
+            return prompt;
+        }
+
+        private void LogLocalPromptFitGuard(int contextSize, int promptBudget, int initialTokens, string finalPrompt, int droppedTurns)
+        {
+            _ = BackendLogService.LogEventAsync(
+                "LocalPromptFitGuard",
+                $"Ctx:{contextSize}\nBudget:{promptBudget}\nInitialTokens:{initialTokens}\nFinalTokens:{CountLocalPromptTokens(finalPrompt)}\nHistoryTurnsDropped:{droppedTurns}");
+        }
+
+        private sealed class ChatSessionPromptPlan
+        {
+            public string SystemPrompt = string.Empty;
+            public List<ChatMessage> HistoryMessages = new();
+            public string UserMessage = string.Empty;
+            public InferenceParams InferenceParams = null!;
+            public int EstimatedPromptTokens;
+        }
+
+        /// <summary>
+        /// Tokenizer-verified fit guard for the ChatSession (non-strict-template) path. That
+        /// path decodes the system prompt, every replayed history message, and the user turn
+        /// natively without ever passing through <see cref="FitLocalPromptToContextWindow"/>,
+        /// so an attached-document turn could overflow the context window and abort llama.cpp
+        /// — killing the process. Trims, in order: oldest history messages, the document
+        /// context block, the system tail, then the user tail; as a last resort it shrinks
+        /// the generation reserve instead of refusing the turn.
+        /// </summary>
+        private ChatSessionPromptPlan FitChatSessionPlanToContextWindow(
+            string systemPrompt,
+            IEnumerable<ChatMessage> historyMessages,
+            string userMessage,
+            InferenceParams inferenceParams)
+        {
+            int contextSize = GetLoadedLocalContextSize();
+            int generationReserve = Math.Clamp(inferenceParams?.MaxTokens ?? 2048, 256, 2048);
+
+            List<ChatMessage> history = NormalizeMessagesForChatSession(historyMessages);
+            string system = systemPrompt ?? string.Empty;
+            string user = userMessage ?? string.Empty;
+
+            // Chat templates wrap every message in role markers the raw token count misses.
+            int TemplateOverhead() => (history.Count + 2) * 16 + 128;
+            int PromptBudget() => contextSize - generationReserve - TemplateOverhead();
+            int TotalTokens() => CountLocalPromptTokens(system)
+                + history.Sum(m => CountLocalPromptTokens(m.Content ?? string.Empty))
+                + CountLocalPromptTokens(user);
+
+            int initialTokens = TotalTokens();
+            int tokens = initialTokens;
+            int droppedMessages = 0;
+
+            while (tokens > PromptBudget() && history.Count > 0)
+            {
+                history.RemoveAt(0);
+                droppedMessages++;
+                tokens = TotalTokens();
+            }
+
+            for (int attempt = 0; attempt < 8 && tokens > PromptBudget(); attempt++)
+            {
+                // The document block rides in the user turn now; shrink it there first.
+                string shrunkUser = ShrinkDocumentContextBlock(user);
+                string shrunkSystem = ShrinkDocumentContextBlock(system);
+                if (string.Equals(shrunkUser, user, StringComparison.Ordinal)
+                    && string.Equals(shrunkSystem, system, StringComparison.Ordinal))
+                    break;
+
+                user = shrunkUser;
+                system = shrunkSystem;
+                tokens = TotalTokens();
+            }
+
+            while (tokens > PromptBudget() && system.Length > 800)
+            {
+                system = system[..(system.Length * 3 / 4)];
+                tokens = TotalTokens();
+            }
+
+            while (tokens > PromptBudget() && user.Length > 400)
+            {
+                user = user[..(user.Length * 3 / 4)];
+                tokens = TotalTokens();
+            }
+
+            InferenceParams fittedParams = inferenceParams!;
+            if (tokens > PromptBudget())
+            {
+                int remainingForGeneration = contextSize - tokens - TemplateOverhead();
+                if (remainingForGeneration >= 256)
+                    fittedParams = CloneInferenceParams(inferenceParams!, remainingForGeneration);
+            }
+
+            if (tokens != initialTokens || droppedMessages > 0)
+            {
+                _ = BackendLogService.LogEventAsync(
+                    "LocalPromptFitGuard",
+                    $"Path:ChatSession\nCtx:{contextSize}\nBudget:{PromptBudget()}\nInitialTokens:{initialTokens}\nFinalTokens:{tokens}\nHistoryMessagesDropped:{droppedMessages}\nMaxTokens:{fittedParams?.MaxTokens ?? 0}");
+            }
+
+            return new ChatSessionPromptPlan
+            {
+                SystemPrompt = system,
+                HistoryMessages = history,
+                UserMessage = user,
+                InferenceParams = fittedParams!,
+                EstimatedPromptTokens = tokens
+            };
+        }
+
+        /// <summary>
+        /// Final pre-decode gate: an oversized native decode does not throw — llama.cpp
+        /// asserts and aborts the entire process — so refuse it here with a managed
+        /// exception the send pipeline turns into an in-chat error message instead.
+        /// </summary>
+        private void EnsureLocalPromptFitsOrThrow(int promptTokens, string stage)
+        {
+            int contextSize = GetLoadedLocalContextSize();
+            if (promptTokens <= contextSize - 192)
+                return;
+
+            _ = BackendLogService.LogEventAsync(
+                "LocalDecodeRefused",
+                $"Stage:{stage}\nPromptTokens:{promptTokens}\nCtx:{contextSize}\nModel:{_modelName}");
+
+            throw new InvalidOperationException(
+                $"This request needs ~{promptTokens:N0} prompt tokens but the loaded model's context window is {contextSize:N0}. " +
+                "The decode was stopped before it could crash the local backend — try a New Chat, remove or shrink attachments, " +
+                "or load the model with a larger context size.");
         }
 
         private static List<ChatMessage> NormalizeMessagesForChatSession(IEnumerable<ChatMessage> messages)
@@ -1596,9 +1986,32 @@ namespace Malx_AI
             // Strict-ChatML and Gemma4 models render the full transcript into a single prompt
             // and reset the executor context below — replaying history into the chat session
             // first would decode every message twice for no benefit.
+            ChatSessionPromptPlan? sessionPlan = null;
             if (_chatSession != null && !_useGemma4LocalCliMode && !useIsolatedWebTurn && !isStrictChatMl && !isGemma4)
             {
-                await RebuildChatSessionFromSelectedMessagesAsync(selectedHistoryMessages, effectiveSystemPrompt, token);
+                string plannedUserText = string.IsNullOrWhiteSpace(personaContext)
+                    ? modelUserMsg
+                    : "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]\n\n" + modelUserMsg;
+
+                sessionPlan = FitChatSessionPlanToContextWindow(
+                    effectiveSystemPrompt,
+                    selectedHistoryMessages,
+                    plannedUserText,
+                    inferenceParams);
+
+                NativeDecodeForensics.BeginDecode(
+                    "NormalChat.SessionHistoryReplay",
+                    sessionPlan.EstimatedPromptTokens,
+                    GetLoadedLocalContextSize(),
+                    _modelName);
+                try
+                {
+                    await RebuildChatSessionFromSelectedMessagesAsync(sessionPlan.HistoryMessages, sessionPlan.SystemPrompt, token);
+                }
+                finally
+                {
+                    NativeDecodeForensics.EndDecode();
+                }
             }
 
             if ((isStrictChatMl || isGemma4) && !_useGemma4LocalCliMode)
@@ -1654,49 +2067,44 @@ namespace Malx_AI
                 int queuedImages = AttachPendingImageEmbedsToExecutor();
                 string visionUserMsg = PrependImageMarkers(modelUserMsg, queuedImages);
 
-                string prompt;
-                if (isGemma4)
+                List<(string Role, string Content)> promptHistoryTurns = isGemma4
+                    ? BuildGemma4HistoryTurns(selectedHistoryMessages)
+                    : BuildChatMlHistoryTurns(selectedHistoryMessages);
+                if (promptHistoryTurns.Count > 0 && string.Equals(promptHistoryTurns[^1].Role, "user", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(promptHistoryTurns[^1].Content, userMsg, StringComparison.Ordinal))
                 {
-                    var historyTurns = BuildGemma4HistoryTurns(selectedHistoryMessages);
-                    if (historyTurns.Count > 0 && string.Equals(historyTurns[^1].Role, "user", StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(historyTurns[^1].Content, userMsg, StringComparison.Ordinal))
-                    {
-                        historyTurns.RemoveAt(historyTurns.Count - 1);
-                    }
-                    prompt = Gemma4Formatter.BuildPrompt(effectiveSystemPrompt, historyTurns, visionUserMsg, false);
+                    promptHistoryTurns.RemoveAt(promptHistoryTurns.Count - 1);
                 }
-                else
-                {
-                    var chatMlTurns = BuildChatMlHistoryTurns(selectedHistoryMessages);
-                    if (chatMlTurns.Count > 0 && string.Equals(chatMlTurns[^1].Role, "user", StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(chatMlTurns[^1].Content, userMsg, StringComparison.Ordinal))
-                    {
-                        chatMlTurns.RemoveAt(chatMlTurns.Count - 1);
-                    }
-                    prompt = BuildStrictChatMlPrompt(effectiveSystemPrompt, chatMlTurns, visionUserMsg);
-                }
+
+                // Fit-guard the rendered prompt against the real context window: an oversized
+                // decode aborts llama.cpp natively and crashes the whole app.
+                string prompt = FitLocalPromptToContextWindow(effectiveSystemPrompt, promptHistoryTurns, visionUserMsg, isGemma4, inferenceParams);
 
                 prompt = ApplyPreInferenceContextReduction(prompt, historyInjectionInfos, userMsg);
 
-                return await StreamInferenceAsync(
-                    () => _executor.InferAsync(prompt, inferenceParams, token),
-                    responseBuilder,
-                    thinkingModeEnabled,
-                    token);
+                int strictPromptTokens = CountLocalPromptTokens(prompt);
+                EnsureLocalPromptFitsOrThrow(strictPromptTokens, "NormalChat.StrictPrompt");
+                NativeDecodeForensics.BeginDecode("NormalChat.StrictPrompt", strictPromptTokens, GetLoadedLocalContextSize(), _modelName);
+                try
+                {
+                    return await StreamInferenceAsync(
+                        () => _executor.InferAsync(prompt, inferenceParams, token),
+                        responseBuilder,
+                        thinkingModeEnabled,
+                        token);
+                }
+                finally
+                {
+                    NativeDecodeForensics.EndDecode();
+                }
             }
 
             int sessionQueuedImages = AttachPendingImageEmbedsToExecutor();
-            string sessionUserMsg = PrependImageMarkers(modelUserMsg, sessionQueuedImages);
-
-            ChatHistory.Message message;
-            if (!useIsolatedWebTurn && !string.IsNullOrWhiteSpace(personaContext))
-            {
-                message = new ChatHistory.Message(AuthorRole.User, "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]\n\n" + sessionUserMsg);
-            }
-            else
-            {
-                message = new ChatHistory.Message(AuthorRole.User, sessionUserMsg);
-            }
+            string sessionUserText = sessionPlan?.UserMessage
+                ?? (!useIsolatedWebTurn && !string.IsNullOrWhiteSpace(personaContext)
+                    ? "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]\n\n" + modelUserMsg
+                    : modelUserMsg);
+            var message = new ChatHistory.Message(AuthorRole.User, PrependImageMarkers(sessionUserText, sessionQueuedImages));
 
             if (_chatSession != null && _chatSession.History.Messages.Count > 0)
             {
@@ -1707,11 +2115,22 @@ namespace Malx_AI
                     _chatSession.History.Messages[lastIndex] = new ChatHistory.Message(lastMessage.AuthorRole, reduced);
             }
 
-            return await StreamInferenceAsync(
-                () => _chatSession.ChatAsync(message, inferenceParams, token),
-                responseBuilder,
-                thinkingModeEnabled,
-                token);
+            InferenceParams sessionParams = sessionPlan?.InferenceParams ?? inferenceParams;
+            int sessionPromptTokens = sessionPlan?.EstimatedPromptTokens ?? CountLocalPromptTokens(message.Content);
+            EnsureLocalPromptFitsOrThrow(sessionPromptTokens, "NormalChat.SessionTurn");
+            NativeDecodeForensics.BeginDecode("NormalChat.SessionTurn", sessionPromptTokens, GetLoadedLocalContextSize(), _modelName);
+            try
+            {
+                return await StreamInferenceAsync(
+                    () => _chatSession.ChatAsync(message, sessionParams, token),
+                    responseBuilder,
+                    thinkingModeEnabled,
+                    token);
+            }
+            finally
+            {
+                NativeDecodeForensics.EndDecode();
+            }
         }
 
         private async Task<(ReasoningParser.ParsedResponse Parsed, string Answer, bool EmptyAfterStrip)> FinalizeAssistantResponseAsync(
@@ -1798,7 +2217,7 @@ namespace Malx_AI
             if (_model == null || _activeModelParams == null)
                 return string.Empty;
 
-            using var tempContext = await Task.Run(() => _model.CreateContext(_activeModelParams), token).ConfigureAwait(false);
+            using var tempContext = await Task.Run(() => LlamaContextFactory.CreateContext(_model, _activeModelParams), token).ConfigureAwait(false);
             var tempExecutor = new InteractiveExecutor(tempContext);
             bool isGemma4 = IsGemma4Model(_modelName);
             bool isStrictChatMl = IsStrictChatMlModel(_modelName);
@@ -1809,11 +2228,31 @@ namespace Malx_AI
                     ? Gemma4Formatter.BuildPrompt(thinkingSystemPrompt, BuildGemma4HistoryTurns(selectedHistoryMessages), modelUserMsg, true)
                     : BuildStrictChatMlPrompt(thinkingSystemPrompt, BuildChatMlHistoryTurns(selectedHistoryMessages), modelUserMsg);
                 prompt = ApplyPreInferenceContextReduction(prompt, CollectPromptInjectionInfos(selectedHistoryMessages), modelUserMsg);
-                await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, () => Task.Run(async () =>
+
+                // The thinking phase is optional — skip it rather than risk an oversized
+                // native decode (which aborts the process) or fail the whole turn.
+                int thinkingPromptTokens = CountLocalPromptTokens(prompt);
+                if (thinkingPromptTokens > GetLoadedLocalContextSize() - 192)
                 {
-                    await foreach (var tokenPiece in tempExecutor.InferAsync(prompt, cappedParams, token))
-                        builder.Append(tokenPiece);
-                }, token));
+                    _ = BackendLogService.LogEventAsync(
+                        "LocalDecodeRefused",
+                        $"Stage:NormalChat.ThinkingPhase\nPromptTokens:{thinkingPromptTokens}\nCtx:{GetLoadedLocalContextSize()}\nModel:{_modelName}");
+                    return string.Empty;
+                }
+
+                NativeDecodeForensics.BeginDecode("NormalChat.ThinkingPhase", thinkingPromptTokens, GetLoadedLocalContextSize(), _modelName);
+                try
+                {
+                    await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, () => Task.Run(async () =>
+                    {
+                        await foreach (var tokenPiece in tempExecutor.InferAsync(prompt, cappedParams, token))
+                            builder.Append(tokenPiece);
+                    }, token));
+                }
+                finally
+                {
+                    NativeDecodeForensics.EndDecode();
+                }
 
                 var parsed = ReasoningParser.Parse(CleanOutputTokens(builder.ToString()), isGemma4);
                 return string.IsNullOrWhiteSpace(parsed.ThinkingContent)
@@ -1821,35 +2260,52 @@ namespace Malx_AI
                     : parsed.ThinkingContent.Trim();
             }
 
+            // This session decodes system prompt + replayed history + user turn natively —
+            // fit the whole plan to the context window first (oversized decodes abort the
+            // process), mirroring the main chat-session path.
+            ChatSessionPromptPlan thinkingPlan = FitChatSessionPlanToContextWindow(
+                thinkingSystemPrompt,
+                selectedHistoryMessages,
+                modelUserMsg,
+                cappedParams);
+
             var tempSession = new LLama.ChatSession(tempExecutor);
             tempSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
-            tempSession.AddSystemMessage(thinkingSystemPrompt);
+            tempSession.AddSystemMessage(thinkingPlan.SystemPrompt);
 
-            string reducedUserPrompt = ApplyPreInferenceContextReduction(modelUserMsg, CollectPromptInjectionInfos(selectedHistoryMessages), modelUserMsg);
+            string reducedUserPrompt = ApplyPreInferenceContextReduction(thinkingPlan.UserMessage, CollectPromptInjectionInfos(selectedHistoryMessages), modelUserMsg);
 
             // History priming decodes the whole prompt — keep it inside the decode gate
             // and off the UI thread together with the final generation pass.
-            await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, () => Task.Run(async () =>
+            NativeDecodeForensics.BeginDecode("NormalChat.ThinkingSession", thinkingPlan.EstimatedPromptTokens, GetLoadedLocalContextSize(), _modelName);
+            try
             {
-                bool lastAcceptedWasUser = false;
-                foreach (var msg in selectedHistoryMessages)
+                await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, () => Task.Run(async () =>
                 {
-                    token.ThrowIfCancellationRequested();
-                    if (string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(msg.Content))
+                    bool lastAcceptedWasUser = false;
+                    foreach (var msg in thinkingPlan.HistoryMessages)
                     {
-                        await tempSession.AddAndProcessUserMessage(msg.Content, token).ConfigureAwait(false);
-                        lastAcceptedWasUser = true;
+                        token.ThrowIfCancellationRequested();
+                        if (string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(msg.Content))
+                        {
+                            await tempSession.AddAndProcessUserMessage(msg.Content, token).ConfigureAwait(false);
+                            lastAcceptedWasUser = true;
+                        }
+                        else if (string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase) && lastAcceptedWasUser && !string.IsNullOrWhiteSpace(msg.Content))
+                        {
+                            await tempSession.AddAndProcessAssistantMessage(msg.Content, token).ConfigureAwait(false);
+                            lastAcceptedWasUser = false;
+                        }
                     }
-                    else if (string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase) && lastAcceptedWasUser && !string.IsNullOrWhiteSpace(msg.Content))
-                    {
-                        await tempSession.AddAndProcessAssistantMessage(msg.Content, token).ConfigureAwait(false);
-                        lastAcceptedWasUser = false;
-                    }
-                }
 
-                await foreach (var tokenPiece in tempSession.ChatAsync(new ChatHistory.Message(AuthorRole.User, reducedUserPrompt), cappedParams, token))
-                    builder.Append(tokenPiece);
-            }, token));
+                    await foreach (var tokenPiece in tempSession.ChatAsync(new ChatHistory.Message(AuthorRole.User, reducedUserPrompt), thinkingPlan.InferenceParams, token))
+                        builder.Append(tokenPiece);
+                }, token));
+            }
+            finally
+            {
+                NativeDecodeForensics.EndDecode();
+            }
 
             return CleanOutputTokens(builder.ToString()).Trim();
         }
@@ -1927,7 +2383,7 @@ namespace Malx_AI
                 return string.Empty;
 
             var builder = new StringBuilder();
-            using var tempContext = await Task.Run(() => _model.CreateContext(_activeModelParams), token).ConfigureAwait(false);
+            using var tempContext = await Task.Run(() => LlamaContextFactory.CreateContext(_model, _activeModelParams), token).ConfigureAwait(false);
             var tempExecutor = new InteractiveExecutor(tempContext);
 
             if (isGemma4 || IsStrictChatMlModel(_modelName))
@@ -1979,18 +2435,31 @@ namespace Malx_AI
 
             try
             {
-                // Dispose old context first to free VRAM before the new allocation.
-                var oldExecutor = _executor;
-                _executor = null;
-                try { oldExecutor?.Context?.Dispose(); } catch { }
+                // Hold the native-decode gate: disposing the context while another surface
+                // is mid-decode (e.g. New Chat clicked during generation) crashes llama.cpp
+                // natively with no managed exception. The gate serializes the reset behind
+                // any in-flight stream. No caller holds this gate when invoking the reset.
+                await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, async () =>
+                {
+                    // Dispose old context first to free VRAM before the new allocation.
+                    var oldExecutor = _executor;
+                    _executor = null;
+                    try { oldExecutor?.Context?.Dispose(); } catch { }
 
-                var newContext = await Task.Run(() => _model.CreateContext(_activeModelParams), token).ConfigureAwait(false);
-                _executor = CreateLocalExecutor(newContext);
-                RebuildChatSession();
+                    var newContext = await Task.Run(() => LlamaContextFactory.CreateContext(_model, _activeModelParams), token).ConfigureAwait(false);
+                    _executor = CreateLocalExecutor(newContext);
+                }).ConfigureAwait(false);
+
+                // RebuildChatSession reads SystemPromptBox (a WPF control); after
+                // ConfigureAwait(false) we are on a threadpool thread, and a cross-thread
+                // read throws — previously swallowed below, leaving _chatSession bound to
+                // the disposed context. Marshal back to the dispatcher explicitly.
+                await Dispatcher.InvokeAsync(RebuildChatSession);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"ResetExecutorContext error: {ex.Message}");
+                await BackendLogService.LogErrorAsync("MainWindow.ResetExecutorContext", ex);
             }
         }
 
@@ -2082,6 +2551,11 @@ namespace Malx_AI
 
         private void ProcessingModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            // Ignore programmatic syncs (SyncProcessingModeComboTo) — the model is already being
+            // loaded in that mode, so a second reload here would be redundant and could race it.
+            if (_suppressProcessingModeComboReload)
+                return;
+
             if (ProcessingModeCombo?.SelectedIndex == 1)
             {
                 InferenceBackendService.CurrentMode = InferenceComputeMode.GpuAccelerated;
@@ -2104,6 +2578,16 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(modelPath) || !File.Exists(modelPath) || _model == null)
                 return;
 
+            // An explicit switch to GPU is the user deliberately retrying — clear any prior
+            // crash strike so the planner/guard doesn't immediately bounce them back to CPU.
+            // Clear the council role models too: their strikes (ResolveCouncilCrashRecovery)
+            // never auto-clear, so this explicit retry is their only reset path.
+            if (InferenceBackendService.CurrentMode == InferenceComputeMode.GpuAccelerated)
+            {
+                NativeCrashLedger.RegisterCleanRun(modelPath);
+                WorkplaceViewControl?.ClearCouncilGpuStrikes();
+            }
+
             string modeName = InferenceBackendService.CurrentMode == InferenceComputeMode.GpuAccelerated
                 ? "GPU Accelerated"
                 : "CPU Only";
@@ -2120,7 +2604,7 @@ namespace Malx_AI
                 WorkplaceViewControl?.ReleaseCachedCouncilModels();
 
                 uint requestedContext = GetDefaultContextForModel(modelPath);
-                var plan = InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceBackendService.CurrentMode);
+                var plan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceBackendService.CurrentMode));
                 AppendSystemMessage($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
 
                 try
@@ -2134,7 +2618,7 @@ namespace Malx_AI
                     InferenceBackendService.CurrentMode = InferenceComputeMode.CpuOnly;
                     _database?.SaveSetting("processing_mode", "cpu");
                     Dispatcher.Invoke(() => { if (ProcessingModeCombo != null) ProcessingModeCombo.SelectedIndex = 0; });
-                    var cpuPlan = InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceComputeMode.CpuOnly);
+                    var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceComputeMode.CpuOnly));
                     await InitializeModelSessionAsync(cpuPlan);
                     AppendSystemMessage("GPU unavailable — running on CPU.");
                 }
@@ -2147,6 +2631,82 @@ namespace Malx_AI
             {
                 await BackendLogService.LogErrorAsync("MainWindow.ModeSwitch", ex);
                 AppendSystemMessage($"Reload failed: {ex.Message}");
+                UpdateUIState(false);
+            }
+        }
+
+        // Frees the Normal-Chat model so a LOCAL council run can load its own role models. On a
+        // single GPU both subsystems cannot keep an 8B-class model resident at once: the council
+        // would load a SECOND copy on top of the chat model, overflow VRAM (plan drops to CPU),
+        // then overflow RAM on the CPU copy — the "Failed to load model" relay error. Invoked via
+        // WorkplaceView.ReleaseHostChatModelAsync at the start of every local relay/study run.
+        private async Task ReleaseChatModelForCouncilAsync(CancellationToken token)
+        {
+            // Gemma-4 CLI mode keeps no in-process weights, and there's nothing to free if no
+            // model is loaded.
+            if (_useGemma4LocalCliMode || (_model == null && _executor == null && _chatSession == null))
+                return;
+
+            try
+            {
+                // Dispose under the native-decode gate so we never tear the context down while a
+                // chat decode is in flight. Marshal the actual disposal to the UI thread because
+                // the chat fields are owned there.
+                await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, async () =>
+                {
+                    await Dispatcher.InvokeAsync(() => DisposeInferenceResources(clearModel: true));
+                }).ConfigureAwait(false);
+
+                _chatModelReleasedForCouncil = true;
+                await BackendLogService.LogEventAsync(
+                    "ChatModelReleasedForCouncil",
+                    "Freed the Normal-Chat model so the local council can load its role models on the shared GPU.");
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("MainWindow.ReleaseChatModelForCouncil", ex);
+            }
+        }
+
+        // Reloads the Normal-Chat model after a local council run freed it (see
+        // ReleaseChatModelForCouncilAsync). Called when the user returns to the chat view.
+        private async Task RestoreChatModelAfterCouncilAsync()
+        {
+            if (!_chatModelReleasedForCouncil)
+                return;
+
+            _chatModelReleasedForCouncil = false;
+
+            // Nothing to restore if the model is somehow already back, or chat is in a mode that
+            // doesn't hold in-process weights.
+            if (_model != null || _cloudModeActive || _useGemma4LocalCliMode)
+                return;
+
+            string? modelPath = _database?.GetUserFact("last_model_path");
+            if (string.IsNullOrWhiteSpace(modelPath) || !File.Exists(modelPath))
+                return;
+
+            try
+            {
+                UpdateUIState(false);
+                AppendSystemMessage("Reloading chat model...");
+
+                // Hand the GPU back to the chat surface: drop any council weights still cached.
+                WorkplaceViewControl?.ReleaseCachedCouncilModels();
+
+                uint requestedContext = GetDefaultContextForModel(modelPath);
+                var recovery = ResolveCrashRecoveryPlan(modelPath, InferenceBackendService.CurrentMode, requestedContext);
+                var plan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, recovery.Context, recovery.Mode));
+                await InitializeModelSessionAsync(plan);
+
+                UpdateHeaderDisplay();
+                AppendSystemMessage($"✓ Chat model ready ({plan.BackendName}).");
+                UpdateUIState(true);
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("MainWindow.RestoreChatModel", ex);
+                AppendSystemMessage($"Couldn't reload the chat model automatically ({ex.Message}). Re-import it with the model button.");
                 UpdateUIState(false);
             }
         }
@@ -2182,7 +2742,10 @@ namespace Malx_AI
                 effectiveSystemPrompt = AppendSingleTurnSystemTail(effectiveSystemPrompt, webContext, thinkingModeEnabled);
 
                 effectiveSystemPrompt = AppendSystemInstruction(effectiveSystemPrompt, LocalMathLatexInstruction);
-                effectiveSystemPrompt = AppendAttachedDocumentContextToSystemPrompt(effectiveSystemPrompt, uiSnapshot.DocumentContext);
+                // NOTE: the attached-document CONTENT is deliberately NOT appended to the system
+                // prompt here. Several local chat templates (Gemma has no system role at all)
+                // silently drop system content, which made the model insist the file was missing.
+                // The document rides in the user turn below — the one channel every template renders.
                 effectiveSystemPrompt = BuildQwen3SystemPrompt(effectiveSystemPrompt, thinkingModeEnabled);
 
                 List<ChatMessage> selectedHistoryMessages = SelectRelevantChatHistory(userMsg, uiSnapshot.ChatMessages, uiSnapshot.ContextSize, uiSnapshot.ChatDocuments);
@@ -2197,16 +2760,30 @@ namespace Malx_AI
                 }
 
                 bool isGemma4Model = IsGemma4Model(uiSnapshot.ModelName);
-                var antiPrompts = new List<string> { "<|im_end|>", "<|endoftext|>", "<|im_start|>", "<|eot_id|>", "<|start_header_id|>" };
+                // Cross-family stop tokens. The executor stops on the model's native EOG token,
+                // but a mismatched template can leave a model generating past its turn end —
+                // off-distribution gibberish that fills context and can end in a native abort.
+                // Listing every family's turn-terminator is a cheap, harmless safety net.
+                var antiPrompts = new List<string>
+                {
+                    "<|im_end|>", "<|endoftext|>", "<|im_start|>", "<|eot_id|>", "<|start_header_id|>",
+                    "<end_of_turn>",          // Gemma 1/2/3
+                    "<|end_of_text|>",        // Llama 3 / Granite
+                    "<|end_of_role|>",        // Granite role turns
+                    "<|endofturn|>"           // misc ChatML variants
+                };
                 if (isGemma4Model)
                 {
                     antiPrompts.Add(Gemma4Formatter.TurnClose);
                     antiPrompts.Add("<|/channel|>");
                 }
 
+                bool documentAttached = !string.IsNullOrWhiteSpace(uiSnapshot.DocumentContext);
+                int maxGenerationTokens = ComputeLocalMaxGenerationTokens(GetLoadedLocalContextSize(), documentAttached);
+
                 InferenceParams inferenceParams = IsQwen3Model(uiSnapshot.ModelName)
-                    ? ModelInferenceProfiles.CreateQwen3InferenceParams(thinkingModeEnabled, 2048, antiPrompts)
-                    : CreateGenericInferenceParams(2048, antiPrompts, uiSnapshot.Temperature, uiSnapshot.MinP);
+                    ? ModelInferenceProfiles.CreateQwen3InferenceParams(thinkingModeEnabled, maxGenerationTokens, antiPrompts)
+                    : CreateGenericInferenceParams(maxGenerationTokens, antiPrompts, uiSnapshot.Temperature, uiSnapshot.MinP);
 
                 string calculatorContext = sandboxPreparation.CalculatorContext;
                 string modelUserMsg = userMsg + calculatorContext;
@@ -2215,6 +2792,16 @@ namespace Malx_AI
 
                 if (hasWebContext)
                     modelUserMsg += "\n\n" + BuildWebGroundedUserTurnInstruction();
+
+                // Document content goes in the user turn so it survives every chat template.
+                // It is placed BEFORE the question (better recall) and clearly delimited.
+                if (documentAttached)
+                {
+                    modelUserMsg = AttachedDocumentRequiredReferenceInstruction
+                        + "\n\n" + uiSnapshot.DocumentContext.Trim()
+                        + "\n\n--- End of attached document content ---\n\n"
+                        + "Question: " + modelUserMsg;
+                }
 
                 return new NormalChatRequestContext
                 {
@@ -2237,7 +2824,7 @@ namespace Malx_AI
             }, token).ConfigureAwait(false);
         }
 
-        private async Task<NormalChatUiSnapshot> CaptureNormalChatUiSnapshotAsync(string userMsg)
+        private async Task<NormalChatUiSnapshot> CaptureNormalChatUiSnapshotAsync(string userMsg, bool isCloudMode = false)
         {
             return await Dispatcher.InvokeAsync(() =>
             {
@@ -2248,7 +2835,7 @@ namespace Malx_AI
                     ModelName = _modelName,
                     ChatDocumentsHaveTextContent = _chatDocuments.Any(doc => doc.HasTextContent),
                     AttachedDocumentMemory = BuildAttachedDocumentMemoryBlock(),
-                    DocumentContext = BuildPersistentDocumentContextBlock(userMsg, false),
+                    DocumentContext = BuildPersistentDocumentContextBlock(userMsg, isCloudMode),
                     HasVisionAttachmentForCloudTurn = HasVisionAttachmentForCloudTurn(),
                     ContextSize = (int)Math.Max(512, CtxSlider?.Value ?? 2048),
                     Temperature = (float)TemperatureSlider.Value,
@@ -3011,6 +3598,20 @@ namespace Malx_AI
                 InputBox.Clear();
                 _nextMessageModelOverride = "Default";
 
+                // The staged attachments belong to this message now — clear their input chips
+                // (they remain in _chatDocuments as context for follow-up questions).
+                bool hadPendingAttachments = false;
+                foreach (ChatDocumentAttachment doc in _chatDocuments)
+                {
+                    if (doc.IsPending)
+                    {
+                        doc.IsPending = false;
+                        hadPendingAttachments = true;
+                    }
+                }
+                if (hadPendingAttachments)
+                    RefreshAttachmentTray();
+
                 AddChatMessage("user", userMsg);
 
                 // Classify importance for the new user message and run compaction if needed
@@ -3203,6 +3804,16 @@ namespace Malx_AI
                         double speedMetric = _tokenCount / Math.Max(_inferenceTimer.Elapsed.TotalSeconds, 0.001);
                         AddChatMessage("system", $"Tokens: {_tokenCount}  •  Speed: {speedMetric:F2} tok/s");
                         _currentStreamingMessage = null;
+
+                        // NOTE: a clean turn deliberately does NOT clear the crash strike here.
+                        // A model that crashed on GPU is now recovered by loading on GPU with a
+                        // SMALLER context (ResolveCrashRecoveryPlan); a clean turn at that reduced
+                        // context only proves the *reduced* setting works, so auto-clearing would
+                        // bounce the next load back to the full context and re-crash (an endless
+                        // full↔reduced oscillation). The strike (and thus the safe reduced context)
+                        // stays put until the user explicitly re-selects GPU Accelerated in
+                        // Settings, which is the deliberate "retry at full settings" signal and
+                        // clears it (ReloadModelWithCurrentModeAsync).
                     }
                     _nextMessageModelOverride = "Default";
                     UpdateTokenUsageIndicator();

@@ -109,10 +109,10 @@ namespace Malx_AI
 
             string backend = parameters.GpuLayerCount > 0 ? "CUDA" : "CPU";
             string reason = parameters.GpuLayerCount > 0
-                ? $"GPU mode active on {profile.PrimaryGpuName}."
+                ? $"GPU mode active on {profile.PrimaryGpuName} (compute {profile.GpuComputeCapability:0.0}, FlashAttn {(parameters.FlashAttention == true ? "on" : "off")})."
                 : BuildCpuReason(mode, profile, gpuRuntimeAvailable);
 
-            Debug.WriteLine($"[InferenceBackendService] Plan: backend={backend}, gpuLayers={parameters.GpuLayerCount}, allowGpu={allowGpu}, nativeInit={NativeBackendInit.DiagnosticMessage}");
+            Debug.WriteLine($"[InferenceBackendService] Plan: backend={backend}, gpuLayers={parameters.GpuLayerCount}, flashAttn={parameters.FlashAttention}, allowGpu={allowGpu}, nativeInit={NativeBackendInit.DiagnosticMessage}");
 
             return new InferenceBackendPlan
             {

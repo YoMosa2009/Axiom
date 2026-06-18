@@ -15,7 +15,7 @@ namespace Malx_AI
 
     public class JsonChatPersistence
     {
-        private const string ChatHistoryFolder = "ChatHistory";
+        private static readonly string ChatHistoryFolder = AppDataPaths.ChatHistory;
         private const string IndexFile = "chats_index.json";
 
         private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };

@@ -90,6 +90,21 @@ namespace Malx_AI
 
                     config.WithAutoFallback();
 
+                    // Capture llama.cpp's native log stream to a file BEFORE any native call.
+                    // Native aborts (GGML_ASSERT) log their reason here and then kill the
+                    // process with no managed exception — this is the only place that record
+                    // survives. Must be registered during config, before the library freezes.
+                    try
+                    {
+                        var logCallback = NativeLlamaLogCapture.TryCreateCallback(AppDataPaths.Logs);
+                        if (logCallback != null)
+                            config.WithLogCallback(logCallback);
+                    }
+                    catch (Exception logEx)
+                    {
+                        Debug.WriteLine($"[NativeBackendInit] native log capture not installed: {logEx.Message}");
+                    }
+
                     GpuConfigured = enableCuda;
                     DiagnosticMessage = enableCuda
                         ? $"CUDA backend configured (ggml-cuda.dll found at {cudaPath})"

@@ -52,7 +52,7 @@ namespace Malx_AI
 
     public sealed class WorkplaceSessionPersistence
     {
-        private const string SessionFolder = "ChatHistory";
+        private static readonly string SessionFolder = AppDataPaths.ChatHistory;
         private const string SessionFile = "workplace_session.json";
 
         private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
@@ -80,7 +80,7 @@ namespace Malx_AI
         {
             string safeName = string.IsNullOrWhiteSpace(baseName) ? "run" : MakeSafe(baseName);
             string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string folder = Path.Combine("ChatHistory", "WorkplaceExports", $"{safeName}_{stamp}");
+            string folder = Path.Combine(AppDataPaths.ChatHistory, "WorkplaceExports", $"{safeName}_{stamp}");
             Directory.CreateDirectory(folder);
 
             File.WriteAllText(Path.Combine(folder, "architect.txt"), architect ?? "");

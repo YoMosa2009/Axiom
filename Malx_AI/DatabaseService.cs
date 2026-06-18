@@ -9,7 +9,7 @@ namespace Malx_AI
 {
     public class DatabaseService : IDisposable
     {
-        private const string DatabasePath = "axiom_data.db";
+        private static readonly string DatabasePath = AppDataPaths.DatabaseFile;
         private const string OpenRouterApiKeySettingKey = "openrouter_api_key";
         private readonly SQLiteConnection _connection;
         private readonly object _gate = new();

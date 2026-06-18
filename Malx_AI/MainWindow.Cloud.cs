@@ -50,6 +50,22 @@ namespace Malx_AI
             public List<ChatMessage> SelectedHistoryMessages { get; init; } = new();
             public List<OpenRouterMessage> ConversationHistory { get; init; } = new();
             public bool ThinkingEnabled { get; init; }
+            public List<string> ImageDataUrls { get; init; } = new();
+        }
+
+        private const int MaxCloudVisionImagesPerTurn = 4;
+
+        private List<string> BuildCloudImageDataUrls(IReadOnlyList<ChatDocumentAttachment> chatDocuments)
+        {
+            if (!_openRouterChatService.SupportsImageInput(_selectedOpenRouterModelId))
+                return new List<string>();
+
+            return (chatDocuments ?? [])
+                .Where(doc => doc.IsImage && !string.IsNullOrWhiteSpace(doc.Base64Data) && !string.IsNullOrWhiteSpace(doc.MimeType))
+                .OrderByDescending(doc => doc.ImportedAt)
+                .Take(MaxCloudVisionImagesPerTurn)
+                .Select(doc => $"data:{doc.MimeType};base64,{doc.Base64Data}")
+                .ToList();
         }
 
         private bool HasVisionAttachmentForCloudTurn()
@@ -618,7 +634,7 @@ namespace Malx_AI
             [
                 new OpenRouterToolDefinition(
                     "web_search",
-                    "Search the web for current information and return relevant snippets.",
+                    "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets.",
                     new JsonObject
                     {
                         ["type"] = "object",
@@ -627,7 +643,7 @@ namespace Malx_AI
                             ["query"] = new JsonObject
                             {
                                 ["type"] = "string",
-                                ["description"] = "The web search query to run."
+                                ["description"] = "A concise search query focused on the user's actual question, such as what X is, what X does to Y, how X works, latest status, docs, or news."
                             }
                         },
                         ["required"] = new JsonArray("query"),
@@ -676,12 +692,14 @@ namespace Malx_AI
             List<OpenRouterMessage> conversationHistory,
             bool thinkingEnabled,
             Action<string>? onToken,
-            CancellationToken token)
+            CancellationToken token,
+            IReadOnlyList<string>? imageDataUrls = null)
         {
             List<OpenRouterMessage> messages = new(conversationHistory ?? []);
             // PreserveFullText: keeps the active user message (which may carry attached document
             // context) intact through tool-loop iterations, where it stops being the final message.
-            messages.Add(new OpenRouterMessage("user", userMsg, PreserveFullText: true));
+            // ImageDataUrls: attached images ride the same payload message as multipart content.
+            messages.Add(new OpenRouterMessage("user", userMsg, PreserveFullText: true, ImageDataUrls: imageDataUrls));
 
             IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions();
             var reasoningParts = new List<string>();
@@ -834,6 +852,10 @@ namespace Malx_AI
                     Result = $"Unsupported tool: {normalizedName}"
                 };
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 return new CloudToolExecutionResult
@@ -878,7 +900,8 @@ namespace Malx_AI
                     requestContext.SystemPrompt,
                     requestContext.ConversationHistory,
                     requestContext.ThinkingEnabled,
-                    tokenChunk =>
+                    imageDataUrls: requestContext.ImageDataUrls,
+                    onToken: tokenChunk =>
                     {
                         if (string.IsNullOrEmpty(tokenChunk))
                             return;
@@ -904,7 +927,7 @@ namespace Malx_AI
                             ScrollChatToEnd();
                         }, System.Windows.Threading.DispatcherPriority.Background);
                     },
-                    token);
+                    token: token);
 
                 await BackendLogService.LogEventAsync(
                     "OpenRouterLatency",
@@ -1036,7 +1059,7 @@ namespace Malx_AI
 
         private async Task<CloudChatRequestContext> PrepareCloudChatRequestContextAsync(string userMsg, CancellationToken token)
         {
-            NormalChatUiSnapshot uiSnapshot = await CaptureNormalChatUiSnapshotAsync(userMsg);
+            NormalChatUiSnapshot uiSnapshot = await CaptureNormalChatUiSnapshotAsync(userMsg, isCloudMode: true);
 
             // Proactive web search — mirrors local-mode behavior so the web toggle and [web] marker
             // work identically in cloud mode. Cloud also has a web_search tool for reactive searches,
@@ -1090,7 +1113,8 @@ namespace Malx_AI
                     FinalUserMessage = userMsg,
                     SelectedHistoryMessages = selectedHistoryMessages,
                     ConversationHistory = conversationHistory,
-                    ThinkingEnabled = thinkingEnabled
+                    ThinkingEnabled = thinkingEnabled,
+                    ImageDataUrls = BuildCloudImageDataUrls(uiSnapshot.ChatDocuments)
                 };
             }, token).ConfigureAwait(false);
         }
