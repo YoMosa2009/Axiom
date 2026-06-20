@@ -14,7 +14,7 @@ namespace Malx_AI
         {
             try
             {
-                string logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+                string logDir = AppDataPaths.Logs;
                 Directory.CreateDirectory(logDir);
                 string logPath = Path.Combine(logDir, "backend-events.log");
 
@@ -42,7 +42,7 @@ namespace Malx_AI
         {
             try
             {
-                string logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+                string logDir = AppDataPaths.Logs;
                 Directory.CreateDirectory(logDir);
                 string logPath = Path.Combine(logDir, "backend-errors.log");
 

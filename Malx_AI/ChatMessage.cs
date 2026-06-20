@@ -406,6 +406,14 @@ namespace Malx_AI
         public long FileSizeBytes { get; set; }
         public DateTime ImportedAt { get; set; } = DateTime.Now;
 
+        /// <summary>
+        /// True while the attachment is staged in the input box and not yet sent. The input
+        /// tray shows only pending chips, so they clear once the message is sent — but the
+        /// document stays in <c>_chatDocuments</c> as conversation context so follow-up
+        /// questions about it still work.
+        /// </summary>
+        public bool IsPending { get; set; } = true;
+
         public bool HasTextContent => !string.IsNullOrWhiteSpace(Content);
         public bool IsImage => string.Equals(Kind, "image", StringComparison.OrdinalIgnoreCase);
     }

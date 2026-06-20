@@ -59,6 +59,12 @@ namespace Malx_AI
         private bool _isDarkMode = true;
         private HardwareProfile _detectedHardware = new HardwareProfile();
         private bool _isSettingsAnimating = false;
+        // Set while SyncProcessingModeComboTo updates the Processing Mode combo programmatically,
+        // so its SelectionChanged handler doesn't fire a redundant model reload.
+        private bool _suppressProcessingModeComboReload = false;
+        // True after a local council run released the Normal-Chat model to free VRAM/RAM; the
+        // model is reloaded when the user returns to the chat view.
+        private bool _chatModelReleasedForCouncil = false;
         private bool _isViewTransitionAnimating = false;
         private bool _isHistorySectionExpanded = true;
         private bool _isHistorySectionAnimating = false;
@@ -89,6 +95,11 @@ namespace Malx_AI
         private int _workplaceChatCounter = 0;
         private int _currentWorkplaceChatId = -1;
         private Button _activeWorkplaceButton = null;
+
+        private static SolidColorBrush BrushFromHex(string hex)
+        {
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+        }
 
         private void LoadEmptyChatLogo()
         {
@@ -273,7 +284,7 @@ namespace Malx_AI
         private const int ContextSelectionThresholdTokens = 1500;
         private const string AttachedDocumentHeaderLine = "ATTACHED DOCUMENT — YOU MUST READ AND USE THIS";
         private const string AttachedDocumentEndLine = "END OF DOCUMENT";
-        private const string AttachedDocumentRequiredReferenceInstruction = "The user has attached a document. Your response must directly reference and use the content of the attached document. If the user's request relates to the document in any way, base your answer on the document content. Do not ignore the document.";
+        private const string AttachedDocumentRequiredReferenceInstruction = "The user has attached one or more files. Their full text is included below between the [[DOCUMENT CONTEXT]] markers — it is ALREADY provided to you here. Never ask the user to attach, upload, paste, or share the file: you can read it right now. Base your answer on this content.";
         private static readonly string[] ExplicitWebSearchMarkers =
         [
             "[web]", "search the web", "search online", "search for ", "look up", "lookup",
@@ -385,7 +396,7 @@ namespace Malx_AI
             "Ask me anything"
         ];
 
-        private const string NormalChatAttachmentDialogFilter = "Supported files (*.pdf;*.txt;*.md;*.json;*.csv;*.tsv;*.xlsx;*.docx;*.rtf;code;images)|*.pdf;*.txt;*.md;*.markdown;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.csv;*.tsv;*.xlsx;*.docx;*.rtf;*.log;*.ini;*.config;*.cs;*.js;*.ts;*.jsx;*.tsx;*.html;*.htm;*.css;*.sql;*.py;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh;*.tex;*.srt;*.vtt;*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|Documents (*.pdf;*.txt;*.md;*.json;*.csv;*.tsv;*.xlsx;*.docx;*.rtf)|*.pdf;*.txt;*.md;*.json;*.csv;*.tsv;*.xlsx;*.docx;*.rtf|Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|All files (*.*)|*.*";
+        private const string NormalChatAttachmentDialogFilter = "Supported files (documents;spreadsheets;presentations;e-books;notebooks;code;images)|*.pdf;*.txt;*.md;*.markdown;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.csv;*.tsv;*.xlsx;*.docx;*.pptx;*.odt;*.ods;*.odp;*.epub;*.ipynb;*.rtf;*.log;*.ini;*.config;*.cs;*.js;*.ts;*.jsx;*.tsx;*.html;*.htm;*.css;*.sql;*.py;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh;*.tex;*.srt;*.vtt;*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|Documents (*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md)|*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md;*.markdown|Spreadsheets and data (*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb)|*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb|Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|All files (*.*)|*.*";
 
         private sealed class NeuronBranchNode
         {
@@ -410,7 +421,7 @@ namespace Malx_AI
         private readonly ObservableCollection<ChatMessage> _chatMessages = new();
         private ChatMessage _currentStreamingMessage;
         private readonly SmartContextCompactionEngine _compactionEngine = new();
-        private const string KvStateFolder = "ChatHistory\\KvStates";
+        private static readonly string KvStateFolder = Path.Combine(AppDataPaths.ChatHistory, "KvStates");
         private const int StreamFlushTokenThreshold = 16;
         private const int StreamUiFlushIntervalMs = 75;
         private bool _normalThinkingModeEnabled;
@@ -422,6 +433,9 @@ namespace Malx_AI
             try
             {
                 InitializeComponent();
+                // Let a LOCAL council run free the Normal-Chat model before it loads its own role
+                // models — on a single GPU both cannot be resident at once (see the method).
+                WorkplaceViewControl.ReleaseHostChatModelAsync = ReleaseChatModelForCouncilAsync;
                 LoadEmptyChatLogo();
                 TemperatureSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
                 TopPSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
@@ -466,6 +480,30 @@ namespace Malx_AI
                     ChatDisplay.ItemsSource = _chatMessages;
                     AddChatMessage("system", "Axiom initialized. Ready to import model.");
                     AddChatMessage("system", $"Backend: {NativeBackendInit.DiagnosticMessage}");
+
+                    // A native llama.cpp abort kills the process with no managed exception —
+                    // the decode marker is the only record of what it was doing. Surface it.
+                    string? decodeCrashReport = NativeDecodeForensics.ConsumeCrashReport();
+                    if (!string.IsNullOrWhiteSpace(decodeCrashReport))
+                    {
+                        // The native llama.cpp log is the only place the actual GGML_ASSERT /
+                        // abort reason is recorded — pull its tail so the crash is self-diagnosing.
+                        string nativeTail = NativeLlamaLogCapture.ReadTail(3000);
+                        _ = BackendLogService.LogEventAsync(
+                            "CrashForensics",
+                            "Previous session terminated during a native decode (likely llama.cpp abort).\n" + decodeCrashReport
+                            + (string.IsNullOrWhiteSpace(nativeTail) ? string.Empty : "\n--- native llama.cpp log tail ---\n" + nativeTail));
+
+                        // Self-healing: record a GPU strike against the model that died so its
+                        // next load is forced onto CPU (stable) instead of crashing again.
+                        string? crashedModel = NativeCrashLedger.RecordFromCrashMarker(decodeCrashReport);
+                        string recoveryNote = string.IsNullOrWhiteSpace(crashedModel)
+                            ? "If this repeats, try a smaller attachment, a New Chat, or switch to CPU mode."
+                            : $"\"{crashedModel}\" will be loaded on CPU for stability next time it runs (a clean run re-enables GPU).";
+                        AddChatMessage("system",
+                            "⚠ The previous session crashed inside the local inference backend while processing a prompt. " +
+                            recoveryNote);
+                    }
                     ShowFirstRunQwen3PromptIfNeeded();
                     _chatMessages.CollectionChanged += (_, _) => UpdateEmptyChatGreetingVisibility();
                     UpdateEmptyChatGreetingVisibility();
@@ -497,6 +535,9 @@ namespace Malx_AI
                 SmartCompactionToggle.IsChecked = _compactionEngine.IsEnabled;
 
                 _ = InitializeProcessingModeAsync();
+                Version appVersion = UpdateCheckService.GetCurrentVersion();
+                AppVersionLabel.Text = $"Version {appVersion.Major}.{appVersion.Minor}.{appVersion.Build}";
+                _ = CheckForAppUpdateOnStartupAsync();
                 _neuronTimer.Interval = TimeSpan.FromMilliseconds(750);
                 _neuronTimer.Tick += (_, _) => UpdateNeuronMap();
                 _toolActivityTimer.Interval = TimeSpan.FromMilliseconds(500);
@@ -638,20 +679,65 @@ namespace Malx_AI
             if (_chatDocuments.Count == 0)
                 return string.Empty;
 
-            string names = string.Join(", ", _chatDocuments.Select(d => d.Name).Take(6));
-            if (_chatDocuments.Count > 6)
-                names += $", +{_chatDocuments.Count - 6} more";
+            // Compact per-document manifest. Always injected while documents are attached, so the
+            // model can identify every file (name, type, size) even when the full content does not
+            // fit the current turn's document budget.
+            var builder = new StringBuilder();
+            builder.Append("[ATTACHED DOCUMENT MEMORY] The following files are attached to this chat and remain persistent conversation context for follow-up questions:");
+            foreach (ChatDocumentAttachment doc in _chatDocuments.Take(12))
+            {
+                builder.Append("\n- ").Append(doc.Name)
+                    .Append(" (").Append(GetAttachmentKindLabel(doc))
+                    .Append(", ").Append(FormatAttachmentSize(doc.FileSizeBytes));
+                if (!doc.IsImage && doc.HasTextContent)
+                    builder.Append($", ~{Math.Max(1, doc.Content.Length / 6):N0} words");
+                builder.Append(')');
+            }
 
-            bool hasLocalVisionImages = !_cloudModeActive
-                && _mtmdWeights != null
-                && _chatDocuments.Any(doc => doc.IsImage && !string.IsNullOrWhiteSpace(doc.Base64Data));
+            if (_chatDocuments.Count > 12)
+                builder.Append($"\n- ... plus {_chatDocuments.Count - 12} more attached files");
 
-            return "[ATTACHED DOCUMENT MEMORY] The following documents remain attached to this chat and should be treated as persistent conversation context for follow-up questions: "
-                + names
-                + ". If document excerpts are provided for the current turn, use them directly instead of saying the files are unavailable."
-                + (HasVisionAttachmentForCloudTurn() || hasLocalVisionImages
-                    ? " Image attachments are provided to you directly in this chat — analyze them when relevant."
-                    : string.Empty);
+            builder.Append("\nIf document excerpts are provided for the current turn, use them directly instead of saying the files are unavailable.");
+
+            bool hasImages = _chatDocuments.Any(doc => doc.IsImage && !string.IsNullOrWhiteSpace(doc.Base64Data));
+            bool hasLocalVisionImages = !_cloudModeActive && _mtmdWeights != null && hasImages;
+            bool hasCloudVisionImages = HasVisionAttachmentForCloudTurn()
+                && _openRouterChatService.SupportsImageInput(_selectedOpenRouterModelId);
+
+            if (hasCloudVisionImages || hasLocalVisionImages)
+                builder.Append(" Image attachments are provided to you directly in this chat — analyze them when relevant.");
+            else if (hasImages)
+                builder.Append(" Image attachments cannot be analyzed by the current model (no vision support); only their file names are known to you. Say so if asked about image content.");
+
+            return builder.ToString();
+        }
+
+        private static string GetAttachmentKindLabel(ChatDocumentAttachment doc)
+        {
+            if (doc.IsImage)
+                return "image";
+
+            string extension = Path.GetExtension(doc.Name ?? string.Empty).ToLowerInvariant();
+            return extension switch
+            {
+                ".pdf" => "PDF document",
+                ".docx" or ".odt" or ".rtf" => "word-processing document",
+                ".xlsx" or ".ods" or ".csv" or ".tsv" => "spreadsheet",
+                ".pptx" or ".odp" => "presentation",
+                ".epub" => "e-book",
+                ".ipynb" => "Jupyter notebook",
+                ".md" or ".markdown" or ".txt" => "text document",
+                _ => "text/code file"
+            };
+        }
+
+        private static string FormatAttachmentSize(long bytes)
+        {
+            if (bytes >= 1024 * 1024)
+                return $"{bytes / (1024.0 * 1024.0):F1} MB";
+            if (bytes >= 1024)
+                return $"{bytes / 1024.0:F0} KB";
+            return $"{Math.Max(0, bytes)} B";
         }
 
         private string BuildPersistentDocumentContextBlock(string currentUserMessage, bool isCloudMode)
@@ -660,7 +746,20 @@ namespace Malx_AI
                 isCloudMode,
                 _chatDocuments,
                 _chatMessages,
-                (int)Math.Max(512, CtxSlider?.Value ?? 2048));
+                GetLoadedLocalContextSize());
+
+        /// <summary>
+        /// The context size the local model was actually allocated with — budgets derived from
+        /// the UI slider can disagree with the loaded model and overflow the real window.
+        /// </summary>
+        private int GetLoadedLocalContextSize()
+        {
+            uint loadedContext = _activeModelParams?.ContextSize ?? 0;
+            if (loadedContext >= 512)
+                return (int)loadedContext;
+
+            return (int)Math.Max(512, CtxSlider?.Value ?? 2048);
+        }
 
         private async void DeleteChat_Click(object sender, RoutedEventArgs e)
         {
@@ -736,14 +835,38 @@ namespace Malx_AI
             if (dialog.ShowDialog() != true)
                 return;
 
-            int importedCount = 0;
-            foreach (string file in dialog.FileNames)
+            await ImportChatAttachmentFilesAsync(dialog.FileNames);
+        }
+
+        private async Task ImportChatAttachmentFilesAsync(IReadOnlyList<string> filePaths)
+        {
+            if (filePaths == null || filePaths.Count == 0)
+                return;
+
+            var importedNames = new List<string>();
+            foreach (string file in filePaths)
             {
                 try
                 {
                     ChatAttachmentImportResult result = await ChatAttachmentImportService.ImportAsync(file);
                     UpsertChatAttachment(result.Attachment);
-                    importedCount++;
+                    importedNames.Add(result.Attachment.Name);
+
+                    // Warn when a text document yielded almost no readable content (e.g. a
+                    // scanned/image-only PDF that still parses to page markers). Otherwise the
+                    // model receives an effectively empty "document" and truthfully replies that
+                    // it cannot read the file — surfacing this at import explains why.
+                    if (!result.Attachment.IsImage)
+                    {
+                        int readableChars = (result.Attachment.Content ?? string.Empty).Count(char.IsLetterOrDigit);
+                        if (readableChars < 40)
+                        {
+                            AppendSystemMessage(
+                                $"⚠ Only {readableChars} readable characters were extracted from {result.Attachment.Name}. " +
+                                "It may be a scanned/image-only PDF or an unsupported format, so the model may not be able to read it. " +
+                                "Try a text-based export of the file.");
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -752,21 +875,325 @@ namespace Malx_AI
             }
 
             RebuildChatDocumentIndex();
+            RefreshAttachmentTray(importedNames);
 
-            if (importedCount > 0)
+            if (importedNames.Count > 0)
             {
                 string summary = BuildAttachmentKindSummary();
                 bool hasImages = _chatDocuments.Any(d => d.IsImage);
                 string imageNote = !hasImages
                     ? string.Empty
                     : _cloudModeActive
-                        ? " Images can be analyzed by cloud vision models."
+                        ? _openRouterChatService.SupportsImageInput(_selectedOpenRouterModelId)
+                            ? " Images can be analyzed by the selected cloud vision model."
+                            : " The selected cloud model has no vision support — images will be listed by name only."
                         : _mtmdWeights != null
                             ? " Images can be analyzed by the loaded local vision model."
                             : " Images need a vision model: place the matching mmproj .gguf next to the model file and re-import, or switch to cloud mode.";
-                AppendSystemMessage($"Attachments ready: {_chatDocuments.Count} total ({summary}).{imageNote}");
+                AppendSystemMessage($"Attached: {string.Join(", ", importedNames)} ({summary} total).{imageNote}");
                 SaveCurrentChat();
             }
+        }
+
+        private void InputContainer_PreviewDragOver(object sender, DragEventArgs e)
+        {
+            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+            e.Handled = e.Data.GetDataPresent(DataFormats.FileDrop);
+        }
+
+        private async void InputContainer_PreviewDrop(object sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+                return;
+
+            e.Handled = true;
+            if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
+                await ImportChatAttachmentFilesAsync(files);
+        }
+
+        /// <summary>
+        /// Rebuilds the attachment chip tray under the Normal Chat input box.
+        /// Chips named in <paramref name="animateNames"/> get an entrance animation.
+        /// </summary>
+        private void RefreshAttachmentTray(IReadOnlyCollection<string>? animateNames = null)
+        {
+            if (AttachmentTrayPanel == null)
+                return;
+
+            AttachmentTrayPanel.Children.Clear();
+
+            // Only attachments that have not been sent yet appear in the input tray; once a
+            // message is sent its chips clear, though the document stays in conversation context.
+            var pendingDocuments = _chatDocuments.Where(doc => doc.IsPending).ToList();
+            if (pendingDocuments.Count == 0)
+            {
+                AttachmentTrayPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            AttachmentTrayPanel.Visibility = Visibility.Visible;
+            foreach (ChatDocumentAttachment doc in pendingDocuments)
+            {
+                bool animate = animateNames?.Contains(doc.Name, StringComparer.OrdinalIgnoreCase) == true;
+                AttachmentTrayPanel.Children.Add(BuildAttachmentChip(doc, animate));
+            }
+        }
+
+        private Border BuildAttachmentChip(ChatDocumentAttachment doc, bool animate)
+        {
+            string kindLabel = GetAttachmentKindLabel(doc);
+            var chip = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x27, 0x24)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x3A, 0x36, 0x31)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(10, 6, 8, 6),
+                Margin = new Thickness(0, 4, 8, 4),
+                RenderTransform = new TranslateTransform(),
+                ToolTip = $"{doc.Name} — {kindLabel}, {FormatAttachmentSize(doc.FileSizeBytes)}"
+            };
+
+            var layout = new StackPanel { Orientation = Orientation.Horizontal };
+            layout.Children.Add(new TextBlock
+            {
+                Text = GetAttachmentGlyph(doc),
+                FontSize = 16,
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var textColumn = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            textColumn.Children.Add(new TextBlock
+            {
+                Text = doc.Name,
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xE8, 0xE3)),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 190
+            });
+            textColumn.Children.Add(new TextBlock
+            {
+                Text = $"{kindLabel} • {FormatAttachmentSize(doc.FileSizeBytes)}",
+                FontSize = 10,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x82, 0x79))
+            });
+            layout.Children.Add(textColumn);
+
+            var removeButton = new Button
+            {
+                Content = "✕",
+                FontSize = 9,
+                Width = 20,
+                Height = 20,
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x82, 0x79)),
+                Cursor = Cursors.Hand,
+                ToolTip = $"Remove {doc.Name} from this chat"
+            };
+            string attachmentName = doc.Name;
+            removeButton.Click += (_, _) => RemoveAttachmentWithAnimation(chip, attachmentName);
+            layout.Children.Add(removeButton);
+
+            chip.Child = layout;
+
+            if (animate)
+            {
+                chip.Opacity = 0;
+                ((TranslateTransform)chip.RenderTransform).Y = 12;
+                chip.Loaded += (_, _) => AnimateAttachmentChipEntrance(chip);
+            }
+
+            return chip;
+        }
+
+        private static string GetAttachmentGlyph(ChatDocumentAttachment doc)
+        {
+            if (doc.IsImage)
+                return "🖼";
+
+            return GetAttachmentKindLabel(doc) switch
+            {
+                "PDF document" => "📕",
+                "word-processing document" => "📄",
+                "spreadsheet" => "📊",
+                "presentation" => "📽",
+                "e-book" => "📚",
+                "Jupyter notebook" => "📓",
+                _ => "📃"
+            };
+        }
+
+        private static void AnimateAttachmentChipEntrance(Border chip)
+        {
+            var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(240))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+            var rise = new DoubleAnimation(12, 0, TimeSpan.FromMilliseconds(300))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+
+            chip.BeginAnimation(OpacityProperty, fade);
+            ((TranslateTransform)chip.RenderTransform).BeginAnimation(TranslateTransform.YProperty, rise);
+        }
+
+        private UpdateCheckResult? _availableUpdate;
+        private bool _updateDownloadInProgress;
+
+        private async Task CheckForAppUpdateOnStartupAsync()
+        {
+            try
+            {
+                UpdateCheckResult? result = await UpdateCheckService.CheckForUpdateAsync().ConfigureAwait(false);
+                if (result == null || !result.IsNewerVersionAvailable)
+                    return;
+
+                _availableUpdate = result;
+                await Dispatcher.InvokeAsync(() => ShowUpdateBanner(result));
+            }
+            catch (Exception ex)
+            {
+                // Offline or rate-limited startup must never surface an error for an optional check.
+                Debug.WriteLine($"Update check failed: {ex.Message}");
+            }
+        }
+
+        private void ShowUpdateBanner(UpdateCheckResult update)
+        {
+            if (UpdateBannerBorder == null)
+                return;
+
+            UpdateBannerTitleText.Text = $"Axiom {update.LatestVersionTag} is available";
+            UpdateBannerDetailText.Text = update.HasInstallerAsset
+                ? "Click to download and install the update. Your chats and settings are preserved."
+                : "Click to open the release page and download the new version.";
+            UpdateBannerBorder.Visibility = Visibility.Visible;
+
+            var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(280))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+            var slideDown = new DoubleAnimation(-24, 0, TimeSpan.FromMilliseconds(340))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+
+            UpdateBannerBorder.BeginAnimation(OpacityProperty, fadeIn);
+            ((TranslateTransform)UpdateBannerBorder.RenderTransform).BeginAnimation(TranslateTransform.YProperty, slideDown);
+        }
+
+        private void HideUpdateBanner()
+        {
+            if (UpdateBannerBorder == null || UpdateBannerBorder.Visibility != Visibility.Visible)
+                return;
+
+            var fadeOut = new DoubleAnimation(UpdateBannerBorder.Opacity, 0, TimeSpan.FromMilliseconds(180))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            };
+            fadeOut.Completed += (_, _) => UpdateBannerBorder.Visibility = Visibility.Collapsed;
+
+            var slideUp = new DoubleAnimation(0, -16, TimeSpan.FromMilliseconds(180))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            };
+
+            UpdateBannerBorder.BeginAnimation(OpacityProperty, fadeOut);
+            ((TranslateTransform)UpdateBannerBorder.RenderTransform).BeginAnimation(TranslateTransform.YProperty, slideUp);
+        }
+
+        private void UpdateBannerClose_Click(object sender, RoutedEventArgs e)
+        {
+            e.Handled = true;
+            if (_updateDownloadInProgress)
+                return;
+
+            HideUpdateBanner();
+        }
+
+        private async void UpdateBanner_Click(object sender, MouseButtonEventArgs e)
+        {
+            UpdateCheckResult? update = _availableUpdate;
+            if (update == null || _updateDownloadInProgress)
+                return;
+
+            if (!update.HasInstallerAsset)
+            {
+                if (!string.IsNullOrWhiteSpace(update.ReleasePageUrl))
+                    Process.Start(new ProcessStartInfo { FileName = update.ReleasePageUrl, UseShellExecute = true });
+                return;
+            }
+
+            _updateDownloadInProgress = true;
+            UpdateBannerCloseButton.IsEnabled = false;
+            try
+            {
+                UpdateBannerTitleText.Text = $"Downloading Axiom {update.LatestVersionTag}…";
+                UpdateBannerDetailText.Text = "Starting download…";
+                var progress = new Progress<double>(percent => UpdateBannerDetailText.Text = $"{percent:F0}% downloaded");
+
+                string installerPath = await UpdateCheckService.DownloadInstallerAsync(
+                    update.InstallerDownloadUrl,
+                    update.InstallerFileName,
+                    progress,
+                    CancellationToken.None);
+
+                UpdateBannerTitleText.Text = "Download complete";
+                UpdateBannerDetailText.Text = "Launching the installer — Axiom will close.";
+                Process.Start(new ProcessStartInfo { FileName = installerPath, UseShellExecute = true });
+
+                await Task.Delay(900);
+                Application.Current.Shutdown();
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("UpdateDownload", ex);
+                UpdateBannerTitleText.Text = "Update download failed";
+                UpdateBannerDetailText.Text = "Click to open the release page and download manually.";
+                // Fall back to the release page on the next click instead of retrying the download.
+                _availableUpdate = new UpdateCheckResult
+                {
+                    LatestVersionTag = update.LatestVersionTag,
+                    LatestVersion = update.LatestVersion,
+                    CurrentVersion = update.CurrentVersion,
+                    ReleasePageUrl = update.ReleasePageUrl,
+                    IsNewerVersionAvailable = true
+                };
+            }
+            finally
+            {
+                _updateDownloadInProgress = false;
+                if (UpdateBannerCloseButton != null)
+                    UpdateBannerCloseButton.IsEnabled = true;
+            }
+        }
+
+        private void RemoveAttachmentWithAnimation(Border chip, string attachmentName)
+        {
+            var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            };
+            fade.Completed += (_, _) =>
+            {
+                _chatDocuments.RemoveAll(d => string.Equals(d.Name, attachmentName, StringComparison.OrdinalIgnoreCase));
+                RebuildChatDocumentIndex();
+                RefreshAttachmentTray();
+                SaveCurrentChat();
+            };
+
+            var sink = new DoubleAnimation(0, 8, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            };
+            chip.BeginAnimation(OpacityProperty, fade);
+            ((TranslateTransform)chip.RenderTransform).BeginAnimation(TranslateTransform.YProperty, sink);
         }
 
         private void OpenPromptTemplates_Click(object sender, RoutedEventArgs e)
@@ -1042,6 +1469,14 @@ namespace Malx_AI
 
         private void NewChat_Click(object sender, RoutedEventArgs e)
         {
+            // Stop any in-flight generation first: the executor reset below must not race
+            // an active decode, and the cancelled turn's cleanup path resets safely under
+            // the decode gate.
+            if (_cancellationTokenSource != null && !_cancellationTokenSource.IsCancellationRequested)
+            {
+                try { _cancellationTokenSource.Cancel(); } catch { }
+            }
+
             _chatCounter++;
             _currentChatId = _chatCounter;
             string chatName = "New chat";
@@ -1049,6 +1484,7 @@ namespace Malx_AI
             _chatMessages.Clear();
             _chatDocuments.Clear();
             _documentRetriever.ClearChunks();
+            RefreshAttachmentTray();
             SetRandomEmptyChatGreeting();
             _chatContent[_currentChatId] = "";
             _chatNames[_currentChatId] = chatName;
@@ -1064,7 +1500,9 @@ namespace Malx_AI
                 _ = ResetExecutorContextAsync(CancellationToken.None);
             }
 
-            _database?.SaveChat(_currentChatId, chatName, "");
+            // SQLite write off the UI thread — DatabaseService serializes internally.
+            int chatIdForDb = _currentChatId;
+            _ = Task.Run(() => _database?.SaveChat(chatIdForDb, chatName, ""));
 
             // Register in the JSON index immediately so the chat survives a restart
             // even if the user closes before sending any messages.
@@ -1236,6 +1674,7 @@ namespace Malx_AI
             _workplaceChats[_currentWorkplaceChatId] = WorkplaceViewControl.CaptureSnapshot();
             _workplaceChatNames[_currentWorkplaceChatId] = "Workplace 1";
             AddWorkplaceToHistory("Workplace 1", _currentWorkplaceChatId);
+            RefreshWorkplaceHistoryActions();
         }
 
         private async void NewWorkplace_Click(object sender, RoutedEventArgs e)
@@ -1250,6 +1689,7 @@ namespace Malx_AI
             _workplaceChats[_currentWorkplaceChatId] = WorkplaceViewControl.CaptureSnapshot();
             _workplaceChatNames[_currentWorkplaceChatId] = name;
             AddWorkplaceToHistory(name, _currentWorkplaceChatId);
+            RefreshWorkplaceHistoryActions();
 
             // Await the save so the new workplace is guaranteed to persist even if
             // a background chat save holds the coordinated-persistence gate right now.
@@ -1281,6 +1721,7 @@ namespace Malx_AI
             int next = _workplaceChats.Keys.OrderBy(k => k).First();
             string nextName = _workplaceChatNames.TryGetValue(next, out string? n) ? n : $"Workplace {next}";
             LoadWorkplaceChat(next, nextName);
+            RefreshWorkplaceHistoryActions();
 
             // Await the save so the deletion is guaranteed to be persisted immediately.
             await QueueCoordinatedChatPersistenceAsync(false, false, true, false);
@@ -1291,15 +1732,22 @@ namespace Malx_AI
             var button = new Button
             {
                 Content = name,
-                Style = (Style)this.Resources["SubtleButtonStyle"],
-                Height = 34,
+                Style = (Style)FindResource("WorkplaceHistoryItemButtonStyle"),
+                Height = 40,
+                MinHeight = 40,
                 Margin = new Thickness(0, 0, 0, 6),
-                Tag = workplaceId
+                Tag = workplaceId,
+                Background = BrushFromHex("#1C1A18"),
+                BorderBrush = BrushFromHex("#302D2A"),
+                Foreground = BrushFromHex("#DCD5CB"),
+                BorderThickness = new Thickness(1),
+                HorizontalContentAlignment = HorizontalAlignment.Left
             };
 
             button.Click += (_, _) => LoadWorkplaceChat(workplaceId, name);
             WorkplaceHistoryStack.Children.Add(button);
             SetActiveWorkplaceButton(button);
+            RefreshWorkplaceHistoryActions();
         }
 
         private void RebuildWorkplaceHistoryUi()
@@ -1312,17 +1760,29 @@ namespace Malx_AI
                 string name = _workplaceChatNames.TryGetValue(id, out var n) ? n : $"Workplace {id}";
                 AddWorkplaceToHistory(name, id);
             }
+
+            RefreshWorkplaceHistoryActions();
+        }
+
+        private void RefreshWorkplaceHistoryActions()
+        {
+            if (DeleteWorkplaceButton != null)
+                DeleteWorkplaceButton.IsEnabled = _workplaceChats.Count > 1;
         }
 
         private void SetActiveWorkplaceButton(Button button)
         {
             if (_activeWorkplaceButton != null)
             {
-                _activeWorkplaceButton.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#302D2A"));
+                _activeWorkplaceButton.Background = BrushFromHex("#1C1A18");
+                _activeWorkplaceButton.BorderBrush = BrushFromHex("#302D2A");
+                _activeWorkplaceButton.Foreground = BrushFromHex("#DCD5CB");
                 _activeWorkplaceButton.BorderThickness = new Thickness(1);
             }
 
-            button.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B8924A"));
+            button.Background = BrushFromHex("#2A241B");
+            button.BorderBrush = BrushFromHex("#B8924A");
+            button.Foreground = BrushFromHex("#EDE8E3");
             button.BorderThickness = new Thickness(1);
 
             _activeWorkplaceButton = button;
@@ -1443,7 +1903,10 @@ namespace Malx_AI
                 foreach (var doc in persisted.AttachedDocuments ?? [])
                 {
                     if (!string.IsNullOrWhiteSpace(doc?.Name) && !string.IsNullOrWhiteSpace(doc.Content))
+                    {
+                        doc.IsPending = false; // restored from a saved chat — already sent
                         _chatDocuments.Add(doc);
+                    }
                 }
 
                 RebuildChatDocumentIndex();
@@ -1452,6 +1915,8 @@ namespace Malx_AI
             {
                 AddChatMessage("system", $"Loaded chat: {chatName}");
             }
+
+            RefreshAttachmentTray();
 
             await TryLoadKvStateForCurrentChatAsync(CancellationToken.None);
 
@@ -1699,10 +2164,38 @@ namespace Malx_AI
             Border? cloudContextNoticeBorder = FindName("CloudContextNoticeBorder") as Border;
             TextBlock? cloudContextNoticeText = FindName("CloudContextNoticeText") as TextBlock;
 
+            TokenUsagePanel.Visibility = Visibility.Visible;
+            int context = _cloudModeActive
+                ? Math.Max(512, _openRouterChatService.GetApproximateContextWindowTokens(_selectedOpenRouterModelId))
+                : (int)Math.Max(512, CtxSlider?.Value ?? 2048);
+            double pct = context <= 0 ? 0 : Math.Clamp(used * 100d / context, 0, 100);
+            TokenUsageProgressBar.Value = pct;
+            TokenUsageLabel.Text = $"{used:N0} / {context:N0} tok ({pct:F0}%)";
+            TokenUsagePanel.ToolTip = _cloudModeActive
+                ? $"Approximately {used:N0} of {context:N0} cloud context tokens used."
+                : $"Approximately {used:N0} of {context:N0} context tokens used.";
+
+            if (pct >= 90)
+            {
+                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
+                TokenUsageProgressBar.ToolTip = "Warning: model may begin losing earlier context.";
+                TokenUsageLabel.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
+            }
+            else if (pct >= 75)
+            {
+                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
+                TokenUsageProgressBar.ToolTip = "High context usage.";
+                TokenUsageLabel.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
+            }
+            else
+            {
+                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(95, 175, 125));
+                TokenUsageProgressBar.ToolTip = null;
+                TokenUsageLabel.Foreground = new SolidColorBrush(Color.FromRgb(138, 130, 121));
+            }
+
             if (_cloudModeActive)
             {
-                TokenUsageProgressBar.Visibility = Visibility.Collapsed;
-                TokenUsageLabel.Visibility = Visibility.Collapsed;
                 CompactionHealthGrid.Visibility = Visibility.Collapsed;
                 CompactionStatusLabel.Visibility = Visibility.Collapsed;
                 UpdateCloudContextNotice(used);
@@ -1713,28 +2206,6 @@ namespace Malx_AI
                 cloudContextNoticeBorder.Visibility = Visibility.Collapsed;
             if (cloudContextNoticeText != null)
                 cloudContextNoticeText.Text = string.Empty;
-            TokenUsageProgressBar.Visibility = Visibility.Visible;
-            TokenUsageLabel.Visibility = Visibility.Visible;
-            int context = (int)Math.Max(512, CtxSlider?.Value ?? 2048);
-            double pct = context <= 0 ? 0 : Math.Clamp(used * 100d / context, 0, 100);
-            TokenUsageProgressBar.Value = pct;
-            TokenUsageLabel.Text = $"approximately {used} of {context} tokens used";
-
-            if (pct >= 90)
-            {
-                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(255, 59, 59));
-                TokenUsageProgressBar.ToolTip = "Warning: model may begin losing earlier context.";
-            }
-            else if (pct >= 75)
-            {
-                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(245, 158, 11));
-                TokenUsageProgressBar.ToolTip = "High context usage.";
-            }
-            else
-            {
-                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(34, 197, 94));
-                TokenUsageProgressBar.ToolTip = null;
-            }
 
             // Update compaction health display
             if (_compactionEngine.IsEnabled)
@@ -1747,22 +2218,24 @@ namespace Malx_AI
 
                 if (_compactionEngine.CompactionPending)
                 {
-                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(255, 59, 59));
-                    CompactionHealthLabel.Text = $"Compaction pending • {usagePctOfEffective:F0}% of {effectiveLimit} effective tokens • triggers at {thresholdPct:F0}%";
-                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(255, 59, 59));
+                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
+                    CompactionHealthLabel.Text = $"Pending - {usagePctOfEffective:F0}%";
+                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
                 }
                 else if (usagePctOfEffective >= 60)
                 {
-                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(245, 158, 11));
-                    CompactionHealthLabel.Text = $"{healthLabel} • {usagePctOfEffective:F0}% of {effectiveLimit} effective tokens • triggers at {thresholdPct:F0}%";
-                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(245, 158, 11));
+                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
+                    CompactionHealthLabel.Text = $"{healthLabel} - {usagePctOfEffective:F0}%";
+                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
                 }
                 else
                 {
-                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(34, 197, 94));
-                    CompactionHealthLabel.Text = $"{healthLabel} • {usagePctOfEffective:F0}% of {effectiveLimit} effective tokens • triggers at {thresholdPct:F0}%";
-                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(122, 122, 114));
+                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(95, 175, 125));
+                    CompactionHealthLabel.Text = $"{healthLabel} - {usagePctOfEffective:F0}%";
+                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(138, 130, 121));
                 }
+
+                CompactionHealthGrid.ToolTip = $"Using {used:N0} of {effectiveLimit:N0} effective tokens. Compaction triggers at {thresholdPct:F0}%.";
             }
             else
             {
@@ -2139,12 +2612,15 @@ namespace Malx_AI
             if (chatDocuments == null || chatDocuments.Count == 0)
                 return false;
 
-            // Always inject for any non-trivial user message when documents are attached
-            if (!string.IsNullOrWhiteSpace(currentUserMessage)
-                && currentUserMessage.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length >= 2)
-            {
+            // When documents are attached, ANY real user message should be answered with the
+            // document in context — the user attached the file precisely to discuss it. The old
+            // gate required >=2 words or an explicit doc cue, which silently dropped the document
+            // for short prompts like "summarize", "explain", or "review"; the model then truthfully
+            // replied that it could not read the attached file (the core "can't read the file"
+            // complaint). The per-turn document budget already bounds how much is injected, so
+            // injecting whenever the turn has any content is safe and correct.
+            if (!string.IsNullOrWhiteSpace(currentUserMessage))
                 return true;
-            }
 
             if (ShouldUseDocumentContext(currentUserMessage, chatDocuments)
                 || MentionsAttachedDocumentName(currentUserMessage, chatDocuments)
@@ -2191,17 +2667,38 @@ namespace Malx_AI
 
         private string BuildPersistentDocumentContextBlock(string currentUserMessage, bool isCloudMode, IReadOnlyList<ChatDocumentAttachment> chatDocuments, IReadOnlyList<ChatMessage> chatMessages, int contextSize)
         {
-            if (!(chatDocuments?.Any(doc => doc.HasTextContent && !doc.IsImage) ?? false)
-                || !ShouldInjectPersistentDocumentContext(currentUserMessage, chatDocuments, chatMessages))
+            int attachedCount = chatDocuments?.Count ?? 0;
+            bool hasTextDocs = chatDocuments?.Any(doc => doc.HasTextContent && !doc.IsImage) ?? false;
+            if (!hasTextDocs || !ShouldInjectPersistentDocumentContext(currentUserMessage, chatDocuments, chatMessages))
             {
+                if (attachedCount > 0)
+                {
+                    // Documents are attached but nothing will be injected — log why, because
+                    // the model will answer "please provide the document" and the cause
+                    // (failed text extraction vs. injection gate) is invisible otherwise.
+                    _ = BackendLogService.LogEventAsync(
+                        "DocumentContextInjection",
+                        $"Injected:false\nAttachedDocs:{attachedCount}\nDocsWithText:{chatDocuments?.Count(d => d.HasTextContent && !d.IsImage) ?? 0}\nReason:{(hasTextDocs ? "GateRejected" : "NoExtractedText")}\nPrompt:{currentUserMessage}");
+                }
+
                 return string.Empty;
             }
 
-            // Budget roughly a third of the context window for document text (4 chars ≈ 1 token),
-            // leaving room for system prompt, history, and the response.
+            // Cloud: routed models expose ~131k-token windows, so documents get a generous
+            // fixed budget (~15k tokens) — most attachments inject whole instead of chunked.
+            // Local: the budget must leave room for generation and system/history, but the old
+            // flat 2,048-token reserve starved documents on small context windows (a 3k-ctx
+            // model floored at 1,500 chars — barely a paragraph). The reserve now scales with
+            // the window (ComputeLocalMaxGenerationTokens), and the inference MaxTokens uses the
+            // SAME value, so the budget and the actual decode stay consistent and never overflow.
+            int generationReserve = ComputeLocalMaxGenerationTokens(contextSize, documentAttached: true);
+            int sysHistReserve = Math.Clamp(contextSize / 8, 256, 1100);
+            int localUsableTokens = Math.Max(700, contextSize - generationReserve - sysHistReserve);
+            // The cap scales with the window: the old flat 16,000-char ceiling wasted most
+            // of an 8k+ context, forcing chunk retrieval where the whole file would fit.
             int maxChars = isCloudMode
-                ? 8000
-                : Math.Clamp((int)(contextSize * 1.4), 2400, 16000);
+                ? 60000
+                : Math.Clamp(localUsableTokens * 3, 1800, 48000);
 
             var textDocuments = chatDocuments.Where(doc => doc.HasTextContent && !doc.IsImage).ToList();
 
@@ -2219,11 +2716,19 @@ namespace Malx_AI
                     fullBuilder.AppendLine(doc.Content.Trim());
                 }
                 fullBuilder.AppendLine("[[END DOCUMENT CONTEXT]]");
-                return fullBuilder.ToString();
+                string fullBlock = fullBuilder.ToString();
+                _ = BackendLogService.LogEventAsync(
+                    "DocumentContextInjection",
+                    $"Injected:true\nMode:FullDocuments\nDocs:{textDocuments.Count}\nChars:{fullBlock.Length}\nBudgetChars:{maxChars}\nCtx:{contextSize}\nCloud:{isCloudMode}");
+                return fullBlock;
             }
 
             string query = BuildDocumentRetrievalQuery(currentUserMessage, chatMessages, chatDocuments);
-            int maxChunks = Math.Clamp(_documentRetriever.CalculateMaxChunksForContext(contextSize), 2, isCloudMode ? 8 : 10);
+            // The char budget above is the hard limit; the chunk cap just bounds retrieval
+            // work, so let larger windows pull more chunks instead of clipping at 10.
+            int maxChunks = isCloudMode
+                ? 24
+                : Math.Clamp(_documentRetriever.CalculateMaxChunksForContext(contextSize), 2, 16);
             // allowFallback: documents are attached and the turn warrants document context, so
             // always provide at least representative chunks — an empty result makes the model
             // claim the file is unreadable.
@@ -2233,7 +2738,12 @@ namespace Malx_AI
                 .ToList();
 
             if (relevantChunks.Count == 0)
+            {
+                _ = BackendLogService.LogEventAsync(
+                    "DocumentContextInjection",
+                    $"Injected:false\nAttachedDocs:{attachedCount}\nReason:RetrievalReturnedNoChunks\nPrompt:{currentUserMessage}");
                 return string.Empty;
+            }
 
             var builder = new StringBuilder();
             builder.AppendLine();
@@ -2260,7 +2770,11 @@ namespace Malx_AI
             }
 
             builder.AppendLine("[[END DOCUMENT CONTEXT]]");
-            return builder.ToString();
+            string chunkBlock = builder.ToString();
+            _ = BackendLogService.LogEventAsync(
+                "DocumentContextInjection",
+                $"Injected:true\nMode:RetrievedChunks\nChunks:{relevantChunks.Count}\nChars:{chunkBlock.Length}\nBudgetChars:{maxChars}\nCtx:{contextSize}\nCloud:{isCloudMode}");
+            return chunkBlock;
         }
 
         private static bool MentionsAttachedDocumentName(string? message, IReadOnlyCollection<ChatDocumentAttachment> chatDocuments)
@@ -2457,8 +2971,26 @@ namespace Malx_AI
                     return false;
 
                 Directory.CreateDirectory(KvStateFolder);
-                await _executor.SaveState(statePath, token);
-                return true;
+
+                // SaveState reads the live native KV cache. It MUST run under the
+                // native-decode gate: this persistence is fired (fire-and-forget) at the
+                // end of a turn, but the next turn's ResetExecutorContextAsync /
+                // RebuildChatSessionWithPromptAsync DISPOSES this same context (and then
+                // decodes into its replacement). A background SaveState overlapping that
+                // dispose/decode is concurrent access to one llama.cpp context, which
+                // aborts the whole process natively (ucrtbase 0xc0000409) — the
+                // "freezes then crashes after 1-2 turns" race. Acquiring the gate
+                // serializes the save behind any reset/decode, and snapshotting _executor
+                // inside the gate guarantees it is not torn down mid-save.
+                return await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, async () =>
+                {
+                    var executor = _executor;
+                    if (executor == null)
+                        return false;
+
+                    await executor.SaveState(statePath, token).ConfigureAwait(false);
+                    return true;
+                }).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -2506,44 +3038,54 @@ namespace Malx_AI
             if (!File.Exists(statePath))
                 return false;
 
-            // Free the old KV cache BEFORE allocating the new one. Keeping both alive
-            // doubles peak VRAM and aborts the process on CUDA OOM. Allocation happens
-            // off the UI thread — it can take seconds for large contexts.
-            var oldExecutor = _executor;
-            _executor = null;
-            _chatSession = null;
-            try { oldExecutor?.Context?.Dispose(); } catch { }
-
-            try
+            // Disposing the old context, creating a new one, and decoding the saved state
+            // into it are all native-context mutations — serialize them on the same
+            // native-decode gate every decode/reset uses so a concurrent stream (or a
+            // background KV save) can never touch a context mid-teardown and abort the
+            // process natively.
+            return await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, async () =>
             {
-                var newContext = await Task.Run(() => _model.CreateContext(_activeModelParams), token);
-                var newExecutor = new InteractiveExecutor(newContext);
+                // Free the old KV cache BEFORE allocating the new one. Keeping both alive
+                // doubles peak VRAM and aborts the process on CUDA OOM. Allocation happens
+                // off the UI thread — it can take seconds for large contexts.
+                var oldExecutor = _executor;
+                _executor = null;
+                _chatSession = null;
+                try { oldExecutor?.Context?.Dispose(); } catch { }
 
-                await newExecutor.LoadState(statePath, token);
-
-                _executor = newExecutor;
-                RebuildChatSession();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"KV LoadState failed for '{statePath}': {ex.Message}");
-
-                // The old context is already gone — recreate a fresh executor so the
-                // caller's history-replay fallback has a live session to rebuild into.
                 try
                 {
-                    var recoveryContext = await Task.Run(() => _model.CreateContext(_activeModelParams), token);
-                    _executor = new InteractiveExecutor(recoveryContext);
-                    RebuildChatSession();
-                }
-                catch (Exception recoveryEx)
-                {
-                    Debug.WriteLine($"KV state recovery context creation failed: {recoveryEx.Message}");
-                }
+                    var newContext = await Task.Run(() => LlamaContextFactory.CreateContext(_model, _activeModelParams), token).ConfigureAwait(false);
+                    // CreateLocalExecutor (not a bare InteractiveExecutor) re-attaches the mmproj
+                    // vision projector when one is loaded, so image analysis survives a KV reload.
+                    var newExecutor = CreateLocalExecutor(newContext);
 
-                return false;
-            }
+                    await newExecutor.LoadState(statePath, token).ConfigureAwait(false);
+
+                    _executor = newExecutor;
+                    await Dispatcher.InvokeAsync(RebuildChatSession);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"KV LoadState failed for '{statePath}': {ex.Message}");
+
+                    // The old context is already gone — recreate a fresh executor so the
+                    // caller's history-replay fallback has a live session to rebuild into.
+                    try
+                    {
+                        var recoveryContext = await Task.Run(() => LlamaContextFactory.CreateContext(_model, _activeModelParams), token).ConfigureAwait(false);
+                        _executor = CreateLocalExecutor(recoveryContext);
+                        await Dispatcher.InvokeAsync(RebuildChatSession);
+                    }
+                    catch (Exception recoveryEx)
+                    {
+                        Debug.WriteLine($"KV state recovery context creation failed: {recoveryEx.Message}");
+                    }
+
+                    return false;
+                }
+            }).ConfigureAwait(false);
         }
 
         private async Task RebuildChatSessionFromMessagesAsync(CancellationToken token)
@@ -2554,26 +3096,40 @@ namespace Malx_AI
                     return;
 
                 RebuildChatSession();
-                bool lastAcceptedWasUser = false;
-                foreach (var msg in _chatMessages.Select(CloneMessageForInferenceContext))
+
+                // Snapshot the UI-bound messages on the current thread, then replay them
+                // under the native-decode gate: AddAndProcess* decode into the live
+                // context, so they must never overlap another decode or a context
+                // teardown (concurrent native access aborts the process).
+                var replayMessages = _chatMessages.Select(CloneMessageForInferenceContext).ToList();
+
+                await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, async () =>
                 {
-                    if (string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase))
+                    var session = _chatSession;
+                    if (session == null)
+                        return;
+
+                    bool lastAcceptedWasUser = false;
+                    foreach (var msg in replayMessages)
                     {
-                        if (!string.IsNullOrWhiteSpace(msg.Content))
+                        if (string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase))
                         {
-                            await _chatSession.AddAndProcessUserMessage(msg.Content ?? string.Empty, token);
-                            lastAcceptedWasUser = true;
+                            if (!string.IsNullOrWhiteSpace(msg.Content))
+                            {
+                                await session.AddAndProcessUserMessage(msg.Content ?? string.Empty, token).ConfigureAwait(false);
+                                lastAcceptedWasUser = true;
+                            }
+                        }
+                        else if (string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (lastAcceptedWasUser && !string.IsNullOrWhiteSpace(msg.Content))
+                            {
+                                await session.AddAndProcessAssistantMessage(msg.Content ?? string.Empty, token).ConfigureAwait(false);
+                                lastAcceptedWasUser = false;
+                            }
                         }
                     }
-                    else if (string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (lastAcceptedWasUser && !string.IsNullOrWhiteSpace(msg.Content))
-                        {
-                            await _chatSession.AddAndProcessAssistantMessage(msg.Content ?? string.Empty, token);
-                            lastAcceptedWasUser = false;
-                        }
-                    }
-                }
+                }).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -2785,9 +3341,13 @@ namespace Malx_AI
                     foreach (var doc in snapshot.AttachedDocuments ?? [])
                     {
                         if (!string.IsNullOrWhiteSpace(doc?.Name) && (!string.IsNullOrWhiteSpace(doc.Content) || !string.IsNullOrWhiteSpace(doc.Base64Data)))
+                        {
+                            doc.IsPending = false; // restored from a saved workspace — already sent
                             _chatDocuments.Add(doc);
+                        }
                     }
                     RebuildChatDocumentIndex();
+                    RefreshAttachmentTray();
                     UpdateHeaderDisplay();
                     ScrollChatToEnd();
                     UpdateTokenUsageIndicator();
@@ -2850,10 +3410,16 @@ namespace Malx_AI
             WorkplaceTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
+            SetNormalChatSidebarActionsVisible(true);
             HistorySectionToggle.Visibility = Visibility.Visible;
             ChatHistorySectionContainer.Visibility = _isHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
             WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
+
+            // If a local council run freed the chat model to make room on the GPU, bring it back
+            // now that the user is returning to chat.
+            if (_chatModelReleasedForCouncil)
+                _ = RestoreChatModelAfterCouncilAsync();
         }
 
         private void SwitchToWorkplace_Click(object sender, RoutedEventArgs e)
@@ -2871,6 +3437,7 @@ namespace Malx_AI
             WorkplaceTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
+            SetNormalChatSidebarActionsVisible(false);
             HistorySectionToggle.Visibility = Visibility.Collapsed;
             ChatHistorySectionContainer.Visibility = Visibility.Collapsed;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Visible;
@@ -2898,6 +3465,7 @@ namespace Malx_AI
             WorkplaceTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             PersonaTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
+            SetNormalChatSidebarActionsVisible(false);
             HistorySectionToggle.Visibility = Visibility.Visible;
             ChatHistorySectionContainer.Visibility = _isHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
@@ -2919,6 +3487,7 @@ namespace Malx_AI
             WorkplaceTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
+            SetNormalChatSidebarActionsVisible(false);
             HistorySectionToggle.Visibility = Visibility.Visible;
             ChatHistorySectionContainer.Visibility = _isHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
@@ -2926,6 +3495,11 @@ namespace Malx_AI
 
             UpdateNeuronMap();
             _neuronTimer.Start();
+        }
+
+        private void SetNormalChatSidebarActionsVisible(bool visible)
+        {
+            NewChatButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private UIElement GetActiveContentView()

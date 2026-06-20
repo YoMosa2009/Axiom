@@ -38,8 +38,8 @@ namespace Malx_AI
 
         public ChatWorkspaceStatePersistence()
         {
-            Directory.CreateDirectory("ChatHistory");
-            _filePath = Path.Combine("ChatHistory", "chat_workspace_state.json");
+            Directory.CreateDirectory(AppDataPaths.ChatHistory);
+            _filePath = Path.Combine(AppDataPaths.ChatHistory, "chat_workspace_state.json");
         }
 
         public async Task SaveAsync(ChatWorkspaceSnapshot snapshot, CancellationToken token = default)

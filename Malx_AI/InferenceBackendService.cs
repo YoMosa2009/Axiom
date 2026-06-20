@@ -44,7 +44,11 @@ namespace Malx_AI
             }
         };
 
-        public static InferenceParams CreateQwen3InferenceParams(bool thinkingEnabled, int maxTokens, IEnumerable<string>? antiPrompts)
+        public static InferenceParams CreateQwen3InferenceParams(
+            bool thinkingEnabled,
+            int maxTokens,
+            IEnumerable<string>? antiPrompts,
+            Grammar? grammar = null)
         {
             var template = thinkingEnabled ? Qwen3ThinkingParams : Qwen3NonThinkingParams;
             var pipeline = template.SamplingPipeline as DefaultSamplingPipeline;
@@ -59,7 +63,11 @@ namespace Malx_AI
                     TopP = pipeline?.TopP ?? 0.8f,
                     TopK = pipeline?.TopK ?? 20,
                     MinP = pipeline?.MinP ?? 0.0f,
-                    RepeatPenalty = pipeline?.RepeatPenalty ?? 1.05f
+                    RepeatPenalty = pipeline?.RepeatPenalty ?? 1.05f,
+                    Grammar = grammar,
+                    GrammarOptimization = grammar == null
+                        ? DefaultSamplingPipeline.GrammarOptimizationMode.None
+                        : DefaultSamplingPipeline.GrammarOptimizationMode.Extended
                 }
             };
         }
@@ -98,7 +106,7 @@ namespace Malx_AI
             // NativeBackendInit.Configure() was already called in App.xaml.cs at startup.
             // The native library is locked in by this point. We only allow GPU layers
             // if the backend was actually configured for CUDA at startup.
-            bool allowGpu = gpuRequested && profile.HasNvidiaGpu && gpuRuntimeAvailable && NativeBackendInit.GpuConfigured;
+            bool allowGpu = gpuRequested && profile.HasNvidiaGpu && NativeBackendInit.GpuConfigured;
 
             if (gpuRequested && !NativeBackendInit.GpuConfigured)
             {
@@ -109,10 +117,10 @@ namespace Malx_AI
 
             string backend = parameters.GpuLayerCount > 0 ? "CUDA" : "CPU";
             string reason = parameters.GpuLayerCount > 0
-                ? $"GPU mode active on {profile.PrimaryGpuName}."
+                ? $"GPU mode active on {profile.PrimaryGpuName} (compute {profile.GpuComputeCapability:0.0}, FlashAttn {(parameters.FlashAttention == true ? "on" : "off")})."
                 : BuildCpuReason(mode, profile, gpuRuntimeAvailable);
 
-            Debug.WriteLine($"[InferenceBackendService] Plan: backend={backend}, gpuLayers={parameters.GpuLayerCount}, allowGpu={allowGpu}, nativeInit={NativeBackendInit.DiagnosticMessage}");
+            Debug.WriteLine($"[InferenceBackendService] Plan: backend={backend}, requestedMode={mode}, gpuLayers={parameters.GpuLayerCount}, ctx={parameters.ContextSize}, flashAttn={parameters.FlashAttention}, allowGpu={allowGpu}, nvidiaSmi={gpuRuntimeAvailable}, nativeInit={NativeBackendInit.DiagnosticMessage}");
 
             return new InferenceBackendPlan
             {
@@ -214,9 +222,9 @@ namespace Malx_AI
                 return "No NVIDIA GPU detected; using CPU mode.";
             }
 
-            if (!gpuRuntimeAvailable)
+            if (!gpuRuntimeAvailable && profile.AvailableVramBytes <= 0)
             {
-                return "NVIDIA GPU detected but CUDA runtime unavailable; using CPU mode.";
+                return "NVIDIA GPU detected, but free VRAM could not be probed and the safety planner could not fit GPU layers; using CPU mode.";
             }
 
             return "GPU mode requested, but parameters resolved to CPU safety profile.";

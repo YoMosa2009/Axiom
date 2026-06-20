@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -17,10 +18,17 @@ namespace Malx_AI
         private static readonly int MaxResultCount = 6;
         private static readonly int MaxResultsPerQuery = 10;
         private static readonly int MaxEvidenceFetchCount = 5;
+        private const int MaxSearchPayloadChars = 450_000;
+        private const int MaxEvidencePayloadChars = 650_000;
         private const string CacheVersionPrefix = "v2::";
-        private static readonly string CacheGenerationPrefix = "v5::";
+        private static readonly string CacheGenerationPrefix = "v6::";
         private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan CurrentInfoCacheTtl = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan SearchDeadline = TimeSpan.FromSeconds(18);
+        private static readonly TimeSpan CurrentSearchDeadline = TimeSpan.FromSeconds(22);
+        private static readonly TimeSpan ProviderDeadline = TimeSpan.FromSeconds(7);
+        private static readonly TimeSpan EvidenceDeadline = TimeSpan.FromSeconds(6);
+        private static readonly TimeSpan CurrentEvidenceDeadline = TimeSpan.FromSeconds(9);
         private static readonly Regex TokenRegex = new(@"[A-Za-z0-9][A-Za-z0-9\.\+#_-]*", RegexOptions.Compiled);
         private static readonly Regex QuotedPhraseRegex = new("\"(?<value>[^\"]{3,80})\"|'(?<value>[^']{3,80})'", RegexOptions.Compiled);
         private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
@@ -31,21 +39,34 @@ namespace Malx_AI
             "a","an","and","are","as","at","be","but","by","can","could","do","does","for","from","had","has","have","help","how",
             "i","if","in","into","is","it","its","latest","look","me","more","news","of","on","online","or","please","recent","research",
             "search","show","tell","than","that","the","their","them","there","these","this","to","up","using","want","was","web","what",
-            "when","where","which","who","why","will","with","would","you","your"
+            "when","where","which","who","why","will","with","would","you","your","about","information","info","details","update","updates",
+            "expand","expanded","expanding","elaborate","elaborated","elaborating"
         };
         private static readonly HashSet<string> TopicShiftStopWords = new(StringComparer.OrdinalIgnoreCase)
         {
             "the","and","for","with","that","this","from","into","about","have","has","are",
             "was","were","will","just","what","how","can","does","please","make","create",
             "write","give","need","want","should","could","would","also","like","using","you",
-            "your","they","them","their","there","here","then","than"
+            "your","they","them","their","there","here","then","than","explain","describe",
+            "definition","meaning","mean","means","effect","effects","affect","affects",
+            "latest","current","recent","new","newest","information","info","details","update","updates","news","article","articles",
+            "expand","expanded","expanding","elaborate","elaborated","elaborating"
+        };
+        private static readonly HashSet<string> QuestionFillerWords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "what","which","who","why","where","when","how","does","do","did","is","are","was","were",
+            "can","could","would","should","will","to","for","of","the","a","an","please","tell","me",
+            "explain","describe","define","expand","elaborate","meaning","mean","means","exactly","actually","basically",
+            "generally","general","main","focus","prompt","question","about","on","regarding",
+            "latest","current","recent","new","newest","information","info","details","update","updates","news","article","articles"
         };
         private static readonly HashSet<string> OverlapStopWords = new(StringComparer.OrdinalIgnoreCase)
         {
             "a","an","and","are","as","at","be","but","by","can","could","do","does","for","from","had","has","have","help","how",
             "i","if","in","into","is","it","its","look","me","more","of","on","online","or","please","research",
             "search","show","tell","than","that","the","their","them","there","these","this","to","up","using","want","was","web","what",
-            "when","where","which","who","why","will","with","would","you","your"
+            "when","where","which","who","why","will","with","would","you","your","about","information","info","details","update","updates",
+            "expand","expanded","expanding","elaborate","elaborated","elaborating"
         };
         private static readonly Regex FreshnessYearRegex = new(@"\b(?<year>20[2-9][0-9])\b", RegexOptions.Compiled);
         private static readonly Regex IsoDateRegex = new(@"\b(?<year>20\d{2})-(?<month>0[1-9]|1[0-2])-(?<day>0[1-9]|[12]\d|3[01])\b", RegexOptions.Compiled);
@@ -87,6 +108,10 @@ namespace Malx_AI
         private static readonly string[] AggregatorSourceHosts =
         [
             "news.google.com", "news.googleusercontent.com"
+        ];
+        private static readonly string[] GenericPromptWordHosts =
+        [
+            "theinformation.com", "informationweek.com"
         ];
         private static readonly string[] DefinitionResultMarkers =
         [
@@ -154,6 +179,9 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(normalizedPrompt))
                 return string.Empty;
 
+            if (TryBuildQuestionFocusedQuery(normalizedPrompt, out string focusedQuery, out _))
+                return focusedQuery;
+
             if (normalizedPrompt.Length > 220)
                 normalizedPrompt = normalizedPrompt[..220].TrimEnd();
 
@@ -186,6 +214,37 @@ namespace Malx_AI
             return ranked.Count == 0 ? normalizedPrompt : string.Join(' ', ranked);
         }
 
+        public bool RequiresFreshOrSourceBackedGrounding(string prompt)
+        {
+            SearchIntent intent = BuildSearchIntent(prompt);
+            if (string.IsNullOrWhiteSpace(intent.BasePrompt))
+                return false;
+
+            return intent.CurrentInfo
+                || intent.News
+                || intent.Release
+                || intent.Docs
+                || LooksLikeHighStakesOrSourceBackedRequest(intent.BasePrompt);
+        }
+
+        public static bool LooksLikeLowSpecificitySearchQuery(string query)
+        {
+            string normalized = NormalizeQuery(query);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return true;
+
+            List<string> meaningfulTokens = TokenRegex.Matches(normalized)
+                .Select(m => m.Value.Trim())
+                .Where(token => token.Length >= 3)
+                .Where(token => !StopWords.Contains(token))
+                .Where(token => !TopicShiftStopWords.Contains(token))
+                .Where(token => !GenericBroadNewsTerms.Contains(token))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return meaningfulTokens.Count < 2 && normalized.Length < 42;
+        }
+
         public async Task<string> SearchTopSnippetsForNormalChatAsync(string originalMessage, CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(originalMessage))
@@ -194,6 +253,12 @@ namespace Malx_AI
             string refinedQuery = BuildFocusedNormalChatQuery(originalMessage);
             if (string.IsNullOrWhiteSpace(refinedQuery))
                 refinedQuery = NormalizeQuery(originalMessage);
+
+            using var searchTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            searchTimeout.CancelAfter(LooksLikeCurrentInfoQuery(originalMessage) || LooksLikeNewsQuery(originalMessage)
+                ? CurrentSearchDeadline
+                : SearchDeadline);
+            CancellationToken searchToken = searchTimeout.Token;
 
             try
             {
@@ -208,13 +273,13 @@ namespace Malx_AI
                 if (TryGetCached(cacheKey, intent, out string cached))
                     return cached;
 
-                List<SearchResult> fetchedResults = await FetchRankedResultsAsync(intent, token);
+                List<SearchResult> fetchedResults = await FetchRankedResultsAsync(intent, searchToken).ConfigureAwait(false);
                 if (fetchedResults.Count == 0)
                     return "No web results were found.";
 
                 List<SearchResult> relevanceFiltered = FilterResultsByRelevance(fetchedResults, intent, originalMessage);
                 relevanceFiltered = PrioritizeFreshResults(relevanceFiltered, intent);
-                List<SearchResult> extractedResults = await FetchExtractedPageResultsAsync(relevanceFiltered, intent, token);
+                List<SearchResult> extractedResults = await FetchExtractedPageResultsAsync(relevanceFiltered, intent, searchToken).ConfigureAwait(false);
                 if (extractedResults.Count == 0)
                     return "No web results were found.";
 
@@ -222,9 +287,13 @@ namespace Malx_AI
                 SaveCache(cacheKey, formatted);
                 return formatted;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (OperationCanceledException)
+            {
+                return "Web search timed out.";
             }
             catch (Exception ex)
             {
@@ -237,6 +306,12 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(query))
                 return "No web results available for an empty query.";
 
+            using var searchTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            searchTimeout.CancelAfter(LooksLikeCurrentInfoQuery(query) || LooksLikeNewsQuery(query)
+                ? CurrentSearchDeadline
+                : SearchDeadline);
+            CancellationToken searchToken = searchTimeout.Token;
+
             try
             {
                 SearchIntent intent = BuildSearchIntent(query);
@@ -248,12 +323,12 @@ namespace Malx_AI
                 if (TryGetCached(cacheKey, intent, out string cached))
                     return cached;
 
-                List<SearchResult> selected = await FetchRankedResultsAsync(intent, token);
+                List<SearchResult> selected = await FetchRankedResultsAsync(intent, searchToken).ConfigureAwait(false);
                 if (selected.Count == 0)
                     return "No web results were found.";
 
                 selected = PrioritizeFreshResults(selected, intent);
-                List<SearchResult> extractedResults = await FetchExtractedPageResultsAsync(selected, intent, token);
+                List<SearchResult> extractedResults = await FetchExtractedPageResultsAsync(selected, intent, searchToken).ConfigureAwait(false);
                 if (extractedResults.Count == 0)
                     return "No web results were found.";
 
@@ -261,9 +336,13 @@ namespace Malx_AI
                 SaveCache(cacheKey, formatted);
                 return formatted;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (OperationCanceledException)
+            {
+                return "Web search timed out.";
             }
             catch (Exception ex)
             {
@@ -284,7 +363,7 @@ namespace Malx_AI
 
             foreach (string subQuery in subQueries)
             {
-                List<SearchResult> results = await SearchAcrossProvidersAsync(subQuery, intent, token);
+                List<SearchResult> results = await SearchAcrossProvidersAsync(subQuery, intent, token).ConfigureAwait(false);
 
                 foreach (SearchResult result in results)
                     aggregated.Add(result with { Position = position++ });
@@ -301,7 +380,7 @@ namespace Malx_AI
 
             if (ShouldRetryWithFreshnessBias(selected, intent))
             {
-                List<SearchResult> retryResults = await FetchAlternateFreshResultsAsync(intent, token);
+                List<SearchResult> retryResults = await FetchAlternateFreshResultsAsync(intent, token).ConfigureAwait(false);
                 if (retryResults.Count > 0)
                     return retryResults;
             }
@@ -311,75 +390,90 @@ namespace Malx_AI
 
         private static async Task<List<SearchResult>> SearchAcrossProvidersAsync(string query, SearchIntent intent, CancellationToken token)
         {
-            var aggregated = new List<SearchResult>();
-
-            async Task AddResultsAsync(Func<string, CancellationToken, Task<List<SearchResult>>> provider)
-            {
-                if (aggregated.Count >= MaxResultsPerQuery)
-                    return;
-
-                List<SearchResult> results = await provider(query, token);
-                if (results.Count == 0)
-                    return;
-
-                foreach (SearchResult result in results)
-                {
-                    aggregated.Add(result);
-                    if (aggregated.Count >= MaxResultsPerQuery)
-                        break;
-                }
-            }
-
+            var providers = new List<Func<string, CancellationToken, Task<List<SearchResult>>>>();
             if (intent.News)
-                await AddResultsAsync(SearchGoogleNewsRssAsync);
+                providers.Add(SearchGoogleNewsRssAsync);
 
-            await AddResultsAsync(SearchDuckDuckGoAsync);
+            providers.Add(SearchDuckDuckGoAsync);
 
-            if (aggregated.Count < 4 || intent.CurrentInfo || intent.News || intent.Docs || intent.Release)
-                await AddResultsAsync(SearchBingHtmlAsync);
+            if (intent.CurrentInfo || intent.News || intent.Docs || intent.Release)
+                providers.Add(SearchBingHtmlAsync);
 
-            if (aggregated.Count < 4)
-                await AddResultsAsync(SearchBingRssAsync);
+            providers.Add(SearchBingRssAsync);
 
-            return aggregated.Take(MaxResultsPerQuery).ToList();
+            Task<List<SearchResult>>[] tasks = providers
+                .Select(provider => RunTimedProviderAsync(provider, query, token))
+                .ToArray();
+
+            List<SearchResult>[] providerResults = await Task.WhenAll(tasks).ConfigureAwait(false);
+            return providerResults
+                .SelectMany(results => results)
+                .Take(MaxResultsPerQuery)
+                .ToList();
         }
 
         private async Task<List<SearchResult>> FetchExtractedPageResultsAsync(IReadOnlyList<SearchResult> results, SearchIntent intent, CancellationToken token)
         {
-            var extracted = new List<SearchResult>();
-            // Track actual page-fetch attempts separately from the number of results collected.
-            // The previous code used extracted.Count, which meant skipped results (e.g. Google News
-            // aggregator URLs) consumed the fetch budget so real article URLs never got fetched.
-            int pagesFetched = 0;
+            List<SearchResult> candidates = (results ?? []).Take(MaxResultCount).ToList();
+            Task<SearchResult?>[] tasks = candidates
+                .Select((result, index) => FetchExtractedSingleResultAsync(result, intent, index, token))
+                .ToArray();
 
-            foreach (SearchResult originalResult in (results ?? []).Take(MaxResultCount))
+            SearchResult?[] resolved = await Task.WhenAll(tasks).ConfigureAwait(false);
+            return resolved
+                .Where(result => result != null)
+                .Select(result => result!)
+                .Where(result => !string.IsNullOrWhiteSpace(result.Snippet)
+                    || !string.IsNullOrWhiteSpace(result.Title)
+                    || !string.IsNullOrWhiteSpace(result.Url))
+                .ToList();
+        }
+
+        private static async Task<List<SearchResult>> RunTimedProviderAsync(
+            Func<string, CancellationToken, Task<List<SearchResult>>> provider,
+            string query,
+            CancellationToken token)
+        {
+            using var timeoutTokenSource = CancellationTokenSource.CreateLinkedTokenSource(token);
+            timeoutTokenSource.CancelAfter(ProviderDeadline);
+
+            try
             {
-                SearchResult result = originalResult;
-                string snippet = result.Snippet ?? string.Empty;
-                string host = GetHostName(result.Url);
-                bool structuredFeedSnippet = LooksLikeStructuredFeedSnippet(snippet);
-                bool skipFetch = ShouldSkipPageEvidenceFetch(host, structuredFeedSnippet);
+                List<SearchResult> results = await provider(query, timeoutTokenSource.Token).ConfigureAwait(false);
+                return results.Take(MaxResultsPerQuery).ToList();
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                return new List<SearchResult>();
+            }
+        }
 
-                if (pagesFetched < MaxEvidenceFetchCount && !skipFetch)
+        private async Task<SearchResult?> FetchExtractedSingleResultAsync(SearchResult originalResult, SearchIntent intent, int index, CancellationToken token)
+        {
+            SearchResult result = originalResult;
+            string snippet = result.Snippet ?? string.Empty;
+            string host = GetHostName(result.Url);
+            bool structuredFeedSnippet = LooksLikeStructuredFeedSnippet(snippet);
+
+            if (index < MaxEvidenceFetchCount && !ShouldSkipPageEvidenceFetch(host, structuredFeedSnippet))
+            {
+                PageEvidence pageEvidence = await TryFetchPageEvidenceAsync(result.Url, result.Title, intent, token).ConfigureAwait(false);
+                if (ShouldReplaceSnippetWithFetchedEvidence(snippet, pageEvidence.Text, intent, result.Title, host))
                 {
-                    pagesFetched++;
-                    PageEvidence pageEvidence = await TryFetchPageEvidenceAsync(result.Url, result.Title, intent, token);
-                    if (ShouldReplaceSnippetWithFetchedEvidence(snippet, pageEvidence.Text, intent, result.Title, host))
+                    result = result with
                     {
-                        result = result with
-                        {
-                            Title = string.IsNullOrWhiteSpace(pageEvidence.Title) ? result.Title : pageEvidence.Title,
-                            Snippet = pageEvidence.Text,
-                            PublishedAt = pageEvidence.PublishedAt ?? result.PublishedAt
-                        };
-                    }
+                        Title = string.IsNullOrWhiteSpace(pageEvidence.Title) ? result.Title : pageEvidence.Title,
+                        Snippet = pageEvidence.Text,
+                        PublishedAt = pageEvidence.PublishedAt ?? result.PublishedAt
+                    };
                 }
-
-                if (!string.IsNullOrWhiteSpace(result.Snippet) || !string.IsNullOrWhiteSpace(result.Title) || !string.IsNullOrWhiteSpace(result.Url))
-                    extracted.Add(result);
             }
 
-            return extracted;
+            return result;
         }
 
         public string PreparePromptContext(string data, int maxChars)
@@ -507,6 +601,32 @@ namespace Malx_AI
             client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
             client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
             return client;
+        }
+
+        private static async Task<string> ReadContentAsStringBoundedAsync(HttpContent content, int maxChars, CancellationToken token)
+        {
+            if (content == null || maxChars <= 0)
+                return string.Empty;
+
+            if (content.Headers.ContentLength.HasValue && content.Headers.ContentLength.Value > maxChars * 4L)
+                return string.Empty;
+
+            await using Stream stream = await content.ReadAsStreamAsync(token).ConfigureAwait(false);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 8192, leaveOpen: false);
+            var buffer = new char[Math.Min(8192, maxChars)];
+            var sb = new StringBuilder(Math.Min(maxChars, 32_768));
+
+            while (sb.Length < maxChars)
+            {
+                int remaining = maxChars - sb.Length;
+                int read = await reader.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), token).ConfigureAwait(false);
+                if (read <= 0)
+                    break;
+
+                sb.Append(buffer, 0, read);
+            }
+
+            return sb.ToString();
         }
 
         private static string NormalizeQuery(string query)
@@ -723,8 +843,17 @@ namespace Malx_AI
                 if (string.IsNullOrWhiteSpace(candidate))
                     return;
 
+                if (IsGenericPromptTerm(candidate))
+                    return;
+
                 if (seen.Add(candidate))
                     ordered.Add(candidate);
+            }
+
+            if (TryBuildQuestionFocusedQuery(selectedSentence, out _, out List<string> focusTerms))
+            {
+                foreach (string term in focusTerms)
+                    AddTerm(term);
             }
 
             foreach (Match match in QuotedPhraseRegex.Matches(selectedSentence))
@@ -750,6 +879,182 @@ namespace Malx_AI
             }
 
             return ordered.Take(10).ToList();
+        }
+
+        private static bool IsGenericPromptTerm(string term)
+        {
+            if (string.IsNullOrWhiteSpace(term))
+                return true;
+
+            string normalized = term.Trim().Trim(' ', '"', '\'', '.', '?', '!', ',', ':', ';');
+            if (string.IsNullOrWhiteSpace(normalized))
+                return true;
+
+            var tokens = TokenRegex.Matches(normalized)
+                .Select(m => m.Value)
+                .ToList();
+            if (tokens.Count == 0)
+                return true;
+
+            return tokens.All(token =>
+                StopWords.Contains(token)
+                || TopicShiftStopWords.Contains(token)
+                || QuestionFillerWords.Contains(token)
+                || QueryQualifierWords.Contains(token)
+                || GenericBroadNewsTerms.Contains(token));
+        }
+
+        private static bool TryBuildQuestionFocusedQuery(string prompt, out string query, out List<string> focusTerms)
+        {
+            query = string.Empty;
+            focusTerms = new List<string>();
+            string normalized = NormalizeQuery(prompt);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            string subject = string.Empty;
+            string relation = string.Empty;
+            string target = string.Empty;
+
+            Match infoAbout = Regex.Match(normalized,
+                @"\b(?:latest|current|recent|new|newest|updated)?\s*(?:information|info|details|updates?|news|articles?|reports?)\s+(?:about|on|regarding|for)\s+(?<subject>[^?.,;]{2,160})",
+                RegexOptions.IgnoreCase);
+            if (infoAbout.Success)
+            {
+                subject = CleanFocusPhrase(infoAbout.Groups["subject"].Value);
+                relation = "latest news updates";
+            }
+
+            if (string.IsNullOrWhiteSpace(subject))
+            {
+                Match latestOn = Regex.Match(normalized,
+                    @"\b(?:what'?s\s+)?(?:the\s+)?(?:latest|current|recent|newest)\s+(?:on|about|regarding|for)\s+(?<subject>[^?.,;]{2,160})",
+                    RegexOptions.IgnoreCase);
+                if (latestOn.Success)
+                {
+                    subject = CleanFocusPhrase(latestOn.Groups["subject"].Value);
+                    relation = "latest news updates";
+                }
+            }
+
+            Match doesTo = Regex.Match(normalized,
+                @"\bwhat\s+(?:does|do|did)\s+(?<subject>.+?)\s+(?<relation>do(?:es)?\s+to|do\s+for|mean\s+for|cause\s+in|cause\s+to)\s+(?<target>[^?.,;]{2,120})",
+                RegexOptions.IgnoreCase);
+            if (string.IsNullOrWhiteSpace(subject) && doesTo.Success)
+            {
+                subject = CleanFocusPhrase(doesTo.Groups["subject"].Value);
+                relation = NormalizeRelationPhrase(doesTo.Groups["relation"].Value);
+                target = CleanFocusPhrase(doesTo.Groups["target"].Value);
+            }
+
+            if (string.IsNullOrWhiteSpace(subject))
+            {
+                Match affect = Regex.Match(normalized,
+                    @"\b(?:what|how)\s+(?:does|do|did|can|could|would|will)\s+(?<subject>.+?)\s+(?<relation>affect|impact|change|influence|interact\s+with|work\s+with|react\s+with|relate\s+to)\s+(?<target>[^?.,;]{2,120})",
+                    RegexOptions.IgnoreCase);
+                if (affect.Success)
+                {
+                    subject = CleanFocusPhrase(affect.Groups["subject"].Value);
+                    relation = NormalizeRelationPhrase(affect.Groups["relation"].Value);
+                    target = CleanFocusPhrase(affect.Groups["target"].Value);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(subject))
+            {
+                Match explainRelation = Regex.Match(normalized,
+                    @"\b(?:explain|describe)\s+(?:the\s+)?(?<relation>relationship|relation|connection|interaction|effect|impact)\s+(?:between|of)\s+(?<subject>.+?)\s+(?:and|on|to|with)\s+(?<target>[^?.,;]{2,120})",
+                    RegexOptions.IgnoreCase);
+                if (explainRelation.Success)
+                {
+                    subject = CleanFocusPhrase(explainRelation.Groups["subject"].Value);
+                    relation = NormalizeRelationPhrase(explainRelation.Groups["relation"].Value);
+                    target = CleanFocusPhrase(explainRelation.Groups["target"].Value);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(subject))
+            {
+                Match definition = Regex.Match(normalized,
+                    @"\b(?:what\s+(?:is|are|was|were)|define|explain|describe)\s+(?<subject>[^?.,;]{2,140})",
+                    RegexOptions.IgnoreCase);
+                if (definition.Success)
+                {
+                    subject = CleanFocusPhrase(definition.Groups["subject"].Value);
+                    relation = "overview";
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(subject))
+                return false;
+
+            focusTerms = ExtractFocusTerms(subject)
+                .Concat(ExtractFocusTerms(target))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToList();
+
+            if (focusTerms.Count == 0)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(target))
+                query = NormalizeQuery($"{subject} {relation} {target}");
+            else
+                query = NormalizeQuery($"{subject} {relation}");
+
+            if (string.IsNullOrWhiteSpace(query))
+                query = string.Join(' ', focusTerms);
+
+            return !string.IsNullOrWhiteSpace(query);
+        }
+
+        private static string CleanFocusPhrase(string phrase)
+        {
+            string cleaned = CleanText(phrase);
+            if (string.IsNullOrWhiteSpace(cleaned))
+                return string.Empty;
+
+            cleaned = Regex.Replace(cleaned,
+                @"\b(?:in general|generally|exactly|actually|basically|overall|main focus|the main focus|my prompt|this prompt|this question|the question)\b",
+                " ",
+                RegexOptions.IgnoreCase);
+            cleaned = Regex.Replace(cleaned, @"^(?:the|a|an|about|of|to|for|on|with)\s+", string.Empty, RegexOptions.IgnoreCase);
+            cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim(' ', '"', '\'', '.', '?', '!', ',', ':', ';');
+
+            List<string> tokens = TokenRegex.Matches(cleaned)
+                .Select(m => m.Value)
+                .Where(token => token.Length > 1 && !QuestionFillerWords.Contains(token))
+                .Take(8)
+                .ToList();
+
+            return tokens.Count == 0 ? string.Empty : string.Join(' ', tokens);
+        }
+
+        private static List<string> ExtractFocusTerms(string phrase)
+        {
+            return TokenRegex.Matches(phrase ?? string.Empty)
+                .Select(m => m.Value.Trim())
+                .Where(token => token.Length >= 2)
+                .Where(token => !QuestionFillerWords.Contains(token))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string NormalizeRelationPhrase(string relation)
+        {
+            string lower = CleanText(relation).ToLowerInvariant();
+            return lower switch
+            {
+                "do to" or "does to" or "do for" => "effect on",
+                "mean for" => "meaning for",
+                "cause in" or "cause to" => "causes effects on",
+                "affect" or "impact" or "influence" => "effect on",
+                "change" => "changes in",
+                "interact with" or "work with" or "react with" => "interaction with",
+                "relate to" or "relationship" or "relation" or "connection" => "relationship with",
+                "effect" or "impact" => "effect on",
+                _ => string.IsNullOrWhiteSpace(lower) ? "overview" : lower
+            };
         }
 
         private static IReadOnlyList<string> ExpandIntentTerms(IReadOnlyList<string> baseTerms, string prompt, bool currentInfo, bool docs, bool release, bool news)
@@ -828,6 +1133,22 @@ namespace Malx_AI
                 RegexOptions.IgnoreCase).Trim();
 
             bool broadNews = news && IsBroadNewsPrompt(selectedSentence, queryTerms);
+
+            if (!broadNews && TryBuildQuestionFocusedQuery(selectedSentence, out string focusedQuestionQuery, out _))
+            {
+                string focused = focusedQuestionQuery;
+                if (docs && !focused.Contains("documentation", StringComparison.OrdinalIgnoreCase) && !focused.Contains("docs", StringComparison.OrdinalIgnoreCase))
+                    focused += " official documentation";
+                else if (release && !focused.Contains("release", StringComparison.OrdinalIgnoreCase) && !focused.Contains("changelog", StringComparison.OrdinalIgnoreCase))
+                    focused += " official release notes";
+                else if ((news || currentInfo) && !focused.Contains("article", StringComparison.OrdinalIgnoreCase))
+                    focused += " article";
+
+                if (currentInfo && !Regex.IsMatch(focused, @"\b20\d{2}\b"))
+                    focused += " " + DateTime.UtcNow.Year;
+
+                return NormalizeQuery(focused);
+            }
 
             List<string> filteredTerms = queryTerms
                 .Where(term => !QueryQualifierWords.Contains(term))
@@ -933,6 +1254,20 @@ namespace Malx_AI
             return markers.Any(lower.Contains);
         }
 
+        private static bool LooksLikeHighStakesOrSourceBackedRequest(string query)
+        {
+            string lower = (query ?? string.Empty).ToLowerInvariant();
+            string[] markers =
+            [
+                "official", "source", "sources", "cite", "citation", "evidence", "verify", "fact check",
+                "documentation", "docs", "api", "sdk", "pricing", "price", "cost", "policy", "terms",
+                "legal", "law", "regulation", "compliance", "medical", "health", "clinical", "finance",
+                "financial", "tax", "rate", "rates", "version", "release", "roadmap", "changelog"
+            ];
+
+            return markers.Any(lower.Contains);
+        }
+
         private static async Task<List<SearchResult>> SearchDuckDuckGoAsync(string query, CancellationToken token)
         {
             var aggregated = new List<SearchResult>();
@@ -946,11 +1281,11 @@ namespace Malx_AI
             {
                 string url = endpoint + Uri.EscapeDataString(query);
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                     continue;
 
-                string html = await response.Content.ReadAsStringAsync(token);
+                string html = await ReadContentAsStringBoundedAsync(response.Content, MaxSearchPayloadChars, token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(html))
                     continue;
 
@@ -972,11 +1307,11 @@ namespace Malx_AI
         {
             string url = "https://www.bing.com/search?format=rss&q=" + Uri.EscapeDataString(query);
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return new List<SearchResult>();
 
-            string xml = await response.Content.ReadAsStringAsync(token);
+            string xml = await ReadContentAsStringBoundedAsync(response.Content, MaxSearchPayloadChars, token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(xml))
                 return new List<SearchResult>();
 
@@ -1006,11 +1341,11 @@ namespace Malx_AI
         {
             string url = "https://www.bing.com/search?q=" + Uri.EscapeDataString(query) + "&setlang=en-US&cc=us";
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return new List<SearchResult>();
 
-            string html = await response.Content.ReadAsStringAsync(token);
+            string html = await ReadContentAsStringBoundedAsync(response.Content, MaxSearchPayloadChars, token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(html))
                 return new List<SearchResult>();
 
@@ -1021,11 +1356,11 @@ namespace Malx_AI
         {
             string url = "https://news.google.com/rss/search?q=" + Uri.EscapeDataString(query) + "&hl=en-US&gl=US&ceid=US:en";
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return new List<SearchResult>();
 
-            string xml = await response.Content.ReadAsStringAsync(token);
+            string xml = await ReadContentAsStringBoundedAsync(response.Content, MaxSearchPayloadChars, token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(xml))
                 return new List<SearchResult>();
 
@@ -1080,9 +1415,10 @@ namespace Malx_AI
 
         private static List<SearchResult> SelectHighConfidenceResults(IEnumerable<SearchResult> ranked, SearchIntent intent)
         {
+            bool definitionFriendly = IsDefinitionOrExplanationIntent(intent);
             var candidates = ranked
                 .Where(result => !IsBlockedAuthority(result))
-                .Where(result => !LooksLikeDefinitionResult(result))
+                .Where(result => definitionFriendly || !LooksLikeDefinitionResult(result))
                 .Where(result => !LooksLikeGenericLandingResult(result, intent))
                 .Where(result => ScoreResult(result, intent) >= 1)
                 .ToList();
@@ -1091,7 +1427,9 @@ namespace Malx_AI
                 return new List<SearchResult>();
 
             var preferred = candidates
-                .Where(result => IsTrustedAuthority(result) || ComputeTermCoverage(result, intent) >= 2)
+                .Where(result => IsTrustedAuthority(result)
+                    || ComputeQuestionRelationScore(result, intent) >= 6
+                    || ComputeTermCoverage(result, intent) >= 2)
                 .ToList();
 
             if (preferred.Count == 0)
@@ -1130,7 +1468,7 @@ namespace Malx_AI
 
                 if (i < MaxEvidenceFetchCount && !ShouldSkipPageEvidenceFetch(host, structuredFeedSnippet))
                 {
-                    PageEvidence fetchedEvidence = await TryFetchPageEvidenceAsync(result.Url, result.Title, intent, token);
+                    PageEvidence fetchedEvidence = await TryFetchPageEvidenceAsync(result.Url, result.Title, intent, token).ConfigureAwait(false);
                     if (ShouldReplaceSnippetWithFetchedEvidence(snippet, fetchedEvidence.Text, intent, result.Title, host))
                     {
                         snippet = fetchedEvidence.Text.Trim();
@@ -1150,7 +1488,7 @@ namespace Malx_AI
             sb.AppendLine("[[WEB SEARCH DATA]]");
             sb.AppendLine($"WEB SEARCH RESULTS — {DateTime.UtcNow:yyyy-MM-dd}");
             sb.AppendLine("Search focus: " + intent.Query);
-            sb.AppendLine("Only use the evidence below for current factual claims. Prefer high-confidence/official sources and ignore unsupported background knowledge.");
+            sb.AppendLine("Use the evidence below for current/source-backed claims that it actually covers. Prefer high-confidence/official sources, do not treat off-topic results as support, and keep stable background knowledge separate from source-backed claims.");
             if (IsBroadNewsIntent(intent) && !HasExplicitRegionalFocus(intent.BasePrompt))
                 sb.AppendLine("For broad news/headline requests, synthesize multiple distinct top headlines from different reputable sources. Do not collapse the answer to a single article unless only one distinct verified item is available.");
             else if (intent.News)
@@ -1187,6 +1525,12 @@ namespace Malx_AI
                         : $"{heading.Trim()} {freshnessLabel}[{authorityDisplay} • {reliability}]");
                 if (!string.IsNullOrWhiteSpace(authorityDisplay))
                     sb.AppendLine("Source domain: " + authorityDisplay.Trim());
+                string sourceUrl = result.Url?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(sourceUrl))
+                    sb.AppendLine("URL: " + sourceUrl);
+                string publishedLabel = GetFreshnessLabel(snippetText, result.PublishedAt).Trim('[', ']');
+                if (!string.IsNullOrWhiteSpace(publishedLabel))
+                    sb.AppendLine("Published: " + publishedLabel);
                 if (!string.IsNullOrWhiteSpace(snippetText))
                 {
                     // Label long fetched article content so the AI knows it is full article body.
@@ -1319,8 +1663,12 @@ namespace Malx_AI
             string authorityKey = GetResultAuthorityKey(result);
             bool broadNews = intent.News && IsBroadNewsIntent(intent) && !HasExplicitRegionalFocus(intent.BasePrompt);
 
-            if (IsBlockedAuthority(result) || LooksLikeDefinitionResult(result))
+            if (IsBlockedAuthority(result))
                 return -100;
+
+            bool definitionFriendly = IsDefinitionOrExplanationIntent(intent);
+            if (LooksLikeDefinitionResult(result))
+                score += definitionFriendly ? 2 : -40;
 
             if (LooksLikeGenericLandingResult(result, intent))
                 return -40;
@@ -1360,8 +1708,129 @@ namespace Malx_AI
                 score += ScoreRecency(result.PublishedAt.Value, intent);
 
             score += ComputeTermCoverage(result, intent);
+            score += ComputeQuestionRelationScore(result, intent);
+            score += ComputeSourceQualityScore(result, intent);
 
             return score;
+        }
+
+        private static int ComputeQuestionRelationScore(SearchResult result, SearchIntent intent)
+        {
+            if (!TryBuildQuestionFocusedQuery(intent.BasePrompt, out string focusedQuery, out List<string> focusTerms)
+                || focusTerms.Count == 0)
+            {
+                return 0;
+            }
+
+            string haystack = ((result.Title ?? string.Empty) + " " + (result.Snippet ?? string.Empty) + " " + (result.Url ?? string.Empty)).ToLowerInvariant();
+            int coveredTerms = focusTerms
+                .Take(8)
+                .Count(term => haystack.Contains(term.ToLowerInvariant(), StringComparison.Ordinal));
+
+            int score = coveredTerms * 2;
+            if (coveredTerms >= Math.Min(2, focusTerms.Count))
+                score += 2;
+
+            string focusedLower = focusedQuery.ToLowerInvariant();
+            if (focusedLower.Contains("effect on", StringComparison.Ordinal)
+                || focusedLower.Contains("changes in", StringComparison.Ordinal)
+                || focusedLower.Contains("interaction with", StringComparison.Ordinal)
+                || focusedLower.Contains("relationship with", StringComparison.Ordinal))
+            {
+                string[] relationWords = ["effect", "affect", "impact", "change", "interaction", "relationship", "influence", "cause", "causes"];
+                if (relationWords.Any(word => haystack.Contains(word, StringComparison.Ordinal)))
+                    score += 4;
+
+                if (QuerySidesCovered(focusedQuery, haystack))
+                    score += 6;
+            }
+
+            return score;
+        }
+
+        private static bool QuerySidesCovered(string focusedQuery, string haystack)
+        {
+            string[] relationMarkers = [" effect on ", " meaning for ", " causes effects on ", " changes in ", " interaction with ", " relationship with "];
+            foreach (string marker in relationMarkers)
+            {
+                int idx = focusedQuery.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (idx <= 0)
+                    continue;
+
+                string left = focusedQuery[..idx];
+                string right = focusedQuery[(idx + marker.Length)..];
+                bool leftCovered = ExtractFocusTerms(left).Any(term => haystack.Contains(term.ToLowerInvariant(), StringComparison.Ordinal));
+                bool rightCovered = ExtractFocusTerms(right).Any(term => haystack.Contains(term.ToLowerInvariant(), StringComparison.Ordinal));
+                return leftCovered && rightCovered;
+            }
+
+            return false;
+        }
+
+        private static int ComputeSourceQualityScore(SearchResult result, SearchIntent intent)
+        {
+            string host = GetHostName(result.Url).ToLowerInvariant();
+            string title = (result.Title ?? string.Empty).ToLowerInvariant();
+            string snippet = (result.Snippet ?? string.Empty).ToLowerInvariant();
+            string authorityKey = GetResultAuthorityKey(result);
+            int score = 0;
+
+            if (MatchesAuthorityList(authorityKey, TrustedSourceHosts))
+                score += 5;
+            if (host.EndsWith(".gov", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".edu", StringComparison.OrdinalIgnoreCase))
+                score += 5;
+            if (intent.Docs && (host.Contains("docs", StringComparison.Ordinal) || title.Contains("documentation", StringComparison.Ordinal) || title.Contains("reference", StringComparison.Ordinal)))
+                score += 5;
+            if (intent.Release && (title.Contains("release notes", StringComparison.Ordinal) || title.Contains("changelog", StringComparison.Ordinal)))
+                score += 5;
+            if (IsDefinitionOrExplanationIntent(intent) && (host.EndsWith("wikipedia.org", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".edu", StringComparison.OrdinalIgnoreCase)))
+                score += 3;
+            if (LooksLikeAggregatorOrLowEvidencePage(result))
+                score -= 5;
+            if (GenericPromptWordHosts.Any(host.EndsWith) && !HostLooksOfficialForFocus(host, intent))
+                score -= 8;
+            if (HostLooksOfficialForFocus(host, intent))
+                score += 6;
+
+            return score;
+        }
+
+        private static bool HostLooksOfficialForFocus(string host, SearchIntent intent)
+        {
+            if (string.IsNullOrWhiteSpace(host))
+                return false;
+
+            if (!TryBuildQuestionFocusedQuery(intent.BasePrompt, out _, out List<string> focusTerms))
+                focusTerms = intent.QueryTerms.Take(6).ToList();
+
+            string normalizedHost = NormalizeAuthorityValue(host);
+            foreach (string term in focusTerms)
+            {
+                string normalizedTerm = NormalizeAuthorityValue(term);
+                if (normalizedTerm.Length >= 4 && normalizedHost.Contains(normalizedTerm, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool LooksLikeAggregatorOrLowEvidencePage(SearchResult result)
+        {
+            string host = GetHostName(result.Url);
+            string path = GetUrlPath(result.Url);
+            string snippet = CleanText(result.Snippet).ToLowerInvariant();
+
+            if (AggregatorSourceHosts.Any(host.EndsWith))
+                return true;
+
+            if (string.IsNullOrWhiteSpace(snippet) || snippet.Length < 45)
+                return true;
+
+            string trimmedPath = path.Trim('/');
+            return string.IsNullOrWhiteSpace(trimmedPath)
+                && (snippet.Contains("latest", StringComparison.Ordinal)
+                    || snippet.Contains("home", StringComparison.Ordinal)
+                    || snippet.Contains("sign up", StringComparison.Ordinal));
         }
 
         private static int ComputeTermCoverage(SearchResult result, SearchIntent intent)
@@ -1411,6 +1880,19 @@ namespace Malx_AI
         {
             string haystack = ((result.Title ?? string.Empty) + " " + (result.Snippet ?? string.Empty) + " " + (result.Url ?? string.Empty)).ToLowerInvariant();
             return DefinitionResultMarkers.Any(marker => haystack.Contains(marker, StringComparison.Ordinal));
+        }
+
+        private static bool IsDefinitionOrExplanationIntent(SearchIntent intent)
+        {
+            string prompt = (intent.BasePrompt ?? string.Empty).ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(prompt))
+                return false;
+
+            if (Regex.IsMatch(prompt, @"\b(?:what\s+(?:is|are|was|were)|define|definition|meaning\s+of|explain|describe)\b", RegexOptions.IgnoreCase))
+                return true;
+
+            return Regex.IsMatch(prompt, @"\b(?:what|how)\s+(?:does|do|did|can|could|would|will)\b", RegexOptions.IgnoreCase)
+                && Regex.IsMatch(prompt, @"\b(?:do\s+to|do\s+for|affect|impact|change|influence|interact|work\s+with|react\s+with|relate\s+to|relationship|connection)\b", RegexOptions.IgnoreCase);
         }
 
         private static bool LooksLikeGenericLandingResult(SearchResult result, SearchIntent intent)
@@ -1718,9 +2200,8 @@ namespace Malx_AI
             {
                 // Use a longer timeout for news/current-info queries — these often require redirect
                 // chains (e.g. news.google.com → actual article site) which take more round trips.
-                int timeoutSeconds = (intent.News || intent.CurrentInfo) ? 9 : 6;
                 using var timeoutTokenSource = CancellationTokenSource.CreateLinkedTokenSource(token);
-                timeoutTokenSource.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                timeoutTokenSource.CancelAfter((intent.News || intent.CurrentInfo) ? CurrentEvidenceDeadline : EvidenceDeadline);
 
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
                 request.Headers.TryAddWithoutValidation("User-Agent",
@@ -1728,7 +2209,7 @@ namespace Malx_AI
                 request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
                 request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
 
-                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutTokenSource.Token);
+                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutTokenSource.Token).ConfigureAwait(false);
                 if (response.StatusCode != System.Net.HttpStatusCode.OK)
                     return new PageEvidence(string.Empty, string.Empty, null, false);
 
@@ -1736,7 +2217,7 @@ namespace Malx_AI
                 if (!string.IsNullOrWhiteSpace(mediaType) && !mediaType.Contains("html", StringComparison.OrdinalIgnoreCase))
                     return new PageEvidence(string.Empty, string.Empty, null, false);
 
-                string html = await response.Content.ReadAsStringAsync(timeoutTokenSource.Token);
+                string html = await ReadContentAsStringBoundedAsync(response.Content, MaxEvidencePayloadChars, timeoutTokenSource.Token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(html))
                     return new PageEvidence(string.Empty, string.Empty, null, false);
 
@@ -1775,6 +2256,10 @@ namespace Malx_AI
                     return new PageEvidence(string.Empty, string.Empty, null, false);
 
                 return new PageEvidence(evidenceText, pageTitle, publishedAt, true);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {
@@ -2289,7 +2774,7 @@ namespace Malx_AI
 
             foreach (string query in alternateQueries.Take(4))
             {
-                List<SearchResult> results = await SearchAcrossProvidersAsync(query, intent, token);
+                List<SearchResult> results = await SearchAcrossProvidersAsync(query, intent, token).ConfigureAwait(false);
 
                 foreach (SearchResult result in results)
                     aggregated.Add(result with { Position = position++ });

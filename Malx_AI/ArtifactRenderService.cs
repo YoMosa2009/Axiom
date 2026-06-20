@@ -54,6 +54,7 @@ namespace Malx_AI
         private static readonly Regex ExternalCssUrlRegex = new("url\\((['\"]?)(?<value>[^)'\"]+)\\1\\)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex ScriptTagRegex = new(@"<script\b[^>]*>.*?</script>", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
         private static readonly Regex JsVisualSignalRegex = new(@"\b(document\.|window\.|canvas\b|svg\b|chart\b|plotly\b|echarts\b|d3\b|appendChild\b|getElementById\b|innerHTML\b|createElement\b|requestAnimationFrame\b|addEventListener\b|getContext\b|fillRect\b|beginPath\b|stroke\b|fill\b)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex RawJsExecutableSignalRegex = new(@"\b(?:document\.|window\.|(?:getElementById|querySelector|querySelectorAll|createElement|appendChild|addEventListener|requestAnimationFrame|getContext|fillRect|beginPath)\s*\(|(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex ConsoleOnlyRegex = new(@"^\s*(console\.(log|info|warn|error)\s*\([^\r\n]*\)\s*;?\s*)+$", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.Singleline);
         private static readonly Regex SvgRootAttributeRegex = new(@"<svg\b(?<attrs>[^>]*)>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex SvgFixedDimensionRegex = new(@"\s(?:width|height)\s*=\s*(?:'[^']*'|""[^""]*""|\d+\w*)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -137,17 +138,19 @@ namespace Malx_AI
             if (TryCreateChartArtifact(raw, sandboxOutput, out ArtifactRenderInfo? chartArtifact))
                 return chartArtifact;
 
-            // 2. SVG (inline vector graphics)
-            if (TryCreateSvgArtifact(raw, out ArtifactRenderInfo? svgArtifact))
-                return svgArtifact;
-
-            // 3. HTML (full document, DOCTYPE, fenced html block, or recognisable snippet)
+            // 2. HTML (full document, DOCTYPE, fenced html block, or recognisable snippet)
+            // Prefer HTML before SVG so full UI screens that contain inline SVG icons/decoration
+            // render as the complete interface instead of being reduced to the first SVG node.
             if (TryCreateHtmlArtifact(raw, out ArtifactRenderInfo? htmlArtifact))
                 return htmlArtifact;
 
+            // 3. SVG (inline vector graphics)
+            if (TryCreateSvgArtifact(raw, out ArtifactRenderInfo? svgArtifact))
+                return svgArtifact;
+
             // 4. Interactive JavaScript (visual DOM/canvas code in a js/javascript fence)
             //    Previously missing from the canvas pipeline — only existed in normal chat.
-            if (TryCreateInteractiveJavaScriptArtifact(raw, out ArtifactRenderInfo? jsArtifact))
+            if (TryCreateInteractiveJavaScriptArtifact(raw, allowRawSource: true, out ArtifactRenderInfo? jsArtifact))
                 return jsArtifact;
 
             // 5. Document / structured text / Markdown table (datasheets, reports, etc.)
@@ -160,7 +163,7 @@ namespace Malx_AI
         public static ArtifactRenderInfo DetectForNormalChat(string responseText)
         {
             string raw = responseText ?? string.Empty;
-            if (TryCreateInteractiveJavaScriptArtifact(raw, out ArtifactRenderInfo? jsArtifact))
+            if (TryCreateInteractiveJavaScriptArtifact(raw, allowRawSource: false, out ArtifactRenderInfo? jsArtifact))
                 return jsArtifact;
 
             return ArtifactRenderInfo.None(raw);
@@ -399,16 +402,18 @@ except Exception:
             return true;
         }
 
-        private static bool TryCreateInteractiveJavaScriptArtifact(string raw, out ArtifactRenderInfo? artifact)
+        private static bool TryCreateInteractiveJavaScriptArtifact(string raw, bool allowRawSource, out ArtifactRenderInfo? artifact)
         {
             artifact = null;
             ChatMessageCodeBlock? jsBlock = ExtractCodeBlocks(raw).FirstOrDefault(block =>
                 string.Equals(block.Language, "javascript", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(block.Language, "js", StringComparison.OrdinalIgnoreCase));
-            if (jsBlock == null)
+            if (jsBlock == null && !allowRawSource)
+                return false;
+            if (jsBlock == null && !RawJsExecutableSignalRegex.IsMatch(raw ?? string.Empty))
                 return false;
 
-            string code = jsBlock.Code.Trim();
+            string code = (jsBlock?.Code ?? raw ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(code)
                 || ConsoleOnlyRegex.IsMatch(code)
                 || !JsVisualSignalRegex.IsMatch(code))

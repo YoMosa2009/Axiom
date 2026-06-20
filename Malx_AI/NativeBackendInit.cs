@@ -44,11 +44,9 @@ namespace Malx_AI
 
                     bool enableCuda = hasCudaDll && hasNvidiaGpu;
 
-                    // ggml-cuda.dll depends on CUDA runtime DLLs (cudart64_12.dll, cublas64_12.dll,
-                    // cublasLt64_12.dll) that are NOT bundled with LLamaSharp. They live in the
-                    // CUDA Toolkit installation. We must add that directory to PATH before the OS
-                    // loader tries to resolve ggml-cuda.dll's imports, otherwise the DLL load fails
-                    // silently and LLamaSharp falls back to CPU.
+                    // Prefer an installed CUDA Toolkit runtime when present, but do not require it.
+                    // The backend package can resolve CUDA through the bundled native directory
+                    // and NVIDIA driver on driver-only machines.
                     if (enableCuda)
                     {
                         string? cudaRuntimeDir = FindCuda12RuntimeDir();
@@ -59,9 +57,9 @@ namespace Malx_AI
                         }
                         else
                         {
-                            // Cannot find CUDA runtime — ggml-cuda.dll will fail to load.
-                            enableCuda = false;
-                            Debug.WriteLine("[NativeBackendInit] CUDA runtime DLLs not found; falling back to CPU.");
+                            // Toolkit runtime not found; keep CUDA enabled and let the bundled
+                            // backend/native loader resolve through its own directory and driver.
+                            Debug.WriteLine("[NativeBackendInit] CUDA Toolkit runtime DLLs not found; trying bundled CUDA backend.");
                         }
                     }
 
@@ -89,6 +87,21 @@ namespace Malx_AI
                     }
 
                     config.WithAutoFallback();
+
+                    // Capture llama.cpp's native log stream to a file BEFORE any native call.
+                    // Native aborts (GGML_ASSERT) log their reason here and then kill the
+                    // process with no managed exception — this is the only place that record
+                    // survives. Must be registered during config, before the library freezes.
+                    try
+                    {
+                        var logCallback = NativeLlamaLogCapture.TryCreateCallback(AppDataPaths.Logs);
+                        if (logCallback != null)
+                            config.WithLogCallback(logCallback);
+                    }
+                    catch (Exception logEx)
+                    {
+                        Debug.WriteLine($"[NativeBackendInit] native log capture not installed: {logEx.Message}");
+                    }
 
                     GpuConfigured = enableCuda;
                     DiagnosticMessage = enableCuda
@@ -198,7 +211,33 @@ namespace Malx_AI
                 }
             }
 
-            return false;
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = "-NoProfile -Command \"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name\"",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using var proc = Process.Start(psi);
+                if (proc == null)
+                    return false;
+
+                string output = proc.StandardOutput.ReadToEnd();
+                proc.WaitForExit(2000);
+                bool detected = output.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase);
+                if (detected)
+                    Debug.WriteLine("[NativeBackendInit] NVIDIA GPU detected via WMI.");
+                return detected;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

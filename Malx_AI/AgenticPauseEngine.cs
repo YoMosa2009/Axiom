@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using LLama;
@@ -65,6 +66,36 @@ namespace Malx_AI
         public void ResetBudget() => _pauseCount = 0;
 
         /// <summary>
+        /// Executes a tool selected by the Builder's grammar-constrained decision step.
+        /// This deliberately reuses the same allowlist and routing callbacks as the legacy
+        /// inline pause protocol so the two paths cannot drift into different capabilities.
+        /// </summary>
+        internal async Task<StructuredToolResult> ExecuteStructuredToolAsync(
+            string tool,
+            string query,
+            CancellationToken token)
+        {
+            string normalizedTool = (tool ?? string.Empty).Trim().ToUpperInvariant();
+            string normalizedQuery = (query ?? string.Empty).Trim();
+            if (normalizedQuery.Length == 0)
+                return StructuredToolResult.Fail("Tool query is empty.");
+
+            var command = new PauseCommand(normalizedTool, normalizedQuery);
+            UpdateStatus(command, 1);
+            try
+            {
+                ToolDispatchResult result = await DispatchToolAsync(command, token);
+                return result.IsSuccess
+                    ? StructuredToolResult.Ok(result.Data)
+                    : StructuredToolResult.Fail(result.ErrorMessage);
+            }
+            finally
+            {
+                _onStatusUpdate(string.Empty);
+            }
+        }
+
+        /// <summary>
         /// Runs the full agentic loop:
         ///   1. Streams tokens from <paramref name="streamFactory"/>, watching for [PAUSE:…].
         ///   2. On pause: executes the requested tool, injects [RESULT: …] into the session,
@@ -98,8 +129,9 @@ namespace Malx_AI
                 {
                     // Get a new stream for this (re-)invocation
                     var stream = streamFactory(currentPayload);
+                    int invocationOutputStart = fullOutput.Length;
 
-                    var (fragment, pauseCommand) = await InterceptStreamAsync(
+                    var (_, pauseCommand) = await InterceptStreamAsync(
                         stream,
                         fullOutput,
                         delta =>
@@ -115,6 +147,15 @@ namespace Malx_AI
                         // Normal completion — clear any lingering pause status
                         _onStatusUpdate(string.Empty);
                         break;
+                    }
+
+                    if (pauseCommand.Tool == ToolWebSearch && fullOutput.Length > invocationOutputStart)
+                    {
+                        // Anything emitted before a WEB_SEARCH pause is speculative: the model has
+                        // already admitted it needs live evidence. Remove that partial text so stale
+                        // or hallucinated preamble cannot survive beside the grounded continuation.
+                        fullOutput.Remove(invocationOutputStart, fullOutput.Length - invocationOutputStart);
+                        onTextProgress?.Invoke(fullOutput.ToString());
                     }
 
                     // Pre-tool rollback snapshot
@@ -166,22 +207,25 @@ namespace Malx_AI
                             emittedTokenCount = rollbackCheckpointTokenLength;
                         }
 
-                        string overrideMessage =
-                            $"[SYSTEM OVERRIDE: The planned action failed with error: {toolResult.ErrorMessage}. Do not repeat your previous logic. Formulate an alternative approach natively.]";
+                        string overrideMessage = pauseCommand.Tool == ToolWebSearch
+                            ? $"[SYSTEM OVERRIDE: Web search failed with error: {toolResult.ErrorMessage}. Do not invent current facts, source-backed claims, URLs, dates, release details, prices, policies, or documentation details. If the answer depends on current web evidence, say the web lookup did not return usable evidence and answer only the parts that are already supported by provided context.]"
+                            : $"[SYSTEM OVERRIDE: The planned action failed with error: {toolResult.ErrorMessage}. Do not repeat your previous logic. Formulate an alternative approach natively.]";
 
                         if (chatSession != null)
                         {
                             chatSession.History.AddMessage(AuthorRole.System, overrideMessage);
                         }
 
-                        currentPayload = overrideMessage + "\nContinue your response.";
+                        currentPayload = pauseCommand.Tool == ToolWebSearch
+                            ? overrideMessage + "\nDo not continue any unsupported current/source-backed answer. Answer current/source-backed portions only with facts already supported by the prompt, or state that web evidence was unavailable; stable non-current background context is allowed when clearly separate from unsupported current claims."
+                            : overrideMessage + "\nContinue your response.";
                         _onStatusUpdate($"▶ Resuming generation  ·  {_pauseCount}/{MaxPausesPerTurn} pauses used");
                         continue;
                     }
 
                     // Success path: inject result and continue
                     string injectedResult = pauseCommand.Tool == ToolWebSearch
-                        ? $"[RESULT: Web Search Data: {toolResult.Data}]"
+                        ? BuildWebSearchResultInjection(toolResult.Data)
                         : $"[RESULT: {toolResult.Data}]";
 
                     // Append result to session history as a system observation so the model
@@ -193,7 +237,9 @@ namespace Malx_AI
 
                     // Build the continuation payload: what the model sees as the new "user turn"
                     // is just the injection marker so it continues naturally.
-                    currentPayload = injectedResult + "\nContinue your response.";
+                    currentPayload = pauseCommand.Tool == ToolWebSearch
+                        ? injectedResult + "\nContinue your response using the web evidence for current/source-backed claims it actually covers. If a needed current/source-backed detail is not confirmed by the evidence, state that gap instead of guessing; stable non-current background context may be used when not contradicted by the evidence."
+                        : injectedResult + "\nContinue your response.";
 
                     // Show resuming status — visible while model generates the continuation
                     _onStatusUpdate($"▶ Resuming generation  ·  {_pauseCount}/{MaxPausesPerTurn} pauses used");
@@ -221,6 +267,7 @@ namespace Malx_AI
             var tokenBuffer = new StringBuilder();   // speculative hold-back buffer
             bool inSpeculative = false;              // are we buffering a potential [PAUSE:?
             int lastProgressLength = 0;              // chars already pushed to onTextProgress
+            int lastLoopCheckLength = 0;             // output length at last runaway-loop check
 
             // Live-progress pump: pushes accumulated visible text to the UI callback at most
             // once per small growth step, so callers can render a streaming card without
@@ -242,6 +289,21 @@ namespace Malx_AI
             await foreach (var piece in stream.WithCancellation(token).ConfigureAwait(false))
             {
                 onTokenCounted(1);
+
+                // Runaway-generation guard: a council role can get stuck echoing/looping its own
+                // (large) system prompt — environment briefing, capability list, pause rule — and
+                // would otherwise stream until the token cap, minutes of garbage the user must
+                // manually Stop. Detect a long block repeating in the recent output and end the
+                // stream early; the role's contract check then retries or falls back, no hang.
+                if (output.Length - lastLoopCheckLength >= 200)
+                {
+                    lastLoopCheckLength = output.Length;
+                    if (LooksLikeRunawayRepetition(output))
+                    {
+                        _activityLogger("Council role stream stopped early — runaway/echo repetition detected.");
+                        break;
+                    }
+                }
 
                 if (output.Length + tokenBuffer.Length > 30_000)
                 {
@@ -296,6 +358,20 @@ namespace Malx_AI
                                 var cmd = ParsePauseCommand(inner);
                                 if (cmd != null)
                                 {
+                                    // A council role frequently ECHOES its own system prompt, whose
+                                    // AGENTIC PAUSE RULE lists literal [PAUSE: ...] examples. Running
+                                    // those echoed examples as real tool calls and resuming generation
+                                    // is a primary amplifier of the Builder "loops forever" bug, so a
+                                    // pause that merely repeats a rule example is treated as plain text.
+                                    if (IsEchoedRuleExample(cmd))
+                                    {
+                                        output.Append(buffered);
+                                        tokenBuffer.Clear();
+                                        inSpeculative = false;
+                                        PushProgress();
+                                        continue;
+                                    }
+
                                     // Discard trigger tokens from output (token masking).
                                     // Status is updated in RunAsync after budget check.
                                     return (string.Empty, cmd);
@@ -363,6 +439,24 @@ namespace Malx_AI
             }
         }
 
+        private static string BuildWebSearchResultInjection(string data)
+        {
+            return "[RESULT: Web Search Data]\n" +
+                "[WEB SEARCH GROUNDING RULE]\n" +
+                "Current UTC date: " + DateTime.UtcNow.ToString("yyyy-MM-dd") + ".\n" +
+                "Treat the web search data below as authoritative for current, online, source-backed, or recently changed claims that it actually covers.\n" +
+                "Use source titles/hosts, URLs, and dates from the data when making current/source-backed factual claims.\n" +
+                "Do not add unsupported current/source-backed facts from memory, model training data, prior council output, or guesses.\n" +
+                "Do not treat off-topic web results as support for the user's named entities.\n" +
+                "Stable non-current background context is allowed when not contradicted by the web evidence.\n" +
+                "If the data is partial or mismatched, use the confirmed facts and clearly state what the web data does not confirm.\n" +
+                "If sources conflict, report the conflict instead of resolving it by guessing.\n" +
+                "[[WEB SEARCH DATA FROM TOOL]]\n" +
+                (data ?? string.Empty).Trim() +
+                "\n[[END WEB SEARCH DATA FROM TOOL]]\n" +
+                "[END RESULT]";
+        }
+
         private ToolDispatchResult RouteHippocampus(string query)
         {
             var entries = _hippocampus.Query(query, 4);
@@ -403,11 +497,60 @@ namespace Malx_AI
                 }
             }
 
+            // The sandbox is the council's math/equation/formula runner. Models often pass a bare
+            // expression ("sqrt(2)+factorial(5)") instead of a full program; normalize it so it
+            // actually prints a value and so common math names resolve without an explicit import.
+            if (language == "python")
+                code = PrepareSandboxMathCode(code);
+
             string result = await _sandboxExecute(code, language);
             if (IsSandboxFailure(result))
                 return ToolDispatchResult.Fail(result);
 
             return ToolDispatchResult.Ok(result);
+        }
+
+        // Math-aware normalization for the Python sandbox. A single bare expression is wrapped in
+        // print() with the math namespace imported; code that calls math functions but forgot the
+        // import gets a safe star-import prepended. Full programs (assignments, defs, loops, existing
+        // prints/imports) are left untouched.
+        private static readonly Regex SandboxStatementRegex =
+            new(@"\b(import|def|class|for|while|if|elif|else|return|with|try|except|lambda|print|yield|raise|assert)\b",
+                RegexOptions.Compiled);
+        private static readonly Regex SandboxMathImportRegex =
+            new(@"\bimport\s+math\b|\bfrom\s+math\s+import\b", RegexOptions.Compiled);
+        private static readonly Regex SandboxMathNameRegex =
+            new(@"\b(sqrt|cbrt|sin|cos|tan|asin|acos|atan|sinh|cosh|tanh|log|log2|log10|exp|pi|tau|e|factorial|floor|ceil|pow|gcd|lcm|hypot|degrees|radians|comb|perm|prod)\b",
+                RegexOptions.Compiled);
+
+        private static string PrepareSandboxMathCode(string code)
+        {
+            string trimmed = (code ?? string.Empty).Trim();
+            if (trimmed.Length == 0)
+                return trimmed;
+
+            // Strip a surrounding markdown code fence so bare-expression detection sees real code.
+            if (trimmed.StartsWith("```", StringComparison.Ordinal))
+            {
+                int firstNewline = trimmed.IndexOf('\n');
+                int lastFence = trimmed.LastIndexOf("```", StringComparison.Ordinal);
+                if (firstNewline > 0 && lastFence > firstNewline)
+                    trimmed = trimmed[(firstNewline + 1)..lastFence].Trim();
+            }
+
+            bool isMultiLine = trimmed.Contains('\n');
+            bool hasPrint = trimmed.Contains("print(", StringComparison.Ordinal);
+            bool looksLikeStatement = isMultiLine
+                || trimmed.Contains('=')
+                || SandboxStatementRegex.IsMatch(trimmed);
+
+            if (!hasPrint && !looksLikeStatement)
+                return "from math import *\nprint(" + trimmed + ")";
+
+            if (!SandboxMathImportRegex.IsMatch(trimmed) && SandboxMathNameRegex.IsMatch(trimmed))
+                return "from math import *\n" + trimmed;
+
+            return trimmed;
         }
 
         private async Task<ToolDispatchResult> RoutePythonMathAsync(string code, CancellationToken token)
@@ -503,6 +646,83 @@ namespace Malx_AI
         private static string Truncate(string s, int max) =>
             s.Length <= max ? s : s[..max] + "…";
 
+        // The exact example queries baked into AgenticPauseRule. A model echoing its system
+        // prompt reproduces these verbatim; running them as real tool calls is never intended.
+        private static readonly HashSet<string> RuleExampleQueries = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "45 * 2",
+            "boiling point of water",
+            "latest .net 10 release notes",
+            "print((42 * 17) / 3)"
+        };
+
+        private static bool IsEchoedRuleExample(PauseCommand cmd)
+            => RuleExampleQueries.Contains(cmd.Query.Trim());
+
+        // Detects a council role stuck repeating itself — either a tight short-cycle loop
+        // (echoing a fragment of its own system prompt) or a whole-answer rewrite (it finishes a
+        // response, then starts re-typing it from the top). Both would otherwise stream to the
+        // token cap: minutes of garbage the user must Stop, and the relay never reaches the Critic.
+        // Thresholds are deliberately conservative so ordinary repetition (lists, boilerplate,
+        // code) is not mistaken for a runaway loop.
+        private static bool LooksLikeRunawayRepetition(StringBuilder output)
+        {
+            int len = output.Length;
+            if (len < 480)
+                return false;
+
+            // ── Tier 1: tight short-cycle loop ──────────────────────────────────
+            // A small block echoed several times in close succession.
+            const int tightWindow = 120;   // length of the repeating-block probe
+            const int tightSpan = 2400;    // how far back to scan
+            if (len >= tightWindow * 4)
+            {
+                int start = Math.Max(0, len - tightSpan);
+                string tail = output.ToString(start, len - start);
+                if (tail.Length >= tightWindow * 4)
+                {
+                    string probe = tail[^tightWindow..];
+                    int count = 0, idx = 0;
+                    while ((idx = tail.IndexOf(probe, idx, StringComparison.Ordinal)) >= 0)
+                    {
+                        if (++count >= 3)        // last 120 chars recur 3x within ~2.4k → looping
+                            return true;
+                        idx += tightWindow;      // non-overlapping
+                    }
+                }
+            }
+
+            // ── Tier 2: whole-answer rewrite ────────────────────────────────────
+            // The model retypes its output from the top. Each cycle is far larger than the
+            // Tier-1 span and may have repeated only once, so Tier 1 never sees 3 hits inside its
+            // small window. Signature: a long, mostly-alphabetic trailing block that has already
+            // appeared verbatim earlier. A 256-char exact recurrence almost never happens in
+            // genuine output, so even a single earlier copy is enough to call it a loop.
+            const int blockWindow = 256;
+            const int blockSpan = 9000;
+            if (len >= blockWindow * 2)
+            {
+                string probe = output.ToString(len - blockWindow, blockWindow);
+
+                // Skip low-information probes (separator rules, whitespace, fence runs) that can
+                // legitimately recur — require the block to be mostly real words.
+                int letters = 0;
+                for (int i = 0; i < probe.Length; i++)
+                    if (char.IsLetter(probe[i])) letters++;
+
+                if (letters >= blockWindow * 3 / 8)
+                {
+                    int searchStart = Math.Max(0, len - blockSpan);
+                    int searchCount = (len - blockWindow) - searchStart;   // region BEFORE the probe
+                    if (searchCount > 0 &&
+                        output.ToString(searchStart, searchCount).IndexOf(probe, StringComparison.Ordinal) >= 0)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
         // ── Pause command parser ──────────────────────────────────────────────
         private static PauseCommand? ParsePauseCommand(string inner)
         {
@@ -525,6 +745,12 @@ namespace Malx_AI
         {
             public static ToolDispatchResult Ok(string data) => new(true, data, string.Empty);
             public static ToolDispatchResult Fail(string error) => new(false, string.Empty, error);
+        }
+
+        internal sealed record StructuredToolResult(bool IsSuccess, string Data, string ErrorMessage)
+        {
+            public static StructuredToolResult Ok(string data) => new(true, data, string.Empty);
+            public static StructuredToolResult Fail(string error) => new(false, string.Empty, error);
         }
     }
 }

@@ -63,14 +63,14 @@ namespace Malx_AI
         public bool Enabled { get; set; } = true;
         public Dictionary<string, int> ModelCeilings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly string FilePath = Path.Combine("ChatHistory", "smart_compaction_settings.json");
+        private static readonly string FilePath = Path.Combine(AppDataPaths.ChatHistory, "smart_compaction_settings.json");
         private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
         public void Save()
         {
             try
             {
-                Directory.CreateDirectory("ChatHistory");
+                Directory.CreateDirectory(AppDataPaths.ChatHistory);
                 File.WriteAllText(FilePath, JsonSerializer.Serialize(this, WriteOptions));
             }
             catch (Exception ex)

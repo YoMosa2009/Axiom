@@ -244,7 +244,11 @@ namespace Malx_AI
 
             try
             {
-                await Browser.EnsureCoreWebView2Async();
+                var webViewEnvironment = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(
+                    browserExecutableFolder: null,
+                    userDataFolder: AppDataPaths.WebView2UserData,
+                    options: WebView2GpuPolicy.CreateEnvironmentOptions());
+                await Browser.EnsureCoreWebView2Async(webViewEnvironment);
                 ConfigureKatexVirtualHostMapping();
                 await InjectKatexScriptsAsync();
                 Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;

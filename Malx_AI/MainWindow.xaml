@@ -197,6 +197,103 @@
             </Setter>
         </Style>
 
+        <Style x:Key="WorkplaceActionButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#24211F"/>
+            <Setter Property="Foreground" Value="#EDE8E3"/>
+            <Setter Property="BorderBrush" Value="#4A4035"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="11,0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#2D2926"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#B8924A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#1C1A18"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#70685F"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.58"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="WorkplaceDeleteButtonStyle" TargetType="Button" BasedOn="{StaticResource WorkplaceActionButtonStyle}">
+            <Setter Property="Background" Value="#231C1C"/>
+            <Setter Property="Foreground" Value="#D9A29A"/>
+            <Setter Property="BorderBrush" Value="#5A3631"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+
+        <Style x:Key="WorkplaceHistoryItemButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#1C1A18"/>
+            <Setter Property="Foreground" Value="#DCD5CB"/>
+            <Setter Property="BorderBrush" Value="#302D2A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <Grid>
+                                <Border x:Name="accentRail"
+                                        Width="3"
+                                        HorizontalAlignment="Left"
+                                        Background="{TemplateBinding BorderBrush}"
+                                        CornerRadius="8,0,0,8"
+                                        Opacity="0.45"/>
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#24211F"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#4A4035"/>
+                                <Setter Property="Foreground" Value="#EDE8E3"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ChatInputIconButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#8A8279"/>
@@ -225,6 +322,74 @@
                                 <Setter TargetName="border" Property="Opacity" Value="0.55"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ChatInputUtilityButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Background" Value="#24211F"/>
+            <Setter Property="Foreground" Value="#BFB6AA"/>
+            <Setter Property="BorderBrush" Value="#36312D"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="Medium"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#2D2926"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#4B4239"/>
+                                <Setter Property="Foreground" Value="#EDE8E3"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#1D1B19"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#70685F"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.58"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="TokenMeterProgressBarStyle" TargetType="ProgressBar">
+            <Setter Property="Height" Value="4"/>
+            <Setter Property="Background" Value="#302D2A"/>
+            <Setter Property="Foreground" Value="#5FAF7D"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid x:Name="TemplateRoot"
+                              Height="{TemplateBinding Height}"
+                              SnapsToDevicePixels="True">
+                            <Border x:Name="PART_Track"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="2"/>
+                            <Border x:Name="PART_Indicator"
+                                    HorizontalAlignment="Left"
+                                    Background="{TemplateBinding Foreground}"
+                                    CornerRadius="2"/>
+                        </Grid>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -384,14 +549,14 @@
 
                 <StackPanel DockPanel.Dock="Top" Margin="14,18,14,0">
                     <TextBlock Text="Axiom" FontSize="26" FontWeight="Bold" Foreground="#EDE8E3" FontFamily="Georgia"/>
-                    <Button DockPanel.Dock="Top" Content="+ New chat" Click="NewChat_Click" Height="40" Margin="0,20,0,0"
+                    <Button x:Name="NewChatButton" DockPanel.Dock="Top" Content="+ New chat" Click="NewChat_Click" Height="40" Margin="0,20,0,0"
                             Style="{StaticResource SidebarFlatButtonStyle}" FontSize="16" Padding="14,10"/>
                     <Button x:Name="HistorySectionToggle" DockPanel.Dock="Top" Content="▾ Recents" Click="SidebarHistoryToggle_Click" Height="32"
                             Margin="0,20,0,0" Style="{StaticResource SidebarFlatButtonStyle}" FontSize="12" Foreground="#8A8279" Padding="0,6"/>
                 </StackPanel>
 
                 <Button x:Name="WorkplaceHistorySectionToggle" DockPanel.Dock="Top" Content="▾ Workplace Chats" Click="WorkplaceSidebarHistoryToggle_Click" Height="34"
-                        Margin="12,8,12,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11" Visibility="Collapsed"/>
+                        Margin="14,10,14,0" Style="{StaticResource SidebarFlatButtonStyle}" FontSize="12" Foreground="#8A8279" Padding="0,6" Visibility="Collapsed"/>
 
                 <Border x:Name="ChatHistorySectionContainer" DockPanel.Dock="Top" Opacity="1" MaxHeight="500">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
@@ -400,11 +565,25 @@
                 </Border>
 
                 <Border x:Name="WorkplaceHistorySectionContainer" DockPanel.Dock="Top" Opacity="1" MaxHeight="420" Visibility="Collapsed">
-                    <StackPanel Margin="8,8,8,0">
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <Button x:Name="NewWorkplaceButton" Content="+ New Workplace" Click="NewWorkplace_Click" Height="30" Margin="0,0,6,0" Style="{StaticResource SubtleButtonStyle}" FontSize="10"/>
-                            <Button x:Name="DeleteWorkplaceButton" Content="Delete" Click="DeleteWorkplace_Click" Height="30" Style="{StaticResource SubtleButtonStyle}" FontSize="10"/>
-                        </StackPanel>
+                    <StackPanel Margin="14,8,14,0">
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="78"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="NewWorkplaceButton" Click="NewWorkplace_Click" Height="36" Margin="0,0,8,0" Style="{StaticResource WorkplaceActionButtonStyle}" ToolTip="Create a new workplace chat">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="+" FontSize="14" FontWeight="Bold" Foreground="#B8924A" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="New Workplace" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="DeleteWorkplaceButton" Grid.Column="1" Click="DeleteWorkplace_Click" Height="36" Style="{StaticResource WorkplaceDeleteButtonStyle}" ToolTip="Delete the current workplace chat">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="x" FontSize="12" FontWeight="Bold" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Delete" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </Grid>
                         <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="320">
                             <StackPanel x:Name="WorkplaceHistoryStack"/>
                         </ScrollViewer>
@@ -437,15 +616,80 @@
                                        Foreground="#8A8279"
                                        FontFamily="Segoe UI"/>
                         </Border>
-                        <ProgressBar x:Name="TokenUsageProgressBar" Height="6" Margin="0,8,0,0" Minimum="0" Maximum="100" Value="0"/>
-                        <TextBlock x:Name="TokenUsageLabel" Text="approximately 0 of 0 tokens used" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
-                        <StackPanel x:Name="CompactionHealthGrid" Margin="0,4,0,0" Visibility="Collapsed">
-                            <Grid Height="4">
-                                <ProgressBar x:Name="CompactionThresholdBar" Height="4" Minimum="0" Maximum="100" Value="0" Foreground="{StaticResource DarkSecondaryBrush}" FlowDirection="LeftToRight"/>
+                        <Border x:Name="TokenUsagePanel"
+                                Margin="0,8,0,0"
+                                Padding="10,8"
+                                Width="360"
+                                HorizontalAlignment="Left"
+                                Background="#1C1A18"
+                                BorderBrush="#302D2A"
+                                BorderThickness="1"
+                                CornerRadius="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="4"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,5">
+                                    <TextBlock Text="Context"
+                                               DockPanel.Dock="Left"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               Foreground="#BFB6AA"
+                                               FontFamily="Segoe UI"/>
+                                    <TextBlock x:Name="TokenUsageLabel"
+                                               Text="0 / 0 tok"
+                                               DockPanel.Dock="Right"
+                                               FontSize="10"
+                                               Foreground="#8A8279"
+                                               FontFamily="Segoe UI"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
+
+                                <ProgressBar x:Name="TokenUsageProgressBar"
+                                             Grid.Row="1"
+                                             Minimum="0"
+                                             Maximum="100"
+                                             Value="0"
+                                             Style="{StaticResource TokenMeterProgressBarStyle}"/>
+
+                                <StackPanel x:Name="CompactionHealthGrid" Grid.Row="2" Margin="0,8,0,0" Visibility="Collapsed">
+                                    <DockPanel LastChildFill="False" Margin="0,0,0,5">
+                                        <TextBlock Text="Compaction"
+                                                   DockPanel.Dock="Left"
+                                                   FontSize="10"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#BFB6AA"
+                                                   FontFamily="Segoe UI"/>
+                                        <TextBlock x:Name="CompactionHealthLabel"
+                                                   Text=""
+                                                   DockPanel.Dock="Right"
+                                                   FontSize="10"
+                                                   Foreground="#8A8279"
+                                                   FontFamily="Segoe UI"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </DockPanel>
+                                    <ProgressBar x:Name="CompactionThresholdBar"
+                                                 Minimum="0"
+                                                 Maximum="100"
+                                                 Value="0"
+                                                 FlowDirection="LeftToRight"
+                                                 Style="{StaticResource TokenMeterProgressBarStyle}"/>
+                                </StackPanel>
+
+                                <TextBlock x:Name="CompactionStatusLabel"
+                                           Grid.Row="3"
+                                           Text=""
+                                           FontSize="9"
+                                           Foreground="#8A8279"
+                                           Visibility="Collapsed"
+                                           Margin="0,6,0,0"
+                                           TextTrimming="CharacterEllipsis"/>
                             </Grid>
-                            <TextBlock x:Name="CompactionHealthLabel" Text="" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,2,0,0"/>
-                        </StackPanel>
-                        <TextBlock x:Name="CompactionStatusLabel" Text="" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Visibility="Collapsed" Margin="0,2,0,0"/>
+                        </Border>
                     </StackPanel>
                 </Border>
 
@@ -842,12 +1086,14 @@
                             </Border>
 
                             <!-- Input Container -->
-                            <Border x:Name="InputContainerBorder" Background="#211F1D" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="24" Padding="0" Margin="24,0,24,28" Opacity="1" HorizontalAlignment="Stretch" MaxWidth="1080" MinWidth="320">
+                            <Border x:Name="InputContainerBorder" Background="#211F1D" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="24" Padding="0" Margin="24,0,24,28" Opacity="1" HorizontalAlignment="Stretch" MaxWidth="1080" MinWidth="320"
+                                    AllowDrop="True" PreviewDragOver="InputContainer_PreviewDragOver" PreviewDrop="InputContainer_PreviewDrop">
                                 <Border.RenderTransform>
                                     <ScaleTransform ScaleX="1" ScaleY="1"/>
                                 </Border.RenderTransform>
                                 <Grid>
                                     <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="56"/>
                                     </Grid.RowDefinitions>
@@ -874,22 +1120,39 @@
                                         </TextBlock>
                                     </Grid>
 
-                                    <Grid Grid.Row="1" Background="Transparent">
+                                    <!-- Attachment preview tray: chips are created in code-behind with an
+                                         entrance animation whenever the user attaches files (Normal Chat only). -->
+                                    <WrapPanel x:Name="AttachmentTrayPanel" Grid.Row="1" Orientation="Horizontal"
+                                               Margin="18,0,18,2" Visibility="Collapsed"/>
+
+                                    <Grid Grid.Row="2" Background="Transparent">
                                         <Grid Margin="0,0,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
-                                                <Button Width="34" Height="34" Margin="0,0,4,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}">
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                                                <Button Width="34" Height="34" Margin="0,0,4,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
                                                     <Path Width="14" Height="14" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
                                                 </Button>
-                                                <Button Width="34" Height="34" Margin="0,0,4,0" Click="OpenPromptTemplates_Click" Style="{StaticResource ChatInputIconButtonStyle}">
-                                                    <TextBlock Text="▦" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                <Button MinWidth="96" Margin="6,0,6,0" Click="OpenPromptTemplates_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Prompt templates">
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Path Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
+                                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                              StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              Data="M2,3.5 L12,3.5 M2,6.5 L12,6.5 M2,9.5 L8.5,9.5 M2,12.5 L6.5,12.5"/>
+                                                        <TextBlock Text="Templates" VerticalAlignment="Center"/>
+                                                    </StackPanel>
                                                 </Button>
-                                                <Button Width="34" Height="34" Click="OpenSystemPromptEditor_Click" Style="{StaticResource ChatInputIconButtonStyle}">
-                                                    <TextBlock Text="≣" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                <Button MinWidth="82" Click="OpenSystemPromptEditor_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="System prompt editor">
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <Path Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
+                                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                              StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              Data="M2,3 L12,3 M2,7 L12,7 M2,11 L12,11 M4.5,1.8 L4.5,4.2 M9,5.8 L9,8.2 M6.5,9.8 L6.5,12.2"/>
+                                                        <TextBlock Text="System" VerticalAlignment="Center"/>
+                                                    </StackPanel>
                                                 </Button>
                                             </StackPanel>
 
@@ -1192,7 +1455,7 @@
                                 </Border>
 
                                 <Grid Margin="0,16,0,0">
-                                    <TextBlock Text="Version 1.2" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.4.0" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{StaticResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </StackPanel>
@@ -1201,5 +1464,31 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <!-- Update notification banner: shown on startup when a newer GitHub release exists.
+             Slides down + fades in; click downloads and runs the installer; ✕ dismisses. -->
+        <Border x:Name="UpdateBannerBorder" Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
+                Panel.ZIndex="9000" VerticalAlignment="Top" HorizontalAlignment="Center"
+                Margin="0,56,0,0" Visibility="Collapsed" Opacity="0"
+                Background="#26231F" BorderBrush="#B8924A" BorderThickness="1" CornerRadius="12"
+                Padding="16,10" Cursor="Hand"
+                MouseLeftButtonUp="UpdateBanner_Click">
+            <Border.RenderTransform>
+                <TranslateTransform Y="-24"/>
+            </Border.RenderTransform>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.45" Color="#000000"/>
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="⬆" FontSize="15" Foreground="#B8924A" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="UpdateBannerTitleText" Text="Update available" FontSize="12" FontWeight="SemiBold" Foreground="#EDE8E3" FontFamily="Segoe UI"/>
+                    <TextBlock x:Name="UpdateBannerDetailText" Text="" FontSize="11" Foreground="#8A8279" FontFamily="Segoe UI" Margin="0,2,0,0"/>
+                </StackPanel>
+                <Button x:Name="UpdateBannerCloseButton" Content="✕" Click="UpdateBannerClose_Click" Width="22" Height="22" Margin="14,0,0,0"
+                        Background="Transparent" BorderBrush="Transparent" Foreground="#8A8279" FontSize="10" Cursor="Hand" VerticalAlignment="Center"
+                        ToolTip="Dismiss"/>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

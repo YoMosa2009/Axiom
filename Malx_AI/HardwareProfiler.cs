@@ -15,6 +15,13 @@ namespace Malx_AI
         public bool HasNvidiaGpu { get; set; }
         public bool HasAmdGpu { get; set; }
         public string PrimaryGpuName { get; set; } = "Unknown";
+        /// <summary>
+        /// NVIDIA CUDA compute capability (e.g. 6.1 for Pascal, 7.5 for Turing), or 0 when
+        /// it could not be probed. Flash Attention is only numerically reliable / accelerated
+        /// from Turing (7.5) onward — on older architectures llama.cpp's FA kernel can emit
+        /// NaN logits, producing gibberish output that ends in a native GGML abort.
+        /// </summary>
+        public double GpuComputeCapability { get; set; }
         public double AvailableRamGb => AvailableRamBytes / 1024d / 1024d / 1024d;
         public double AvailableVramGb => AvailableVramBytes / 1024d / 1024d / 1024d;
     }
@@ -57,6 +64,7 @@ namespace Malx_AI
                 HasNvidiaGpu = gpuIdentity.HasNvidiaGpu,
                 HasAmdGpu = gpuIdentity.HasAmdGpu,
                 PrimaryGpuName = gpuIdentity.PrimaryGpuName,
+                GpuComputeCapability = gpuIdentity.GpuComputeCapability,
                 AvailableRamBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
                 AvailableVramBytes = GetFreeGpuMemoryBytes()
             };
@@ -77,27 +85,78 @@ namespace Malx_AI
             bool largeModel = fileBytes > 8L * 1024 * 1024 * 1024;
             bool gpuCandidate = allowGpu && profile.HasNvidiaGpu;
 
+            // Flash Attention is only enabled on GPUs/models where it is numerically safe;
+            // an oversold FA path produces gibberish and crashes (see ShouldEnableFlashAttention).
+            bool flashAttention = gpuCandidate && ShouldEnableFlashAttention(modelPath, profile);
+
             // Quantizing the KV cache to q8_0 halves its memory cost with negligible quality
-            // loss. It requires flash attention, which we only enable on the CUDA path.
-            bool useKvQuant = gpuCandidate && largeModel;
+            // loss, but llama.cpp REQUIRES flash attention for a quantized V-cache — without it
+            // the decode aborts the process. So KV quant is gated on FA being enabled.
+            // Applied from ~2GB up (was 4GB): this is what lets a 4B-class model — including the
+            // default workplace model — run a much LARGER context window in the same VRAM (the
+            // halved KV cache buys ~2× the usable context with full GPU offload), which is the
+            // single biggest lever for reducing truncation-driven hallucination without losing speed.
+            bool useKvQuant = gpuCandidate && flashAttention && fileBytes > 2L * 1024 * 1024 * 1024;
 
             long kvBytesPerToken = meta?.KvBytesPerTokenF16 ?? EstimateKvBytesPerTokenFromSize(fileBytes);
             long effectiveKvPerToken = useKvQuant ? kvBytesPerToken / 2 : kvBytesPerToken;
 
-            uint safeContext = ResolveSafeContext(requestedContext, fileBytes, meta, profile, gpuCandidate, effectiveKvPerToken);
+            // Physical micro-batch drives prompt-processing throughput (ingesting documents and long
+            // history — which matters more now that contexts are larger) AND the CUDA compute-buffer
+            // VRAM cost. Pick it from free VRAM headroom so it only steps up where there is clearly
+            // room, then charge its compute buffer in the sizing/layer math below so a bigger batch can
+            // never strand layers on the CPU or OOM. Constrained cards (≤ ~12 GB free) keep the safe 256/512.
+            uint gpuMicroBatch = ChooseGpuMicroBatch(profile, gpuCandidate, largeModel);
+            long computeReserve = gpuCandidate
+                ? GpuComputeBufferReserveBytes(gpuMicroBatch)
+                : 640L * 1024 * 1024;
+
+            uint safeContext = ResolveSafeContext(requestedContext, fileBytes, meta, profile, gpuCandidate, effectiveKvPerToken, computeReserve);
 
             int gpuLayers = 0;
             if (gpuCandidate)
             {
-                gpuLayers = CalculateGpuLayerCount(fileBytes, profile.AvailableVramBytes, safeContext, effectiveKvPerToken, meta?.BlockCount);
+                gpuLayers = CalculateGpuLayerCount(fileBytes, profile.AvailableVramBytes, safeContext, effectiveKvPerToken, meta?.BlockCount, IsPartialGpuSplitUnsafe(meta), computeReserve);
             }
 
             // When most layers stay on the CPU, the weights working set lives in RAM.
             // Shrink the context if the model is large relative to free RAM so the KV
             // cache and compute buffers cannot push the process into the page file.
+            // Only applied on the heuristic path: with GGUF metadata, ResolveSafeContext
+            // already charged the weights against the combined pool — halving again here
+            // double-punished partially offloaded models.
             int totalLayers = meta?.BlockCount ?? EstimateLayerCountFromSize(fileBytes);
-            bool fullOffload = gpuLayers > totalLayers;
-            if (!fullOffload)
+            if (gpuCandidate && gpuLayers == 0 && profile.AvailableVramBytes > 0)
+            {
+                uint recoveredContext = FindLargestGpuBackedContext(
+                    safeContext,
+                    requestedContext,
+                    meta,
+                    fileBytes,
+                    profile.AvailableVramBytes,
+                    effectiveKvPerToken,
+                    computeReserve);
+                if (recoveredContext > 0 && recoveredContext < safeContext)
+                {
+                    int recoveredLayers = CalculateGpuLayerCount(
+                        fileBytes,
+                        profile.AvailableVramBytes,
+                        recoveredContext,
+                        effectiveKvPerToken,
+                        meta?.BlockCount,
+                        IsPartialGpuSplitUnsafe(meta),
+                        computeReserve);
+
+                    if (recoveredLayers > 0)
+                    {
+                        safeContext = recoveredContext;
+                        gpuLayers = recoveredLayers;
+                    }
+                }
+            }
+
+            bool fullOffload = IsFullGpuOffload(gpuLayers, totalLayers);
+            if (meta == null && !fullOffload)
             {
                 long ramBudget = (long)(profile.AvailableRamBytes * 0.70);
                 if (fileBytes > ramBudget)
@@ -113,9 +172,9 @@ namespace Malx_AI
                 MainGpu = 0
             };
 
-            ApplyPerformanceTuning(modelParams, gpuLayers, fullOffload, largeModel, useKvQuant, profile);
+            ApplyPerformanceTuning(modelParams, gpuLayers, fullOffload, largeModel, useKvQuant, flashAttention, profile, gpuMicroBatch);
 
-            Debug.WriteLine($"HardwareProfiler: model={Path.GetFileName(modelPath)}, ctx={safeContext}, gpuLayers={gpuLayers}/{totalLayers}, kvQuant={useKvQuant}, threads={modelParams.Threads}, batch={modelParams.BatchSize}/{modelParams.UBatchSize}");
+            Debug.WriteLine($"HardwareProfiler: model={Path.GetFileName(modelPath)}, requestedCtx={requestedContext}, ctx={safeContext}, gpuLayers={gpuLayers}/{totalLayers}, kvQuant={useKvQuant}, flashAttn={flashAttention}, computeCap={profile.GpuComputeCapability}, freeVram={profile.AvailableVramGb:F1}GB, threads={modelParams.Threads}, batch={modelParams.BatchSize}/{modelParams.UBatchSize}");
             return modelParams;
         }
 
@@ -135,7 +194,10 @@ namespace Malx_AI
 
             bool largeModel = fileBytes > 8L * 1024 * 1024 * 1024;
             bool gpuResident = cachedGpuLayerCount > 0;
-            bool useKvQuant = gpuResident && largeModel;
+            bool flashAttention = gpuResident && ShouldEnableFlashAttention(modelPath, profile);
+            // Must match BuildSafeModelParams' gate so a cached-weights replan prices the
+            // KV cache the same way the original load did (q8_0 from ~2GB up on FA-capable GPUs).
+            bool useKvQuant = gpuResident && flashAttention && fileBytes > 2L * 1024 * 1024 * 1024;
 
             long kvBytesPerToken = meta?.KvBytesPerTokenF16 ?? EstimateKvBytesPerTokenFromSize(fileBytes);
             long effectiveKvPerToken = useKvQuant ? kvBytesPerToken / 2 : kvBytesPerToken;
@@ -170,9 +232,13 @@ namespace Malx_AI
                 MainGpu = 0
             };
 
-            ApplyPerformanceTuning(modelParams, cachedGpuLayerCount, cachedGpuLayerCount > totalLayers, largeModel, useKvQuant, profile);
+            // Weights are already resident, so size the micro-batch from CURRENT free VRAM (what is left
+            // for the KV cache + compute buffer). Conservative by construction: less free VRAM → smaller
+            // batch.
+            uint gpuMicroBatch = ChooseGpuMicroBatch(profile, gpuResident, largeModel);
+            ApplyPerformanceTuning(modelParams, cachedGpuLayerCount, IsFullGpuOffload(cachedGpuLayerCount, totalLayers), largeModel, useKvQuant, flashAttention, profile, gpuMicroBatch);
 
-            Debug.WriteLine($"HardwareProfiler: cached-weights plan model={Path.GetFileName(modelPath)}, ctx={safeContext}, gpuLayers={cachedGpuLayerCount}/{totalLayers} (kept from cache)");
+            Debug.WriteLine($"HardwareProfiler: cached-weights plan model={Path.GetFileName(modelPath)}, ctx={safeContext}, gpuLayers={cachedGpuLayerCount}/{totalLayers} (kept from cache), flashAttn={flashAttention}, ubatch={gpuMicroBatch}");
             return modelParams;
         }
 
@@ -181,8 +247,13 @@ namespace Malx_AI
         /// whatever KV cache fits in half the memory left after the weights, never above
         /// the model's trained context or the caller's request. Falls back to the static
         /// file-size table when the header could not be parsed.
+        ///
+        /// The pool is VRAM PLUS system RAM for GPU candidates: with partial offload the
+        /// CPU-resident layers' weights AND their KV slices live in RAM, so sizing the
+        /// context as if everything had to fit in VRAM alone systematically over-shrank
+        /// it (a 9B model on an 8GB card planned ~3k even with 16GB of RAM free).
         /// </summary>
-        private static uint ResolveSafeContext(uint requestedContext, long fileBytes, GgufModelMetadata? meta, HardwareProfile profile, bool gpuCandidate, long kvBytesPerToken)
+        private static uint ResolveSafeContext(uint requestedContext, long fileBytes, GgufModelMetadata? meta, HardwareProfile profile, bool gpuCandidate, long kvBytesPerToken, long computeReserve)
         {
             uint maxCtxForSize = fileBytes switch
             {
@@ -196,9 +267,30 @@ namespace Malx_AI
             if (meta?.ContextLength is > 0)
                 upperBound = Math.Min(upperBound, (uint)meta.ContextLength);
 
+            // PERFORMANCE-FIRST GPU path: prefer the largest context whose KV cache still leaves room
+            // for EVERY layer on the GPU. Full offload is by far the biggest speed factor, so we never
+            // grow the window past the point where it would spill layers onto the CPU. Only if the model
+            // cannot fully offload even at a small window (big model / small card — it will be partial
+            // regardless) do we fall through to the VRAM+RAM pool math and maximize context there.
+            // This is what lets the larger requested windows reduce hallucination WITHOUT costing speed.
+            if (gpuCandidate && profile.AvailableVramBytes > 0 && kvBytesPerToken > 0)
+            {
+                const long sessionReserve = 512L * 1024 * 1024; // mirrors CalculateGpuLayerCount's cap
+                long vramForKv = profile.AvailableVramBytes - fileBytes - computeReserve - sessionReserve;
+                long fullOffloadCtx = vramForKv > 0 ? vramForKv / kvBytesPerToken : 0;
+                if (fullOffloadCtx >= 2048)
+                {
+                    uint capped = (uint)Math.Clamp(Math.Min((long)upperBound, fullOffloadCtx), 1024L, 65536L);
+                    return Math.Max(1024u, capped);
+                }
+                // else: cannot fully offload even at a minimal window → partial offload happens anyway,
+                // so fall through and size context from the combined VRAM+RAM pool below.
+            }
+
+            long ramPool = (long)(profile.AvailableRamBytes * 0.70);
             long memPool = gpuCandidate && profile.AvailableVramBytes > 0
-                ? profile.AvailableVramBytes
-                : (long)(profile.AvailableRamBytes * 0.70);
+                ? profile.AvailableVramBytes + ramPool
+                : ramPool;
 
             long memAfterWeights = memPool - fileBytes;
             if (meta != null && kvBytesPerToken > 0 && memAfterWeights > 0)
@@ -210,6 +302,67 @@ namespace Malx_AI
 
             return Math.Clamp(Math.Min(upperBound, maxCtxForSize), 1024u, 32768u);
         }
+
+        private static uint FindLargestGpuBackedContext(
+            uint currentContext,
+            uint requestedContext,
+            GgufModelMetadata? meta,
+            long fileBytes,
+            long freeVramBytes,
+            long kvBytesPerToken,
+            long computeReserve)
+        {
+            if (currentContext <= 1024 || freeVramBytes <= 0 || kvBytesPerToken <= 0)
+                return 0;
+
+            uint upperBound = currentContext;
+            if (requestedContext > 0)
+                upperBound = Math.Min(upperBound, requestedContext);
+            if (meta?.ContextLength is > 0)
+                upperBound = Math.Min(upperBound, (uint)meta.ContextLength);
+
+            uint[] candidates =
+            [
+                upperBound,
+                32768u,
+                24576u,
+                16384u,
+                12288u,
+                8192u,
+                6144u,
+                4096u,
+                3072u,
+                2048u,
+                1536u,
+                1024u
+            ];
+
+            foreach (uint candidate in candidates
+                         .Where(c => c <= upperBound && c >= 1024)
+                         .Distinct()
+                         .OrderByDescending(c => c))
+            {
+                int layers = CalculateGpuLayerCount(
+                    fileBytes,
+                    freeVramBytes,
+                    candidate,
+                    kvBytesPerToken,
+                    meta?.BlockCount,
+                    IsPartialGpuSplitUnsafe(meta),
+                    computeReserve);
+
+                if (layers > 0)
+                    return candidate;
+            }
+
+            return 0;
+        }
+
+        private static bool IsFullGpuOffload(int gpuLayers, int totalLayers)
+            => totalLayers > 0 && gpuLayers >= totalLayers;
+
+        private static bool IsPartialGpuSplitUnsafe(GgufModelMetadata? meta)
+            => meta?.IsHybridRecurrent == true || meta?.IsSlidingWindowAttention == true;
 
         // Fallback KV-cache cost per token when GGUF metadata is unavailable.
         // Derived from typical architectures at each size class (f16, K+V).
@@ -290,11 +443,16 @@ namespace Malx_AI
 
                 if (names.Count > 0)
                 {
-                    profile.PrimaryGpuName = names[0];
+                    string? nvidiaName = names.FirstOrDefault(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase));
+                    string? amdName = names.FirstOrDefault(n => n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase));
+                    profile.PrimaryGpuName = nvidiaName ?? amdName ?? names[0];
                 }
 
                 profile.HasNvidiaGpu = names.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase));
                 profile.HasAmdGpu = names.Any(n => n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase));
+
+                if (profile.HasNvidiaGpu)
+                    profile.GpuComputeCapability = ProbeNvidiaComputeCapability(profile.PrimaryGpuName);
             }
             catch
             {
@@ -302,6 +460,120 @@ namespace Malx_AI
             }
 
             return profile;
+        }
+
+        /// <summary>
+        /// Reads the CUDA compute capability from nvidia-smi (e.g. 6.1, 7.5, 8.6). Falls back
+        /// to inferring it from the GPU marketing name when nvidia-smi is unavailable or too
+        /// old to support the query, so the Flash Attention gate still works on a bare driver.
+        /// </summary>
+        private static double ProbeNvidiaComputeCapability(string gpuName)
+        {
+            foreach (var candidate in NvidiaSmiCandidates)
+            {
+                if (TryRunNvidiaSmi(candidate, "--query-gpu=compute_cap --format=csv,noheader", out var output)
+                    && !string.IsNullOrWhiteSpace(output))
+                {
+                    string first = output
+                        .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(x => x.Trim())
+                        .FirstOrDefault(x => double.TryParse(x, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+                        ?? string.Empty;
+
+                    if (double.TryParse(first, NumberStyles.Any, CultureInfo.InvariantCulture, out double cap) && cap > 0)
+                        return cap;
+                }
+            }
+
+            return InferComputeCapabilityFromName(gpuName);
+        }
+
+        // Best-effort architecture inference from the GPU name. Only needs to separate
+        // pre-Turing (< 7.5, Flash-Attention-unsafe) from Turing-and-newer.
+        private static double InferComputeCapabilityFromName(string gpuName)
+        {
+            if (string.IsNullOrWhiteSpace(gpuName))
+                return 0; // Unknown — caller treats 0 as "do not trust Flash Attention".
+
+            string n = gpuName.ToUpperInvariant();
+
+            // Pascal (6.x): GTX 10-series, Titan X/Xp, Quadro P, Tesla P.
+            if (n.Contains("GTX 10") || n.Contains("GTX10") || n.Contains("TITAN X") || n.Contains("TITAN XP")
+                || n.Contains("QUADRO P") || n.Contains("TESLA P") || n.Contains(" P100") || n.Contains(" P40"))
+                return 6.1;
+
+            // Maxwell (5.x): GTX 9-series, GTX 750, Quadro M, Tesla M.
+            if (n.Contains("GTX 9") || n.Contains("GTX 750") || n.Contains("QUADRO M") || n.Contains("TESLA M"))
+                return 5.2;
+
+            // Kepler (3.x): GTX 6/7-series, Tesla K.
+            if (n.Contains("GTX 6") || n.Contains("GTX 7") || n.Contains("TESLA K"))
+                return 3.5;
+
+            // Turing and newer are Flash-Attention-safe: GTX 16xx, RTX 20/30/40/50,
+            // and the A/H/L datacenter lines. Report a representative Turing value.
+            if (n.Contains("GTX 16") || n.Contains("RTX") || n.Contains("A100") || n.Contains("H100")
+                || n.Contains("L40") || n.Contains(" A40") || n.Contains(" T4"))
+                return 7.5;
+
+            return 0; // Unknown NVIDIA card — be conservative and skip Flash Attention.
+        }
+
+        /// <summary>
+        /// Flash Attention is a perf optimization, not a requirement — and it is only safe on
+        /// Turing (compute 7.5) and newer NVIDIA GPUs. On older architectures (Pascal/Maxwell/
+        /// Kepler) llama.cpp's FA path can produce NaN attention scores → gibberish tokens →
+        /// a native GGML abort that kills the whole process. It is ALSO incompatible with the
+        /// attention logit soft-capping that Gemma 2/3 rely on, regardless of GPU. In both
+        /// cases we disable it: correctness and stability outrank throughput.
+        /// </summary>
+        /// <summary>
+        /// Lightweight "will this model load with flash attention (and therefore KV-cache
+        /// quantization) on this machine?" check for context-budget planning. Uses the CACHED GPU
+        /// identity (compute capability) and does NOT run the nvidia-smi free-memory probe, so it is
+        /// cheap to call from the UI. Callers use it to decide how large a context to aspire to:
+        /// with FA the q8_0 KV cache lets a big window fit; without it a big f16 window steals GPU
+        /// layers and slows generation, so they stay conservative.
+        /// </summary>
+        public static bool SupportsFlashAttention(string modelPath)
+        {
+            HardwareProfile identity;
+            lock (_probeLock)
+            {
+                _cachedGpuIdentity ??= ProbeGraphicsHardware();
+                identity = _cachedGpuIdentity;
+            }
+
+            return identity.HasNvidiaGpu
+                && NativeBackendInit.GpuConfigured
+                && ShouldEnableFlashAttention(modelPath, identity);
+        }
+
+        public static bool ShouldEnableFlashAttention(string modelPath, HardwareProfile profile)
+        {
+            string fileName = Path.GetFileNameWithoutExtension(modelPath ?? string.Empty);
+            if (IsSoftCappingModel(fileName))
+                return false;
+
+            // Compute capability of 0 means "unknown" — treat as unsafe rather than risk
+            // a hard crash on an unidentified older card.
+            return profile.GpuComputeCapability >= 7.5;
+        }
+
+        // Gemma 2 and Gemma 3 use attention/final-logit soft-capping that llama.cpp's Flash
+        // Attention kernels skip, exploding the logits into NaNs. Gemma 4 runs via the CLI
+        // runner, not this path. The name match is intentionally broad (any non-"gemma-4"
+        // gemma) so a renamed GGUF still gets the safe path.
+        private static bool IsSoftCappingModel(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return false;
+
+            bool isGemma = fileName.Contains("gemma", StringComparison.OrdinalIgnoreCase);
+            bool isGemma4 = fileName.Contains("gemma-4", StringComparison.OrdinalIgnoreCase)
+                || fileName.Contains("gemma4", StringComparison.OrdinalIgnoreCase)
+                || fileName.Contains("gemma_4", StringComparison.OrdinalIgnoreCase);
+            return isGemma && !isGemma4;
         }
 
         /// <summary>
@@ -318,7 +590,7 @@ namespace Malx_AI
         /// and under any VRAM pressure planned 0, silently dropping generation to pure
         /// CPU even when the user selected GPU mode.
         /// </summary>
-        private static int CalculateGpuLayerCount(long modelBytes, long freeVramBytes, uint contextSize, long kvBytesPerToken, int? actualLayerCount)
+        private static int CalculateGpuLayerCount(long modelBytes, long freeVramBytes, uint contextSize, long kvBytesPerToken, int? actualLayerCount, bool partialGpuSplitUnsafe, long computeReserve)
         {
             int totalLayers = actualLayerCount ?? EstimateLayerCountFromSize(modelBytes);
 
@@ -330,10 +602,14 @@ namespace Malx_AI
             }
 
             long kvTotal = Math.Max(64L * 1024 * 1024, kvBytesPerToken * contextSize);
-            long computeReserve = 640L * 1024 * 1024; // CUDA compute buffers + fragmentation headroom
+            // CUDA compute buffers + fragmentation headroom, sized to the chosen micro-batch so a larger
+            // batch reserves the VRAM its bigger compute buffer needs instead of risking an OOM.
             // Headroom for short-lived secondary contexts (council base-state vault,
             // KV-state loads). These never coexist with more than one main context.
-            long sessionReserve = Math.Max(256L * 1024 * 1024, kvTotal / 2);
+            // Scaling this with HALF the full KV cache reserved gigabytes on long-context
+            // plans and routinely cost 5-10 offloadable layers; the secondary contexts it
+            // covers are short-lived and small, so a quarter capped at 512MB is plenty.
+            long sessionReserve = Math.Clamp(kvTotal / 4, 192L * 1024 * 1024, 512L * 1024 * 1024);
 
             long budget = freeVramBytes - computeReserve - sessionReserve;
             if (budget <= 0)
@@ -346,6 +622,12 @@ namespace Malx_AI
             // Full offload: all weights plus the whole KV cache fit in the budget.
             if (modelBytes + kvTotal <= budget)
                 return totalLayers + 1;
+
+            // Hybrid recurrent (Mamba/SSM) and sliding-window-attention models that do NOT fully
+            // fit must go to CPU, not a partial split: splitting their special state/KV caches
+            // across CPU and GPU has produced CUDA illegal-memory-access aborts during decode.
+            if (partialGpuSplitUnsafe)
+                return 0;
 
             int layers = (int)(budget / Math.Max(1, perLayerWeights + kvPerLayer));
 
@@ -361,10 +643,49 @@ namespace Malx_AI
         }
 
         /// <summary>
+        /// Picks the physical micro-batch (UBatchSize) for a GPU plan from free-VRAM headroom. A larger
+        /// micro-batch processes more prompt tokens per CUDA kernel launch — the main lever for faster
+        /// prompt ingestion of documents and long history — but costs a proportionally larger compute
+        /// buffer, so it only steps up where there is clearly room. The common 8 GB-class card keeps the
+        /// proven 512 (no new OOM risk); only 12 GB+ cards go higher. Large models stay conservative.
+        /// </summary>
+        private static uint ChooseGpuMicroBatch(HardwareProfile profile, bool gpuCandidate, bool largeModel)
+        {
+            if (!gpuCandidate)
+                return 512u;
+
+            double freeGb = profile.AvailableVramGb;
+            if (freeGb <= 0)
+                return largeModel ? 256u : 512u;   // unknown free VRAM — be conservative
+            if (largeModel || freeGb < 6.0)
+                return 256u;
+            if (freeGb < 12.0)
+                return 512u;                        // 6-12 GB (incl. common 8 GB cards): unchanged
+            if (freeGb < 20.0)
+                return 1024u;                       // 12-16 GB cards
+            return 2048u;                           // 24 GB+ cards
+        }
+
+        /// <summary>
+        /// VRAM to reserve for the CUDA compute buffer + fragmentation headroom, sized to the chosen
+        /// micro-batch. Charged in the layer math so a larger micro-batch can never strand layers on the
+        /// CPU or overflow the card. Deliberately generous — under-reserving here is what causes OOMs.
+        /// </summary>
+        private static long GpuComputeBufferReserveBytes(uint gpuMicroBatch)
+        {
+            return gpuMicroBatch switch
+            {
+                <= 512u  => 640L * 1024 * 1024,
+                <= 1024u => 1024L * 1024 * 1024,
+                _        => 1536L * 1024 * 1024
+            };
+        }
+
+        /// <summary>
         /// Applies thread, batch, flash-attention, and KV-cache settings tuned to the
         /// chosen offload split. Runs for both CPU and GPU plans.
         /// </summary>
-        private static void ApplyPerformanceTuning(ModelParams modelParams, int gpuLayers, bool fullOffload, bool largeModel, bool useKvQuant, HardwareProfile profile)
+        private static void ApplyPerformanceTuning(ModelParams modelParams, int gpuLayers, bool fullOffload, bool largeModel, bool useKvQuant, bool flashAttention, HardwareProfile profile, uint gpuMicroBatch = 512)
         {
             int physicalCores = PhysicalCoreCount.Value;
             int logicalCores = Environment.ProcessorCount;
@@ -381,16 +702,21 @@ namespace Malx_AI
 
             if (gpuLayers > 0)
             {
-                // Larger logical batch improves prompt throughput on CUDA. The physical
-                // micro-batch (UBatchSize) drives compute-buffer VRAM, so keep it small
-                // when VRAM is tight or the model is large.
-                bool tightVram = profile.AvailableVramBytes > 0 && profile.AvailableVramGb < 6.0;
-                modelParams.BatchSize = 1024;
-                modelParams.UBatchSize = (largeModel || tightVram) ? 256u : 512u;
+                // Larger logical batch improves prompt throughput on CUDA. VRAM cost is driven by the
+                // physical micro-batch (UBatchSize), not the logical batch, so a large BatchSize is
+                // nearly free and lets CUDA chew through long prompts (documents!) in far fewer kernel
+                // launches. The micro-batch was chosen from free-VRAM headroom (ChooseGpuMicroBatch) and
+                // its compute buffer was already reserved in the layer math, so a bigger batch here is
+                // safe — it speeds prompt processing without stranding layers on the CPU.
+                modelParams.BatchSize = Math.Max(2048u, gpuMicroBatch);
+                modelParams.UBatchSize = gpuMicroBatch;
 
-                modelParams.FlashAttention = true;
+                // Only enabled where it is numerically safe — see ShouldEnableFlashAttention.
+                modelParams.FlashAttention = flashAttention;
 
-                if (useKvQuant)
+                // A quantized V-cache requires flash attention in llama.cpp; useKvQuant is
+                // already gated on flashAttention, but assert the invariant defensively.
+                if (useKvQuant && flashAttention)
                 {
                     modelParams.TypeK = LLama.Native.GGMLType.GGML_TYPE_Q8_0;
                     modelParams.TypeV = LLama.Native.GGMLType.GGML_TYPE_Q8_0;
@@ -401,6 +727,22 @@ namespace Malx_AI
                 modelParams.BatchSize = 512;
                 modelParams.UBatchSize = largeModel ? 256u : 512u;
             }
+
+            // Single conversation per context: the app never runs batched/parallel sequences.
+            // n_seq_max=64 is harmless for the attention KV cache (sized by tokens) but
+            // CATASTROPHIC for hybrid Mamba/SSM models: their recurrent-state ("rs") cache is
+            // sized PER SEQUENCE, so 64 sequences inflates it ~64× (a Nemotron-H 4B needed 5.2 GB
+            // of rs cache at 64 vs ~80 MB at 1). On full GPU offload that 5.2 GB landed in VRAM and
+            // overflowed the card → cudaMalloc OOM at context creation → crash on the very first
+            // role. One sequence is all this app uses, and n_seq_max=1 shrinks memory for every
+            // model (strictly safe — sequence 0 always exists, so KV save/load still works).
+            //
+            // IMPORTANT: setting this property is NOT enough. LLamaSharp 0.26.0's
+            // ToLlamaContextParams reads SeqMax and then OVERWRITES n_seq_max with
+            // clamp(n_ctx/8, 10, 64), so contexts must be created through LlamaContextFactory,
+            // which restores n_seq_max=1 after that overwrite. We still set it here so the value is
+            // correct if the library is ever fixed, and to document intent at the params level.
+            modelParams.SeqMax = 1;
 
             // Compact the KV cache when fragmentation passes 10% — prevents spurious
             // NoKvSlot failures in long interactive sessions.
