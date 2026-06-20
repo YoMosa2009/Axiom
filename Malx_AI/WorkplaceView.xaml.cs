@@ -24,6 +24,8 @@ using LLama.Transformers;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using System.Windows.Threading;
+using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Rendering;
 
 namespace Malx_AI
 {
@@ -344,7 +346,7 @@ namespace Malx_AI
                 {
                     executedToolCount++;
                     UpdateCloudCouncilToolStatus(toolCall, executedToolCount);
-                    string toolResult = await ExecuteCouncilCloudToolAsync(toolCall, token);
+                    string toolResult = await ExecuteCouncilCloudToolAsync(toolCall, messages, token);
                     messages.Add(new OpenRouterMessage("tool", BuildCouncilCloudToolResultMessage(toolResult, toolCall?.Name), toolCall?.Id));
                     UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, CloudCouncilToolLoopIterationLimit)}/{CloudCouncilToolLoopIterationLimit} pauses used");
                 }
@@ -545,7 +547,7 @@ namespace Malx_AI
             {
                 defs.Add(new OpenRouterToolDefinition(
                     "web_search",
-                    "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets.",
+                    "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets. Use conversation and council payload context to make the query standalone before searching.",
                     new JsonObject
                     {
                         ["type"] = "object",
@@ -554,7 +556,7 @@ namespace Malx_AI
                             ["query"] = new JsonObject
                             {
                                 ["type"] = "string",
-                                ["description"] = "A concise search query focused on the user's actual question, such as what X is, what X does to Y, how X works, latest status, docs, or news."
+                                ["description"] = "A concise standalone search query focused on the user's actual question, preserving the requested relation and including any prior-turn or council-payload entity needed to disambiguate it."
                             }
                         },
                         ["required"] = new JsonArray("query"),
@@ -622,7 +624,24 @@ namespace Malx_AI
         }
 
         // Routes a cloud tool call to the council's existing tool implementations.
-        private async Task<string> ExecuteCouncilCloudToolAsync(OpenRouterToolCall toolCall, CancellationToken token)
+        private IReadOnlyList<ConversationSearchTurn> BuildCouncilCloudSearchContextTurns(IReadOnlyList<OpenRouterMessage>? messages, string currentQuery)
+        {
+            var turns = new List<ConversationSearchTurn>(BuildCouncilSearchContextTurns(currentQuery));
+
+            if (messages != null)
+            {
+                turns.AddRange(messages
+                    .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
+                             || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                    .Where(m => !string.IsNullOrWhiteSpace(m.Text))
+                    .TakeLast(12)
+                    .Select(m => new ConversationSearchTurn(m.Role, m.Text)));
+            }
+
+            return turns;
+        }
+
+        private async Task<string> ExecuteCouncilCloudToolAsync(OpenRouterToolCall toolCall, IReadOnlyList<OpenRouterMessage> conversationMessages, CancellationToken token)
         {
             if (toolCall == null || string.IsNullOrWhiteSpace(toolCall.Name))
                 return "Tool call was empty.";
@@ -640,7 +659,14 @@ namespace Malx_AI
                     if (!_isWebSearchEnabled)
                         return "Web search is disabled by the user. Answer from your existing knowledge and the provided context, and state this limitation if it affects the answer.";
                     string query = root.TryGetProperty("query", out JsonElement q) ? q.GetString() ?? string.Empty : string.Empty;
-                    string data = await ExecuteWebSearchAsync(query, token);
+                    string contextualQuery = ConversationSearchContext.BuildContextualSearchPrompt(
+                        query,
+                        BuildCouncilCloudSearchContextTurns(conversationMessages, query));
+                    if (string.IsNullOrWhiteSpace(contextualQuery))
+                        contextualQuery = query;
+
+                    await BackendLogService.LogEventAsync("Workplace.CloudWebSearch", $"ToolQuery:{query}\nContextualQuery:{contextualQuery}");
+                    string data = await ExecuteWebSearchAsync(contextualQuery, token);
                     if (HasWebSearchEvidence(data))
                     {
                         _latestCouncilReactiveWebContext = MergeCouncilWebContexts(_latestCouncilReactiveWebContext, data);
@@ -706,7 +732,7 @@ namespace Malx_AI
             {
                 normalized =
                     "[WEB TOOL RESULT RULE]\n" +
-                    "Use this web_search result as source evidence only for claims it directly supports. Cite source titles/hosts or URLs for current/source-backed claims. Do not add unsupported current facts from memory, and do not treat off-topic results as support.\n\n" +
+                    "Use this web_search result as source evidence only for claims it directly supports. Verify that the evidence covers the user's named entities and the requested relation from the council task. Cite source titles/hosts or URLs for current/source-backed claims. If results are partial or off-topic and another tool call is still available, call one narrower standalone web_search query; otherwise answer the supported portion and state the exact evidence gap. Do not add unsupported current facts from memory, and do not treat off-topic results as support.\n\n" +
                     normalized;
             }
 
@@ -778,6 +804,8 @@ namespace Malx_AI
             public bool CalculatorUsed { get; set; }
             public CouncilTaskType TaskType { get; init; }
             public bool IsArtifactCanvasRequest { get; set; }
+            public bool IsProjectCanvasIteration { get; set; }
+            public ArtifactKind ExistingCanvasArtifactKind { get; set; }
             public string PreferredArtifactFormatHint { get; set; } = "";
             // Live-measured usable pixel area of the canvas artifact viewport at request time,
             // quoted to the models so sizing guidance matches the real pane instead of a stale
@@ -788,6 +816,10 @@ namespace Malx_AI
             // the Builder so it edits the existing artifact instead of regenerating blind. Empty on
             // first generation or non-canvas turns.
             public string CurrentArtifactForIteration { get; set; } = "";
+            public bool CurrentArtifactForIterationWasTruncated { get; set; }
+            public bool CanvasMutationFailed { get; set; }
+            public string PreviousArtifactRequest { get; set; } = "";
+            public string PreviousArtifactFormatHint { get; set; } = "";
             public string ArchitectOutput { get; set; } = "";
             public string BuilderOutput { get; set; } = "";
             public string CriticReview { get; set; } = "";
@@ -798,6 +830,7 @@ namespace Malx_AI
             public string CriticThinking { get; set; } = "";
             public bool RevisionTriggered { get; set; }
             public bool BuilderOutputTruncated { get; set; }
+            public bool BuilderProducedCode { get; set; }
             public int ArchitectStepCount { get; set; }
             public PreFlightDecomposition? Decomposition { get; set; }
             public List<string> StaticValidationFindings { get; set; } = new();
@@ -897,11 +930,17 @@ namespace Malx_AI
             string combined = string.IsNullOrWhiteSpace(objective)
                 ? userQuery
                 : $"{userQuery} {objective}";
-            string strategicQuery = _webSearchService.BuildStrategicSearchQuery(combined);
-            if (string.IsNullOrWhiteSpace(strategicQuery))
-                strategicQuery = combined;
+            string contextualPrompt = ConversationSearchContext.BuildContextualSearchPrompt(
+                combined,
+                BuildCouncilSearchContextTurns(combined));
+            if (string.IsNullOrWhiteSpace(contextualPrompt))
+                contextualPrompt = combined;
 
-            bool requiresGrounding = _webSearchService.RequiresFreshOrSourceBackedGrounding(combined);
+            string strategicQuery = _webSearchService.BuildStrategicSearchQuery(contextualPrompt);
+            if (string.IsNullOrWhiteSpace(strategicQuery))
+                strategicQuery = contextualPrompt;
+
+            bool requiresGrounding = _webSearchService.RequiresFreshOrSourceBackedGrounding(contextualPrompt);
             string data = await ExecuteWebSearchAsync(strategicQuery, token);
             if (string.IsNullOrWhiteSpace(data)
                 || data.Contains("no usable results", StringComparison.OrdinalIgnoreCase)
@@ -918,6 +957,33 @@ namespace Malx_AI
             // markers and corrupt the priority-ordered evidence digest.
 
             return "[WEB GROUNDING RULE] Web search is enabled and the evidence below is the authoritative source material for current, online, source-backed, or recently changed claims that it actually covers. Current UTC date: " + DateTime.UtcNow.ToString("yyyy-MM-dd") + ". Prefer High confidence sources over Medium confidence ones, and ignore Low confidence sources unless the user explicitly asks for them. Do not add current/source-backed claims from model training data, prior memory, or assumptions when they are not present in the sources. Stable non-current background context may come from the prompt, council plan, project knowledge, or general knowledge when it is not contradicted by the web evidence. Do not treat off-topic web results as evidence for the user's named entities; if the evidence is partial or mismatched, answer the supported portions first and briefly state what remains unconfirmed. For broad current-information requests, summarize the strongest supported developments from the provided sources instead of declaring the web data unusable. If sources conflict, report the conflict explicitly instead of guessing. Cite source titles or hosts naturally for source-backed/current claims, and do not make unsupported current claims that cannot be tied to a provided source.\n" + data;
+        }
+
+        private IReadOnlyList<ConversationSearchTurn> BuildCouncilSearchContextTurns(string currentQuery)
+        {
+            var turns = new List<ConversationSearchTurn>();
+
+            if (!string.IsNullOrWhiteSpace(_activeCouncilWebPrompt)
+                && !string.Equals(_activeCouncilWebPrompt.Trim(), currentQuery?.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                turns.Add(new ConversationSearchTurn("user", _activeCouncilWebPrompt));
+            }
+
+            if (_activeCouncilRunContext != null)
+            {
+                if (!string.IsNullOrWhiteSpace(_activeCouncilRunContext.UserPrompt))
+                    turns.Add(new ConversationSearchTurn("user", _activeCouncilRunContext.UserPrompt));
+                if (!string.IsNullOrWhiteSpace(_activeCouncilRunContext.Objective))
+                    turns.Add(new ConversationSearchTurn("user", _activeCouncilRunContext.Objective));
+            }
+
+            turns.AddRange(_chatHistory
+                .Where(h => h.Role is "user" or "architect" or "builder")
+                .Where(h => !string.IsNullOrWhiteSpace(h.Content))
+                .TakeLast(10)
+                .Select(h => new ConversationSearchTurn(h.Role, h.Content)));
+
+            return turns;
         }
 
         private static bool HasWebSearchEvidence(string webContext)
@@ -1399,6 +1465,8 @@ namespace Malx_AI
         private uint _architectContextSize = 8192;
         private uint _builderContextSize = 8192;
         private uint _criticContextSize = 8192;
+        private readonly Dictionary<CouncilRole, uint> _effectiveLocalRoleContextSizes = new();
+        private readonly Dictionary<CouncilRole, int> _lastRolePromptTokenEstimates = new();
         private bool _autoOptimizeRoleContexts = true;
         private static readonly uint MinRoleContext = 2048;
         private static readonly uint MaxRoleContext = 32768;
@@ -1433,6 +1501,8 @@ namespace Malx_AI
         private const int DefaultCloudCouncilRateLimitWaitSeconds = 6;
         private const int MaxCloudCouncilRateLimitWaitSeconds = 22;
         private static readonly Regex ModelParamBillionsRegex = new(@"(\d+(?:\.\d+)?)\s*[bB]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private const string ProjectCanvasManualTrigger = "@ProjectCanvas";
+        private static readonly Regex ProjectCanvasManualTriggerRegex = new(@"(?<![A-Za-z0-9_])@ProjectCanvas(?![A-Za-z0-9_])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex ArchitectNumberedStepRegex = new(@"^\s*\d{1,3}[\.|\)]\s+", RegexOptions.Compiled);
         private static readonly string[] SandboxUnitWords =
         [
@@ -1453,6 +1523,7 @@ namespace Malx_AI
         ];
         private static readonly Regex SandboxExpressionRegex = new(@"\d+(?:\.\d+)?\s*[\+\-\*/\^]\s*\d+(?:\.\d+)?", RegexOptions.Compiled);
         private static readonly Regex BuilderCodeFenceRegex = new(@"```(?:[A-Za-z0-9_+#\.-]+)?\s*(?<code>[\s\S]*?)```", RegexOptions.Compiled);
+        private static readonly Regex BuilderTypedCodeFenceRegex = new(@"```(?<language>[A-Za-z0-9_+#\.-]+)\s*\r?\n(?<code>[\s\S]*?)```", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SandboxNumberWithUnitRegex = new(@"(?<label>[A-Za-z][A-Za-z0-9_-]*)?\s*(?<number>-?\d+(?:\.\d+)?)\s*(?<unit>kilometers|km|meters|miles|kilograms|kg|pounds|grams|liters|gallons|seconds|minutes|hours|degrees|percent|dollars|euros|watts|volts|amps|newtons|joules)?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex PythonResultLineRegex = new(@"^(?<label>[^:=]+?)\s*[:=]\s*(?<value>-?\d+(?:\.\d+)?(?:[eE][\+\-]?\d+)?(?:\s*[%A-Za-z/]+)?)$", RegexOptions.Compiled);
         private static readonly Regex DigitLetterMultiplicationRegex = new(@"(?<digit>\d)(?<letter>[A-Za-z])", RegexOptions.Compiled);
@@ -1532,7 +1603,10 @@ namespace Malx_AI
         private bool _isRefinementMode;
         private CouncilTaskHistoryEntry? _activeHistorySelection;
         private string _lastConfidenceLabel = "Moderate Confidence";
-        private string _preRevisionBuilderOutput = "";
+        private string _canvasDiffBaseSource = "";
+        private string _canvasDiffCurrentSource = "";
+        private int _canvasDiffAdditionCount;
+        private int _canvasDiffRemovalCount;
         private bool _isDiffViewActive;
 
         private readonly ObservableCollection<WorkplaceChatMessage> _systemNotifications = new();
@@ -1615,11 +1689,33 @@ namespace Malx_AI
             };
         }
 
-        private static InferenceParams CreateRoleInferenceParams(string modelPath, int maxTokens, IEnumerable<string> antiPrompts, float temperature, float minP)
+        private static InferenceParams CreateRoleInferenceParams(
+            string modelPath,
+            int maxTokens,
+            IEnumerable<string> antiPrompts,
+            float temperature,
+            float minP,
+            Grammar? grammar = null)
         {
             return IsQwen3Model(modelPath)
-                ? ModelInferenceProfiles.CreateQwen3InferenceParams(false, maxTokens, antiPrompts)
-                : CreateGenericInferenceParams(maxTokens, antiPrompts, temperature, minP);
+                ? ModelInferenceProfiles.CreateQwen3InferenceParams(false, maxTokens, antiPrompts, grammar)
+                : new InferenceParams
+                {
+                    MaxTokens = maxTokens,
+                    AntiPrompts = antiPrompts?.ToList() ?? new List<string>(),
+                    SamplingPipeline = new DefaultSamplingPipeline
+                    {
+                        Temperature = temperature,
+                        MinP = minP,
+                        TopP = 0.95f,
+                        TopK = 40,
+                        RepeatPenalty = 1.1f,
+                        Grammar = grammar,
+                        GrammarOptimization = grammar == null
+                            ? DefaultSamplingPipeline.GrammarOptimizationMode.None
+                            : DefaultSamplingPipeline.GrammarOptimizationMode.Extended
+                    }
+                };
         }
 
         private void ApplyQwen3DefaultCouncilProfile(CouncilRole role, string modelPath)
@@ -1658,6 +1754,8 @@ namespace Malx_AI
         public WorkplaceView()
         {
             InitializeComponent();
+            QueryInput.TextArea.TextView.LineTransformers.Add(new ProjectCanvasMentionColorizer());
+            QueryInput.TextChanged += (_, _) => UpdateWorkplaceTokenUsageIndicator();
             Directory.CreateDirectory(CouncilKvStateFolder);
             LoadOpenRouterKeyForWorkplace();
 
@@ -1719,7 +1817,27 @@ namespace Malx_AI
                 msg => UpdateAgenticPauseStatus(msg));
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
+            UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
+        }
+
+        private sealed class ProjectCanvasMentionColorizer : DocumentColorizingTransformer
+        {
+            private static readonly SolidColorBrush MentionBrush = new(Color.FromRgb(92, 190, 255));
+
+            protected override void ColorizeLine(DocumentLine line)
+            {
+                string text = CurrentContext.Document.GetText(line);
+                foreach (Match match in ProjectCanvasManualTriggerRegex.Matches(text))
+                {
+                    int startOffset = line.Offset + match.Index;
+                    int endOffset = startOffset + ProjectCanvasManualTrigger.Length;
+                    ChangeLinePart(startOffset, endOffset, element =>
+                    {
+                        element.TextRunProperties.SetForegroundBrush(MentionBrush);
+                    });
+                }
+            }
         }
 
         private async void WorkplaceView_Loaded(object sender, RoutedEventArgs e)
@@ -1965,10 +2083,12 @@ namespace Malx_AI
             ArchitectContextValueText.Text = $"{_architectContextSize} tokens";
             BuilderContextValueText.Text = $"{_builderContextSize} tokens";
             CriticContextValueText.Text = $"{_criticContextSize} tokens";
+            UpdateWorkplaceTokenUsageIndicator();
         }
 
         private void ApplyOptimizedRoleContexts()
         {
+            _effectiveLocalRoleContextSizes.Clear();
             _architectContextSize = GetOptimizedContextForModel(CouncilRole.Architect, _contextSize);
             _builderContextSize = GetOptimizedContextForModel(CouncilRole.Builder, _contextSize);
             _criticContextSize = GetOptimizedContextForModel(CouncilRole.Critic, _contextSize);
@@ -2075,6 +2195,7 @@ namespace Malx_AI
                 return;
 
             _contextSize = (uint)Math.Clamp((int)e.NewValue, (int)MinRoleContext, (int)MaxRoleContext);
+            _effectiveLocalRoleContextSizes.Clear();
 
             if (_autoOptimizeRoleContexts)
             {
@@ -2099,6 +2220,7 @@ namespace Malx_AI
             _architectContextSize = (uint)Math.Clamp((int)ArchitectContextSlider.Value, (int)MinRoleContext, (int)MaxRoleContext);
             _builderContextSize = (uint)Math.Clamp((int)BuilderContextSlider.Value, (int)MinRoleContext, (int)MaxRoleContext);
             _criticContextSize = (uint)Math.Clamp((int)CriticContextSlider.Value, (int)MinRoleContext, (int)MaxRoleContext);
+            _effectiveLocalRoleContextSizes.Clear();
             _contextSize = (uint)Math.Clamp((int)new[] { _architectContextSize, _builderContextSize, _criticContextSize }.Max(), (int)MinRoleContext, (int)MaxRoleContext);
 
             SyncContextControls();
@@ -2142,6 +2264,7 @@ namespace Malx_AI
                 ContextInfoBlock.Text = $"Context A/B/C: {_architectContextSize}/{_builderContextSize}/{_criticContextSize}t ({mode}) | Max chunks: {maxChunks}";
             }
             HardwareInfoBlock.Text = GetCouncilStatusDescription();
+            UpdateWorkplaceTokenUsageIndicator();
         }
 
         private void UpdateContextPressurePreview(string userQuery, string objective, int chunkCount)
@@ -2173,6 +2296,134 @@ namespace Malx_AI
             ContextPressureBlock.Text = includeRatio
                 ? $"Context pressure: {level} ({usedTokens}/{capacityTokens}t)"
                 : $"Context pressure: {level}";
+        }
+
+        private int EstimateWorkplaceContextTokens()
+        {
+            int historyTokens = _chatHistory
+                .Where(h => h.Role is "user" or "architect" or "builder" or "critic" or "builder-patch" or "builder-revision")
+                .Sum(h => EstimateTokenCount(h.Content));
+
+            int currentInputTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
+            int currentCanvasTokens = 0;
+            string currentCanvas = ProjectCanvasEditor?.Text ?? string.Empty;
+            if (_lastRunContext?.IsArtifactCanvasRequest == true
+                && !string.IsNullOrWhiteSpace(currentCanvas)
+                && !currentCanvas.TrimStart().StartsWith("// Builder output appears here", StringComparison.OrdinalIgnoreCase))
+            {
+                currentCanvasTokens = EstimateTokenCount(currentCanvas);
+            }
+
+            return Math.Max(0, historyTokens + currentInputTokens + currentCanvasTokens);
+        }
+
+        private int GetWorkplaceRoleContextCapacity(CouncilRole role)
+        {
+            if (_isCloudModeEnabled)
+            {
+                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(OpenRouterChatService.WorkplaceCouncilDefaultModelId);
+                return role == CouncilRole.Builder ? cloudWindow : cloudWindow / 2;
+            }
+
+            if (_effectiveLocalRoleContextSizes.TryGetValue(role, out uint effectiveContext))
+                return Math.Max(512, (int)effectiveContext);
+
+            return Math.Max(512, (int)GetRoleContextSize(role));
+        }
+
+        private static string FormatCompactTokenCount(int tokens)
+        {
+            if (tokens >= 1024)
+            {
+                double kibTokens = tokens / 1024d;
+                return kibTokens >= 100 ? $"{kibTokens:F0}K" : $"{kibTokens:F1}K";
+            }
+
+            return tokens.ToString("N0");
+        }
+
+        private static void UpdateWorkplaceRoleTokenMeter(
+            CouncilRole role,
+            int used,
+            int capacity,
+            TextBlock label,
+            ProgressBar bar)
+        {
+            double percent = capacity <= 0 ? 0 : Math.Clamp(used * 100d / capacity, 0, 100);
+            label.Text = $"{FormatCompactTokenCount(used)} / {FormatCompactTokenCount(capacity)}";
+            bar.Value = percent;
+
+            Color meterColor = percent switch
+            {
+                >= 90 => Color.FromRgb(201, 106, 91),
+                >= 75 => Color.FromRgb(184, 146, 74),
+                _ => Color.FromRgb(95, 175, 125)
+            };
+            var brush = new SolidColorBrush(meterColor);
+            bar.Foreground = brush;
+            label.Foreground = percent >= 75
+                ? brush
+                : new SolidColorBrush(Color.FromRgb(138, 130, 121));
+
+            string details = $"{role}: approximately {used:N0} of {capacity:N0} tokens ({percent:F0}%).";
+            label.ToolTip = details;
+            bar.ToolTip = details;
+        }
+
+        private void RecordCouncilRolePromptUsage(CouncilRole role, string systemPrompt, string userPayload)
+        {
+            int estimatedTokens = Math.Max(0, EstimateTokenCount(systemPrompt) + EstimateTokenCount(userPayload));
+
+            void ApplyUsage()
+            {
+                _lastRolePromptTokenEstimates[role] = estimatedTokens;
+                UpdateWorkplaceTokenUsageIndicator();
+            }
+
+            if (Dispatcher.CheckAccess())
+                ApplyUsage();
+            else
+                _ = Dispatcher.InvokeAsync(ApplyUsage, DispatcherPriority.Background);
+        }
+
+        private void UpdateWorkplaceTokenUsageIndicator()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(UpdateWorkplaceTokenUsageIndicator, DispatcherPriority.Background);
+                return;
+            }
+
+            if (FindName("WorkplaceTokenUsagePanel") is not Border panel
+                || FindName("ArchitectTokenUsageProgressBar") is not ProgressBar architectBar
+                || FindName("BuilderTokenUsageProgressBar") is not ProgressBar builderBar
+                || FindName("CriticTokenUsageProgressBar") is not ProgressBar criticBar
+                || FindName("ArchitectTokenUsageLabel") is not TextBlock architectLabel
+                || FindName("BuilderTokenUsageLabel") is not TextBlock builderLabel
+                || FindName("CriticTokenUsageLabel") is not TextBlock criticLabel)
+            {
+                return;
+            }
+
+            int conversationEstimate = EstimateWorkplaceContextTokens();
+            int pendingInputTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
+            int architectUsed = _lastRolePromptTokenEstimates.TryGetValue(CouncilRole.Architect, out int architectPromptTokens)
+                ? architectPromptTokens + pendingInputTokens
+                : conversationEstimate;
+            int builderUsed = _lastRolePromptTokenEstimates.TryGetValue(CouncilRole.Builder, out int builderPromptTokens)
+                ? builderPromptTokens + pendingInputTokens
+                : conversationEstimate;
+            int criticUsed = _lastRolePromptTokenEstimates.TryGetValue(CouncilRole.Critic, out int criticPromptTokens)
+                ? criticPromptTokens + pendingInputTokens
+                : conversationEstimate;
+            panel.Visibility = Visibility.Visible;
+            panel.ToolTip = _isCloudModeEnabled
+                ? "Approximate retained workplace context against the configured cloud model windows."
+                : "Approximate retained workplace context against each local role's effective model and hardware-aware window.";
+
+            UpdateWorkplaceRoleTokenMeter(CouncilRole.Architect, architectUsed, GetWorkplaceRoleContextCapacity(CouncilRole.Architect), architectLabel, architectBar);
+            UpdateWorkplaceRoleTokenMeter(CouncilRole.Builder, builderUsed, GetWorkplaceRoleContextCapacity(CouncilRole.Builder), builderLabel, builderBar);
+            UpdateWorkplaceRoleTokenMeter(CouncilRole.Critic, criticUsed, GetWorkplaceRoleContextCapacity(CouncilRole.Critic), criticLabel, criticBar);
         }
 
         private void UpdateCouncilBlocks()
@@ -2631,6 +2882,7 @@ namespace Malx_AI
             }
 
             _council[role].ModelPath = dialog.FileName;
+            _effectiveLocalRoleContextSizes.Remove(role);
             ApplyQwen3DefaultCouncilProfile(role, dialog.FileName);
             if (!IsQwen3Model(dialog.FileName))
             {
@@ -2807,7 +3059,12 @@ namespace Malx_AI
                     HardwareInfoBlock.Text = "Runtime: web tool engaged by council";
                 }, DispatcherPriority.Background);
 
-                string rawQuery = (query ?? string.Empty).Trim();
+                string rawQuery = ConversationSearchContext.BuildContextualSearchPrompt(
+                    (query ?? string.Empty).Trim(),
+                    BuildCouncilSearchContextTurns(query ?? string.Empty));
+                if (string.IsNullOrWhiteSpace(rawQuery))
+                    rawQuery = (query ?? string.Empty).Trim();
+
                 if (WebSearchService.LooksLikeLowSpecificitySearchQuery(rawQuery)
                     && !string.IsNullOrWhiteSpace(_activeCouncilWebPrompt))
                 {
@@ -2903,10 +3160,10 @@ namespace Malx_AI
         // stub keeps every call site working with "no objective".
         private static string ReadObjectiveText() => string.Empty;
 
-        private static CouncilTaskType DetectTaskType(string userQuery, string objective)
+        private static CouncilTaskType DetectTaskType(string userQuery, string objective, bool? knownArtifactCanvasIntent = null)
         {
             string combined = $"{userQuery} {objective}".ToLowerInvariant();
-            bool artifactCanvasIntent = DetectArtifactCanvasIntent(userQuery, objective);
+            bool artifactCanvasIntent = knownArtifactCanvasIntent ?? DetectArtifactCanvasIntent(userQuery, objective);
 
             // Strong coding signals — phrases that unambiguously mean "write code"
             string[] strongCoding =
@@ -2978,6 +3235,9 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(combined))
                 return false;
 
+            if (HasProjectCanvasManualTrigger(userQuery, objective))
+                return true;
+
             // Explicit canvas mention is an unambiguous override
             if (combined.Contains("project canvas", StringComparison.Ordinal)
                 || combined.Contains("canvas artifact", StringComparison.Ordinal)
@@ -3005,6 +3265,10 @@ namespace Malx_AI
             [
                 "chart", "graph", "dashboard", "visualization", "visualisation",
                 "diagram", "svg", "html", "canvas", "web page", "webpage",
+                "login screen", "signup screen", "sign up screen", "login form",
+                "signup form", "sign up form", "landing page", "settings screen",
+                "profile screen", "admin panel", "control panel", "modal", "dialog",
+                "navbar", "navigation", "sidebar", "menu",
                 "coordinate plane", "coordinate graph", "plotter",
                 "datasheet", "data sheet", "spreadsheet", "spread sheet",
                 "infographic", "info graphic", "heatmap", "heat map",
@@ -3017,8 +3281,8 @@ namespace Malx_AI
             // Weak artifact targets need an additional implementation hint or strong visual signal
             string[] weakArtifactTargets =
             [
-                "artifact", "preview", "component", "ui", "interface",
-                "form", "table", "app", "template",
+                "artifact", "preview", "component", "ui", "interface", "screen",
+                "page", "layout", "form", "table", "app", "template",
                 "grid", "matrix", "schedule", "report"
             ];
 
@@ -3117,6 +3381,29 @@ namespace Malx_AI
                 $"Never use fixed pixel widths wider than {Math.Max(300, canvasWidth - 24)}px on outer layout elements. " +
                 "Ensure the artifact fills the available width without horizontal scrolling.";
 
+            if (!combined.Contains("svg", StringComparison.Ordinal)
+                && (combined.Contains("login", StringComparison.Ordinal)
+                    || combined.Contains("signup", StringComparison.Ordinal)
+                    || combined.Contains("sign up", StringComparison.Ordinal)
+                    || combined.Contains("screen", StringComparison.Ordinal)
+                    || combined.Contains("page", StringComparison.Ordinal)
+                    || combined.Contains("layout", StringComparison.Ordinal)
+                    || combined.Contains("ui", StringComparison.Ordinal)
+                    || combined.Contains("interface", StringComparison.Ordinal)
+                    || combined.Contains("modal", StringComparison.Ordinal)
+                    || combined.Contains("dialog", StringComparison.Ordinal)
+                    || combined.Contains("navbar", StringComparison.Ordinal)
+                    || combined.Contains("navigation", StringComparison.Ordinal)
+                    || combined.Contains("sidebar", StringComparison.Ordinal)
+                    || combined.Contains("admin panel", StringComparison.Ordinal)
+                    || combined.Contains("control panel", StringComparison.Ordinal)))
+            {
+                return "Output a complete self-contained HTML document with inline CSS and inline JavaScript only when behavior is needed. " +
+                       "This is a UI/screen artifact, so prefer HTML over standalone SVG. SVG may be used only inside the HTML for icons or illustrations. " +
+                       "Include all visible states the user requested and make the first viewport look like a finished app screen, not a diagram. " +
+                       "Do NOT import external fonts, CSS, icons, or JavaScript via CDN. Must render fully offline in WebView2." + sizingRule;
+            }
+
             if (combined.Contains("svg", StringComparison.Ordinal)
                 || combined.Contains("diagram", StringComparison.Ordinal)
                 || combined.Contains("vector", StringComparison.Ordinal)
@@ -3207,6 +3494,34 @@ namespace Malx_AI
             return "Prefer a self-contained visual artifact implementation that renders directly in Project Canvas." + sizingRule;
         }
 
+        private static bool RequestsExplicitArtifactFormatChange(string userQuery)
+        {
+            string query = (userQuery ?? string.Empty).ToLowerInvariant();
+            string[] signals =
+            [
+                "convert to html", "convert it to html", "as html", "into html",
+                "convert to svg", "convert it to svg", "as svg", "into svg",
+                "convert to markdown", "convert it to markdown", "as markdown", "into markdown",
+                "convert to javascript", "convert it to javascript", "as javascript", "into javascript",
+                "convert to python", "convert it to python", "as python", "into python"
+            ];
+            return signals.Any(signal => query.Contains(signal, StringComparison.Ordinal));
+        }
+
+        private static string GetCanvasIterationFormatHint(ArtifactKind kind, int canvasWidth)
+        {
+            string sizing = $" Preserve the current artifact type. Keep the output fluid within the {canvasWidth}px-wide, user-resizable canvas.";
+            return kind switch
+            {
+                ArtifactKind.Html => "Return a complete self-contained HTML document with inline CSS/JavaScript and no external resources." + sizing,
+                ArtifactKind.Svg => "Return one complete inline SVG with a viewBox and width='100%' on the root element." + sizing,
+                ArtifactKind.Chart => "Return the complete Python chart source so the sandbox capture flow can regenerate the chart." + sizing,
+                ArtifactKind.Document => "Return the complete Markdown document, preserving its heading/table structure. Use one ```markdown code fence and no prose outside it." + sizing,
+                ArtifactKind.InteractiveJavaScript => "Return the complete interactive JavaScript source in one ```javascript code fence. Preserve the DOM/canvas behavior and do not convert it to HTML unless explicitly requested." + sizing,
+                _ => "Return a complete replacement in the same language and format as the current Project Canvas source." + sizing
+            };
+        }
+
         /// <summary>
         /// Single source of truth for the canvas rendering environment quoted to the models.
         /// Quotes the live-measured viewport (not a hardcoded constant) and pins down the host
@@ -3244,7 +3559,7 @@ namespace Malx_AI
                     formatHint,
                 CouncilRole.Builder =>
                     "\n[PROJECT CANVAS ARTIFACT REQUEST] The final deliverable must be a renderable artifact for Project Canvas. " +
-                    "CRITICAL FORMAT RULE: Wrap the entire artifact in exactly ONE code fence using the correct language tag (```html, ```svg, ```python, etc.). " +
+                    "CRITICAL FORMAT RULE: Wrap the entire artifact in exactly ONE code fence using the correct language tag (```html, ```svg, ```python, ```javascript, ```markdown, etc.). " +
                     "Output NOTHING outside that single code fence — no preamble, no explanation, no notes after the closing ```. " +
                     "Do not output multiple alternatives or prose commentary around the artifact. " +
                     "If the request is visual and no language is forced, favor HTML or SVG over plain prose. " +
@@ -3257,7 +3572,7 @@ namespace Malx_AI
                 CouncilRole.Critic =>
                     "\n[PROJECT CANVAS ARTIFACT REQUEST] Review the Builder output as a renderable artifact deliverable. " +
                     $"It will render in a {viewportWidth}px wide pane whose host background is dark (#171615). " +
-                    "Check that: (1) the output is a single code-fenced artifact with no text before or after the fence, " +
+                    "Check that: (1) the output is a single correctly tagged code-fenced artifact with no text before or after the fence, " +
                     "(2) it matches the requested visual/task outcome, " +
                     "(3) it is self-contained and does not rely on external internet resources, " +
                     "(4) it uses responsive/fluid sizing — flag SVG root elements with hardcoded width/height but no viewBox, " +
@@ -3287,6 +3602,14 @@ namespace Malx_AI
                 ? "Prefer one small self-contained offline HTML artifact."
                 : preferredFormatHint.Trim();
             int viewportWidth = runContext.CanvasViewportWidth;
+            string compactFormatRule = runContext.ExistingCanvasArtifactKind switch
+            {
+                ArtifactKind.Document => "Preserve the current Markdown document format and structure. ",
+                ArtifactKind.InteractiveJavaScript => "Preserve the current interactive JavaScript format and DOM/canvas behavior. ",
+                ArtifactKind.Svg => "Preserve the current single-SVG format. ",
+                ArtifactKind.Chart => "Preserve the current Python chart-source format. ",
+                _ => "Prefer a compact HTML file with inline CSS and inline JavaScript. "
+            };
 
             return role switch
             {
@@ -3300,7 +3623,7 @@ namespace Malx_AI
                     "\n[SMALL MODEL ARTIFACT MODE] Output one complete artifact only. " +
                     "Start your ENTIRE response with the opening code fence (e.g., ```html) and end with the closing ```. " +
                     "Do NOT write any text before the opening ``` or after the closing ```. " +
-                    "Prefer a compact HTML file with inline CSS and inline JavaScript. " +
+                    compactFormatRule +
                     "Use plain DOM APIs and simple controls like input, button, svg, canvas, and div. " +
                     "Avoid external libraries, build tools, frameworks, and complex abstractions. " +
                     $"SIZING: the display pane is {viewportWidth}px wide. Set body {{ width:100%; margin:0; padding:12px; box-sizing:border-box; }}. " +
@@ -3314,6 +3637,84 @@ namespace Malx_AI
                     "Prefer compact, offline-safe, directly renderable output.",
                 _ => string.Empty
             };
+        }
+
+        private static string BuildLocalBuilderCognitionBoost(CouncilTaskType taskType, CouncilRunContext runContext)
+        {
+            string outputKind = runContext.IsArtifactCanvasRequest
+                ? "one complete renderable Project Canvas artifact"
+                : taskType == CouncilTaskType.Coding
+                    ? "one complete working code/script deliverable"
+                    : "one complete final deliverable that directly answers the request";
+
+            return
+                "\n[LOCAL SMALL-MODEL BUILDER BOOST]\n" +
+                "You are running as a local model, so use this deterministic execution loop internally before writing the answer:\n" +
+                "1. Read the latest user request and the approved Architect specification before acting. For code/canvas work, read [[BUILDER IMPLEMENTATION CAPSULE]] as the compact source of truth.\n" +
+                "2. Convert every requirement into a concrete output behavior or content change. Do not merely describe a change that the deliverable does not contain.\n" +
+                "3. Decide whether a tool is actually needed BEFORE drafting: SEARCH_HIPPOCAMPUS for prior-session facts; CALCULATE for one expression; PYTHON_MATH or RUN_SANDBOX for executable verification; WEB_SEARCH only for current or source-backed facts. Use the exact [PAUSE: TOOL | query] protocol and never invent a tool name.\n" +
+                "4. Call all needed tools before the final deliverable. After [RESULT: ...], incorporate the result and do not expose tool commands, scratch work, or raw tool output. If a tool fails, use a supported alternative or state the exact limitation; never claim the tool succeeded.\n" +
+                "5. Choose the simplest implementation that satisfies the request. For a canvas iteration, modify the supplied current source and preserve every unaffected part.\n" +
+                "6. Before finalizing, check: each requested change is materially present, syntax closes, required controls/functions exist, values that needed tools were verified, and output-format rules are followed.\n" +
+                $"7. Output {outputKind} only. No plan, no change log, and no claim that a change was made unless the returned deliverable actually contains it.\n" +
+                "If a detail is underspecified, choose the simplest reasonable default and keep the implementation coherent.";
+        }
+
+        private static string BuildBuilderImplementationCapsule(CouncilRunContext runContext)
+        {
+            var decomp = runContext.Decomposition ?? new PreFlightDecomposition
+            {
+                ProblemStatement = runContext.UserPrompt
+            };
+
+            var capsule = new StringBuilder();
+            capsule.AppendLine("Purpose: " + (string.IsNullOrWhiteSpace(decomp.ProblemStatement) ? runContext.UserPrompt : decomp.ProblemStatement.Trim()));
+            capsule.AppendLine("Output target: " + (runContext.IsArtifactCanvasRequest ? "Project Canvas renderable artifact" : "Working code/script"));
+            capsule.AppendLine("Task type: " + runContext.TaskType);
+
+            if (runContext.IsArtifactCanvasRequest && !string.IsNullOrWhiteSpace(runContext.PreferredArtifactFormatHint))
+                capsule.AppendLine("Artifact format: " + runContext.PreferredArtifactFormatHint.Trim());
+
+            if (decomp.Requirements.Count > 0)
+            {
+                capsule.AppendLine("Required behavior:");
+                for (int i = 0; i < Math.Min(decomp.Requirements.Count, 8); i++)
+                    capsule.AppendLine($"- {decomp.Requirements[i]}");
+            }
+
+            if (decomp.Constraints.Count > 0)
+            {
+                capsule.AppendLine("Constraints:");
+                for (int i = 0; i < Math.Min(decomp.Constraints.Count, 8); i++)
+                    capsule.AppendLine($"- {decomp.Constraints[i]}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(runContext.ArchitectOutput))
+            {
+                capsule.AppendLine("Architect steps to implement:");
+                foreach (string step in ExtractArchitectStepLines(runContext.ArchitectOutput).Take(8))
+                    capsule.AppendLine("- " + step);
+            }
+
+            capsule.AppendLine("Final self-check before output:");
+            capsule.AppendLine("- Every required behavior above is represented in the code/artifact.");
+            capsule.AppendLine("- No placeholder TODOs, no missing event handlers, no broken closing tags/braces.");
+            capsule.AppendLine("- Output is one complete file/artifact, not a fragment.");
+
+            return BuildLabeledBlock("BUILDER IMPLEMENTATION CAPSULE", capsule.ToString().Trim());
+        }
+
+        private static IEnumerable<string> ExtractArchitectStepLines(string architectOutput)
+        {
+            if (string.IsNullOrWhiteSpace(architectOutput))
+                yield break;
+
+            foreach (string line in architectOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                string trimmed = line.Trim();
+                if (ArchitectNumberedStepRegex.IsMatch(trimmed))
+                    yield return ArchitectNumberedStepRegex.Replace(trimmed, string.Empty).Trim();
+            }
         }
 
         /// <summary>
@@ -3810,14 +4211,14 @@ namespace Malx_AI
                     "\n[VISUAL ARTIFACT TASK] This response is a renderable artifact — not a prose explanation and not a research document. " +
                     "ANTI-DRIFT: You are the BUILDER — do NOT output a numbered plan or step list before the artifact. " +
                     "Code fences ARE required and mandatory. " +
-                    "Your ENTIRE response must be the artifact wrapped in exactly one ```html, ```svg, or ```python code fence. " +
+                    "Your ENTIRE response must be the artifact wrapped in exactly one correctly tagged code fence such as ```html, ```svg, ```python, ```javascript, or ```markdown. " +
                     "Do NOT output any text, explanation, or commentary before the opening fence or after the closing fence. " +
                     $"SIZING: The canvas viewport is currently {viewportWidth}px wide and user-resizable — use width:100% and box-sizing:border-box throughout; " +
                     "SVG root must have viewBox and width='100%'; HTML5 Canvas must size from container clientWidth. " +
                     "THEME: the host pane is dark (#171615) — always set an explicit background-color and text color on body; never rely on browser defaults.",
                 CouncilRole.Critic =>
                     "\n[VISUAL ARTIFACT TASK] The Builder output must be a renderable artifact — not prose text. " +
-                    "Expect and require a single code-fenced deliverable (```html, ```svg, or ```python). " +
+                    "Expect and require a single correctly tagged code-fenced deliverable (including HTML, SVG, Python, JavaScript, or Markdown). " +
                     "Do NOT penalize code output or suggest prose alternatives. " +
                     "Flag: missing or multiple code fences, external CDN library imports, incomplete implementation, text outside the code fence, " +
                     "or illegible styling (no explicit body background/text color, base font under 12px, fixed widths wider than the canvas pane).",
@@ -3840,13 +4241,17 @@ namespace Malx_AI
             string hint = runContext.PreferredArtifactFormatHint ?? string.Empty;
 
             // Infer a human-readable artifact type label from the format hint
-            string artifactLabel = hint.Contains("SVG", StringComparison.OrdinalIgnoreCase) ? "SVG diagram / vector graphic"
+            string artifactLabel = runContext.ExistingCanvasArtifactKind == ArtifactKind.Document ? "Markdown document"
+                : runContext.ExistingCanvasArtifactKind == ArtifactKind.InteractiveJavaScript ? "interactive JavaScript artifact"
+                : hint.Contains("SVG", StringComparison.OrdinalIgnoreCase) ? "SVG diagram / vector graphic"
                 : hint.Contains("Python", StringComparison.OrdinalIgnoreCase) ? "Python chart (sandbox capture)"
                 : hint.Contains("<table>", StringComparison.OrdinalIgnoreCase) || hint.Contains("table", StringComparison.OrdinalIgnoreCase) ? "HTML data table / structured document"
                 : hint.Contains("input field", StringComparison.OrdinalIgnoreCase) || hint.Contains("calculator", StringComparison.OrdinalIgnoreCase) ? "interactive HTML tool / calculator"
                 : "self-contained HTML artifact";
 
-            string fence = hint.Contains("SVG", StringComparison.OrdinalIgnoreCase) ? "```svg"
+            string fence = runContext.ExistingCanvasArtifactKind == ArtifactKind.Document ? "```markdown"
+                : runContext.ExistingCanvasArtifactKind == ArtifactKind.InteractiveJavaScript ? "```javascript"
+                : hint.Contains("SVG", StringComparison.OrdinalIgnoreCase) ? "```svg"
                 : hint.Contains("Python", StringComparison.OrdinalIgnoreCase) ? "```python"
                 : "```html";
 
@@ -4225,26 +4630,86 @@ namespace Malx_AI
         }
 
         private static bool IsLikelyCodeOutput(string output)
+            => DetectCodeOutput(output).IsCode;
+
+        private readonly record struct CodeOutputDetection(bool IsCode, string Language, int ConfidenceScore, bool HasTypedFence);
+
+        private static CodeOutputDetection DetectCodeOutput(string output)
         {
             if (string.IsNullOrWhiteSpace(output))
-                return false;
+                return new CodeOutputDetection(false, "markdown", 0, false);
 
             string trimmed = output.Trim();
-            int codeSignals = 0;
-            if (trimmed.Contains("```")) codeSignals += 3;
-            if (trimmed.Contains("{") && trimmed.Contains("}")) codeSignals += 2;
-            if (trimmed.Contains(";") && trimmed.Contains("(")) codeSignals += 2;
-            if (trimmed.Contains("def ", StringComparison.OrdinalIgnoreCase)) codeSignals += 2;
-            if (trimmed.Contains("public ", StringComparison.OrdinalIgnoreCase)) codeSignals += 2;
-            if (trimmed.Contains("function ", StringComparison.OrdinalIgnoreCase)) codeSignals += 2;
-            if (trimmed.Contains("import ", StringComparison.OrdinalIgnoreCase)) codeSignals += 1;
-            if (trimmed.Contains("return ", StringComparison.OrdinalIgnoreCase)) codeSignals += 1;
-            if (trimmed.Contains("<html", StringComparison.OrdinalIgnoreCase)) codeSignals += 3;
-            if (trimmed.Contains("<svg", StringComparison.OrdinalIgnoreCase)) codeSignals += 3;
-            if (trimmed.Contains("<!doctype", StringComparison.OrdinalIgnoreCase)) codeSignals += 3;
-            if (trimmed.Contains("<div", StringComparison.OrdinalIgnoreCase) && trimmed.Contains("</div>", StringComparison.OrdinalIgnoreCase)) codeSignals += 2;
+            string candidate = trimmed;
+            string? fencedLanguage = null;
+            Match typedFence = BuilderTypedCodeFenceRegex.Match(trimmed);
+            if (typedFence.Success)
+            {
+                fencedLanguage = typedFence.Groups["language"].Value.Trim().ToLowerInvariant();
+                candidate = typedFence.Groups["code"].Value.Trim();
+            }
 
-            return codeSignals >= 4;
+            string language = NormalizeCodeLanguage(fencedLanguage) ?? DetectLanguage(candidate);
+            bool knownCodeFence = fencedLanguage is
+                "c" or "cpp" or "c++" or "csharp" or "cs" or "java" or "kotlin" or
+                "python" or "py" or "javascript" or "js" or "typescript" or "ts" or
+                "html" or "css" or "scss" or "sql" or "bash" or "sh" or "powershell" or "ps1" or
+                "rust" or "go" or "ruby" or "php" or "swift" or "dart" or "lua" or "r" or
+                "json" or "xml" or "yaml" or "yml" or "toml" or "dockerfile";
+
+            int score = knownCodeFence ? 6 : 0;
+            ArtifactKind artifactKind = ArtifactRenderService.DetectForCanvas(trimmed, null).Kind;
+            if (artifactKind is ArtifactKind.Html or ArtifactKind.Svg or ArtifactKind.Chart or ArtifactKind.InteractiveJavaScript)
+                score = Math.Max(score, 7);
+
+            if (Regex.IsMatch(candidate, @"(?m)^\s*(?:def|class)\s+[A-Za-z_]\w*|^\s*(?:from\s+\S+\s+import|import\s+\S+)", RegexOptions.IgnoreCase)) score += 3;
+            if (Regex.IsMatch(candidate, @"(?m)^\s*(?:public|private|protected|internal|static)\s+(?:class|struct|interface|enum|void|[A-Za-z_]\w*[<\[]?)", RegexOptions.IgnoreCase)) score += 3;
+            if (Regex.IsMatch(candidate, @"\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=|\bfunction\s+[A-Za-z_$][\w$]*\s*\(|=>", RegexOptions.IgnoreCase)) score += 3;
+            if (candidate.Contains("{", StringComparison.Ordinal) && candidate.Contains("}", StringComparison.Ordinal)) score += 1;
+            if (candidate.Contains(";", StringComparison.Ordinal) && candidate.Contains("(", StringComparison.Ordinal)) score += 1;
+            if (Regex.IsMatch(candidate, @"(?is)^\s*(?:select\s+.+\s+from\s+|insert\s+into\s+|update\s+\S+\s+set\s+|create\s+(?:table|view|index)\s+)", RegexOptions.IgnoreCase)) score += 5;
+            if (Regex.IsMatch(candidate, @"(?m)^\s*(?:#!\s*/|param\s*\(|function\s+\w+[\s\{]|\$[A-Za-z_]\w*\s*=)", RegexOptions.IgnoreCase)) score += 3;
+            if (Regex.IsMatch(candidate, "(?m)^\\s*(?:#include\\s*[<\"]|package\\s+\\w+|fn\\s+\\w+\\s*\\(|func\\s+\\w+\\s*\\()", RegexOptions.IgnoreCase)) score += 4;
+            if (Regex.IsMatch(candidate, "(?m)^\\s*(?:[.#]?[A-Za-z][\\w\\s>+~:#.\\[\\]=\"'-]*)\\s*\\{\\s*$") && candidate.Contains(':')) score += 3;
+            if (Regex.IsMatch(candidate, @"(?is)^\s*<\?xml\b|^\s*<[A-Za-z][^>]*>[\s\S]*</[A-Za-z][^>]*>\s*$")) score += 4;
+
+            if ((candidate.StartsWith('{') && candidate.EndsWith('}'))
+                || (candidate.StartsWith('[') && candidate.EndsWith(']')))
+            {
+                try
+                {
+                    using JsonDocument _ = JsonDocument.Parse(candidate);
+                    score += 5;
+                    language = "json";
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            int codeLikeLines = candidate.Split('\n').Count(line =>
+                Regex.IsMatch(line, @"^\s*(?:[A-Za-z_$][\w$]*\s*=|(?:if|for|while|switch|try|catch)\s*[\(]|return\b|}\s*;?)", RegexOptions.IgnoreCase));
+            if (codeLikeLines >= 2) score += 2;
+
+            return new CodeOutputDetection(score >= 4, language, score, typedFence.Success);
+        }
+
+        private static string? NormalizeCodeLanguage(string? language)
+        {
+            return language?.Trim().ToLowerInvariant() switch
+            {
+                "cs" or "csharp" => "c#",
+                "py" or "python" => "python",
+                "js" or "javascript" => "javascript",
+                "ts" or "typescript" => "typescript",
+                "cpp" or "c++" => "cpp",
+                "sh" or "bash" => "bash",
+                "ps1" or "powershell" => "powershell",
+                "yml" or "yaml" => "yaml",
+                "md" or "markdown" or "text" or "txt" => null,
+                { Length: > 0 } value => value,
+                _ => null
+            };
         }
 
         private static string GetRoleCompletionMarker(CouncilRole role)
@@ -5155,28 +5620,7 @@ namespace Malx_AI
         }
 
         private static bool HasStrongCodeSignal(string output)
-        {
-            if (string.IsNullOrWhiteSpace(output))
-                return false;
-
-            string lower = output.ToLowerInvariant();
-            int weight = 0;
-            if (lower.Contains("def ")) weight += 2;
-            if (lower.Contains("class ")) weight += 2;
-            if (lower.Contains("public ") || lower.Contains("private ")) weight += 2;
-            if (lower.Contains("function ")) weight += 2;
-            if (lower.Contains("return ")) weight += 1;
-            if (lower.Contains("import ") || lower.Contains("using ")) weight += 1;
-            if (lower.Contains("{") && lower.Contains("}")) weight += 2;
-            if (lower.Contains(";") && lower.Contains("(")) weight += 2;
-            if (lower.Contains("<!doctype") || lower.Contains("<html")) weight += 3;
-            if (lower.Contains("<head") && lower.Contains("<body")) weight += 2;
-            if (lower.Contains("<svg")) weight += 3;
-            if (lower.Contains("<canvas")) weight += 2;
-            if (lower.Contains("<script")) weight += 2;
-            if (lower.Contains("<input") || lower.Contains("<button")) weight += 1;
-            return weight >= 3;
-        }
+            => DetectCodeOutput(output).IsCode;
 
         private static bool LooksLikeBuilderProsePrelude(string output)
         {
@@ -5215,6 +5659,88 @@ namespace Malx_AI
             }
 
             return false;
+        }
+
+        private static bool HasProjectCanvasManualTrigger(string userQuery, string objective)
+            => ProjectCanvasManualTriggerRegex.IsMatch(userQuery ?? string.Empty)
+                || ProjectCanvasManualTriggerRegex.IsMatch(objective ?? string.Empty);
+
+        private static bool DetectArtifactCanvasFollowUpIntent(string userQuery, CouncilRunContext? lastRunContext, string? currentCanvas)
+        {
+            string query = (userQuery ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(query))
+                return false;
+
+            bool priorCanvasOutput = lastRunContext?.IsArtifactCanvasRequest == true
+                || lastRunContext?.TaskType == CouncilTaskType.Coding;
+            bool currentCanvasHasContent = CanvasHasRealContent(currentCanvas);
+            bool currentCanvasHasRenderableArtifact = ArtifactRenderService
+                .DetectForCanvas(currentCanvas ?? string.Empty, null)
+                .SupportsPreview;
+            if (!currentCanvasHasContent || (!priorCanvasOutput && !currentCanvasHasRenderableArtifact))
+                return false;
+
+            string lower = query.ToLowerInvariant();
+            string[] editSignals =
+            [
+                "add", "remove", "delete", "change", "update", "modify", "edit",
+                "fix", "improve", "refine", "iterate", "revise", "redo", "remake",
+                "make it", "make this", "make the", "turn it", "turn this",
+                "resize", "restyle", "style", "color", "colour", "animate",
+                "align", "move", "replace", "keep", "preserve", "continue",
+                "build on", "build further", "extend", "expand"
+            ];
+            string[] artifactReferences =
+            [
+                "it", "this", "that", "artifact", "canvas", "project canvas",
+                "screen", "page", "layout", "ui", "interface", "form", "button",
+                "input", "card", "panel", "section", "header", "footer", "design",
+                "preview", "render", "component", "background", "text", "title", "font",
+                "spacing", "size", "width", "height", "code", "script", "document", "table",
+                "chart", "graph", "diagram", "svg", "html", "markdown"
+            ];
+            string[] proseAnswerSignals =
+            [
+                "explain", "why", "what is", "what are", "describe", "summarize",
+                "summarise", "tell me about", "review", "critique"
+            ];
+
+            bool hasEditSignal = editSignals.Any(signal => Regex.IsMatch(
+                lower,
+                $@"(?<![a-z0-9_]){Regex.Escape(signal)}(?![a-z0-9_])",
+                RegexOptions.IgnoreCase));
+            bool referencesArtifact = artifactReferences.Any(signal => Regex.IsMatch(
+                lower,
+                $@"(?<![a-z0-9_]){Regex.Escape(signal)}(?![a-z0-9_])",
+                RegexOptions.IgnoreCase));
+            bool asksForProseOnly = proseAnswerSignals.Any(signal => lower.StartsWith(signal, StringComparison.Ordinal))
+                && !hasEditSignal;
+
+            // A short imperative such as "change the background to blue" normally omits the word
+            // "artifact". Once a real canvas output exists, the edit verb itself is sufficient;
+            // longer prompts still need an explicit canvas/content reference to avoid hijacking an
+            // unrelated new request after a canvas run.
+            bool conciseEditDirective = query.Length <= 240 && hasEditSignal;
+            return (conciseEditDirective || (hasEditSignal && referencesArtifact)) && !asksForProseOnly;
+        }
+
+        private static bool CanvasHasRealContent(string? content)
+        {
+            string trimmed = (content ?? string.Empty).Trim();
+            return trimmed.Length > 0
+                && !trimmed.StartsWith("// Builder output appears here", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool CanvasSourcesEquivalent(string? existingCanvas, string? candidateOutput)
+        {
+            static string Normalize(string value) => value
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n')
+                .Trim();
+
+            string existing = Normalize(existingCanvas ?? string.Empty);
+            string candidate = Normalize(StripChatFromCode(candidateOutput ?? string.Empty));
+            return string.Equals(existing, candidate, StringComparison.Ordinal);
         }
 
         private static bool LooksLikeCompletionMarkerOnlyText(string text)
@@ -6018,7 +6544,7 @@ namespace Malx_AI
             RefineButton.Visibility = Visibility.Collapsed;
 
             string userQuery = QueryInput.Text.Trim();
-            QueryInput.Clear();
+            QueryInput.Text = string.Empty;
             Guid? refinementParentId = null;
             bool refinementPass = false;
             string previousFinalForDiff = _lastFinalOutput;
@@ -6032,6 +6558,7 @@ namespace Malx_AI
             }
             AppendChat("user", userQuery);
             _chatHistory.Add(("user", userQuery));
+            UpdateWorkplaceTokenUsageIndicator();
 
             // On a single GPU the Normal-Chat model and the council role models compete for the
             // same VRAM/RAM. Loading role models on top of a still-resident chat model is the
@@ -6079,14 +6606,35 @@ namespace Malx_AI
                 ? userQuery
                 : userQuery + "\n\n" + calculatorContext;
 
+            bool directArtifactCanvasRequest = DetectArtifactCanvasIntent(userQuery, objective);
+            bool projectCanvasFollowUp = DetectArtifactCanvasFollowUpIntent(userQuery, _lastRunContext, ProjectCanvasEditor?.Text);
+            ArtifactRenderInfo existingCanvasArtifact = ArtifactRenderService
+                .DetectForCanvas(ProjectCanvasEditor?.Text ?? string.Empty, _lastSandboxOutput);
+            bool existingCanvasIsRenderable = existingCanvasArtifact.SupportsPreview;
+            bool continuesRenderableArtifact = _lastRunContext?.IsArtifactCanvasRequest == true || existingCanvasIsRenderable;
+            bool isArtifactCanvasRequest = directArtifactCanvasRequest
+                || (projectCanvasFollowUp && continuesRenderableArtifact);
             CouncilTaskType taskType = isDocumentTask
                 ? CouncilTaskType.Document
-                : DetectTaskType(userQuery, objective);
-            bool isArtifactCanvasRequest = DetectArtifactCanvasIntent(userQuery, objective);
+                : projectCanvasFollowUp && !isArtifactCanvasRequest
+                    ? CouncilTaskType.Coding
+                    : DetectTaskType(userQuery, objective, isArtifactCanvasRequest);
             var (canvasViewportWidth, canvasViewportHeight) = GetCanvasArtifactViewportSize();
             string preferredArtifactFormatHint = isArtifactCanvasRequest
                 ? GetPreferredArtifactFormatHint(userQuery, objective, canvasViewportWidth)
                 : string.Empty;
+            if (projectCanvasFollowUp
+                && existingCanvasIsRenderable
+                && !RequestsExplicitArtifactFormatChange(userQuery))
+            {
+                preferredArtifactFormatHint = GetCanvasIterationFormatHint(existingCanvasArtifact.Kind, canvasViewportWidth);
+            }
+            if (projectCanvasFollowUp
+                && !directArtifactCanvasRequest
+                && !string.IsNullOrWhiteSpace(_lastRunContext?.PreferredArtifactFormatHint))
+            {
+                preferredArtifactFormatHint += " Maintain this artifact format unless the user's new instruction explicitly changes it.";
+            }
             string webGroundingPrompt = string.IsNullOrWhiteSpace(objective)
                 ? userQuery
                 : $"{userQuery}\n{objective}";
@@ -6103,7 +6651,11 @@ namespace Malx_AI
                 TaskType = taskType,
                 IsDocumentTask = isDocumentTask,
                 IsArtifactCanvasRequest = isArtifactCanvasRequest,
+                IsProjectCanvasIteration = projectCanvasFollowUp,
+                ExistingCanvasArtifactKind = existingCanvasArtifact.Kind,
                 PreferredArtifactFormatHint = preferredArtifactFormatHint,
+                PreviousArtifactRequest = _lastRunContext?.IsArtifactCanvasRequest == true ? _lastRunContext.UserPrompt : string.Empty,
+                PreviousArtifactFormatHint = _lastRunContext?.IsArtifactCanvasRequest == true ? _lastRunContext.PreferredArtifactFormatHint : string.Empty,
                 CanvasViewportWidth = canvasViewportWidth,
                 CanvasViewportHeight = canvasViewportHeight,
                 WebGroundingRequired = webGroundingRequired,
@@ -6115,25 +6667,28 @@ namespace Malx_AI
             // Artifact iteration: when this is a canvas request and the canvas already holds a real
             // artifact (not the placeholder), capture it so the Builder edits the existing artifact
             // instead of regenerating from scratch. Runs on the UI thread here, so the read is direct.
-            if (isArtifactCanvasRequest)
+            if (projectCanvasFollowUp)
             {
                 string currentCanvas = ProjectCanvasEditor?.Text ?? string.Empty;
                 string trimmedCanvas = currentCanvas.Trim();
-                bool canvasHasRealArtifact = trimmedCanvas.Length > 40
-                    && !trimmedCanvas.StartsWith("// Builder output appears here", StringComparison.OrdinalIgnoreCase);
+                bool canvasHasRealArtifact = CanvasHasRealContent(trimmedCanvas);
                 if (canvasHasRealArtifact)
                 {
-                    // Cloud council models have ~131k-token windows, so they can iterate on much
-                    // larger artifacts than small local models. Capping cloud runs at 6k chars made
-                    // the Builder "complete updated artifact" silently drop everything past the cap.
-                    int artifactIterationCap = CanUseCloudCouncil ? 24000 : 6000;
+                    int builderContext = (int)GetRoleContextSize(CouncilRole.Builder);
+                    // A replacement needs room for both the original source and the generated
+                    // replacement. Scale the source allowance to the actual role context instead of
+                    // using the old fixed 6k cap that dropped ordinary HTML artifacts mid-file.
+                    int artifactIterationCap = CanUseCloudCouncil
+                        ? 120000
+                        : Math.Clamp((builderContext - 3500) * 2, 6000, 40000);
                     runContext.CurrentArtifactForIteration = currentCanvas.Length > artifactIterationCap
                         ? currentCanvas[..artifactIterationCap]
                         : currentCanvas;
+                    runContext.CurrentArtifactForIterationWasTruncated = currentCanvas.Length > artifactIterationCap;
                     if (currentCanvas.Length > artifactIterationCap)
-                        LogActivity($"Artifact iteration: canvas artifact ({currentCanvas.Length} chars) exceeds the {artifactIterationCap}-char iteration window; tail truncated for the Builder payload.");
+                        LogActivity($"Canvas iteration: source ({currentCanvas.Length} chars) exceeds the safe {artifactIterationCap}-char local context allowance; mutation verification will prevent a partial replacement from overwriting it.");
                     else
-                        LogActivity($"Artifact iteration: current canvas artifact ({trimmedCanvas.Length} chars) attached for Builder editing.");
+                        LogActivity($"Canvas iteration: current source ({trimmedCanvas.Length} chars) attached for Builder editing.");
                 }
             }
 
@@ -6296,6 +6851,7 @@ namespace Malx_AI
                     LogActivity($"Document synthesis task detected — deterministic content plan ({runContext.ArchitectStepCount} steps). Architect model bypassed.");
                     AppendChat("architect", architectOutput);
                     _chatHistory.Add(("architect", architectOutput));
+                    UpdateWorkplaceTokenUsageIndicator();
                     UpdateStageIndicator(null, true, false, false);
                 }
                 else if (HasEffectiveLocalRoleModel(CouncilRole.Architect) || CanUseCloudCouncil)
@@ -6489,6 +7045,7 @@ namespace Malx_AI
                     LogActivity($"Architect responded ({architectOutput.Length} chars, {runContext.ArchitectStepCount} steps). Displaying output.");
                     AppendChat("architect", architectOutput);
                     _chatHistory.Add(("architect", architectOutput));
+                    UpdateWorkplaceTokenUsageIndicator();
                     UpdateStageIndicator(null, true, false, false);
                 }
 
@@ -6525,6 +7082,7 @@ namespace Malx_AI
                             : GetTaskTypeBoost(taskType, CouncilRole.Builder))
                         + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
                         + (runContext.IsArtifactCanvasRequest && smallLocalBuilderModel ? BuildSmallModelArtifactAssist(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(taskType, runContext) : "")
                         + GetTokenBudgetHint(runContext)
                         + (isCalcTask ? GetCalculationBoost(CouncilRole.Builder, taskType) : "")
                         + ((runContext.PythonSandboxEligible && (taskType == CouncilTaskType.Coding || isCalcTask))
@@ -6548,6 +7106,7 @@ namespace Malx_AI
 
                     bool useSegmented = taskType == CouncilTaskType.Coding
                         && !runContext.IsArtifactCanvasRequest   // a canvas artifact is ONE self-contained file — segmenting it emits partial code chunks that never render
+                        && !runContext.IsProjectCanvasIteration // an edit must return one coherent replacement of the existing canvas source
                         && (runContext.Complexity == TaskComplexity.Complex || (runContext.Complexity != TaskComplexity.Simple && runContext.ArchitectStepCount > 4))
                         && !string.IsNullOrWhiteSpace(runContext.ArchitectOutput);
 
@@ -6584,12 +7143,24 @@ namespace Malx_AI
                         // processes the architect plan or user prompt.
                         if (runContext.IsArtifactCanvasRequest)
                             builderPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
+                        if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
+                            builderPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
 
-                        // Artifact iteration: give the Builder the current artifact to edit in place.
+                        // Keep the small prior-request summary near the head. The full current source
+                        // is appended near the closing anchor so local tail-preserving context trimming
+                        // does not discard it while retaining lower-priority pipeline framing.
                         if (!string.IsNullOrWhiteSpace(runContext.CurrentArtifactForIteration))
                         {
-                            builderPayload.AppendLine(BuildLabeledBlock("CURRENT ARTIFACT — MODIFY THIS", runContext.CurrentArtifactForIteration));
-                            builderPayload.AppendLine("The user is refining the existing artifact above. Start from it and apply only the requested change. Output the COMPLETE updated artifact (not a diff, not a fragment), preserving everything the user did not ask to change.");
+                            if (!string.IsNullOrWhiteSpace(runContext.PreviousArtifactRequest)
+                                || !string.IsNullOrWhiteSpace(runContext.PreviousArtifactFormatHint))
+                            {
+                                var priorArtifactContext = new StringBuilder();
+                                if (!string.IsNullOrWhiteSpace(runContext.PreviousArtifactRequest))
+                                    priorArtifactContext.AppendLine("Original artifact request: " + runContext.PreviousArtifactRequest.Trim());
+                                if (!string.IsNullOrWhiteSpace(runContext.PreviousArtifactFormatHint))
+                                    priorArtifactContext.AppendLine("Prior artifact format guidance: " + runContext.PreviousArtifactFormatHint.Trim());
+                                builderPayload.AppendLine(BuildLabeledBlock("PRIOR ARTIFACT CONTEXT", priorArtifactContext.ToString().Trim()));
+                            }
                         }
 
                         builderPayload.AppendLine(pipelineStateHeader);
@@ -6613,6 +7184,15 @@ namespace Malx_AI
                             builderPayload.AppendLine(BuildLabeledBlock("PROJECT KNOWLEDGE BASE", knowledgePacket));
                         }
 
+                        if (!string.IsNullOrWhiteSpace(runContext.CurrentArtifactForIteration))
+                        {
+                            builderPayload.AppendLine(BuildLabeledBlock("CURRENT PROJECT CANVAS SOURCE — MODIFY THIS", runContext.CurrentArtifactForIteration));
+                            builderPayload.AppendLine(BuildLabeledBlock("REQUESTED CANVAS CHANGE", runContext.UserPrompt));
+                            builderPayload.AppendLine(runContext.CurrentArtifactForIterationWasTruncated
+                                ? "The source block is truncated because the complete canvas exceeds this local model's safe context. Do not return a partial replacement or claim success. Preserve the artifact type and make the requested change only if you can return a complete coherent replacement."
+                                : "Modify the current source above and output the COMPLETE updated source (not a diff or fragment). Preserve its language, artifact type, behavior, and every part the user did not ask to change. The final source must materially differ from the current source in the requested way.");
+                        }
+
                         builderPayload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: _isWebSearchEnabled && !_isCloudModeEnabled));
 
                         var builderResult = await ExecuteCouncilRoleAsync(
@@ -6630,9 +7210,11 @@ namespace Malx_AI
                     string builderContractCleaned = "";
                     // Artifact canvas requests produce HTML/SVG code — exempt them from the role-drift
                     // and IsLikelyCodeOutput checks that exist to catch code leaking into prose tasks.
-                    bool builderContractOk = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out bool builderMarkerFound)
-                        && (runContext.IsArtifactCanvasRequest || !BuilderHasRoleDrift(builderContractCleaned, taskType))
-                        && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest || !IsLikelyCodeOutput(builderContractCleaned))
+                    bool builderNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out bool builderMarkerFound);
+                    bool builderOutputDetectedAsCode = builderNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
+                    bool builderContractOk = builderNormalized
+                        && (runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !BuilderHasRoleDrift(builderContractCleaned, taskType))
+                        && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !IsLikelyCodeOutput(builderContractCleaned))
                         && !IsDegenerateBuilderOutput(builderContractCleaned, taskType)
                         && !IsRepetitionLoop(builderContractCleaned, previousBuilderOutput);
 
@@ -6651,6 +7233,8 @@ namespace Malx_AI
                         if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
                             correctionPayload.AppendLine(builderPriorKnowledge);
                         AppendCouncilWebContext(correctionPayload, runContext);
+                        if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
+                            correctionPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
                         if (runContext.IsArtifactCanvasRequest)
                         {
                             correctionPayload.AppendLine("ROLE CORRECTION: Builder must output the renderable artifact as exactly ONE ```html, ```svg, or ```python code fence with NOTHING outside the fence. " +
@@ -6689,9 +7273,11 @@ namespace Malx_AI
                         builderOutput = builderRetry.Answer;
                         builderReasoningFallback = builderRetry.IsReasoningFallback;
 
-                        if (!TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound)
-                            || (!runContext.IsArtifactCanvasRequest && BuilderHasRoleDrift(builderContractCleaned, taskType))
-                            || (taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest && IsLikelyCodeOutput(builderContractCleaned))
+                        bool retryNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound);
+                        builderOutputDetectedAsCode = retryNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
+                        if (!retryNormalized
+                            || (!runContext.IsArtifactCanvasRequest && !builderOutputDetectedAsCode && BuilderHasRoleDrift(builderContractCleaned, taskType))
+                            || (taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest && !builderOutputDetectedAsCode && IsLikelyCodeOutput(builderContractCleaned))
                             || IsDegenerateBuilderOutput(builderContractCleaned, taskType))
                         {
                             if (isCalcTask && TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound))
@@ -6775,6 +7361,7 @@ namespace Malx_AI
                         && !HasCouncilWebEvidenceForRun(runContext)
                         && taskType != CouncilTaskType.Coding
                         && !runContext.IsArtifactCanvasRequest
+                        && !DetectCodeOutput(builderOutput).IsCode
                         && !BuilderStatesWebEvidenceUnavailable(builderOutput))
                     {
                         LogActivity("Builder attempted a current/source-backed answer without usable web evidence; replacing with evidence-gap response.");
@@ -6799,6 +7386,89 @@ namespace Malx_AI
                             AppendChat("system", $"Artifact recovery applied for Project Canvas ({source}).");
                             builderOutput = recoveredArtifact;
                             builderReasoningFallback = false; // recovered into a real renderable artifact
+                        }
+                    }
+
+                    if (runContext.IsProjectCanvasIteration && CanvasHasRealContent(ProjectCanvasEditor?.Text))
+                    {
+                        string existingCanvasSource = ProjectCanvasEditor.Text;
+                        string candidateCanvasSource = StripChatFromCode(builderOutput ?? string.Empty);
+                        bool candidateUnchanged = CanvasSourcesEquivalent(existingCanvasSource, candidateCanvasSource);
+                        bool candidateRenderable = !runContext.IsArtifactCanvasRequest
+                            || ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview;
+                        bool candidateLooksPartial = runContext.CurrentArtifactForIterationWasTruncated
+                            && candidateCanvasSource.Length < existingCanvasSource.Length * 0.85;
+
+                        if ((candidateUnchanged || !candidateRenderable) && !runContext.CurrentArtifactForIterationWasTruncated)
+                        {
+                            LogActivity(candidateUnchanged
+                                ? "Canvas mutation verification found an unchanged Builder result; running one corrective Builder pass."
+                                : "Canvas mutation verification found a non-renderable replacement; running one corrective Builder pass.");
+                            AppendChat("system", "The Builder did not produce a verifiable canvas change. Running one focused correction pass...");
+
+                            var mutationRetryPayload = new StringBuilder();
+                            if (runContext.IsArtifactCanvasRequest)
+                                mutationRetryPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
+                            if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
+                                mutationRetryPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
+                            mutationRetryPayload.AppendLine(BuildLabeledBlock("CURRENT PROJECT CANVAS SOURCE — MODIFY THIS", existingCanvasSource));
+                            mutationRetryPayload.AppendLine(BuildLabeledBlock("REQUESTED CANVAS CHANGE", runContext.UserPrompt));
+                            mutationRetryPayload.AppendLine(BuildLabeledBlock("REJECTED BUILDER RESULT", builderOutput));
+                            mutationRetryPayload.AppendLine(candidateUnchanged
+                                ? "The rejected result is equivalent to the current canvas. Actually implement the requested change in the returned source."
+                                : "The rejected result cannot be rendered as the current artifact type. Return a complete valid replacement in the same format as the current canvas.");
+                            mutationRetryPayload.AppendLine("Return the complete updated source only. Preserve unaffected content. Do not describe the change, output a diff, or claim success without changing the source.");
+                            mutationRetryPayload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: false));
+
+                            var mutationRetry = await ExecuteCouncilRoleAsync(
+                                CouncilRole.Builder,
+                                builderSystem,
+                                mutationRetryPayload.ToString(),
+                                token,
+                                runContext.IsDocumentTask ? 0.2f : null,
+                                baseStateVault,
+                                true);
+
+                            string retryCandidate = mutationRetry.Answer;
+                            if (TryNormalizeBuilderOutput(retryCandidate, taskType, out string normalizedRetryCandidate, out _))
+                                retryCandidate = normalizedRetryCandidate;
+                            retryCandidate = PostProcessBuilderOutput(retryCandidate, runContext);
+
+                            if (runContext.IsArtifactCanvasRequest
+                                && !ArtifactRenderService.DetectForCanvas(retryCandidate, null).SupportsPreview)
+                            {
+                                string recoveredRetry = TryBuildDeterministicArtifactRecovery(runContext, retryCandidate);
+                                if (!string.IsNullOrWhiteSpace(recoveredRetry))
+                                    retryCandidate = recoveredRetry;
+                            }
+
+                            bool retryChanged = !CanvasSourcesEquivalent(existingCanvasSource, retryCandidate);
+                            bool retryRenderable = !runContext.IsArtifactCanvasRequest
+                                || ArtifactRenderService.DetectForCanvas(retryCandidate, null).SupportsPreview;
+                            if (retryChanged && retryRenderable)
+                            {
+                                builderOutput = retryCandidate;
+                                builderReasoningFallback = mutationRetry.IsReasoningFallback;
+                                candidateCanvasSource = StripChatFromCode(builderOutput);
+                                candidateUnchanged = false;
+                                candidateRenderable = true;
+                                candidateLooksPartial = false;
+                                LogActivity("Canvas mutation correction produced a changed, valid replacement.");
+                            }
+                        }
+
+                        if (candidateUnchanged || !candidateRenderable || candidateLooksPartial)
+                        {
+                            runContext.CanvasMutationFailed = true;
+                            builderOutput = existingCanvasSource;
+                            builderReasoningFallback = false;
+                            string reason = candidateLooksPartial
+                                ? "the current canvas is too large for a safe complete replacement in this local model context"
+                                : candidateUnchanged
+                                    ? "the Builder returned source equivalent to the current canvas"
+                                    : "the Builder replacement was not valid for the current canvas artifact type";
+                            LogActivity($"Canvas mutation rejected: {reason}.");
+                            AppendChat("warning", $"Canvas change was not applied because {reason}. The existing Project Canvas was preserved.");
                         }
                     }
 
@@ -6842,7 +7512,7 @@ namespace Malx_AI
                         builderOutput = BuildDeterministicDocumentResponse(runContext.UserPrompt, runContext.DocumentContent, runContext.DocumentFileNames);
                     }
 
-                    if (taskType != CouncilTaskType.Coding)
+                    if (taskType != CouncilTaskType.Coding && !DetectCodeOutput(builderOutput).IsCode)
                     {
                         int targetWords = TryGetRequestedWordTarget(runContext.UserPrompt, runContext.Objective);
                         if (targetWords > 0)
@@ -6897,9 +7567,10 @@ namespace Malx_AI
                         }
                     }
 
+                    runContext.BuilderProducedCode = DetectCodeOutput(builderOutput).IsCode;
                     runContext.BuilderOutput = builderOutput;
                     contextState.BuilderOutput = builderOutput;
-                    if (taskType == CouncilTaskType.Coding)
+                    if (taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
                     {
                         WriteBuilderSessionMemory(builderOutput, activeRunIndex);
                     }
@@ -6919,7 +7590,12 @@ namespace Malx_AI
                     // Previously only CouncilTaskType.Coding routed to canvas, so artifact requests
                     // classified as General/Research/Analysis (e.g. "make a datasheet") were silently
                     // sent to chat instead. Now IsArtifactCanvasRequest also triggers the canvas path.
-                    if (ShouldSuppressReasoningFallbackFromCanvas(builderOutput, builderReasoningFallback))
+                    if (runContext.CanvasMutationFailed)
+                    {
+                        _chatHistory.Add(("builder", "[Canvas mutation rejected; existing Project Canvas preserved.]"));
+                        UpdateWorkplaceTokenUsageIndicator();
+                    }
+                    else if (ShouldSuppressReasoningFallbackFromCanvas(builderOutput, builderReasoningFallback))
                     {
                         // Reasoning-only fallback: do NOT dump chain-of-thought into the canvas. Keep it
                         // hidden as builder thinking and tell the user no artifact was produced.
@@ -6927,8 +7603,10 @@ namespace Malx_AI
                         LogActivity("Builder produced only reasoning (no renderable artifact). Suppressed from Project Canvas; retained as hidden thinking.");
                         AppendChat("builder", "Builder didn't produce a renderable artifact — only intermediate reasoning — so nothing was sent to the Project Canvas. Try rephrasing to explicitly request an HTML or SVG artifact.");
                         _chatHistory.Add(("builder", "[No renderable artifact produced — reasoning suppressed from canvas.]"));
+                        UpdateWorkplaceTokenUsageIndicator();
                     }
                     else if (taskType == CouncilTaskType.Coding
+                        || runContext.BuilderProducedCode
                         || (runContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
                     {
                         LogActivity($"Builder responded ({builderOutput.Length} chars). Routing to Project Canvas...");
@@ -6943,12 +7621,17 @@ namespace Malx_AI
                         }
 
                         bool isRenderable = _canvasArtifact.SupportsPreview;
-                        AppendChat("builder", runContext.IsArtifactCanvasRequest
+                        AppendChat("builder", runContext.IsProjectCanvasIteration
                             ? (isRenderable
-                                ? $"Builder generated a renderable {_canvasArtifact.DisplayTitle} and sent it to the canvas."
-                                : "Builder output was routed to Project Canvas — no renderable artifact was detected in the output. The canvas shows the raw text. Try asking for an explicit HTML or SVG artifact.")
-                            : "Builder output was sent to Project Canvas.");
+                                ? $"Builder applied a verified source change to the {_canvasArtifact.DisplayTitle}."
+                                : "Builder applied a verified source change to Project Canvas.")
+                            : runContext.IsArtifactCanvasRequest
+                                ? (isRenderable
+                                    ? $"Builder generated a renderable {_canvasArtifact.DisplayTitle} and sent it to the canvas."
+                                    : "Builder output was routed to Project Canvas — no renderable artifact was detected in the output. The canvas shows the raw text. Try asking for an explicit HTML or SVG artifact.")
+                                : "Builder output was sent to Project Canvas.");
                         _chatHistory.Add(("builder", builderOutput));
+                        UpdateWorkplaceTokenUsageIndicator();
                     }
                     else if (runContext.IsArtifactCanvasRequest)
                     {
@@ -6960,12 +7643,14 @@ namespace Malx_AI
                         AppendChat("builder", builderOutput);
                         AppendChat("system", "No renderable artifact was produced, so the Project Canvas was left unchanged. Try asking explicitly for an HTML or SVG artifact.");
                         _chatHistory.Add(("builder", builderOutput));
+                        UpdateWorkplaceTokenUsageIndicator();
                     }
                     else
                     {
                         LogActivity($"Builder responded ({builderOutput.Length} chars). Sending to chat (non-coding task).");
                         AppendChat("builder", builderOutput);
                         _chatHistory.Add(("builder", builderOutput));
+                        UpdateWorkplaceTokenUsageIndicator();
                     }
                     UpdateStageIndicator(null, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), true, false);
                 }
@@ -6978,7 +7663,8 @@ namespace Malx_AI
                 // ═══════════════════════════════════════════════════════════
                 // STATIC VALIDATION — deterministic checks before Critic
                 // ═══════════════════════════════════════════════════════════
-                if (taskType == CouncilTaskType.Coding && !string.IsNullOrWhiteSpace(builderOutput))
+                if ((taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
+                    && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     var staticFindings = RunStaticValidation(builderOutput);
                     runContext.StaticValidationFindings = staticFindings;
@@ -7312,6 +7998,7 @@ namespace Malx_AI
 
                     AppendChat("critic", criticOutput);
                     _chatHistory.Add(("critic", criticOutput));
+                    UpdateWorkplaceTokenUsageIndicator();
                     LogActivity($"Critic responded ({criticOutput.Length} chars). Audit complete.");
                     UpdateStageIndicator(null, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), !string.IsNullOrWhiteSpace(runContext.BuilderOutput), true);
 
@@ -7366,7 +8053,6 @@ namespace Malx_AI
                             builderRetryAttempts++;
 
                             // Targeted patch for minor issues
-                            _preRevisionBuilderOutput = runContext.BuilderOutput;
                             runContext.RevisionTriggered = true;
                             RevisionNoticeBlock.Visibility = Visibility.Visible;
                             LogActivity("Minor issues detected — running targeted patch (not full rewrite).");
@@ -7385,6 +8071,7 @@ namespace Malx_AI
                                     ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, runContext)
                                     : GetTaskTypeBoost(taskType, CouncilRole.Builder))
                                 + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                                + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(taskType, runContext) : "")
                                 + (isCalcTask ? GetCalculationBoost(CouncilRole.Builder, taskType) : "")
                                 + (taskType == CouncilTaskType.Coding
                                     ? "\n[TARGETED PATCH MODE] Fix ONLY the specific issues listed below. " +
@@ -7421,6 +8108,7 @@ namespace Malx_AI
                                 && !HasCouncilWebEvidenceForRun(runContext)
                                 && taskType != CouncilTaskType.Coding
                                 && !runContext.IsArtifactCanvasRequest
+                                && !DetectCodeOutput(patchedOutput).IsCode
                                 && !BuilderStatesWebEvidenceUnavailable(patchedOutput))
                             {
                                 patchedOutput = BuildWebEvidenceUnavailableBuilderFallback(runContext);
@@ -7429,7 +8117,7 @@ namespace Malx_AI
 
                             // Post-patch verification for coding tasks
                             bool patchEscalate = false;
-                            if (taskType == CouncilTaskType.Coding)
+                            if (taskType == CouncilTaskType.Coding || DetectCodeOutput(patchedOutput).IsCode)
                             {
                                 var postPatchFindings = RunStaticValidation(patchedOutput);
                                 if (postPatchFindings.Count > 0)
@@ -7466,7 +8154,8 @@ namespace Malx_AI
                                 builderOutput = patchedOutput;
                                 runContext.BuilderOutput = builderOutput;
                                 runContext.BuilderThinking = patchResult.ThinkingContent;
-                                if (taskType == CouncilTaskType.Coding)
+                                runContext.BuilderProducedCode = DetectCodeOutput(builderOutput).IsCode;
+                                if (taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
                                 {
                                     WriteBuilderSessionMemory(builderOutput, activeRunIndex);
                                 }
@@ -7476,16 +8165,18 @@ namespace Malx_AI
                                     LogActivity("Builder patch produced only reasoning (no renderable artifact). Suppressed from Project Canvas.");
                                     AppendChat("builder", "Builder patch didn't produce a renderable artifact — only reasoning — so the Project Canvas was left unchanged.");
                                     _chatHistory.Add(("builder-patch", "[No renderable artifact produced — reasoning suppressed from canvas.]"));
+                                    UpdateWorkplaceTokenUsageIndicator();
                                 }
                                 else if (taskType == CouncilTaskType.Coding
+                                    || runContext.BuilderProducedCode
                                     || (runContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
                                 {
                                     UpdateProjectCanvas(builderOutput);
                                     AppendChat("builder", runContext.IsArtifactCanvasRequest
                                         ? "Builder artifact patch sent to Project Canvas."
                                         : "Builder patch sent to Project Canvas.");
-                                    ShowDiffButton.Visibility = Visibility.Visible;
                                     _chatHistory.Add(("builder-patch", builderOutput));
+                                    UpdateWorkplaceTokenUsageIndicator();
                                 }
                                 else if (runContext.IsArtifactCanvasRequest)
                                 {
@@ -7493,12 +8184,13 @@ namespace Malx_AI
                                     AppendChat("builder", builderOutput);
                                     AppendChat("system", "Patch produced no renderable artifact — Project Canvas left unchanged.");
                                     _chatHistory.Add(("builder-patch", builderOutput));
+                                    UpdateWorkplaceTokenUsageIndicator();
                                 }
                                 else
                                 {
                                     AppendChat("builder", builderOutput);
-                                    ShowDiffButton.Visibility = Visibility.Visible;
                                     _chatHistory.Add(("builder-patch", builderOutput));
+                                    UpdateWorkplaceTokenUsageIndicator();
                                 }
                                 UpdateStageIndicator(null, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), true, true);
                             }
@@ -7519,8 +8211,6 @@ namespace Malx_AI
                         {
                             builderRetryAttempts++;
 
-                            _preRevisionBuilderOutput = runContext.BuilderOutput;
-
                             // Full rewrite for 3+ issues or escalated patch failure
                             runContext.RevisionTriggered = true;
                             RevisionNoticeBlock.Visibility = Visibility.Visible;
@@ -7539,6 +8229,7 @@ namespace Malx_AI
                                     ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, runContext)
                                     : GetTaskTypeBoost(taskType, CouncilRole.Builder))
                                 + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                                + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(taskType, runContext) : "")
                                 + GetTokenBudgetHint(runContext)
                                 + (isCalcTask ? GetCalculationBoost(CouncilRole.Builder, taskType) : "")
                                 + (taskType == CouncilTaskType.Coding
@@ -7598,6 +8289,7 @@ namespace Malx_AI
                                 && !HasCouncilWebEvidenceForRun(runContext)
                                 && taskType != CouncilTaskType.Coding
                                 && !runContext.IsArtifactCanvasRequest
+                                && !DetectCodeOutput(revisedBuilderOutput).IsCode
                                 && !BuilderStatesWebEvidenceUnavailable(revisedBuilderOutput))
                             {
                                 revisedBuilderOutput = BuildWebEvidenceUnavailableBuilderFallback(runContext);
@@ -7606,10 +8298,11 @@ namespace Malx_AI
 
                             LogActivity($"Builder revision complete ({revisedBuilderOutput.Length} chars). Routing output...");
                             builderOutput = revisedBuilderOutput;
+                            runContext.BuilderProducedCode = DetectCodeOutput(builderOutput).IsCode;
                             runContext.BuilderOutput = builderOutput;
                             contextState.BuilderOutput = builderOutput;
                             runContext.BuilderThinking = revisedBuilderResult.ThinkingContent;
-                            if (taskType == CouncilTaskType.Coding)
+                            if (taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
                             {
                                 WriteBuilderSessionMemory(builderOutput, activeRunIndex);
                             }
@@ -7619,10 +8312,12 @@ namespace Malx_AI
                                 LogActivity("Builder revision produced only reasoning (no renderable artifact). Suppressed from Project Canvas.");
                                 AppendChat("builder", "Builder revision didn't produce a renderable artifact — only reasoning — so the Project Canvas was left unchanged.");
                                 _chatHistory.Add(("builder-revision", "[No renderable artifact produced — reasoning suppressed from canvas.]"));
+                                UpdateWorkplaceTokenUsageIndicator();
                             }
                             else
                             {
                                 if (taskType == CouncilTaskType.Coding
+                                    || runContext.BuilderProducedCode
                                     || (runContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
                                 {
                                     UpdateProjectCanvas(builderOutput);
@@ -7640,8 +8335,8 @@ namespace Malx_AI
                                 {
                                     AppendChat("builder", builderOutput);
                                 }
-                                ShowDiffButton.Visibility = Visibility.Visible;
                                 _chatHistory.Add(("builder-revision", builderOutput));
+                                UpdateWorkplaceTokenUsageIndicator();
                             }
                             UpdateStageIndicator(null, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), true, true);
                         }
@@ -7694,6 +8389,7 @@ namespace Malx_AI
                     runContext.CriticThinking = criticOnlyResult.ThinkingContent;
                     AppendChat("critic", criticOutput);
                     _chatHistory.Add(("critic", criticOutput));
+                    UpdateWorkplaceTokenUsageIndicator();
                     UpdateStageIndicator(null, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), false, true);
                 }
                 else if (!hasBuilder && !hasCritic && !string.IsNullOrWhiteSpace(architectOutput))
@@ -8314,7 +9010,9 @@ namespace Malx_AI
             // prose — causing "mixed" output when models include explanations alongside code. Artifact
             // requests are code-fenced HTML/SVG deliverables, so they must take the code path; the prose
             // sanitizer below would strip lines (import/from/etc.) and corrupt the artifact.
-            if (context.TaskType == CouncilTaskType.Coding || context.IsArtifactCanvasRequest)
+            if (context.TaskType == CouncilTaskType.Coding
+                || context.IsArtifactCanvasRequest
+                || DetectCodeOutput(output).IsCode)
             {
                 output = StripChatFromCode(output);
             }
@@ -9552,7 +10250,9 @@ namespace Malx_AI
                 "search_session_memory (recall facts, prior plans, and outputs stored earlier in this workplace session).\n" +
                 webDisabledNote +
                 "Tool choice: use calculate for simple arithmetic or unit conversion; use run_python for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use web_search for current/latest/source-backed facts; use search_session_memory for facts from this chat or prior council work.\n" +
-                "Tool results only cover the specific current/source-backed claim or computation they actually address; off-topic web results are not support for the user's named entities.\n" +
+                "Before calling web_search, connect the current role payload to the user's latest objective and recent workplace turns. Make the query standalone: include the actual title, person, organization, product, document, API, or topic instead of references like 'the movie', 'this model', 'that article', or pronouns.\n" +
+                "For relationship questions, preserve the relation in the query, such as what X does to Y, what happens to character Z at the end of title X, how API A differs from API B, or which version changed a behavior.\n" +
+                "Tool results only cover the specific current/source-backed claim or computation they actually address; off-topic web results are not support for the user's named entities. If web evidence is partial, mismatched, or misses a required named entity, call one narrower web_search query before finalizing when the tool is available.\n" +
                 "Issue a normal tool call when you need one — the system runs it and returns the result, which you must treat as authoritative grounded fact.\n" +
                 "NEVER write [PAUSE: ...] or [RESULT: ...] lines, raw tool commands, or Python code in your final visible answer.\n" +
                 "For prompts like \"what is X\" or \"what does X do to Y\", call web_search when X/Y are specific, current, obscure, technical, medical/legal/financial, or likely to have changed.\n" +
@@ -9798,8 +10498,15 @@ namespace Malx_AI
             bool allowBatchRecovery = true,
             bool showLiveCard = true,
             int? maxGenerationTokensOverride = null,
-            int? contextSizeOverride = null)
+            int? contextSizeOverride = null,
+            bool useBuilderToolDecision = true,
+            Grammar? outputGrammar = null,
+            bool allowAgenticPauses = true,
+            bool internalInferenceStep = false)
         {
+            if (!internalInferenceStep)
+                RecordCouncilRolePromptUsage(role, systemPrompt, userPayload);
+
             if (_isCloudModeEnabled)
             {
                 return await ExecuteCouncilRoleCloudAsync(role, systemPrompt, userPayload, token, showLiveCard);
@@ -9821,6 +10528,24 @@ namespace Malx_AI
             }
 
             bool isGemma4 = IsGemma4Model(config.DisplayName) || IsGemma4Model(config.ModelPath ?? "");
+            if (role == CouncilRole.Builder && useBuilderToolDecision && !isGemma4)
+            {
+                return await ExecuteLocalBuilderWithToolDecisionAsync(
+                    systemPrompt,
+                    userPayload,
+                    token,
+                    temperatureOverride,
+                    baseStateVault,
+                    loadBaseState,
+                    allowBatchRecovery,
+                    showLiveCard,
+                    maxGenerationTokensOverride,
+                    contextSizeOverride);
+            }
+
+            if (role == CouncilRole.Builder && useBuilderToolDecision && isGemma4)
+                LogActivity("Builder grammar-constrained tool decision skipped: Gemma 4 is using the external CLI runner, which has no configured grammar contract.");
+
             if (isGemma4)
             {
                 string gemmaRoleName = role.ToString();
@@ -9952,10 +10677,16 @@ namespace Malx_AI
             var plan = reuseCachedWeights
                 ? InferenceBackendService.CreatePlanForCachedWeights(cacheKey, roleContext, cachedEntry!.GpuLayerCount)
                 : InferenceBackendService.CreatePlan(config.ModelPath, roleContext, recoveryMode);
+            if (!contextSizeOverride.HasValue)
+            {
+                _effectiveLocalRoleContextSizes[role] = plan.Parameters.ContextSize ?? roleContext;
+                UpdateWorkplaceTokenUsageIndicator();
+            }
             HardwareInfoBlock.Text = $"Runtime: adaptive context | Backend: {plan.BackendName}";
 
             LogActivity($"{roleName}: ctx={plan.Parameters.ContextSize}, gpu_layers={plan.Parameters.GpuLayerCount}, backend={plan.BackendName}");
-            AppendChat("system", $"{roleName}: ctx {plan.Parameters.ContextSize}, gpu layers {plan.Parameters.GpuLayerCount} | {plan.Reason}");
+            if (!internalInferenceStep)
+                AppendChat("system", $"{roleName}: ctx {plan.Parameters.ContextSize}, gpu layers {plan.Parameters.GpuLayerCount} | {plan.Reason}");
 
             var responseBuilder = new StringBuilder();
 
@@ -10135,7 +10866,7 @@ namespace Malx_AI
             int contextBudget = (int)plan.Parameters.ContextSize;
             int availableForGeneration = contextBudget - promptTokenEstimate - templateOverhead;
 
-            int minGenTokens = role switch
+            int minGenTokens = outputGrammar != null ? 64 : role switch
             {
                 CouncilRole.Builder => 384,
                 _ => 256
@@ -10204,11 +10935,32 @@ namespace Malx_AI
                 }
             }
 
-            var inferenceParams = CreateRoleInferenceParams(config.ModelPath ?? string.Empty, maxGenTokens, antiPrompts, roleTemp, roleMinP);
+            var inferenceParams = CreateRoleInferenceParams(config.ModelPath ?? string.Empty, maxGenTokens, antiPrompts, roleTemp, roleMinP, outputGrammar);
 
             bool strictChatMl = IsStrictChatMlModel(config.DisplayName);
             int tokenCount = 0;
             var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            async Task<string> ConsumeNativeStreamAsync(IAsyncEnumerable<string> stream)
+            {
+                var nativeOutput = new StringBuilder();
+                int lastProgressLength = 0;
+                await foreach (string piece in stream.WithCancellation(token).ConfigureAwait(false))
+                {
+                    nativeOutput.Append(piece);
+                    tokenCount++;
+                    _pipelineTokenCount++;
+                    if (onLiveTextProgress != null && nativeOutput.Length - lastProgressLength >= 48)
+                    {
+                        lastProgressLength = nativeOutput.Length;
+                        onLiveTextProgress(nativeOutput.ToString());
+                    }
+                    if (nativeOutput.Length > 30_000)
+                        break;
+                }
+                onLiveTextProgress?.Invoke(nativeOutput.ToString());
+                return nativeOutput.ToString();
+            }
 
             // Drop a crash-forensics marker for the duration of this role's native decode. If a
             // CUDA illegal-memory-access (or any native abort) kills the process here, the marker
@@ -10240,16 +10992,18 @@ namespace Malx_AI
                             token);
                     }
 
-                    string rawStrict = await _agenticPauseEngine.RunAsync(
-                        StrictStreamFactory,
-                        null,
-                        executor,
-                        inferenceParams,
-                        systemPrompt,
-                        userPayload,
-                        delta => { tokenCount += delta; _pipelineTokenCount += delta; },
-                        token,
-                        onLiveTextProgress);
+                    string rawStrict = allowAgenticPauses
+                        ? await _agenticPauseEngine.RunAsync(
+                            StrictStreamFactory,
+                            null,
+                            executor,
+                            inferenceParams,
+                            systemPrompt,
+                            userPayload,
+                            delta => { tokenCount += delta; _pipelineTokenCount += delta; },
+                            token,
+                            onLiveTextProgress)
+                        : await ConsumeNativeStreamAsync(StrictStreamFactory(userPayload));
 
                     responseBuilder.Append(rawStrict);
                 }
@@ -10277,16 +11031,18 @@ namespace Malx_AI
                             token);
                     }
 
-                    string rawChat = await _agenticPauseEngine.RunAsync(
-                        ChatStreamFactory,
-                        session,
-                        executor,
-                        inferenceParams,
-                        systemPrompt,
-                        userPayload,
-                        delta => { tokenCount += delta; _pipelineTokenCount += delta; },
-                        token,
-                        onLiveTextProgress);
+                    string rawChat = allowAgenticPauses
+                        ? await _agenticPauseEngine.RunAsync(
+                            ChatStreamFactory,
+                            session,
+                            executor,
+                            inferenceParams,
+                            systemPrompt,
+                            userPayload,
+                            delta => { tokenCount += delta; _pipelineTokenCount += delta; },
+                            token,
+                            onLiveTextProgress)
+                        : await ConsumeNativeStreamAsync(ChatStreamFactory(userPayload));
 
                     responseBuilder.Append(rawChat);
                 }
@@ -10308,7 +11064,13 @@ namespace Malx_AI
                     null,
                     false,
                     false,
-                    showLiveCard);
+                    showLiveCard,
+                    maxGenerationTokensOverride,
+                    contextSizeOverride,
+                    useBuilderToolDecision,
+                    outputGrammar,
+                    allowAgenticPauses,
+                    internalInferenceStep);
             }
             catch (Exception ex) when (ex.Message.Contains("NoKvSlot", StringComparison.OrdinalIgnoreCase))
             {
@@ -10553,12 +11315,65 @@ namespace Malx_AI
         private void UpdateProjectCanvas(string content)
         {
             string cleanCode = StripChatFromCode(content);
+            string previousSource = ProjectCanvasEditor.Text ?? string.Empty;
+
+            if (!CanvasSourcesEquivalent(previousSource, cleanCode))
+            {
+                ExitCanvasDiffView();
+                if (CanvasHasRealContent(previousSource))
+                    CaptureCanvasDiff(previousSource, cleanCode);
+                else
+                    ClearCanvasDiff();
+            }
+
             ProjectCanvasEditor.Text = cleanCode;
 
             string language = DetectLanguage(cleanCode);
             SetCanvasHighlighting(language);
             RefreshCanvasArtifact(content, _lastSandboxOutput);
+            UpdateWorkplaceTokenUsageIndicator();
             _ = QueueWorkspaceStateSaveAsync();
+        }
+
+        private void CaptureCanvasDiff(string original, string revised)
+        {
+            _canvasDiffBaseSource = original ?? string.Empty;
+            _canvasDiffCurrentSource = revised ?? string.Empty;
+            IReadOnlyList<LineDiffEntry> changes = LineDiff.Build(_canvasDiffBaseSource, _canvasDiffCurrentSource);
+            _canvasDiffAdditionCount = changes.Count(change => change.Kind == LineDiffKind.Added);
+            _canvasDiffRemovalCount = changes.Count(change => change.Kind == LineDiffKind.Removed);
+
+            bool hasChanges = _canvasDiffAdditionCount > 0 || _canvasDiffRemovalCount > 0;
+            ShowDiffButton.Visibility = hasChanges ? Visibility.Visible : Visibility.Collapsed;
+            CanvasDiffSummaryBlock.Text = hasChanges
+                ? $"Latest revision: +{_canvasDiffAdditionCount} / −{_canvasDiffRemovalCount} lines"
+                : string.Empty;
+            CanvasDiffSummaryBlock.Visibility = hasChanges ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void ClearCanvasDiff()
+        {
+            _canvasDiffBaseSource = string.Empty;
+            _canvasDiffCurrentSource = string.Empty;
+            _canvasDiffAdditionCount = 0;
+            _canvasDiffRemovalCount = 0;
+            _isDiffViewActive = false;
+            DiffViewerLines.Items.Clear();
+            DiffViewerScroller.Visibility = Visibility.Collapsed;
+            ShowDiffButton.Visibility = Visibility.Collapsed;
+            ShowDiffButton.Content = "Diff";
+            CanvasDiffSummaryBlock.Text = string.Empty;
+            CanvasDiffSummaryBlock.Visibility = Visibility.Collapsed;
+        }
+
+        private void ExitCanvasDiffView()
+        {
+            if (!_isDiffViewActive)
+                return;
+
+            _isDiffViewActive = false;
+            DiffViewerScroller.Visibility = Visibility.Collapsed;
+            ShowDiffButton.Content = "Diff";
         }
 
         private async Task EnsureCanvasArtifactWebViewInitializedAsync()
@@ -10680,11 +11495,14 @@ namespace Malx_AI
             if (FindName("CanvasPreviewViewButton") is Button previewButton)
                 previewButton.Opacity = _isCanvasPreviewMode ? 1.0 : 0.65;
             if (FindName("CanvasArtifactPreviewHost") is Grid previewHost)
-                previewHost.Visibility = hasArtifact && _isCanvasPreviewMode ? Visibility.Visible : Visibility.Collapsed;
-            ProjectCanvasEditor.Visibility = hasArtifact && _isCanvasPreviewMode ? Visibility.Collapsed : Visibility.Visible;
-            if (!hasArtifact || !_isCanvasPreviewMode)
-                DiffViewerScroller.Visibility = _isDiffViewActive ? Visibility.Visible : Visibility.Collapsed;
-            CanvasSubtitleBlock.Text = hasArtifact
+                previewHost.Visibility = !_isDiffViewActive && hasArtifact && _isCanvasPreviewMode ? Visibility.Visible : Visibility.Collapsed;
+            ProjectCanvasEditor.Visibility = _isDiffViewActive || (hasArtifact && _isCanvasPreviewMode)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            DiffViewerScroller.Visibility = _isDiffViewActive ? Visibility.Visible : Visibility.Collapsed;
+            CanvasSubtitleBlock.Text = _isDiffViewActive
+                ? "Source diff — red removed, green added"
+                : hasArtifact
                 ? _isCanvasPreviewMode
                     ? _canvasArtifact.DisplayTitle
                     : $"{_canvasArtifact.DisplayTitle} — code view"
@@ -10693,6 +11511,7 @@ namespace Malx_AI
 
         private void CanvasCodeViewButton_Click(object sender, RoutedEventArgs e)
         {
+            ExitCanvasDiffView();
             _isCanvasPreviewMode = false;
             RefreshCanvasArtifactUi();
         }
@@ -10702,6 +11521,7 @@ namespace Malx_AI
             if (!_canvasArtifact.SupportsPreview)
                 return;
 
+            ExitCanvasDiffView();
             _isCanvasPreviewMode = true;
             _ = RenderCanvasArtifactPreviewAsync();
             RefreshCanvasArtifactUi();
@@ -10763,34 +11583,77 @@ namespace Malx_AI
         private static string DetectLanguage(string content)
         {
             if (string.IsNullOrWhiteSpace(content))
-            {
                 return "markdown";
-            }
 
             string lower = content.ToLowerInvariant();
+            Match typedFence = BuilderTypedCodeFenceRegex.Match(content);
+            string? fencedLanguage = typedFence.Success
+                ? NormalizeCodeLanguage(typedFence.Groups["language"].Value)
+                : null;
+            if (!string.IsNullOrWhiteSpace(fencedLanguage))
+                return fencedLanguage;
 
-            // Check fenced markers first (present in raw input), then code patterns (present in cleaned code)
-            if (lower.Contains("```csharp") || lower.Contains("```cs") ||
-                lower.Contains("namespace ") || (lower.Contains("using ") && lower.Contains("class ")))
-                return "c#";
-
-            if (lower.Contains("```python") || lower.Contains("def ") || lower.Contains("import "))
-                return "python";
-
-            if (lower.Contains("```java") ||
-                (lower.Contains("public class ") && lower.Contains("public static void main")))
-                return "java";
-
-            if (lower.Contains("```json") || lower.TrimStart().StartsWith("{"))
-                return "javascript";
-
-            if (lower.Contains("```html") || lower.Contains("<!doctype") || lower.Contains("<html"))
+            if (lower.Contains("<!doctype") || lower.Contains("<html")
+                || (lower.Contains("<body") && lower.Contains("</body>")))
                 return "html";
 
-            if (lower.Contains("```svg") || lower.TrimStart().StartsWith("<svg") || lower.Contains("<svg ") || lower.Contains("<svg\n"))
+            if (lower.TrimStart().StartsWith("<svg") || lower.Contains("<svg ") || lower.Contains("<svg\n"))
                 return "xml";
 
-            if (lower.Contains("```xml") || lower.Contains("<project") || lower.Contains("<window"))
+            if (lower.Contains("namespace ")
+                || (lower.Contains("using ") && Regex.IsMatch(content, @"\b(?:class|record|struct|interface)\s+\w+"))
+                || lower.Contains("console.writeline"))
+                return "c#";
+
+            if (Regex.IsMatch(content, @"(?m)^\s*(?:def\s+\w+\s*\(|from\s+\S+\s+import\s+|import\s+\S+)|\bif\s+__name__\s*=="))
+                return "python";
+
+            if ((lower.Contains("public class ") && lower.Contains("public static void main"))
+                || lower.Contains("system.out.println"))
+                return "java";
+
+            if (Regex.IsMatch(content, @"\b(?:interface|type)\s+\w+\s*[={]|:\s*(?:string|number|boolean)(?:\[\])?\s*[;,]", RegexOptions.IgnoreCase))
+                return "typescript";
+
+            if (Regex.IsMatch(content, @"\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=|\bfunction\s+[A-Za-z_$][\w$]*\s*\(|=>|document\.(?:getElementById|querySelector)", RegexOptions.IgnoreCase))
+                return "javascript";
+
+            if (Regex.IsMatch(content, @"(?is)^\s*(?:select\s+.+\s+from\s+|insert\s+into\s+|update\s+\S+\s+set\s+|create\s+(?:table|view|index)\s+)", RegexOptions.IgnoreCase))
+                return "sql";
+
+            if (lower.StartsWith("#!") || Regex.IsMatch(content, @"(?m)^\s*(?:export\s+\w+=|sudo\s+|apt(?:-get)?\s+|npm\s+|docker\s+|echo\s+\$)"))
+                return "bash";
+
+            if (Regex.IsMatch(content, @"(?m)^\s*(?:param\s*\(|\$[A-Za-z_]\w*\s*=|Get-[A-Za-z]+|Set-[A-Za-z]+)"))
+                return "powershell";
+
+            if (lower.Contains("#include") || lower.Contains("std::"))
+                return "cpp";
+
+            if (Regex.IsMatch(content, @"(?m)^\s*(?:fn\s+\w+\s*\(|use\s+\w+::)"))
+                return "rust";
+
+            if (Regex.IsMatch(content, @"(?m)^\s*(?:package\s+\w+|func\s+\w+\s*\()"))
+                return "go";
+
+            if ((lower.TrimStart().StartsWith("{") && lower.TrimEnd().EndsWith("}"))
+                || (lower.TrimStart().StartsWith("[") && lower.TrimEnd().EndsWith("]")))
+            {
+                try
+                {
+                    using JsonDocument _ = JsonDocument.Parse(content);
+                    return "json";
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            if (Regex.IsMatch(content, "(?m)^\\s*(?:[.#]?[A-Za-z][\\w\\s>+~:#.\\[\\]=\"'-]*)\\s*\\{\\s*$")
+                && content.Contains(':'))
+                return "css";
+
+            if (lower.Contains("<project") || lower.Contains("<window") || lower.TrimStart().StartsWith("<?xml"))
                 return "xml";
 
             return "markdown";
@@ -10799,8 +11662,21 @@ namespace Malx_AI
         private void SetCanvasHighlighting(string language)
         {
             var manager = HighlightingManager.Instance;
+            string extension = language switch
+            {
+                "c#" => ".cs",
+                "javascript" => ".js",
+                "typescript" => ".ts",
+                "python" => ".py",
+                "cpp" => ".cpp",
+                "bash" => ".sh",
+                "powershell" => ".ps1",
+                "yaml" => ".yaml",
+                "markdown" => ".md",
+                _ => "." + language
+            };
             ProjectCanvasEditor.SyntaxHighlighting =
-                manager.GetDefinitionByExtension("." + language) ??
+                manager.GetDefinitionByExtension(extension) ??
                 manager.GetDefinition(language) ??
                 manager.GetDefinition("Markdown") ??
                 manager.GetDefinition("C#");
@@ -11080,6 +11956,7 @@ namespace Malx_AI
                 streamCard.Content = content.Trim();
                 _streamingCouncilCards.Remove(role);
                 Dispatcher.InvokeAsync(() => ChatScrollViewer?.ScrollToEnd(), DispatcherPriority.Background);
+                UpdateWorkplaceTokenUsageIndicator();
                 RequestWorkspaceStateSave();
                 return;
             }
@@ -11105,6 +11982,7 @@ namespace Malx_AI
                 Dispatcher.InvokeAsync(() => ChatScrollViewer?.ScrollToEnd(), System.Windows.Threading.DispatcherPriority.Background);
             }
 
+            UpdateWorkplaceTokenUsageIndicator();
             RequestWorkspaceStateSave();
         }
 
@@ -11570,17 +12448,13 @@ namespace Malx_AI
 
         private static string BuildSimpleDiff(string left, string right)
         {
-            var leftLines = (left ?? "").Split('\n');
-            var rightLines = (right ?? "").Split('\n');
             var sb = new StringBuilder();
-            int max = Math.Max(leftLines.Length, rightLines.Length);
-            for (int i = 0; i < max; i++)
+            foreach (LineDiffEntry entry in LineDiff.Build(left, right))
             {
-                string a = i < leftLines.Length ? leftLines[i] : "";
-                string b = i < rightLines.Length ? rightLines[i] : "";
-                if (a == b) continue;
-                sb.AppendLine($"- {a}");
-                sb.AppendLine($"+ {b}");
+                if (entry.Kind == LineDiffKind.Removed)
+                    sb.AppendLine($"- {entry.Text}");
+                else if (entry.Kind == LineDiffKind.Added)
+                    sb.AppendLine($"+ {entry.Text}");
             }
             return sb.Length == 0 ? "No differences." : sb.ToString().Trim();
         }
@@ -11589,38 +12463,59 @@ namespace Malx_AI
         {
             if (_isDiffViewActive)
             {
-                // Hide diff, show normal editor
-                DiffViewerScroller.Visibility = Visibility.Collapsed;
-                ShowDiffButton.Content = "Diff";
-                _isDiffViewActive = false;
+                ExitCanvasDiffView();
+                _isCanvasPreviewMode = false;
                 RefreshCanvasArtifactUi();
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(_preRevisionBuilderOutput))
+            if (string.IsNullOrWhiteSpace(_canvasDiffBaseSource)
+                || string.IsNullOrWhiteSpace(_canvasDiffCurrentSource))
             {
-                AppendChat("system", "No revision diff available. Diff is shown after a Critic-triggered revision.");
+                AppendChat("system", "No Project Canvas revision diff is available yet.");
                 return;
             }
 
-            // Build diff lines and render them
-            RenderInlineDiff(_preRevisionBuilderOutput, ProjectCanvasEditor.Text);
+            RenderInlineDiff(_canvasDiffBaseSource, _canvasDiffCurrentSource);
             _isCanvasPreviewMode = false;
-            ProjectCanvasEditor.Visibility = Visibility.Collapsed;
-            DiffViewerScroller.Visibility = Visibility.Visible;
-            ShowDiffButton.Content = "Code";
-            CanvasSubtitleBlock.Text = "Revision diff — red = removed, green = added";
             _isDiffViewActive = true;
+            ShowDiffButton.Content = "Code";
+            RefreshCanvasArtifactUi();
         }
 
         private void RenderInlineDiff(string original, string revised)
         {
             DiffViewerLines.Items.Clear();
+            IReadOnlyList<LineDiffEntry> diff = LineDiff.Build(original, revised);
+            if (diff.Count == 0)
+                return;
 
-            var leftLines = (original ?? "").Split('\n');
-            var rightLines = (revised ?? "").Split('\n');
-            int max = Math.Max(leftLines.Length, rightLines.Length);
+            const int contextLines = 3;
+            var visibleIndices = new HashSet<int>();
+            for (int i = 0; i < diff.Count; i++)
+            {
+                if (diff[i].Kind == LineDiffKind.Unchanged)
+                    continue;
 
+                int start = Math.Max(0, i - contextLines);
+                int end = Math.Min(diff.Count - 1, i + contextLines);
+                for (int index = start; index <= end; index++)
+                    visibleIndices.Add(index);
+            }
+
+            int previousVisibleIndex = -2;
+            foreach (int index in visibleIndices.OrderBy(value => value))
+            {
+                if (index > previousVisibleIndex + 1)
+                    AddDiffOmissionRow();
+
+                AddDiffRow(diff[index]);
+                previousVisibleIndex = index;
+            }
+        }
+
+        private void AddDiffRow(LineDiffEntry entry)
+        {
             var deletionBrush = new SolidColorBrush(Color.FromArgb(40, 255, 59, 59));
             var additionBrush = new SolidColorBrush(Color.FromArgb(40, 34, 197, 94));
             var deletionFg = new SolidColorBrush(Color.FromRgb(255, 120, 120));
@@ -11629,76 +12524,58 @@ namespace Malx_AI
             var lineNumFg = new SolidColorBrush(Color.FromRgb(138, 130, 121));
             var font = new FontFamily("Consolas");
 
-            for (int i = 0; i < max; i++)
+            var panel = new DockPanel
             {
-                string a = i < leftLines.Length ? leftLines[i].TrimEnd('\r') : "";
-                string b = i < rightLines.Length ? rightLines[i].TrimEnd('\r') : "";
-
-                if (a == b)
+                Margin = new Thickness(0),
+                Background = entry.Kind switch
                 {
-                    // Unchanged line
-                    var panel = new DockPanel { Margin = new Thickness(0) };
-                    panel.Children.Add(new TextBlock
-                    {
-                        Text = $"{i + 1,4}  ",
-                        FontFamily = font, FontSize = 12,
-                        Foreground = lineNumFg, Width = 50,
-                        TextAlignment = TextAlignment.Right
-                    });
-                    panel.Children.Add(new TextBlock
-                    {
-                        Text = $"  {b}",
-                        FontFamily = font, FontSize = 12,
-                        Foreground = normalFg,
-                        TextWrapping = TextWrapping.NoWrap
-                    });
-                    DiffViewerLines.Items.Add(panel);
+                    LineDiffKind.Removed => deletionBrush,
+                    LineDiffKind.Added => additionBrush,
+                    _ => Brushes.Transparent
                 }
-                else
+            };
+            string oldNumber = entry.OldLineNumber?.ToString() ?? string.Empty;
+            string newNumber = entry.NewLineNumber?.ToString() ?? string.Empty;
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"{oldNumber,4} {newNumber,4} ",
+                FontFamily = font,
+                FontSize = 11,
+                Foreground = lineNumFg,
+                Width = 74,
+                TextAlignment = TextAlignment.Right
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = (entry.Kind switch
                 {
-                    // Deletion line
-                    if (i < leftLines.Length && !string.IsNullOrWhiteSpace(a))
-                    {
-                        var delPanel = new DockPanel { Background = deletionBrush, Margin = new Thickness(0) };
-                        delPanel.Children.Add(new TextBlock
-                        {
-                            Text = $"{i + 1,4}  ",
-                            FontFamily = font, FontSize = 12,
-                            Foreground = lineNumFg, Width = 50,
-                            TextAlignment = TextAlignment.Right
-                        });
-                        delPanel.Children.Add(new TextBlock
-                        {
-                            Text = $"- {a}",
-                            FontFamily = font, FontSize = 12,
-                            Foreground = deletionFg,
-                            TextWrapping = TextWrapping.NoWrap
-                        });
-                        DiffViewerLines.Items.Add(delPanel);
-                    }
+                    LineDiffKind.Removed => "− ",
+                    LineDiffKind.Added => "+ ",
+                    _ => "  "
+                }) + entry.Text,
+                FontFamily = font,
+                FontSize = 12,
+                Foreground = entry.Kind switch
+                {
+                    LineDiffKind.Removed => deletionFg,
+                    LineDiffKind.Added => additionFg,
+                    _ => normalFg
+                },
+                TextWrapping = TextWrapping.NoWrap
+            });
+            DiffViewerLines.Items.Add(panel);
+        }
 
-                    // Addition line
-                    if (i < rightLines.Length && !string.IsNullOrWhiteSpace(b))
-                    {
-                        var addPanel = new DockPanel { Background = additionBrush, Margin = new Thickness(0) };
-                        addPanel.Children.Add(new TextBlock
-                        {
-                            Text = $"{i + 1,4}  ",
-                            FontFamily = font, FontSize = 12,
-                            Foreground = lineNumFg, Width = 50,
-                            TextAlignment = TextAlignment.Right
-                        });
-                        addPanel.Children.Add(new TextBlock
-                        {
-                            Text = $"+ {b}",
-                            FontFamily = font, FontSize = 12,
-                            Foreground = additionFg,
-                            TextWrapping = TextWrapping.NoWrap
-                        });
-                        DiffViewerLines.Items.Add(addPanel);
-                    }
-                }
-            }
+        private void AddDiffOmissionRow()
+        {
+            DiffViewerLines.Items.Add(new TextBlock
+            {
+                Text = "      ··· unchanged lines ···",
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromRgb(138, 130, 121)),
+                Margin = new Thickness(0, 3, 0, 3)
+            });
         }
 
         private void ClearTaskHistory_Click(object sender, RoutedEventArgs e)
@@ -12915,12 +13792,17 @@ namespace Malx_AI
                 int maxChunks = _documentRetriever.CalculateMaxChunksForContext((int)_contextSize);
                 var chunks = MergeWithPriority(_documentRetriever.RetrieveRelevantChunks(_lastRunContext.UserPrompt, maxChunks), maxChunks);
                 string knowledge = BuildKnowledgePacket(chunks, _nextPromptPriorityConcept);
+                var builderConfig = GetEffectiveRoleConfig(CouncilRole.Builder);
+                bool smallLocalBuilderModel = IsSmallLocalCouncilModel(builderConfig.ModelPath ?? builderConfig.DisplayName, _isCloudModeEnabled);
 
                 string builderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                     + objectiveClause
                     + (_lastRunContext.IsArtifactCanvasRequest
                         ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, _lastRunContext)
                         : GetTaskTypeBoost(_lastRunContext.TaskType, CouncilRole.Builder))
+                    + (_lastRunContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, _lastRunContext.PreferredArtifactFormatHint, _lastRunContext) : "")
+                    + (_lastRunContext.IsArtifactCanvasRequest && smallLocalBuilderModel ? BuildSmallModelArtifactAssist(CouncilRole.Builder, _lastRunContext.PreferredArtifactFormatHint, _lastRunContext) : "")
+                    + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(_lastRunContext.TaskType, _lastRunContext) : "")
                     + (_lastRunContext.IsCalculationTask ? GetCalculationBoost(CouncilRole.Builder, _lastRunContext.TaskType) : "")
                     + BuildBuilderContract(_lastRunContext.TaskType, _lastRunContext.IsArtifactCanvasRequest)
                     + BuildCouncilWebSystemNote(_lastRunContext.WebContext, _lastRunContext.WebGroundingRequired)
@@ -12934,6 +13816,8 @@ namespace Malx_AI
                 var payload = new StringBuilder();
                 if (_lastRunContext.IsArtifactCanvasRequest)
                     payload.AppendLine(BuildCanvasArtifactAnchorBlock(_lastRunContext));
+                if (smallLocalBuilderModel && (_lastRunContext.TaskType == CouncilTaskType.Coding || _lastRunContext.IsArtifactCanvasRequest))
+                    payload.AppendLine(BuildBuilderImplementationCapsule(_lastRunContext));
                 payload.AppendLine(pipelineState);
                 payload.AppendLine(sharedVocabularySection);
                 AppendCouncilWebContext(payload, _lastRunContext);
@@ -12964,17 +13848,21 @@ namespace Malx_AI
                     throw new InvalidOperationException("Builder re-run output missing completion marker.");
                 }
                 string rerunOutput = PostProcessBuilderOutput(rerunBuilderCleaned, _lastRunContext);
+                bool rerunProducedCode = DetectCodeOutput(rerunOutput).IsCode;
                 if (_lastRunContext.WebGroundingRequired
                     && !HasCouncilWebEvidenceForRun(_lastRunContext)
                     && _lastRunContext.TaskType != CouncilTaskType.Coding
                     && !_lastRunContext.IsArtifactCanvasRequest
+                    && !rerunProducedCode
                     && !BuilderStatesWebEvidenceUnavailable(rerunOutput))
                 {
                     rerunOutput = BuildWebEvidenceUnavailableBuilderFallback(_lastRunContext);
                 }
                 _lastRunContext.BuilderOutput = rerunOutput;
+                _lastRunContext.BuilderProducedCode = rerunProducedCode;
 
                 bool rerunToCanvas = _lastRunContext.TaskType == CouncilTaskType.Coding
+                    || rerunProducedCode
                     || (_lastRunContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(rerunOutput, null).SupportsPreview);
                 if (rerunToCanvas)
                 {

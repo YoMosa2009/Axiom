@@ -725,22 +725,42 @@ namespace Malx_AI
             return "[WEB TURN RULE] For this answer, treat [[WEB SEARCH DATA]] as the source of truth for factual claims. Do not use prior assistant messages, memory, or model background knowledge to add details that are not explicitly supported by those sources. If a requested detail is missing, answer with what the sources do confirm and briefly call out the missing detail instead of refusing the whole answer. For broad current-information requests, synthesize the most relevant supported developments from the sources. For news or latest-update requests, present the answer as a clean list with short explanations and include the source name and date for each item. If a fact is not in the sources, omit it rather than inferring it from training data.";
         }
 
-        private async Task<string> TryBuildWebContextAsync(string userQuery, bool forceEnableForTurn, CancellationToken token, int maxChars = 2200)
+        private static IReadOnlyList<ConversationSearchTurn> BuildNormalChatSearchTurns(IReadOnlyList<ChatMessage>? conversationHistory)
+        {
+            if (conversationHistory == null || conversationHistory.Count == 0)
+                return [];
+
+            return conversationHistory
+                .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                .Where(m => !string.IsNullOrWhiteSpace(m.Content))
+                .TakeLast(10)
+                .Select(m => new ConversationSearchTurn(m.Role, m.Content))
+                .ToList();
+        }
+
+        private async Task<string> TryBuildWebContextAsync(string userQuery, bool forceEnableForTurn, CancellationToken token, IReadOnlyList<ChatMessage>? conversationHistory = null, int maxChars = 2200)
         {
             bool shouldSearch = forceEnableForTurn || _normalWebSearchEnabled || ContainsExplicitWebSearchRequest(userQuery);
             if (!shouldSearch)
                 return string.Empty;
 
-            string searchQuery = _webSearchService.BuildFocusedNormalChatQuery(userQuery);
+            string contextualPrompt = ConversationSearchContext.BuildContextualSearchPrompt(
+                userQuery,
+                BuildNormalChatSearchTurns(conversationHistory));
+            if (string.IsNullOrWhiteSpace(contextualPrompt))
+                contextualPrompt = userQuery?.Trim() ?? string.Empty;
+
+            string searchQuery = _webSearchService.BuildFocusedNormalChatQuery(contextualPrompt);
             if (string.IsNullOrWhiteSpace(searchQuery))
-                searchQuery = userQuery?.Trim() ?? string.Empty;
+                searchQuery = contextualPrompt;
 
             try
             {
                 StartToolActivityIndicator("Searching the web");
                 await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
-                await BackendLogService.LogEventAsync("MainWindow.WebSearch", $"Prompt:{userQuery}\nQuery:{searchQuery}");
-                string data = await _webSearchService.SearchTopSnippetsForNormalChatAsync(userQuery, token);
+                await BackendLogService.LogEventAsync("MainWindow.WebSearch", $"Prompt:{userQuery}\nContextualPrompt:{contextualPrompt}\nQuery:{searchQuery}");
+                string data = await _webSearchService.SearchTopSnippetsForNormalChatAsync(contextualPrompt, token);
                 if (string.IsNullOrWhiteSpace(data)
                     || data.Contains("No web results", StringComparison.OrdinalIgnoreCase)
                     || data.Contains("Web search unavailable", StringComparison.OrdinalIgnoreCase)
@@ -767,7 +787,7 @@ namespace Malx_AI
             }
             catch (Exception ex)
             {
-                await BackendLogService.LogEventAsync("ToolFailReadOnly", $"Tool:WebSearch\nPrompt:{userQuery}\nQuery:{searchQuery}\nError:{ex.Message}");
+                await BackendLogService.LogEventAsync("ToolFailReadOnly", $"Tool:WebSearch\nPrompt:{userQuery}\nContextualPrompt:{contextualPrompt}\nQuery:{searchQuery}\nError:{ex.Message}");
                 return string.Empty;
             }
             finally

@@ -66,6 +66,36 @@ namespace Malx_AI
         public void ResetBudget() => _pauseCount = 0;
 
         /// <summary>
+        /// Executes a tool selected by the Builder's grammar-constrained decision step.
+        /// This deliberately reuses the same allowlist and routing callbacks as the legacy
+        /// inline pause protocol so the two paths cannot drift into different capabilities.
+        /// </summary>
+        internal async Task<StructuredToolResult> ExecuteStructuredToolAsync(
+            string tool,
+            string query,
+            CancellationToken token)
+        {
+            string normalizedTool = (tool ?? string.Empty).Trim().ToUpperInvariant();
+            string normalizedQuery = (query ?? string.Empty).Trim();
+            if (normalizedQuery.Length == 0)
+                return StructuredToolResult.Fail("Tool query is empty.");
+
+            var command = new PauseCommand(normalizedTool, normalizedQuery);
+            UpdateStatus(command, 1);
+            try
+            {
+                ToolDispatchResult result = await DispatchToolAsync(command, token);
+                return result.IsSuccess
+                    ? StructuredToolResult.Ok(result.Data)
+                    : StructuredToolResult.Fail(result.ErrorMessage);
+            }
+            finally
+            {
+                _onStatusUpdate(string.Empty);
+            }
+        }
+
+        /// <summary>
         /// Runs the full agentic loop:
         ///   1. Streams tokens from <paramref name="streamFactory"/>, watching for [PAUSE:…].
         ///   2. On pause: executes the requested tool, injects [RESULT: …] into the session,
@@ -715,6 +745,12 @@ namespace Malx_AI
         {
             public static ToolDispatchResult Ok(string data) => new(true, data, string.Empty);
             public static ToolDispatchResult Fail(string error) => new(false, string.Empty, error);
+        }
+
+        internal sealed record StructuredToolResult(bool IsSuccess, string Data, string ErrorMessage)
+        {
+            public static StructuredToolResult Ok(string data) => new(true, data, string.Empty);
+            public static StructuredToolResult Fail(string error) => new(false, string.Empty, error);
         }
     }
 }

@@ -607,14 +607,30 @@ namespace Malx_AI
 
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha1ModelId, StringComparison.OrdinalIgnoreCase))
             {
-                return "[MODEL PROFILE: HEPHA 1] You are operating in Axiom's Hepha 1 cloud profile. Prioritize code correctness, deterministic tool usage, compact structured outputs, and environment-aware solutions that work cleanly with the app's Python sandbox, web retrieval, imported documents, and persisted chat state. When tool-produced context is present, treat it as authoritative and integrate it directly without re-describing internal plumbing.";
+                return "[MODEL PROFILE: HEPHA 1] You are operating in Axiom's Hepha 1 cloud profile. Prioritize code correctness, deterministic tool usage, compact structured outputs, and environment-aware solutions that work cleanly with the app's Python sandbox, web retrieval, imported documents, and persisted chat state. When tool-produced context is present, treat it as authoritative and integrate it directly without re-describing internal plumbing. Use the larger cloud context window to connect the latest user message with relevant prior turns before choosing tools or answering.";
             }
 
             string taskBias = IsCodingRequest(userMsg)
                 ? "When coding is requested, stay implementation-first and keep code directly usable."
                 : "Favor strong reasoning, concise execution-ready answers, and efficient use of supplied context blocks.";
 
-            return $"[MODEL PROFILE: {selectedLabel.ToUpperInvariant()}] You are operating in Axiom's {selectedLabel} cloud profile. Optimize for the app's backend pipeline: use tool outputs, imported document context, web-grounding blocks, persona memory, and calculator/python results as high-priority signals. {taskBias} Do not expose internal chain-of-thought unless explicitly requested by the product behavior.";
+            return $"[MODEL PROFILE: {selectedLabel.ToUpperInvariant()}] You are operating in Axiom's {selectedLabel} cloud profile. Optimize for the app's backend pipeline: use tool outputs, imported document context, web-grounding blocks, persona memory, and calculator/python results as high-priority signals. Use the larger cloud context window to connect the latest user message with relevant prior turns before choosing tools or answering. {taskBias} Do not expose internal chain-of-thought unless explicitly requested by the product behavior.";
+        }
+
+        private string BuildCloudWebSearchSystemInstruction(string userMsg, bool proactiveWebContextAttached)
+        {
+            string webAvailability = proactiveWebContextAttached
+                ? "A proactive web evidence block is already attached for this turn."
+                : _normalWebSearchEnabled || ContainsExplicitWebSearchRequest(userMsg)
+                    ? "Web Search is enabled or explicitly requested for this turn."
+                    : "The web_search tool is available for cases where current or source-backed information is needed.";
+
+            return "[CLOUD WEB SEARCH BEHAVIOR]\n" +
+                webAvailability + "\n" +
+                "Before using web_search, resolve the user's latest message against the conversation history so the query is standalone. Replace references like 'the movie', 'that model', 'this article', pronouns, or character names with the actual title, product, person, organization, document, or topic from prior turns when the conversation provides it.\n" +
+                "Use web_search for current, obscure, source-backed, documentation, policy, release, pricing, legal, medical, financial, or specific factual claims that may not be reliable from model memory. Stable background context may come from general knowledge when it is not contradicted by source evidence.\n" +
+                "For multi-part or ambiguous requests, prefer one focused query that preserves the relation the user asked about. If the first result is off-topic, misses the named entity, or answers only part of the relation, call one narrower follow-up query before final synthesis.\n" +
+                "After web_search, synthesize the evidence into a direct answer instead of behaving like a search-results page. Cite source titles, hosts, URLs, or dates naturally for current/source-backed claims, and explicitly separate confirmed facts from gaps the sources did not cover.";
         }
 
         private static string TrimForInlineError(string message, int maxLength)
@@ -634,7 +650,7 @@ namespace Malx_AI
             [
                 new OpenRouterToolDefinition(
                     "web_search",
-                    "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets.",
+                    "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets. Use this for source-backed facts and when conversation context is needed to answer correctly. Include relevant conversation context in the query: resolve pronouns and phrases like 'the movie', 'that model', or 'this article' to the actual title, product, person, or topic from prior turns.",
                     new JsonObject
                     {
                         ["type"] = "object",
@@ -643,7 +659,7 @@ namespace Malx_AI
                             ["query"] = new JsonObject
                             {
                                 ["type"] = "string",
-                                ["description"] = "A concise search query focused on the user's actual question, such as what X is, what X does to Y, how X works, latest status, docs, or news."
+                                ["description"] = "A concise standalone search query focused on the user's actual question, preserving the relation being asked about and including any prior-turn entity needed to disambiguate it."
                             }
                         },
                         ["required"] = new JsonArray("query"),
@@ -743,7 +759,7 @@ namespace Malx_AI
                             pythonSessionStarted = true;
                         }
 
-                        CloudToolExecutionResult executionResult = await ExecuteCloudToolCallAsync(toolCall, userMsg, token);
+                        CloudToolExecutionResult executionResult = await ExecuteCloudToolCallAsync(toolCall, userMsg, messages, token);
                         string boundedToolResult = BuildCloudToolResultMessage(executionResult.Result, toolCall.Name);
                         messages.Add(new OpenRouterMessage("tool", boundedToolResult, toolCall.Id));
                     }
@@ -782,11 +798,41 @@ namespace Malx_AI
             }
         }
 
+        private static bool HasCloudWebSearchEvidence(string text)
+        {
+            return !string.IsNullOrWhiteSpace(text)
+                && text.Contains("[[WEB SEARCH DATA]]", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("[[END WEB SEARCH DATA]]", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static IReadOnlyList<ConversationSearchTurn> BuildCloudToolSearchTurns(IReadOnlyList<OpenRouterMessage>? messages)
+        {
+            if (messages == null || messages.Count == 0)
+                return [];
+
+            return messages
+                .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                .Where(m => !string.IsNullOrWhiteSpace(m.Text))
+                .TakeLast(14)
+                .Select(m => new ConversationSearchTurn(m.Role, m.Text))
+                .ToList();
+        }
+
         private static string BuildCloudToolResultMessage(string toolResult, string toolName)
         {
             string normalized = (toolResult ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized))
                 return "Tool returned no output. If needed, summarize that no evidence or result was produced.";
+
+            bool isWebSearch = string.Equals(toolName?.Trim(), "web_search", StringComparison.OrdinalIgnoreCase);
+            if (isWebSearch && HasCloudWebSearchEvidence(normalized))
+            {
+                normalized =
+                    "[WEB TOOL RESULT RULE]\n" +
+                    "Use this web_search result as source evidence only for claims it directly supports. Verify that the evidence covers the user's named entities and the relation they asked about. If it is off-topic or incomplete and another tool call is still available, call one narrower standalone web_search query; otherwise answer the supported portion and state the exact evidence gap. Synthesize the sources into a direct answer instead of listing raw snippets.\n\n" +
+                    normalized;
+            }
 
             if (normalized.Length <= CloudToolResultCharacterLimit)
                 return normalized;
@@ -796,7 +842,7 @@ namespace Malx_AI
             return truncated + $"\n\n[TOOL RESULT TRUNCATED] The {displayName} output exceeded {CloudToolResultCharacterLimit} characters. Use the retained portion above as the primary evidence and synthesize from it instead of asking the tool to repeat the same large output unless a narrower follow-up query is required.";
         }
 
-        private async Task<CloudToolExecutionResult> ExecuteCloudToolCallAsync(OpenRouterToolCall toolCall, string originalUserMessage, CancellationToken token)
+        private async Task<CloudToolExecutionResult> ExecuteCloudToolCallAsync(OpenRouterToolCall toolCall, string originalUserMessage, IReadOnlyList<OpenRouterMessage> conversationMessages, CancellationToken token)
         {
             if (toolCall == null || string.IsNullOrWhiteSpace(toolCall.Name))
                 return new CloudToolExecutionResult { Result = "Tool call was empty." };
@@ -812,7 +858,21 @@ namespace Malx_AI
                 {
                     StartToolActivityIndicator("Searching the web");
                     string query = root.TryGetProperty("query", out JsonElement queryElement) ? queryElement.GetString() ?? string.Empty : string.Empty;
-                    string data = await _webSearchService.SearchTopSnippetsForNormalChatAsync(query, token);
+                    string contextualQuery = ConversationSearchContext.BuildContextualSearchPrompt(
+                        query,
+                        BuildCloudToolSearchTurns(conversationMessages));
+                    if (string.IsNullOrWhiteSpace(contextualQuery))
+                    {
+                        contextualQuery = ConversationSearchContext.BuildContextualSearchPrompt(
+                            query,
+                            new[] { new ConversationSearchTurn("user", originalUserMessage) });
+                    }
+
+                    string finalQuery = string.IsNullOrWhiteSpace(contextualQuery) ? query : contextualQuery;
+                    await BackendLogService.LogEventAsync("MainWindow.CloudWebSearch", $"ToolQuery:{query}\nContextualQuery:{finalQuery}");
+                    string data = await _webSearchService.SearchTopSnippetsForNormalChatAsync(
+                        finalQuery,
+                        token);
                     return new CloudToolExecutionResult
                     {
                         Name = normalizedName,
@@ -1064,7 +1124,7 @@ namespace Malx_AI
             // Proactive web search — mirrors local-mode behavior so the web toggle and [web] marker
             // work identically in cloud mode. Cloud also has a web_search tool for reactive searches,
             // but proactive injection is needed when the user explicitly enables the toggle.
-            string webContext = await TryBuildWebContextAsync(userMsg, false, token);
+            string webContext = await TryBuildWebContextAsync(userMsg, false, token, uiSnapshot.ChatMessages);
             string personaContext = await _personaMemoryService.GetRelevantContextAsync(userMsg, 150, 350, token);
 
             return await Task.Run(() =>
@@ -1074,6 +1134,10 @@ namespace Malx_AI
                 string cloudModelInstruction = BuildCloudModelSystemInstruction(userMsg);
                 if (!string.IsNullOrWhiteSpace(cloudModelInstruction))
                     systemPrompt += "\n\n" + cloudModelInstruction;
+
+                string cloudWebSearchInstruction = BuildCloudWebSearchSystemInstruction(userMsg, !string.IsNullOrWhiteSpace(webContext));
+                if (!string.IsNullOrWhiteSpace(cloudWebSearchInstruction))
+                    systemPrompt += "\n\n" + cloudWebSearchInstruction;
 
                 string cloudIdentityInstruction = BuildCloudIdentitySystemInstruction();
                 if (!string.IsNullOrWhiteSpace(cloudIdentityInstruction))

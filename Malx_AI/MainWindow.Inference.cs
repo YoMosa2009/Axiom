@@ -2720,7 +2720,7 @@ namespace Malx_AI
 
             SandboxPreparation sandboxPreparation = PrepareSandboxContext(userMsg);
             string personaContext = await _personaMemoryService.GetRelevantContextAsync(userMsg, 150, 200);
-            string webContext = await TryBuildWebContextAsync(userMsg, false, token);
+            string webContext = await TryBuildWebContextAsync(userMsg, false, token, uiSnapshot.ChatMessages);
 
             return await Task.Run(() =>
             {

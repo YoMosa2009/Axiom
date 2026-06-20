@@ -5,6 +5,27 @@
              xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}">
+    <UserControl.Resources>
+        <Style x:Key="WorkplaceTokenMeterProgressBarStyle" TargetType="ProgressBar">
+            <Setter Property="Height" Value="4"/>
+            <Setter Property="Background" Value="#302D2A"/>
+            <Setter Property="Foreground" Value="#5FAF7D"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid Height="{TemplateBinding Height}" SnapsToDevicePixels="True">
+                            <Border Background="{TemplateBinding Background}" CornerRadius="2"/>
+                            <Border x:Name="PART_Indicator"
+                                    HorizontalAlignment="Left"
+                                    Background="{TemplateBinding Foreground}"
+                                    CornerRadius="2"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="280" MinWidth="240" MaxWidth="360"/>
@@ -291,24 +312,92 @@
                         <TextBlock Text="Refinement Mode" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource PrimaryAccentBrush}"/>
                     </Border>
                     <Border Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="10" Margin="0,0,0,10">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                <Border x:Name="ArchitectStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="8,3" Margin="0,0,6,0">
-                                    <TextBlock x:Name="ArchitectStageText" Text="Architect · Idle" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
-                                </Border>
-                                <Border x:Name="BuilderStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="8,3" Margin="0,0,6,0">
-                                    <TextBlock x:Name="BuilderStageText" Text="Builder · Idle" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
-                                </Border>
-                                <Border x:Name="CriticStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="8,3">
-                                    <TextBlock x:Name="CriticStageText" Text="Critic · Idle" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
-                                </Border>
-                                <Button Content="Re-run Builder" Click="RerunBuilder_Click" Margin="10,0,6,0" Padding="8,2" FontSize="10" Style="{StaticResource SubtleButtonStyle}"/>
-                                <Button Content="Re-run Critic" Click="RerunCritic_Click" Margin="0,0,6,0" Padding="8,2" FontSize="10" Style="{StaticResource SubtleButtonStyle}"/>
-                                <Button Content="Re-run Sandbox" Click="RerunSandbox_Click" Margin="0,0,6,0" Padding="8,2" FontSize="10" Style="{StaticResource SubtleButtonStyle}"/>
-                                <Button Content="Export Run" Click="ExportRunArtifacts_Click" Padding="8,2" FontSize="10" Style="{StaticResource SubtleButtonStyle}"/>
-                            </StackPanel>
-                            <TextBlock x:Name="RevisionNoticeBlock" Text="Issues were found and the output was revised." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Visibility="Collapsed"/>
-                        </StackPanel>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Row="0" Grid.Column="0" MinWidth="270" MaxWidth="390" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="24"/>
+                                    <RowDefinition Height="24"/>
+                                </Grid.RowDefinitions>
+                                <UniformGrid Grid.Row="0" Columns="3" Margin="0,0,0,4">
+                                    <Border x:Name="ArchitectStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="7,2" Margin="0,0,5,0">
+                                        <TextBlock x:Name="ArchitectStageText" Text="Architect · Idle" FontSize="9" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                    </Border>
+                                    <Border x:Name="BuilderStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="7,2" Margin="0,0,5,0">
+                                        <TextBlock x:Name="BuilderStageText" Text="Builder · Idle" FontSize="9" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                    </Border>
+                                    <Border x:Name="CriticStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="7,2">
+                                        <TextBlock x:Name="CriticStageText" Text="Critic · Idle" FontSize="9" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                    </Border>
+                                </UniformGrid>
+                                <UniformGrid Grid.Row="1" Columns="4">
+                                    <Button Click="RerunBuilder_Click" Margin="0,0,5,0" Padding="4,2" FontSize="9" Style="{StaticResource SubtleButtonStyle}" ToolTip="Re-run Builder">
+                                        <TextBlock Text="↻ Builder" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                    </Button>
+                                    <Button Click="RerunCritic_Click" Margin="0,0,5,0" Padding="4,2" FontSize="9" Style="{StaticResource SubtleButtonStyle}" ToolTip="Re-run Critic">
+                                        <TextBlock Text="↻ Critic" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                    </Button>
+                                    <Button Click="RerunSandbox_Click" Margin="0,0,5,0" Padding="4,2" FontSize="9" Style="{StaticResource SubtleButtonStyle}" ToolTip="Re-run Sandbox">
+                                        <TextBlock Text="↻ Sandbox" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                    </Button>
+                                    <Button Click="ExportRunArtifacts_Click" Padding="4,2" FontSize="9" Style="{StaticResource SubtleButtonStyle}" ToolTip="Export Run">
+                                        <TextBlock Text="Export" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
+                                    </Button>
+                                </UniformGrid>
+                            </Grid>
+                            <Border x:Name="WorkplaceTokenUsagePanel"
+                                    Grid.Row="0"
+                                    Grid.Column="1"
+                                    Margin="14,0,0,0"
+                                    Padding="14,1,0,1"
+                                    VerticalAlignment="Center"
+                                    BorderBrush="{StaticResource NotebookBorderBrush}"
+                                    BorderThickness="1,0,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Grid Width="92" Margin="0,0,12,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="4"/>
+                                        </Grid.RowDefinitions>
+                                        <DockPanel Margin="0,0,0,4">
+                                            <TextBlock Text="Architect" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                            <TextBlock x:Name="ArchitectTokenUsageLabel" Text="0 / 0" FontSize="9" HorizontalAlignment="Right" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                        </DockPanel>
+                                        <ProgressBar x:Name="ArchitectTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
+                                    </Grid>
+                                    <Grid Width="92" Margin="0,0,12,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="4"/>
+                                        </Grid.RowDefinitions>
+                                        <DockPanel Margin="0,0,0,4">
+                                            <TextBlock Text="Builder" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                            <TextBlock x:Name="BuilderTokenUsageLabel" Text="0 / 0" FontSize="9" HorizontalAlignment="Right" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                        </DockPanel>
+                                        <ProgressBar x:Name="BuilderTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
+                                    </Grid>
+                                    <Grid Width="92">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="4"/>
+                                        </Grid.RowDefinitions>
+                                        <DockPanel Margin="0,0,0,4">
+                                            <TextBlock Text="Critic" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                            <TextBlock x:Name="CriticTokenUsageLabel" Text="0 / 0" FontSize="9" HorizontalAlignment="Right" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                        </DockPanel>
+                                        <ProgressBar x:Name="CriticTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                            <TextBlock x:Name="RevisionNoticeBlock" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0" Text="Issues were found and the output was revised." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Visibility="Collapsed"/>
+                        </Grid>
                     </Border>
 
                     <Border Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="0" Margin="0,0,0,8">
@@ -323,10 +412,12 @@
                                 <Button x:Name="SendButton" Content="Run Council" Click="SendMessage_Click" Width="110" Height="36"
                                         Style="{StaticResource PremiumButtonStyle}" Margin="4,0"/>
                             </StackPanel>
-                            <TextBox x:Name="QueryInput" VerticalContentAlignment="Top" Padding="16,10"
-                                     Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}" BorderThickness="0"
+                            <avalonedit:TextEditor x:Name="QueryInput"
+                                     Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}"
                                      FontFamily="Segoe UI" FontSize="13" KeyDown="QueryInput_KeyDown"
-                                     AcceptsReturn="True" TextWrapping="Wrap" MinHeight="40" MaxHeight="120"/>
+                                     WordWrap="True" ShowLineNumbers="False"
+                                     HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                                     MinHeight="40" MaxHeight="120"/>
                         </DockPanel>
                     </Border>
                     <TextBlock Text="Architect/Critic in chat  •  Builder in Project Canvas" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
@@ -470,6 +561,7 @@
                         <StackPanel>
                             <TextBlock x:Name="CanvasTitleBlock" Text="Project Canvas" FontSize="14" FontWeight="SemiBold"/>
                             <TextBlock x:Name="CanvasSubtitleBlock" Text="Builder output rendered here." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,3,0,0"/>
+                            <TextBlock x:Name="CanvasDiffSummaryBlock" Text="" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,2,0,0" Visibility="Collapsed"/>
                         </StackPanel>
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
                             <StackPanel x:Name="CanvasArtifactTogglePanel" Orientation="Horizontal" Margin="0,0,6,0" Visibility="Collapsed">
@@ -483,7 +575,7 @@
                                 </Canvas>
                             </Button>
                             <Button x:Name="RunCodeButton" Content="▶ Run" Margin="0,0,6,0" Click="RunCodeButton_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="10" Width="60" Height="26" Padding="0" ToolTip="Execute code in sandbox"/>
-                            <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,6,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Width="46" Height="26" Padding="0" ToolTip="Show revision changes" Visibility="Collapsed"/>
+                            <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,6,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Width="46" Height="26" Padding="0" ToolTip="Compare the current canvas source with its previous generated version" Visibility="Collapsed"/>
                             <Button x:Name="CodeOutputToggleButton" Content="⌄" Margin="0,0,6,0" Click="CodeOutputToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide code output"/>
                             <Button x:Name="ProjectCanvasToggleButton" Content="›" Click="ProjectCanvasToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide project canvas"/>
                         </StackPanel>

@@ -116,7 +116,7 @@ namespace Malx_AI
             int gpuLayers = 0;
             if (gpuCandidate)
             {
-                gpuLayers = CalculateGpuLayerCount(fileBytes, profile.AvailableVramBytes, safeContext, effectiveKvPerToken, meta?.BlockCount, meta?.IsHybridRecurrent ?? false, computeReserve);
+                gpuLayers = CalculateGpuLayerCount(fileBytes, profile.AvailableVramBytes, safeContext, effectiveKvPerToken, meta?.BlockCount, IsPartialGpuSplitUnsafe(meta), computeReserve);
             }
 
             // When most layers stay on the CPU, the weights working set lives in RAM.
@@ -126,7 +126,36 @@ namespace Malx_AI
             // already charged the weights against the combined pool — halving again here
             // double-punished partially offloaded models.
             int totalLayers = meta?.BlockCount ?? EstimateLayerCountFromSize(fileBytes);
-            bool fullOffload = gpuLayers > totalLayers;
+            if (gpuCandidate && gpuLayers == 0 && profile.AvailableVramBytes > 0)
+            {
+                uint recoveredContext = FindLargestGpuBackedContext(
+                    safeContext,
+                    requestedContext,
+                    meta,
+                    fileBytes,
+                    profile.AvailableVramBytes,
+                    effectiveKvPerToken,
+                    computeReserve);
+                if (recoveredContext > 0 && recoveredContext < safeContext)
+                {
+                    int recoveredLayers = CalculateGpuLayerCount(
+                        fileBytes,
+                        profile.AvailableVramBytes,
+                        recoveredContext,
+                        effectiveKvPerToken,
+                        meta?.BlockCount,
+                        IsPartialGpuSplitUnsafe(meta),
+                        computeReserve);
+
+                    if (recoveredLayers > 0)
+                    {
+                        safeContext = recoveredContext;
+                        gpuLayers = recoveredLayers;
+                    }
+                }
+            }
+
+            bool fullOffload = IsFullGpuOffload(gpuLayers, totalLayers);
             if (meta == null && !fullOffload)
             {
                 long ramBudget = (long)(profile.AvailableRamBytes * 0.70);
@@ -145,7 +174,7 @@ namespace Malx_AI
 
             ApplyPerformanceTuning(modelParams, gpuLayers, fullOffload, largeModel, useKvQuant, flashAttention, profile, gpuMicroBatch);
 
-            Debug.WriteLine($"HardwareProfiler: model={Path.GetFileName(modelPath)}, ctx={safeContext}, gpuLayers={gpuLayers}/{totalLayers}, kvQuant={useKvQuant}, flashAttn={flashAttention}, computeCap={profile.GpuComputeCapability}, threads={modelParams.Threads}, batch={modelParams.BatchSize}/{modelParams.UBatchSize}");
+            Debug.WriteLine($"HardwareProfiler: model={Path.GetFileName(modelPath)}, requestedCtx={requestedContext}, ctx={safeContext}, gpuLayers={gpuLayers}/{totalLayers}, kvQuant={useKvQuant}, flashAttn={flashAttention}, computeCap={profile.GpuComputeCapability}, freeVram={profile.AvailableVramGb:F1}GB, threads={modelParams.Threads}, batch={modelParams.BatchSize}/{modelParams.UBatchSize}");
             return modelParams;
         }
 
@@ -207,7 +236,7 @@ namespace Malx_AI
             // for the KV cache + compute buffer). Conservative by construction: less free VRAM → smaller
             // batch.
             uint gpuMicroBatch = ChooseGpuMicroBatch(profile, gpuResident, largeModel);
-            ApplyPerformanceTuning(modelParams, cachedGpuLayerCount, cachedGpuLayerCount > totalLayers, largeModel, useKvQuant, flashAttention, profile, gpuMicroBatch);
+            ApplyPerformanceTuning(modelParams, cachedGpuLayerCount, IsFullGpuOffload(cachedGpuLayerCount, totalLayers), largeModel, useKvQuant, flashAttention, profile, gpuMicroBatch);
 
             Debug.WriteLine($"HardwareProfiler: cached-weights plan model={Path.GetFileName(modelPath)}, ctx={safeContext}, gpuLayers={cachedGpuLayerCount}/{totalLayers} (kept from cache), flashAttn={flashAttention}, ubatch={gpuMicroBatch}");
             return modelParams;
@@ -273,6 +302,67 @@ namespace Malx_AI
 
             return Math.Clamp(Math.Min(upperBound, maxCtxForSize), 1024u, 32768u);
         }
+
+        private static uint FindLargestGpuBackedContext(
+            uint currentContext,
+            uint requestedContext,
+            GgufModelMetadata? meta,
+            long fileBytes,
+            long freeVramBytes,
+            long kvBytesPerToken,
+            long computeReserve)
+        {
+            if (currentContext <= 1024 || freeVramBytes <= 0 || kvBytesPerToken <= 0)
+                return 0;
+
+            uint upperBound = currentContext;
+            if (requestedContext > 0)
+                upperBound = Math.Min(upperBound, requestedContext);
+            if (meta?.ContextLength is > 0)
+                upperBound = Math.Min(upperBound, (uint)meta.ContextLength);
+
+            uint[] candidates =
+            [
+                upperBound,
+                32768u,
+                24576u,
+                16384u,
+                12288u,
+                8192u,
+                6144u,
+                4096u,
+                3072u,
+                2048u,
+                1536u,
+                1024u
+            ];
+
+            foreach (uint candidate in candidates
+                         .Where(c => c <= upperBound && c >= 1024)
+                         .Distinct()
+                         .OrderByDescending(c => c))
+            {
+                int layers = CalculateGpuLayerCount(
+                    fileBytes,
+                    freeVramBytes,
+                    candidate,
+                    kvBytesPerToken,
+                    meta?.BlockCount,
+                    IsPartialGpuSplitUnsafe(meta),
+                    computeReserve);
+
+                if (layers > 0)
+                    return candidate;
+            }
+
+            return 0;
+        }
+
+        private static bool IsFullGpuOffload(int gpuLayers, int totalLayers)
+            => totalLayers > 0 && gpuLayers >= totalLayers;
+
+        private static bool IsPartialGpuSplitUnsafe(GgufModelMetadata? meta)
+            => meta?.IsHybridRecurrent == true || meta?.IsSlidingWindowAttention == true;
 
         // Fallback KV-cache cost per token when GGUF metadata is unavailable.
         // Derived from typical architectures at each size class (f16, K+V).
@@ -353,7 +443,9 @@ namespace Malx_AI
 
                 if (names.Count > 0)
                 {
-                    profile.PrimaryGpuName = names[0];
+                    string? nvidiaName = names.FirstOrDefault(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase));
+                    string? amdName = names.FirstOrDefault(n => n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase));
+                    profile.PrimaryGpuName = nvidiaName ?? amdName ?? names[0];
                 }
 
                 profile.HasNvidiaGpu = names.Any(n => n.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase));
@@ -498,7 +590,7 @@ namespace Malx_AI
         /// and under any VRAM pressure planned 0, silently dropping generation to pure
         /// CPU even when the user selected GPU mode.
         /// </summary>
-        private static int CalculateGpuLayerCount(long modelBytes, long freeVramBytes, uint contextSize, long kvBytesPerToken, int? actualLayerCount, bool isHybridRecurrent, long computeReserve)
+        private static int CalculateGpuLayerCount(long modelBytes, long freeVramBytes, uint contextSize, long kvBytesPerToken, int? actualLayerCount, bool partialGpuSplitUnsafe, long computeReserve)
         {
             int totalLayers = actualLayerCount ?? EstimateLayerCountFromSize(modelBytes);
 
@@ -531,11 +623,10 @@ namespace Malx_AI
             if (modelBytes + kvTotal <= budget)
                 return totalLayers + 1;
 
-            // Hybrid recurrent (Mamba/SSM) models that do NOT fully fit must go to CPU, not a
-            // partial split: stranding some SSM layers on the GPU and others on the CPU has
-            // produced CUDA illegal-memory-access aborts during decode. CPU is stable, and with
-            // n_seq_max forced to 1 (LlamaContextFactory) their recurrent state is tiny in RAM.
-            if (isHybridRecurrent)
+            // Hybrid recurrent (Mamba/SSM) and sliding-window-attention models that do NOT fully
+            // fit must go to CPU, not a partial split: splitting their special state/KV caches
+            // across CPU and GPU has produced CUDA illegal-memory-access aborts during decode.
+            if (partialGpuSplitUnsafe)
                 return 0;
 
             int layers = (int)(budget / Math.Max(1, perLayerWeights + kvPerLayer));
