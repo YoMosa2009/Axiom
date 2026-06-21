@@ -1490,8 +1490,9 @@ namespace Malx_AI
         private static readonly uint MaxRoleContext = 32768;
         private bool _isProcessing;
         private bool _isProjectCanvasExpanded = true;
+        private bool _isProjectCanvasAutoCollapsed;
+        private bool _isProjectCanvasExplicitlyExpandedInCompactLayout;
         private bool _isCodeOutputExpanded = true;
-        private const double ProjectCanvasExpandedWidth = 560;
         private const double ProjectCanvasExpandedWidthRatio = 0.34;
         private const int ContextCompressionThreshold = 3000;
         private const double AvgCharsPerToken = 4.0;
@@ -1838,6 +1839,7 @@ namespace Malx_AI
             RefreshWorkplaceWebToggleUi();
             UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
+            SizeChanged += (_, _) => ApplyDesktopLayout(ActualWidth);
         }
 
         private sealed class ProjectCanvasMentionColorizer : DocumentColorizingTransformer
@@ -1867,8 +1869,84 @@ namespace Malx_AI
 
         private void ProjectCanvasToggleButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_isProjectCanvasAutoCollapsed)
+            {
+                _isProjectCanvasAutoCollapsed = false;
+                _isProjectCanvasExplicitlyExpandedInCompactLayout = true;
+                _isProjectCanvasExpanded = true;
+                AnimateProjectCanvasPane(true);
+                return;
+            }
+
             _isProjectCanvasExpanded = !_isProjectCanvasExpanded;
+            _isProjectCanvasExplicitlyExpandedInCompactLayout = false;
             AnimateProjectCanvasPane(_isProjectCanvasExpanded);
+        }
+
+        internal void ApplyDesktopLayout(double availableWidth)
+        {
+            if (!IsLoaded || availableWidth <= 0)
+                return;
+
+            bool compactCanvasLayout = availableWidth < 1120;
+            CouncilSidebarColumn.Width = new GridLength(availableWidth < 1200 ? 240 : availableWidth < 1700 ? 260 : 280);
+
+            if (compactCanvasLayout && _isProjectCanvasExpanded &&
+                !_isProjectCanvasAutoCollapsed && !_isProjectCanvasExplicitlyExpandedInCompactLayout)
+            {
+                _isProjectCanvasAutoCollapsed = true;
+                SetProjectCanvasVisibilityInstant(false);
+            }
+            else if (!compactCanvasLayout)
+            {
+                _isProjectCanvasExplicitlyExpandedInCompactLayout = false;
+                if (_isProjectCanvasAutoCollapsed)
+                {
+                    _isProjectCanvasAutoCollapsed = false;
+                    SetProjectCanvasVisibilityInstant(_isProjectCanvasExpanded);
+                }
+                else if (_isProjectCanvasExpanded && ProjectCanvasPane.Visibility == Visibility.Visible)
+                {
+                    ProjectCanvasPane.Width = GetResponsiveProjectCanvasWidth();
+                }
+            }
+
+            double canvasWidth = ProjectCanvasPane.Visibility == Visibility.Visible
+                ? ProjectCanvasPane.ActualWidth > 0 ? ProjectCanvasPane.ActualWidth : GetResponsiveProjectCanvasWidth()
+                : ProjectCanvasCollapsedHandle.Visibility == Visibility.Visible ? 36 : 0;
+            double centerWidth = Math.Max(0, availableWidth - CouncilSidebarColumn.Width.Value - canvasWidth);
+            bool stackRunSummary = centerWidth < 760;
+
+            Grid.SetRow(WorkplaceTokenUsagePanel, stackRunSummary ? 1 : 0);
+            Grid.SetColumn(WorkplaceTokenUsagePanel, stackRunSummary ? 0 : 1);
+            Grid.SetColumnSpan(WorkplaceTokenUsagePanel, stackRunSummary ? 2 : 1);
+            WorkplaceTokenUsagePanel.Margin = stackRunSummary
+                ? new Thickness(0, 8, 0, 0)
+                : new Thickness(14, 0, 0, 0);
+            WorkplaceTokenUsagePanel.Padding = stackRunSummary
+                ? new Thickness(0, 8, 0, 0)
+                : new Thickness(14, 1, 0, 1);
+            WorkplaceTokenUsagePanel.BorderThickness = stackRunSummary
+                ? new Thickness(0, 1, 0, 0)
+                : new Thickness(1, 0, 0, 0);
+
+            StageActionsPanel.HorizontalAlignment = stackRunSummary ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            StageActionsPanel.MaxWidth = stackRunSummary ? double.PositiveInfinity : 390;
+            InputAreaContainer.Padding = centerWidth < 650
+                ? new Thickness(12, 10, 12, 10)
+                : new Thickness(24, 12, 24, 12);
+        }
+
+        private void SetProjectCanvasVisibilityInstant(bool visible)
+        {
+            ProjectCanvasPane.BeginAnimation(WidthProperty, null);
+            ProjectCanvasPane.BeginAnimation(OpacityProperty, null);
+            ProjectCanvasPane.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            ProjectCanvasPane.Opacity = visible ? 1 : 0;
+            ProjectCanvasPane.Width = visible ? GetResponsiveProjectCanvasWidth() : 0;
+            ProjectCanvasCollapsedHandle.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
+            ProjectCanvasToggleButton.Content = visible ? "›" : "‹";
+            ProjectCanvasToggleButton.ToolTip = visible ? "Hide project canvas" : "Show project canvas";
         }
 
         // ── Agentic Pause UI ──────────────────────────────────────────────────

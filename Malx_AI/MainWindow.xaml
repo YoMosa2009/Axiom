@@ -2,9 +2,10 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Malx_AI"
-        Title="Axiom - Chat" Height="900" Width="1600" WindowStartupLocation="CenterScreen"
+        Title="Axiom - Chat" Height="900" Width="1600" MinWidth="1040" MinHeight="640" WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/Malx_Logo.ico"
-        AllowsTransparency="False" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}">
+        AllowsTransparency="False" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
 
     <Window.Resources>
         <QuadraticEase x:Key="FastEaseOut" EasingMode="EaseOut"/>
@@ -519,7 +520,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- MODE TABS -->
-        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="{StaticResource DarkSidebarBrush}" BorderThickness="0,0,0,1" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="12,8">
+        <Border x:Name="NavigationBar" Grid.Row="0" Grid.ColumnSpan="2" Background="{StaticResource DarkSidebarBrush}" BorderThickness="0,0,0,1" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="12,8">
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="ChatTabButton" Content="💬 Chat" Click="SwitchToChat_Click" Height="32" Width="120"
                         Style="{StaticResource ActiveNavigationTabButtonStyle}" Margin="0,0,8,0"/>

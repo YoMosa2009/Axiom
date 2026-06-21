@@ -4,7 +4,8 @@
              xmlns:local="clr-namespace:Malx_AI"
              xmlns:avalonedit="http://icsharpcode.net/sharpdevelop/avalonedit"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-             Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}">
+             Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}"
+             UseLayoutRounding="True" SnapsToDevicePixels="True">
     <UserControl.Resources>
         <Style x:Key="WorkplaceTokenMeterProgressBarStyle" TargetType="ProgressBar">
             <Setter Property="Height" Value="4"/>
@@ -28,7 +29,7 @@
     </UserControl.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="280" MinWidth="240" MaxWidth="360"/>
+            <ColumnDefinition x:Name="CouncilSidebarColumn" Width="280" MinWidth="240" MaxWidth="360"/>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition x:Name="CanvasColumn" Width="Auto"/>
         </Grid.ColumnDefinitions>
@@ -249,7 +250,7 @@
                 <DockPanel>
                     <StackPanel>
                         <TextBlock Text="Axiom Workplace" FontSize="18" FontWeight="SemiBold"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <WrapPanel Orientation="Horizontal" Margin="0,4,0,0">
                             <TextBlock x:Name="ContextInfoBlock" Text="Context: Ready" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
                             <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
                             <TextBlock x:Name="HardwareInfoBlock" Text="Adaptive mode" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
@@ -265,7 +266,7 @@
                             <TextBlock x:Name="ContextPressureBlock" Text="Context pressure: --" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
                             <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
                             <TextBlock x:Name="PipelineProgressBlock" Text="" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource PrimaryAccentBrush}"/>
-                        </StackPanel>
+                        </WrapPanel>
                     </StackPanel>
                 </DockPanel>
             </Border>
@@ -316,12 +317,13 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Grid Grid.Row="0" Grid.Column="0" MinWidth="270" MaxWidth="390" HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <Grid x:Name="StageActionsPanel" Grid.Row="0" Grid.Column="0" MinWidth="270" MaxWidth="390" HorizontalAlignment="Left" VerticalAlignment="Center">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="24"/>
                                     <RowDefinition Height="24"/>
@@ -396,7 +398,7 @@
                                     </Grid>
                                 </StackPanel>
                             </Border>
-                            <TextBlock x:Name="RevisionNoticeBlock" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0" Text="Issues were found and the output was revised." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Visibility="Collapsed"/>
+                            <TextBlock x:Name="RevisionNoticeBlock" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,6,0,0" Text="Issues were found and the output was revised." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Visibility="Collapsed"/>
                         </Grid>
                     </Border>
 

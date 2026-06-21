@@ -433,6 +433,7 @@ namespace Malx_AI
             try
             {
                 InitializeComponent();
+                InitializeResponsiveDesktopLayout();
                 // Let a LOCAL council run free the Normal-Chat model before it loads its own role
                 // models — on a single GPU both cannot be resident at once (see the method).
                 WorkplaceViewControl.ReleaseHostChatModelAsync = ReleaseChatModelForCouncilAsync;
@@ -571,7 +572,7 @@ namespace Malx_AI
 
             if (!collapse)
             {
-                SidebarColumn.Width = new GridLength(304);
+                SidebarColumn.Width = new GridLength(GetResponsiveSidebarWidth());
                 SidebarBorder.Visibility = Visibility.Visible;
                 SidebarBorder.Opacity = 0;
                 SidebarBorder.RenderTransform = new TranslateTransform(-24, 0);
