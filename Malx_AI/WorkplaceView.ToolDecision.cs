@@ -13,6 +13,7 @@ namespace Malx_AI
     {
         private const int BuilderToolDecisionMaxQueryChars = 4000;
         private const int BuilderToolResultMaxChars = 8000;
+        private const int MaxBuilderPreflightTools = 2;
 
         private sealed record BuilderToolDecision(string Action, string Tool, string Query);
 
@@ -28,72 +29,85 @@ namespace Malx_AI
             int? maxGenerationTokensOverride,
             int? contextSizeOverride)
         {
-            BuilderToolDecision? decision = null;
-            string lastInvalidDecision = string.Empty;
-
-            try
-            {
-                Grammar grammar = CreateBuilderToolDecisionGrammar();
-                for (int attempt = 0; attempt < 2 && decision == null; attempt++)
-                {
-                    string decisionSystem = BuildBuilderToolDecisionSystemPrompt(attempt > 0);
-                    string decisionPayload = BuildBuilderToolDecisionPayload(userPayload, lastInvalidDecision);
-                    ReasoningParser.ParsedResponse decisionResponse = await ExecuteCouncilRoleAsync(
-                        CouncilRole.Builder,
-                        decisionSystem,
-                        decisionPayload,
-                        token,
-                        temperatureOverride: 0.0f,
-                        baseStateVault: null,
-                        loadBaseState: false,
-                        allowBatchRecovery: allowBatchRecovery,
-                        showLiveCard: false,
-                        maxGenerationTokensOverride: 192,
-                        contextSizeOverride: contextSizeOverride,
-                        useBuilderToolDecision: false,
-                        outputGrammar: grammar,
-                        allowAgenticPauses: false,
-                        internalInferenceStep: true);
-
-                    lastInvalidDecision = decisionResponse.Answer.Trim();
-                    if (!TryParseBuilderToolDecision(lastInvalidDecision, out decision, out string parseError))
-                        LogActivity($"Builder tool decision rejected (attempt {attempt + 1}/2): {parseError}");
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // Tool routing is an enhancement, not a reason to lose the Builder deliverable.
-                // The final pass still runs normally and is subsequently validated/repaired.
-                LogActivity($"Builder constrained tool decision unavailable; continuing without a tool: {ex.Message}");
-            }
-
             var toolContext = new StringBuilder();
-            if (decision?.Action == "tool")
+            var usedToolCalls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Grammar grammar = CreateBuilderToolDecisionGrammar();
+
+            for (int round = 0; round <= MaxBuilderPreflightTools; round++)
             {
-                if (_agenticPauseEngine == null)
-                {
-                    toolContext.AppendLine("Tool execution failed: the tool dispatcher is unavailable.");
-                }
-                else
-                {
-                    LogActivity($"Builder constrained tool decision: {decision.Tool}.");
-                    AgenticPauseEngine.StructuredToolResult toolResult =
-                        await _agenticPauseEngine.ExecuteStructuredToolAsync(decision.Tool, decision.Query, token);
+                if (usedToolCalls.Count >= MaxBuilderPreflightTools)
+                    break;
 
-                    string resultText = toolResult.IsSuccess ? toolResult.Data : toolResult.ErrorMessage;
-                    if (resultText.Length > BuilderToolResultMaxChars)
-                        resultText = resultText[..BuilderToolResultMaxChars] + "\n[tool result truncated]";
+                BuilderToolDecision? decision = null;
+                string lastInvalidDecision = string.Empty;
+                try
+                {
+                    for (int attempt = 0; attempt < 2 && decision == null; attempt++)
+                    {
+                        string decisionSystem = BuildBuilderToolDecisionSystemPrompt(attempt > 0, usedToolCalls.Count);
+                        string decisionPayload = BuildBuilderToolDecisionPayload(
+                            userPayload,
+                            lastInvalidDecision,
+                            toolContext.ToString(),
+                            usedToolCalls);
+                        ReasoningParser.ParsedResponse decisionResponse = await ExecuteCouncilRoleAsync(
+                            CouncilRole.Builder,
+                            decisionSystem,
+                            decisionPayload,
+                            token,
+                            temperatureOverride: 0.0f,
+                            baseStateVault: null,
+                            loadBaseState: false,
+                            allowBatchRecovery: allowBatchRecovery,
+                            showLiveCard: false,
+                            maxGenerationTokensOverride: 192,
+                            contextSizeOverride: contextSizeOverride,
+                            useBuilderToolDecision: false,
+                            outputGrammar: grammar,
+                            allowAgenticPauses: false,
+                            internalInferenceStep: true);
 
-                    toolContext.AppendLine("[[PRE-BUILDER TOOL RESULT]]");
-                    toolContext.AppendLine($"Tool: {decision.Tool}");
-                    toolContext.AppendLine($"Status: {(toolResult.IsSuccess ? "success" : "failed")}");
-                    toolContext.AppendLine(resultText);
-                    toolContext.AppendLine("[[END PRE-BUILDER TOOL RESULT]]");
+                        lastInvalidDecision = decisionResponse.Answer.Trim();
+                        if (!TryParseBuilderToolDecision(lastInvalidDecision, out decision, out string parseError))
+                            LogActivity($"Builder tool decision rejected (attempt {attempt + 1}/2): {parseError}");
+                    }
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // Tool routing is an enhancement, not a reason to lose the deliverable.
+                    LogActivity($"Builder constrained tool decision unavailable; continuing without another tool: {ex.Message}");
+                    break;
+                }
+
+                if (decision == null || decision.Action == "final" || usedToolCalls.Count >= MaxBuilderPreflightTools)
+                    break;
+
+                string callKey = decision.Tool + "\n" + decision.Query.Trim();
+                if (!usedToolCalls.Add(callKey))
+                {
+                    LogActivity("Builder attempted a duplicate preflight tool call; stopping tool loop.");
+                    break;
+                }
+
+                LogActivity($"Builder constrained tool decision {usedToolCalls.Count}/{MaxBuilderPreflightTools}: {decision.Tool}.");
+                AgenticPauseEngine.StructuredToolResult toolResult = _agenticPauseEngine == null
+                    ? AgenticPauseEngine.StructuredToolResult.Fail("The tool dispatcher is unavailable.")
+                    : await _agenticPauseEngine.ExecuteStructuredToolAsync(decision.Tool, decision.Query, token);
+
+                string resultText = toolResult.IsSuccess ? toolResult.Data : toolResult.ErrorMessage;
+                if (resultText.Length > BuilderToolResultMaxChars)
+                    resultText = resultText[..BuilderToolResultMaxChars] + "\n[tool result truncated]";
+
+                toolContext.AppendLine($"[[TOOL OBSERVATION {usedToolCalls.Count}]]");
+                toolContext.AppendLine($"Tool: {decision.Tool}");
+                toolContext.AppendLine($"Query: {decision.Query}");
+                toolContext.AppendLine($"Status: {(toolResult.IsSuccess ? "success" : "failed")}");
+                toolContext.AppendLine(resultText);
+                toolContext.AppendLine($"[[END TOOL OBSERVATION {usedToolCalls.Count}]]");
             }
 
             string finalSystemPrompt = systemPrompt.Replace(
@@ -103,7 +117,10 @@ namespace Malx_AI
 
             string finalPayload = toolContext.Length == 0
                 ? userPayload
-                : userPayload + "\n\n" + toolContext;
+                // Keep the role's "produce the deliverable now" closing anchor as the final text
+                // the model reads. Appending observations after it encourages small models to echo
+                // tool output instead of implementing the request.
+                : toolContext + "\n\n" + userPayload;
 
             return await ExecuteCouncilRoleAsync(
                 CouncilRole.Builder,
@@ -123,7 +140,7 @@ namespace Malx_AI
                 internalInferenceStep: false);
         }
 
-        private string BuildBuilderToolDecisionSystemPrompt(bool isRepairAttempt)
+        private string BuildBuilderToolDecisionSystemPrompt(bool isRepairAttempt, int toolsUsed)
         {
             string webTool = _isWebSearchEnabled ? ", WEB_SEARCH" : string.Empty;
             string repair = isRepairAttempt
@@ -132,25 +149,34 @@ namespace Malx_AI
 
             return
                 "You are a tool router for the local Builder. " + repair +
-                "Decide whether exactly one tool must run before the Builder generates its deliverable. " +
+                $"This is decision round {toolsUsed + 1}; {toolsUsed} tool(s) have already run. " +
+                "Decide whether one additional tool must run before the Builder generates its deliverable. " +
                 "Tools retrieve evidence or calculate/execute checks; they do not write the final code. " +
-                "Choose final when the supplied context is sufficient. " +
+                "Choose final when the supplied context and observations are sufficient. Never repeat an equivalent call. " +
                 "Available tools: SEARCH_HIPPOCAMPUS, CALCULATE, RUN_SANDBOX, PYTHON_MATH" + webTool + ". " +
                 "Use RUN_SANDBOX only to check a small supplied snippet, not to generate an application. " +
+                "No tool can edit files, install packages, operate the UI, or modify Project Canvas. " +
                 "Return exactly one JSON object with fields in this order: action, tool, query. " +
                 "For no tool use {\"action\":\"final\",\"tool\":\"NONE\",\"query\":\"\"}. " +
                 "For a tool use action=tool, an available tool name, and a standalone non-empty query.";
         }
 
-        private string BuildBuilderToolDecisionPayload(string userPayload, string previousInvalidDecision)
+        private string BuildBuilderToolDecisionPayload(
+            string userPayload,
+            string previousInvalidDecision,
+            string priorToolObservations,
+            IReadOnlyCollection<string> usedToolCalls)
         {
-            string objective = _lastRunContext?.UserPrompt ?? string.Empty;
+            CouncilRunContext? runContext = _activeCouncilRunContext ?? _lastRunContext;
+            string objective = runContext?.UserPrompt ?? string.Empty;
             string payloadExcerpt = userPayload ?? string.Empty;
             const int maxExcerptChars = 10000;
             if (payloadExcerpt.Length > maxExcerptChars)
                 payloadExcerpt = "[earlier Builder context omitted]\n" + payloadExcerpt[^maxExcerptChars..];
 
             var payload = new StringBuilder();
+            payload.AppendLine(BuildCouncilGoalContractBlock(runContext?.GoalContract));
+            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled));
             if (!string.IsNullOrWhiteSpace(objective))
             {
                 payload.AppendLine("[[USER OBJECTIVE]]");
@@ -161,6 +187,15 @@ namespace Malx_AI
             payload.AppendLine("[[BUILDER INPUT]]");
             payload.AppendLine(payloadExcerpt);
             payload.AppendLine("[[END BUILDER INPUT]]");
+            if (!string.IsNullOrWhiteSpace(priorToolObservations))
+            {
+                payload.AppendLine("[[PRIOR TOOL OBSERVATIONS]]");
+                payload.AppendLine(priorToolObservations.Trim());
+                payload.AppendLine("[[END PRIOR TOOL OBSERVATIONS]]");
+            }
+            if (usedToolCalls.Count > 0)
+                payload.AppendLine("Already-used calls must not be repeated: " + string.Join(" | ", usedToolCalls.Select(call =>
+                    call.Length <= 180 ? call.Replace('\n', ':') : call[..180].Replace('\n', ':') + "...")));
             if (!string.IsNullOrWhiteSpace(previousInvalidDecision))
                 payload.AppendLine("Previous invalid envelope: " + previousInvalidDecision);
             return payload.ToString();

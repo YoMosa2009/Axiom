@@ -202,6 +202,7 @@ namespace Malx_AI
                 .Replace(AgenticPauseRule, BuildCloudCouncilToolsNote(), StringComparison.Ordinal)
                 .Replace("use the pause tools below", "use the tools provided", StringComparison.Ordinal)
                 .Replace("except through WEB_SEARCH", "except through the web_search tool", StringComparison.Ordinal);
+            cloudSystemPrompt += BuildCloudCouncilIntelligenceNote(role, _activeCouncilRunContext ?? _lastRunContext);
             if (role == CouncilRole.Builder)
             {
                 cloudSystemPrompt += "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
@@ -276,9 +277,10 @@ namespace Malx_AI
             string finalText = string.Empty;
             int toolCallCount = 0;
             IReadOnlyList<string> stopSequences = BuildCloudCouncilRoleStopSequences(role);
-            int maxTokens = GetCloudCouncilRoleMaxTokens(role);
+            int maxTokens = ResolveCloudCouncilRoleMaxTokens(role, _activeCouncilRunContext ?? _lastRunContext);
             bool forceNoToolsSynthesisAfterBuilderGrounding = false;
             int executedToolCount = 0;
+            var executedToolSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             for (int iteration = 0; iteration < CloudCouncilToolLoopIterationLimit; iteration++)
             {
@@ -286,6 +288,7 @@ namespace Malx_AI
                 // partial text on the card before the final answer streams in.
                 var textBuilder = new StringBuilder();
                 IReadOnlyList<OpenRouterToolDefinition>? toolsForThisPass = forceNoToolsSynthesisAfterBuilderGrounding
+                    || executedToolCount >= CloudCouncilToolExecutionLimit
                     ? null
                     : tools;
                 OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
@@ -344,11 +347,35 @@ namespace Malx_AI
 
                 foreach (OpenRouterToolCall toolCall in response.ToolCalls)
                 {
+                    if (toolCall == null)
+                        continue;
+
+                    OpenRouterToolCall nonNullToolCall = toolCall;
+                    string signature = (nonNullToolCall.Name ?? string.Empty).Trim() + "\n" + (nonNullToolCall.ArgumentsJson ?? string.Empty).Trim();
+                    if (!executedToolSignatures.Add(signature))
+                    {
+                        messages.Add(new OpenRouterMessage(
+                            "tool",
+                            "Duplicate tool call suppressed. Use the prior observation and continue toward the final deliverable.",
+                            nonNullToolCall.Id));
+                        LogActivity($"{roleName}: duplicate cloud tool call suppressed ({nonNullToolCall.Name}).");
+                        continue;
+                    }
+
+                    if (executedToolCount >= CloudCouncilToolExecutionLimit)
+                    {
+                        messages.Add(new OpenRouterMessage(
+                            "tool",
+                            $"Cloud tool execution budget exhausted ({CloudCouncilToolExecutionLimit}). Use existing observations and produce the final role output.",
+                            nonNullToolCall.Id));
+                        continue;
+                    }
+
                     executedToolCount++;
-                    UpdateCloudCouncilToolStatus(toolCall, executedToolCount);
-                    string toolResult = await ExecuteCouncilCloudToolAsync(toolCall, messages, token);
-                    messages.Add(new OpenRouterMessage("tool", BuildCouncilCloudToolResultMessage(toolResult, toolCall?.Name), toolCall?.Id));
-                    UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, CloudCouncilToolLoopIterationLimit)}/{CloudCouncilToolLoopIterationLimit} pauses used");
+                    UpdateCloudCouncilToolStatus(nonNullToolCall, executedToolCount);
+                    string toolResult = await ExecuteCouncilCloudToolAsync(nonNullToolCall, messages, token);
+                    messages.Add(new OpenRouterMessage("tool", BuildCouncilCloudToolResultMessage(toolResult, nonNullToolCall.Name), nonNullToolCall.Id));
+                    UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, CloudCouncilToolExecutionLimit)}/{CloudCouncilToolExecutionLimit} tools used");
                 }
 
                 if (builderHasGroundingToolCall)
@@ -437,17 +464,6 @@ namespace Malx_AI
                 ThinkingContent = reasoningFallback ? reasoning : string.Empty,
                 HasThinking = reasoningFallback,
                 IsReasoningFallback = reasoningFallback
-            };
-        }
-
-        private static int GetCloudCouncilRoleMaxTokens(CouncilRole role)
-        {
-            return role switch
-            {
-                CouncilRole.Builder => 4096,
-                CouncilRole.Architect => 2048,
-                CouncilRole.Critic => 2048,
-                _ => 2048
             };
         }
 
@@ -833,6 +849,7 @@ namespace Malx_AI
             public bool BuilderProducedCode { get; set; }
             public int ArchitectStepCount { get; set; }
             public PreFlightDecomposition? Decomposition { get; set; }
+            public CouncilGoalContract? GoalContract { get; set; }
             public List<string> StaticValidationFindings { get; set; } = new();
             public bool IsCalculationTask { get; set; }
             public bool IsDocumentTask { get; set; }
@@ -905,6 +922,7 @@ namespace Malx_AI
 
         private sealed class ContextStateObject
         {
+            public string TaskContract { get; set; } = "";
             public string UserPrompt { get; set; } = "";
             public string Objective { get; set; } = "";
             public string CalculatorContext { get; set; } = "";
@@ -1491,6 +1509,7 @@ namespace Malx_AI
         // legitimately need a research → compute → verify chain; the forced no-tools synthesis pass
         // still guarantees usable output if the budget is exhausted.
         private const int CloudCouncilToolLoopIterationLimit = 6;
+        private const int CloudCouncilToolExecutionLimit = 6;
         private const int CloudCouncilToolResultCharacterLimit = 14000;
         // Above this many visible characters, Builder text accompanying tool calls is treated as the
         // finished deliverable (late tool calls ignored). Below it, the text is a pre-tool lead-in and
@@ -5899,6 +5918,12 @@ namespace Malx_AI
         {
             var sb = new StringBuilder();
 
+            // Keep the compact goal/capability contract at the beginning, where small models are
+            // most likely to retain it. The role-specific closing anchor repeats the action at the
+            // end, avoiding the weak "important facts lost in the middle" layout.
+            if (!string.IsNullOrWhiteSpace(state.TaskContract))
+                sb.AppendLine(state.TaskContract.Trim());
+
             if (!string.IsNullOrWhiteSpace(state.Objective))
                 sb.AppendLine(BuildLabeledBlock("OBJECTIVE", state.Objective));
 
@@ -6311,6 +6336,15 @@ namespace Malx_AI
                     if (!System.Text.RegularExpressions.Regex.IsMatch(finalOutput, $@"\b{System.Text.RegularExpressions.Regex.Escape(fn)}\b"))
                         missing.Add($"Required function/identifier may be missing: {fn}");
                 }
+
+                // Identifier-only checking misses ordinary product requirements such as "add a
+                // delete button" or "persist tasks". Use conservative lexical evidence as a
+                // second pass; this emits a review warning, never silently rewrites user output.
+                foreach (string requirement in context.Decomposition.Requirements)
+                {
+                    if (!RequirementHasImplementationSignal(requirement, finalOutput))
+                        missing.Add($"Coding requirement may be unimplemented: {requirement}");
+                }
             }
             else
             {
@@ -6379,6 +6413,12 @@ namespace Malx_AI
         private static string BuildCriticPayload(CouncilRunContext context, string sandboxResult)
         {
             var payload = new StringBuilder();
+            string taskContract = BuildCouncilGoalContractBlock(context.GoalContract);
+            if (!string.IsNullOrWhiteSpace(taskContract))
+                payload.AppendLine(taskContract);
+            if (context.IsCloudExecution)
+                payload.AppendLine(BuildCloudVerificationPacket(context));
+
             if (context.StaticValidationFindings.Count > 0)
             {
                 var sb = new StringBuilder();
@@ -6391,8 +6431,8 @@ namespace Malx_AI
             // Cloud council models have ~131k-token windows; the tight local caps starved the cloud
             // Critic of the very evidence it audits (it literally could not see most of a large
             // artifact). Budgets stay unchanged for local models.
-            int sandboxCap = context.IsCloudExecution ? 6000 : 2000;
-            int requestCap = context.IsCloudExecution ? 6000 : 2000;
+            int sandboxCap = context.IsCloudExecution ? 16000 : 2000;
+            int requestCap = context.IsCloudExecution ? 12000 : 2000;
 
             if (!string.IsNullOrWhiteSpace(sandboxResult))
             {
@@ -6439,7 +6479,7 @@ namespace Malx_AI
                 // Provide just enough document reference for the Critic to verify factual grounding.
                 // Local: 1500 chars to protect small context windows. Cloud: 6000 chars — the cloud
                 // Critic has the headroom, and more source text means better hallucination checks.
-                int maxDocChars = context.IsCloudExecution ? 6000 : 1500;
+                int maxDocChars = context.IsCloudExecution ? 48000 : 1500;
                 string docSnippet = context.DocumentContent.Length > maxDocChars
                     ? context.DocumentContent[..maxDocChars] + "\n[...document truncated — Critic should verify Builder output against Architect plan steps]"
                     : context.DocumentContent;
@@ -6451,9 +6491,9 @@ namespace Malx_AI
                 string builderText = context.BuilderOutput;
                 // Keep start and end for review when over budget. Cloud gets a much larger window so
                 // the Critic can actually audit big artifacts instead of reviewing 5k of a 20k file.
-                int builderCap = context.IsCloudExecution ? 24000 : 5000;
-                int builderHead = context.IsCloudExecution ? 16000 : 3500;
-                int builderTail = context.IsCloudExecution ? 8000 : 1500;
+                int builderCap = context.IsCloudExecution ? 96000 : 5000;
+                int builderHead = context.IsCloudExecution ? 64000 : 3500;
+                int builderTail = context.IsCloudExecution ? 32000 : 1500;
                 if (builderText.Length > builderCap)
                 {
                     builderText = builderText[..builderHead] + "\n[...middle section truncated for context budget...]\n" + builderText[^builderTail..];
@@ -6679,7 +6719,7 @@ namespace Malx_AI
                     // replacement. Scale the source allowance to the actual role context instead of
                     // using the old fixed 6k cap that dropped ordinary HTML artifacts mid-file.
                     int artifactIterationCap = CanUseCloudCouncil
-                        ? 120000
+                        ? 300000
                         : Math.Clamp((builderContext - 3500) * 2, 6000, 40000);
                     runContext.CurrentArtifactForIteration = currentCanvas.Length > artifactIterationCap
                         ? currentCanvas[..artifactIterationCap]
@@ -6807,10 +6847,18 @@ namespace Malx_AI
                     decomposition = DecomposeUserPrompt(userQuery, objective, taskType);
                 }
                 runContext.Decomposition = decomposition;
+                runContext.GoalContract = BuildCouncilGoalContract(
+                    runContext,
+                    decomposition,
+                    _isWebSearchEnabled,
+                    _sessionHippocampus.GetMetadata().TotalEntryCount);
+                contextState.TaskContract = BuildCouncilGoalContractBlock(runContext.GoalContract)
+                    + BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution);
                 runContext.Complexity = EstimateTaskComplexity(decomposition.Requirements.Count);
                 runContext.SharedVocabulary = BuildSharedVocabulary(userQuery, objective);
                 _activeTaskComplexity = runContext.Complexity;
                 LogActivity($"Pre-flight: {decomposition.Requirements.Count} requirements, {decomposition.Constraints.Count} constraints extracted.");
+                LogActivity($"Task contract pinned: {runContext.GoalContract.AcceptanceChecks.Count} acceptance checks, Canvas={runContext.IsArtifactCanvasRequest}.");
                 LogActivity($"Task complexity: {runContext.Complexity}.");
 
                 string sharedVocabularySection = BuildSharedVocabularySection(runContext.SharedVocabulary);
@@ -6904,7 +6952,7 @@ namespace Malx_AI
                     // Cloud models have the context headroom for a wider, fuller conversation window,
                     // which markedly improves follow-up planning ("now change X" style turns).
                     string recentConversation = CanUseCloudCouncil
-                        ? BuildRecentConversationContext(6, 700)
+                        ? BuildRecentConversationContext(10, 1600)
                         : BuildRecentConversationContext(4);
                     string architectPayload = BuildPipelineStateHeader("", "")
                         + recentConversation
@@ -7104,13 +7152,15 @@ namespace Malx_AI
                     builderPriorKnowledge = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(runContext.ArchitectOutput, 4));
                     string previousBuilderOutput = GetPreviousRoleOutput("builder");
 
-                    bool useSegmented = taskType == CouncilTaskType.Coding
+                    bool useSegmented = taskType == CouncilTaskType.Coding && !runContext.IsCloudExecution
                         && !runContext.IsArtifactCanvasRequest   // a canvas artifact is ONE self-contained file — segmenting it emits partial code chunks that never render
                         && !runContext.IsProjectCanvasIteration // an edit must return one coherent replacement of the existing canvas source
                         && (runContext.Complexity == TaskComplexity.Complex || (runContext.Complexity != TaskComplexity.Simple && runContext.ArchitectStepCount > 4))
                         && !string.IsNullOrWhiteSpace(runContext.ArchitectOutput);
 
-                    int builderContextBudget = (int)GetRoleContextSize(CouncilRole.Builder);
+                    int builderContextBudget = runContext.IsCloudExecution
+                        ? GetCloudCouncilInputBudgetTokens()
+                        : (int)GetRoleContextSize(CouncilRole.Builder);
                     int documentTokens = runContext.IsDocumentTask ? EstimateTokenCount(runContext.DocumentContent) : 0;
                     // Document doesn't fit one full-context pass → retrieve the relevant sections and
                     // answer in ONE pass (RAG), rather than truncating to the head in the normal path.
@@ -7175,7 +7225,9 @@ namespace Malx_AI
 
                         if (runContext.IsDocumentTask && !string.IsNullOrWhiteSpace(runContext.DocumentContent))
                         {
-                            int maxDocChars = Math.Max(1600, (((int)GetRoleContextSize(CouncilRole.Builder) - 900) * 4));
+                            int maxDocChars = runContext.IsCloudExecution
+                                ? GetCloudDocumentCharacterBudget(runContext, 1600)
+                                : Math.Max(1600, (((int)GetRoleContextSize(CouncilRole.Builder) - 900) * 4));
                             builderPayload.AppendLine(BuildDocumentContentBlock(runContext.DocumentContent, maxDocChars));
                             builderPayload.AppendLine(DocumentGroundingInstruction);
                         }
@@ -7667,6 +7719,9 @@ namespace Malx_AI
                     && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     var staticFindings = RunStaticValidation(builderOutput);
+                    foreach (string requirementWarning in VerifyFulfillment(runContext, builderOutput))
+                        staticFindings.Add("REQUIREMENT CHECK (confirm against output): " + requirementWarning);
+                    staticFindings = staticFindings.Distinct(StringComparer.OrdinalIgnoreCase).Take(24).ToList();
                     runContext.StaticValidationFindings = staticFindings;
                     runContext.StaticValidationIssuesFound = staticFindings.Count > 0;
                     if (staticFindings.Count > 0)
@@ -8028,13 +8083,14 @@ namespace Malx_AI
                     // ═══════════════════════════════════════════════════════════════
                     // STAGE 4 — Weighted confidence routing after Critic
                     // ═══════════════════════════════════════════════════════════════
-                    if (CanUseCloudCouncil && hasBuilder && criticDetectedIssues)
+                    if (hasBuilder && criticDetectedIssues)
                     {
-                        LogActivity("Cloud council: Critic found issues; keeping Builder output and skipping automatic rewrite to avoid repeated cloud Builder remakes.");
-                        AppendChat("warning", "Critic found issues, but cloud mode kept the current Builder output instead of auto-rewriting it. Use Refine or Re-run Builder if you want a deliberate revision.");
-                    }
-                    else if (hasBuilder && criticDetectedIssues)
-                    {
+                        if (CanUseCloudCouncil)
+                        {
+                            LogActivity("Cloud council: Critic findings accepted as bounded revision feedback.");
+                            AppendChat("system", "Cloud Critic found concrete issues. Running a bounded repair flow against the task contract.");
+                        }
+
                         int issueCount = criticReport.Issues.Count;
                         LogActivity($"Critic findings count: {issueCount}.");
 
@@ -8086,6 +8142,8 @@ namespace Malx_AI
                                 patchSystem = BuildQwen3SystemPrompt(patchSystem, false);
 
                             var patchPayload = new StringBuilder();
+                            patchPayload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
+                            patchPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
                             // Mirror the main builder pass: anchor the expected artifact format first.
                             if (runContext.IsArtifactCanvasRequest)
                                 patchPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
@@ -8094,11 +8152,14 @@ namespace Malx_AI
                                 patchPayload.AppendLine(builderPriorKnowledge);
                             AppendCouncilWebContext(patchPayload, runContext);
                             patchPayload.AppendLine(BuildRolePrimedPayload(CouncilRole.Builder, taskType, ""));
+                            patchPayload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
                             patchPayload.AppendLine(BuildLabeledBlock("BUILDER OUTPUT", runContext.BuilderOutput));
                             patchPayload.AppendLine(BuildLabeledBlock("CRITIC FINDINGS", runContext.CriticReview));
                             if (runContext.IsDocumentTask && !string.IsNullOrWhiteSpace(runContext.DocumentContent))
                             {
-                                patchPayload.AppendLine(BuildDocumentContentBlock(runContext.DocumentContent, 6000));
+                                patchPayload.AppendLine(BuildDocumentContentBlock(
+                                    runContext.DocumentContent,
+                                    GetCloudDocumentCharacterBudget(runContext, 6000)));
                             }
 
                             var patchResult = await ExecuteCouncilRoleAsync(
@@ -8120,6 +8181,8 @@ namespace Malx_AI
                             if (taskType == CouncilTaskType.Coding || DetectCodeOutput(patchedOutput).IsCode)
                             {
                                 var postPatchFindings = RunStaticValidation(patchedOutput);
+                                postPatchFindings.AddRange(VerifyFulfillment(runContext, patchedOutput));
+                                postPatchFindings = postPatchFindings.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                                 if (postPatchFindings.Count > 0)
                                 {
                                     LogActivity($"Post-patch static validation found {postPatchFindings.Count} new issue(s) — escalating to full revision.");
@@ -8247,6 +8310,8 @@ namespace Malx_AI
                                 revisionBuilderSystem = BuildQwen3SystemPrompt(revisionBuilderSystem, false);
 
                             var revisionPayload = new StringBuilder();
+                            revisionPayload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
+                            revisionPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
                             // Mirror the main builder pass: anchor the expected artifact format first.
                             if (runContext.IsArtifactCanvasRequest)
                                 revisionPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
@@ -8267,7 +8332,9 @@ namespace Malx_AI
 
                             if (runContext.IsDocumentTask && !string.IsNullOrWhiteSpace(runContext.DocumentContent))
                             {
-                                revisionPayload.AppendLine(BuildDocumentContentBlock(runContext.DocumentContent, 7000));
+                                revisionPayload.AppendLine(BuildDocumentContentBlock(
+                                    runContext.DocumentContent,
+                                    GetCloudDocumentCharacterBudget(runContext, 7000)));
                             }
 
                             if (finalChunks.Count > 0)
@@ -8295,6 +8362,14 @@ namespace Malx_AI
                                 revisedBuilderOutput = BuildWebEvidenceUnavailableBuilderFallback(runContext);
                             }
                             builderReasoningFallback = revisedBuilderResult.IsReasoningFallback;
+
+                            if (taskType == CouncilTaskType.Coding || DetectCodeOutput(revisedBuilderOutput).IsCode)
+                            {
+                                var revisionFindings = RunStaticValidation(revisedBuilderOutput);
+                                revisionFindings.AddRange(VerifyFulfillment(runContext, revisedBuilderOutput));
+                                foreach (string finding in revisionFindings.Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
+                                    AppendChat("warning", "Post-revision verification: " + finding);
+                            }
 
                             LogActivity($"Builder revision complete ({revisedBuilderOutput.Length} chars). Routing output...");
                             builderOutput = revisedBuilderOutput;
@@ -8437,6 +8512,7 @@ namespace Malx_AI
                     TaskDescription = userQuery.Length > 200 ? userQuery[..200] : userQuery,
                     TaskType = taskType
                 };
+                WriteGoalContractSessionMemory(runContext.GoalContract, activeRunIndex);
                 SessionMemoryStatusBlock.Text = $"Prior run stored ({DateTime.Now:HH:mm})";
 
                 _lastRunContext = runContext;
@@ -8620,6 +8696,8 @@ namespace Malx_AI
                 RelayStatusBlock.Text = $"Relay: Builder segment {i + 1}/{segments.Count}...";
 
                 var segmentPayload = new StringBuilder();
+                segmentPayload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
+                segmentPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
                 segmentPayload.AppendLine(pipelineStateHeader);
                 segmentPayload.AppendLine(sharedVocabularySection);
                 if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
@@ -8709,7 +8787,9 @@ namespace Malx_AI
         private async Task<string> ExecuteDocumentRetrievalBuilderAsync(
             CouncilRunContext runContext, string builderSystem, string priorKnowledgeBlock, CancellationToken token, CouncilBaseStateVault? baseStateVault)
         {
-            int builderContext = (int)GetRoleContextSize(CouncilRole.Builder);
+            int builderContext = runContext.IsCloudExecution
+                ? GetCloudCouncilInputBudgetTokens()
+                : (int)GetRoleContextSize(CouncilRole.Builder);
 
             // Budget the window by its REAL fixed costs first, then give what's left to source content.
             // The Builder system prompt (environment briefing + output contract + role boosts) is roughly
@@ -8751,6 +8831,8 @@ namespace Malx_AI
             }
 
             var payload = new StringBuilder();
+            payload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
+            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
             payload.AppendLine(BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(runContext.ArchitectOutput), ""));
             payload.AppendLine(BuildSharedVocabularySection(runContext.SharedVocabulary));
             if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
@@ -8801,7 +8883,9 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(runContext.DocumentContent))
                 return null;
 
-            int builderContext = (int)GetRoleContextSize(CouncilRole.Builder);
+            int builderContext = runContext.IsCloudExecution
+                ? GetCloudCouncilInputBudgetTokens()
+                : (int)GetRoleContextSize(CouncilRole.Builder);
             int builderSystemTokens = EstimateTokenCount(builderSystem);
             int fixedOverhead = builderSystemTokens
                 + EstimateTokenCount(runContext.UserPrompt)
@@ -8824,6 +8908,8 @@ namespace Malx_AI
             }
 
             var payload = new StringBuilder();
+            payload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
+            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
             payload.AppendLine(pipelineStateHeader);
             payload.AppendLine(sharedVocabularySection);
             if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
@@ -9262,35 +9348,61 @@ namespace Malx_AI
             var decomp = new PreFlightDecomposition();
             string combined = $"{userQuery} {objective}".Trim();
 
-            // Problem statement: first sentence or up to 120 chars
-            int sentenceEnd = combined.IndexOfAny(['.', '!', '?']);
-            decomp.ProblemStatement = sentenceEnd > 0 && sentenceEnd < 120
-                ? combined[..(sentenceEnd + 1)].Trim()
-                : (combined.Length > 120 ? combined[..120].Trim() + "..." : combined.Trim());
+            // Preserve the complete intent instead of reducing a nuanced request to its first
+            // sentence. The cap keeps the contract compact enough for 1B-7B local models.
+            decomp.ProblemStatement = NormalizeContractText(combined, 700);
 
-            // Extract requirements from explicit markers and sentence structure
             string lower = combined.ToLowerInvariant();
-            var requirementMarkers = new[] { "must ", "should ", "need to ", "needs to ", "require", "want ", "create ", "build ", "implement ", "write ", "generate ", "produce " };
-            foreach (var line in combined.Split(['.', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            var requirementMarkers = new[]
             {
-                string trimLine = line.Trim();
-                if (trimLine.Length < 5) continue;
-                string trimLower = trimLine.ToLowerInvariant();
-                if (requirementMarkers.Any(m => trimLower.Contains(m)))
-                    decomp.Requirements.Add(trimLine);
+                "must ", "should ", "need to ", "needs to ", "require", "want ",
+                "create ", "build ", "implement ", "write ", "generate ", "produce ",
+                "make ", "add ", "remove ", "change ", "fix ", "improve ", "enhance ",
+                "support ", "allow ", "ensure ", "include ", "use ", "display ", "render "
+            };
+            var constraintMarkers = new[]
+            {
+                "only ", "without ", " no ", "must not ", "don't ", "do not ",
+                "using ", "in python", "in c#", "in java", "in javascript", "in html",
+                "standard library", "no external", "offline", "self-contained", "single file",
+                "at most", "at least", "under ", "over ", "exactly "
+            };
+
+            // Split on paragraphs, bullets, semicolons, and discourse cues that users commonly
+            // use to add requirements. Avoid splitting on plain "and", which destroys meaning.
+            string prepared = Regex.Replace(combined,
+                @"\b(furthermore|moreover|additionally|lastly|finally|also|one last thing)\b\s*[:,]?",
+                "\n", RegexOptions.IgnoreCase);
+            prepared = Regex.Replace(prepared, @"(?m)^\s*(?:[-*\u2022]|\d{1,2}[.)])\s+", "");
+            string[] units = Regex.Split(prepared, @"(?:\r?\n)+|;\s+|(?<=[.!?])\s+(?=[A-Z])");
+
+            foreach (string unit in units)
+            {
+                string item = NormalizeContractText(unit, 320).Trim(' ', '.', ';');
+                if (item.Length < 4)
+                    continue;
+
+                string itemLower = " " + item.ToLowerInvariant() + " ";
+                bool isConstraint = constraintMarkers.Any(marker => itemLower.Contains(marker));
+                bool isRequirement = requirementMarkers.Any(marker => itemLower.Contains(marker));
+
+                if (isRequirement || isConstraint)
+                    decomp.Requirements.Add(item);
+                if (isConstraint)
+                    decomp.Constraints.Add(item);
             }
 
-            if (decomp.Requirements.Count == 0)
-                decomp.Requirements.Add(combined.Length > 200 ? combined[..200] : combined);
+            if (decomp.Requirements.Count == 0 && combined.Length > 0)
+                decomp.Requirements.Add(NormalizeContractText(combined, 320));
 
-            // Extract constraints
-            var constraintMarkers = new[] { "only ", "without ", "no ", "must not ", "don't ", "do not ", "using ", "in python", "in c#", "in java", "in javascript", "standard library", "no external" };
-            foreach (var line in combined.Split(['.', '\n'], StringSplitOptions.RemoveEmptyEntries))
-            {
-                string trimLower = line.Trim().ToLowerInvariant();
-                if (constraintMarkers.Any(m => trimLower.Contains(m)))
-                    decomp.Constraints.Add(line.Trim());
-            }
+            decomp.Requirements = decomp.Requirements
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(10)
+                .ToList();
+            decomp.Constraints = decomp.Constraints
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToList();
 
             if (taskType == CouncilTaskType.Coding)
             {
@@ -9299,6 +9411,11 @@ namespace Malx_AI
                 else if (lower.Contains("java") && !lower.Contains("javascript")) decomp.Constraints.Add("Language: Java");
                 else if (lower.Contains("javascript") || lower.Contains("js ")) decomp.Constraints.Add("Language: JavaScript");
             }
+
+            decomp.Constraints = decomp.Constraints
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToList();
 
             return decomp;
         }
@@ -13534,23 +13651,29 @@ namespace Malx_AI
 
         private int GetContextCompressionThresholdTokens()
         {
+            if (CanUseCloudCouncil)
+            {
+                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(
+                    OpenRouterChatService.WorkplaceCouncilDefaultModelId);
+                int cloudUsableHistoryWindow = Math.Max(32768, cloudWindow - 32768);
+                return Math.Max(ContextCompressionThreshold, (int)(cloudUsableHistoryWindow * 0.60));
+            }
+
             int architectContext = (int)GetRoleContextSize(CouncilRole.Architect);
             int builderContext = (int)GetRoleContextSize(CouncilRole.Builder);
             int criticContext = (int)GetRoleContextSize(CouncilRole.Critic);
             int limitingContext = Math.Max((int)MinRoleContext, Math.Min(architectContext, Math.Min(builderContext, criticContext)));
 
-            int reservedForCurrentTurn = CanUseCloudCouncil
-                ? Math.Min(12000, Math.Max(4000, limitingContext / 8))
-                : Math.Min(1800, Math.Max(900, limitingContext / 5));
+            int reservedForCurrentTurn = Math.Min(1800, Math.Max(900, limitingContext / 5));
             int usableHistoryWindow = Math.Max(ContextCompressionThreshold, limitingContext - reservedForCurrentTurn);
-            double triggerRatio = CanUseCloudCouncil ? 0.55 : 0.45;
+            const double triggerRatio = 0.45;
 
             return Math.Max(ContextCompressionThreshold, (int)(usableHistoryWindow * triggerRatio));
         }
 
         private int GetRecentMessagesToKeepAfterCompression()
         {
-            return CanUseCloudCouncil ? 10 : 6;
+            return CanUseCloudCouncil ? 16 : 6;
         }
 
         private async Task CompressChatHistoryIfNeededAsync(CancellationToken token)
@@ -13814,6 +13937,8 @@ namespace Malx_AI
                 string pipelineState = BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(_lastRunContext.ArchitectOutput), "");
 
                 var payload = new StringBuilder();
+                payload.AppendLine(BuildCouncilGoalContractBlock(_lastRunContext.GoalContract));
+                payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, _lastRunContext.IsCloudExecution));
                 if (_lastRunContext.IsArtifactCanvasRequest)
                     payload.AppendLine(BuildCanvasArtifactAnchorBlock(_lastRunContext));
                 if (smallLocalBuilderModel && (_lastRunContext.TaskType == CouncilTaskType.Coding || _lastRunContext.IsArtifactCanvasRequest))
