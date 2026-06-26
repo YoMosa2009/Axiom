@@ -881,7 +881,7 @@ namespace Malx_AI
 
             RefreshNormalWebToggleUi();
 
-            AddChatMessage("system", _normalWebSearchEnabled
+            ShowTransientStatus(_normalWebSearchEnabled
                 ? "Normal chat web search enabled."
                 : "Normal chat web search disabled.");
         }

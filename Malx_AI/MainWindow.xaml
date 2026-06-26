@@ -474,6 +474,147 @@
             </Setter>
         </Style>
 
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="{x:Type ComboBoxItem}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource NotebookTextBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                        <Border x:Name="ItemBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderThickness="0"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#2A2826"/>
+                                <Setter Property="Foreground" Value="#EDE8E3"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#3A3328"/>
+                                <Setter Property="Foreground" Value="#F5D591"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#665F58"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkComboBoxStyle" TargetType="{x:Type ComboBox}">
+            <Setter Property="Background" Value="#171615"/>
+            <Setter Property="Foreground" Value="{StaticResource NotebookTextBrush}"/>
+            <Setter Property="BorderBrush" Value="#302D2A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBox}">
+                        <Grid TextElement.Foreground="{TemplateBinding Foreground}">
+                            <ToggleButton x:Name="DropDownToggle"
+                                          Background="{TemplateBinding Background}"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          ClickMode="Press"
+                                          Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Border x:Name="ToggleBorder"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="6"
+                                                SnapsToDevicePixels="True">
+                                            <Grid>
+                                                <Path x:Name="DropDownArrow"
+                                                      Width="8"
+                                                      Height="5"
+                                                      HorizontalAlignment="Right"
+                                                      VerticalAlignment="Center"
+                                                      Margin="0,0,10,0"
+                                                      Fill="#8A8279"
+                                                      Stretch="Uniform"
+                                                      Data="M 0 0 L 8 0 L 4 5 Z"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="#4A443D"/>
+                                                <Setter TargetName="DropDownArrow" Property="Fill" Value="#EDE8E3"/>
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter TargetName="ToggleBorder" Property="Background" Value="#211F1D"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="#B8924A"/>
+                                                <Setter TargetName="DropDownArrow" Property="Fill" Value="#F5D591"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter x:Name="ContentSite"
+                                              Margin="10,0,30,0"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   IsOpen="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                   Placement="Bottom"
+                                   PopupAnimation="Fade">
+                                <Border MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="220"
+                                        Margin="0,4,0,0"
+                                        Padding="4"
+                                        Background="#171615"
+                                        BorderBrush="#302D2A"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        SnapsToDevicePixels="True">
+                                    <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter Property="BorderBrush" Value="#B8924A"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#665F58"/>
+                                <Setter Property="Background" Value="#211F1D"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ChatModeSelectorButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="#8A8279"/>
@@ -923,11 +1064,11 @@
                                                                            IsHtmlRenderingEnabled="False"
                                                                            HorizontalAlignment="Stretch"
                                                                            Visibility="Collapsed"/>
-                                                <StackPanel x:Name="ActionButtonPanel" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0" Visibility="Collapsed">
-                                                    <Button Content="Pin" Click="PinMessage_Click" Tag="{Binding}" FontSize="9" Padding="6,1" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button Content="Branch" Click="BranchMessage_Click" Tag="{Binding}" FontSize="9" Padding="6,1" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button Content="Copy" Click="CopyMessage_Click" Tag="{Binding}" FontSize="9" Padding="6,1" Margin="4,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
-                                                </StackPanel>
+                                                <WrapPanel x:Name="ActionButtonPanel" HorizontalAlignment="Right" Margin="0,8,0,0" Visibility="Collapsed">
+                                                    <Button Content="Pin" Click="PinMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="40" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    <Button Content="Branch" Click="BranchMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="56" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    <Button Content="Copy" Click="CopyMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="46" Margin="0,0,0,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                </WrapPanel>
                                             </StackPanel>
                                         </Border>
                                         <DataTemplate.Triggers>
@@ -941,6 +1082,7 @@
                                             <DataTrigger Binding="{Binding Role}" Value="assistant">
                                                 <Setter TargetName="BubbleBorder" Property="HorizontalAlignment" Value="Left"/>
                                                 <Setter TargetName="BubbleBorder" Property="Margin" Value="8,4,80,4"/>
+                                                <Setter TargetName="BubbleBorder" Property="MinWidth" Value="300"/>
                                                 <Setter TargetName="BubbleBorder" Property="MaxWidth" Value="780"/>
                                                 <Setter TargetName="BubbleBorder" Property="Background" Value="{StaticResource AiMessageBrush}"/>
                                                 <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="{StaticResource NotebookBorderBrush}"/>
@@ -1102,7 +1244,7 @@
                                     <Grid Grid.Row="0" MinHeight="78" MaxHeight="180">
                                         <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="22,20,22,10"
                                               Background="Transparent" Foreground="#EDE8E3" BorderThickness="0" CaretBrush="#EDE8E3"
-                                              FontFamily="Segoe UI" FontSize="16" KeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
+                                              FontFamily="Segoe UI" FontSize="16" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
                                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="78" MaxHeight="180"
                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                               SelectionBrush="#66B8924A" SelectionOpacity="1"/>
@@ -1295,7 +1437,13 @@
                         <Border.RenderTransform>
                             <TranslateTransform X="28"/>
                         </Border.RenderTransform>
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
                             <StackPanel>
                                 <TextBlock Text="Inference Settings" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,16"/>
 
@@ -1343,7 +1491,7 @@
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,16">
                                     <StackPanel>
                                         <TextBlock Text="Processing Mode" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
-                                        <ComboBox x:Name="ProcessingModeCombo" SelectionChanged="ProcessingModeCombo_SelectionChanged" Height="30" Width="220">
+                                        <ComboBox x:Name="ProcessingModeCombo" SelectionChanged="ProcessingModeCombo_SelectionChanged" Height="30" Width="220" Style="{StaticResource DarkComboBoxStyle}">
                                             <ComboBoxItem Content="CPU Only"/>
                                             <ComboBoxItem Content="GPU Accelerated"/>
                                         </ComboBox>
@@ -1454,13 +1602,16 @@
                                         <TextBlock Text="Automatically compresses low-priority messages when context usage reaches 80% of the model's reliability ceiling." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                     </StackPanel>
                                 </Border>
+                            </StackPanel>
+                            </ScrollViewer>
 
-                                <Grid Margin="0,16,0,0">
+                            <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,12,0,0" Margin="0,12,0,0">
+                                <Grid>
                                     <TextBlock x:Name="AppVersionLabel" Text="Version 1.4.0" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{StaticResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
-                            </StackPanel>
-                        </ScrollViewer>
+                            </Border>
+                        </Grid>
                     </Border>
                 </Grid>
             </Border>

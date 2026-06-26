@@ -30,8 +30,8 @@ namespace Malx_AI
                 CouncilRole.Builder => 6144,
                 CouncilRole.Architect when complex => 4096,
                 CouncilRole.Architect => 3072,
-                CouncilRole.Critic when complex || artifact => 6144,
-                CouncilRole.Critic => 4096,
+                CouncilRole.Critic when complex || artifact => 3072,
+                CouncilRole.Critic => 2048,
                 _ => 4096
             };
         }
@@ -58,7 +58,8 @@ namespace Malx_AI
                 CouncilRole.Critic => common +
                     "Perform an independent falsification pass: inspect the Builder output itself rather than accepting its descriptions of what it did. " +
                     "Check every R-item, C-item, and A-item separately; then check syntax/runtime evidence, edge cases, factual grounding, and Canvas completeness. " +
-                    "Builder prose is not proof. Prefer direct source, code, sandbox output, calculator output, and tool evidence. Report only concrete, actionable findings in the required schema.",
+                    "Builder prose is not proof. Prefer direct source, code, sandbox output, calculator output, and tool evidence. " +
+                    "Do not output hidden reasoning, thinking notes, analysis logs, or deliberation. Report only concrete, actionable findings in the required schema.",
 
                 _ => common
             };

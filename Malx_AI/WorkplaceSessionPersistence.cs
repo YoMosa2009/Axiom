@@ -17,11 +17,22 @@ namespace Malx_AI
         public bool AutoOptimizeRoleContexts { get; set; } = true;
         public List<WorkplaceChatMessageDto> ChatCards { get; set; } = new();
         public List<WorkplaceDocumentDto> Documents { get; set; } = new();
+        public List<WorkplaceChatMessageDto> SystemNotifications { get; set; } = new();
+        public List<CouncilTaskHistoryEntry> TaskHistory { get; set; } = new();
+        public List<ModelPerformanceLogEntry> PerformanceLog { get; set; } = new();
+        public bool IsRunStateIsolated { get; set; }
         public Dictionary<string, WorkplaceCouncilModelDto> CouncilModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public List<SessionHippocampusEntry> HippocampusEntries { get; set; } = new();
         public bool StudySessionCompleted { get; set; }
         public int StudySessionProcessedDocumentCount { get; set; }
         public int CompletedCouncilRunCount { get; set; }
+        public string LastSandboxOutput { get; set; } = "";
+        public string LastFinalOutput { get; set; } = "";
+        public string LastConfidenceLabel { get; set; } = "Moderate Confidence";
+        public string CanvasDiffBaseSource { get; set; } = "";
+        public string CanvasDiffCurrentSource { get; set; } = "";
+        public int CanvasDiffAdditionCount { get; set; }
+        public int CanvasDiffRemovalCount { get; set; }
         public DateTime SavedAt { get; set; } = DateTime.Now;
     }
 

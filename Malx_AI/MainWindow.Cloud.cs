@@ -176,7 +176,7 @@ namespace Malx_AI
             UpdateHeaderDisplay();
 
             string label = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
-            AddChatMessage("system", $"Cloud model set to {label}.");
+            ShowTransientStatus($"Cloud model set to {label}.");
         }
 
         private void OpenRouterApiKeyPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
@@ -997,7 +997,7 @@ namespace Malx_AI
 
                 await FinalizeCloudStreamingMessageAsync(toolLoopResult.ResponseText, toolLoopResult.ReasoningText, generationStopped: false);
 
-                AddChatMessage("system", $"Tokens: {_tokenCount}  •  Mode: Cloud ({_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)})");
+                ShowTransientStatus($"Tokens: {_tokenCount}  •  Mode: Cloud ({_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)})");
                 _currentStreamingMessage = null;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)

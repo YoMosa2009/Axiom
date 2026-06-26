@@ -367,13 +367,13 @@ namespace Malx_AI
 
                     _useGemma4LocalCliMode = true;
                     _gemma4ModelPath = openFileDialog.FileName;
-                    AppendSystemMessage("Gemma 4 local CLI mode active.");
+                    ShowTransientStatus("Gemma 4 local CLI mode active.");
                     UpdateHeaderDisplay();
                     PopulateNextMessageModelSelector();
                     _database?.SaveUserFact("last_model", _modelName);
                     _database?.SaveUserFact("last_model_path", openFileDialog.FileName);
-                    AppendSystemMessage($"✓ Model Ready: {_modelName}");
-                    AppendSystemMessage("✓ System ready for chat");
+                    ShowTransientStatus($"Model ready: {_modelName}");
+                    ShowTransientStatus("System ready for chat.");
                     UpdateUIState(true);
                     return;
                 }
@@ -398,7 +398,7 @@ namespace Malx_AI
                     catch { }
                 }
 
-                AppendSystemMessage($"Loading: {openFileDialog.SafeFileName}...");
+                ShowTransientStatus($"Loading: {openFileDialog.SafeFileName}...");
 
                 // Free any VRAM held by cached council models before planning, otherwise
                 // the planner sees that memory as gone and resolves to few/zero GPU layers.
@@ -409,7 +409,7 @@ namespace Malx_AI
                 uint requestedContext = GetDefaultContextForModel(openFileDialog.FileName);
                 var recovery = ResolveCrashRecoveryPlan(openFileDialog.FileName, InferenceBackendService.CurrentMode, requestedContext);
                 var plan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, recovery.Context, recovery.Mode));
-                AppendSystemMessage($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
+                ShowTransientStatus($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
 
                 try
                 {
@@ -418,19 +418,19 @@ namespace Malx_AI
                 catch (Exception ex) when (plan.UsingGpu)
                 {
                     await BackendLogService.LogErrorAsync("MainWindow.GPUInit", ex);
-                    AppendSystemMessage($"GPU init failed ({ex.Message}). Retrying with CPU fallback...");
+                    ShowTransientStatus($"GPU init failed ({ex.Message}). Retrying with CPU fallback...");
                     var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly));
                     await InitializeModelSessionAsync(cpuPlan);
-                    AppendSystemMessage("Fallback mode active: CPU");
+                    ShowTransientStatus("Fallback mode active: CPU");
                 }
                 catch (Exception ex)
                 {
                     await BackendLogService.LogErrorAsync("MainWindow.ModelInit", ex);
-                    AppendSystemMessage($"Model initialization failed ({GetMostRelevantError(ex)}). Retrying in CPU safe mode...");
+                    ShowTransientStatus($"Model initialization failed ({GetMostRelevantError(ex)}). Retrying in CPU safe mode...");
 
                     var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly));
                     await InitializeModelSessionAsync(cpuPlan);
-                    AppendSystemMessage("Fallback mode active: CPU");
+                    ShowTransientStatus("Fallback mode active: CPU");
                 }
 
                 UpdateHeaderDisplay();
@@ -439,8 +439,8 @@ namespace Malx_AI
                 _database?.SaveUserFact("last_model", _modelName);
                 _database?.SaveUserFact("last_model_path", openFileDialog.FileName);
 
-                AppendSystemMessage($"✓ Model Ready: {_modelName}");
-                AppendSystemMessage("✓ System ready for chat");
+                ShowTransientStatus($"Model ready: {_modelName}");
+                ShowTransientStatus("System ready for chat.");
                 UpdateUIState(true);
             }
             catch (Exception ex)
@@ -585,7 +585,7 @@ namespace Malx_AI
 
                 _mmprojPath = mmprojPath;
                 await ResetExecutorContextAsync();
-                AppendSystemMessage($"✓ Vision enabled: {Path.GetFileName(mmprojPath)} (image attachments can be analyzed locally)");
+                ShowTransientStatus($"Vision enabled: {Path.GetFileName(mmprojPath)} (image attachments can be analyzed locally)");
             }
             catch (Exception ex)
             {
@@ -633,7 +633,7 @@ namespace Malx_AI
                 }
 
                 _mmprojPath = mmprojPath;
-                AppendSystemMessage($"✓ Vision enabled: {Path.GetFileName(mmprojPath)} (image attachments can be analyzed locally)");
+                ShowTransientStatus($"Vision enabled: {Path.GetFileName(mmprojPath)} (image attachments can be analyzed locally)");
             }
             catch (Exception ex)
             {
@@ -2341,7 +2341,7 @@ namespace Malx_AI
             _normalThinkingModeEnabled = !_normalThinkingModeEnabled;
             RefreshNormalThinkingToggleUi();
 
-            AddChatMessage("system", _normalThinkingModeEnabled
+            ShowTransientStatus(_normalThinkingModeEnabled
                 ? "Thinking mode enabled for normal chat."
                 : "Thinking mode disabled for normal chat.");
         }
@@ -2560,13 +2560,13 @@ namespace Malx_AI
             {
                 InferenceBackendService.CurrentMode = InferenceComputeMode.GpuAccelerated;
                 _database?.SaveSetting("processing_mode", "gpu");
-                AppendSystemMessage("Processing mode set to GPU Accelerated.");
+                ShowTransientStatus("Processing mode set to GPU Accelerated.");
             }
             else
             {
                 InferenceBackendService.CurrentMode = InferenceComputeMode.CpuOnly;
                 _database?.SaveSetting("processing_mode", "cpu");
-                AppendSystemMessage("Processing mode set to CPU Only.");
+                ShowTransientStatus("Processing mode set to CPU Only.");
             }
 
             _ = ReloadModelWithCurrentModeAsync();
@@ -2594,7 +2594,7 @@ namespace Malx_AI
 
             try
             {
-                AppendSystemMessage($"Reloading model for {modeName} mode...");
+                ShowTransientStatus($"Reloading model for {modeName} mode...");
                 UpdateUIState(false);
 
                 DisposeInferenceResources(clearModel: true);
@@ -2605,7 +2605,7 @@ namespace Malx_AI
 
                 uint requestedContext = GetDefaultContextForModel(modelPath);
                 var plan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceBackendService.CurrentMode));
-                AppendSystemMessage($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
+                ShowTransientStatus($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
 
                 try
                 {
@@ -2614,17 +2614,17 @@ namespace Malx_AI
                 catch (Exception ex) when (plan.UsingGpu)
                 {
                     await BackendLogService.LogErrorAsync("MainWindow.GPUReload", ex);
-                    AppendSystemMessage($"GPU init failed ({ex.Message}). Falling back to CPU...");
+                    ShowTransientStatus($"GPU init failed ({ex.Message}). Falling back to CPU...");
                     InferenceBackendService.CurrentMode = InferenceComputeMode.CpuOnly;
                     _database?.SaveSetting("processing_mode", "cpu");
                     Dispatcher.Invoke(() => { if (ProcessingModeCombo != null) ProcessingModeCombo.SelectedIndex = 0; });
                     var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceComputeMode.CpuOnly));
                     await InitializeModelSessionAsync(cpuPlan);
-                    AppendSystemMessage("GPU unavailable — running on CPU.");
+                    ShowTransientStatus("GPU unavailable - running on CPU.");
                 }
 
                 UpdateHeaderDisplay();
-                AppendSystemMessage($"✓ Model ready ({plan.BackendName})");
+                ShowTransientStatus($"Model ready ({plan.BackendName})");
                 UpdateUIState(true);
             }
             catch (Exception ex)
@@ -2689,7 +2689,7 @@ namespace Malx_AI
             try
             {
                 UpdateUIState(false);
-                AppendSystemMessage("Reloading chat model...");
+                ShowTransientStatus("Reloading chat model...");
 
                 // Hand the GPU back to the chat surface: drop any council weights still cached.
                 WorkplaceViewControl?.ReleaseCachedCouncilModels();
@@ -2700,7 +2700,7 @@ namespace Malx_AI
                 await InitializeModelSessionAsync(plan);
 
                 UpdateHeaderDisplay();
-                AppendSystemMessage($"✓ Chat model ready ({plan.BackendName}).");
+                ShowTransientStatus($"Chat model ready ({plan.BackendName}).");
                 UpdateUIState(true);
             }
             catch (Exception ex)
@@ -3366,13 +3366,13 @@ namespace Malx_AI
                     return;
 
                 Clipboard.SetText(combinedCode);
-                AppendSystemMessage(message.CodeBlocks.Count == 1
+                ShowTransientStatus(message.CodeBlocks.Count == 1
                     ? "Copied code block."
                     : $"Copied {message.CodeBlocks.Count} code blocks.");
             }
             catch (Exception ex)
             {
-                AppendSystemMessage($"Code copy failed: {ex.Message}");
+                ShowTransientStatus($"Code copy failed: {ex.Message}");
             }
         }
 
@@ -3400,7 +3400,7 @@ namespace Malx_AI
 
         private void InputBox_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Enter)
+            if (e.Key == Key.Enter || e.Key == Key.Return)
             {
                 if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
                 {
@@ -3802,7 +3802,7 @@ namespace Malx_AI
                         }
 
                         double speedMetric = _tokenCount / Math.Max(_inferenceTimer.Elapsed.TotalSeconds, 0.001);
-                        AddChatMessage("system", $"Tokens: {_tokenCount}  •  Speed: {speedMetric:F2} tok/s");
+                        ShowTransientStatus($"Tokens: {_tokenCount}  •  Speed: {speedMetric:F2} tok/s");
                         _currentStreamingMessage = null;
 
                         // NOTE: a clean turn deliberately does NOT clear the crash strike here.

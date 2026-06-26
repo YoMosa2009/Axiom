@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Automation;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -479,8 +480,8 @@ namespace Malx_AI
                 try
                 {
                     ChatDisplay.ItemsSource = _chatMessages;
-                    AddChatMessage("system", "Axiom initialized. Ready to import model.");
-                    AddChatMessage("system", $"Backend: {NativeBackendInit.DiagnosticMessage}");
+                    Debug.WriteLine("Axiom initialized. Ready to import model.");
+                    Debug.WriteLine($"Backend: {NativeBackendInit.DiagnosticMessage}");
 
                     // A native llama.cpp abort kills the process with no managed exception —
                     // the decode marker is the only record of what it was doing. Surface it.
@@ -817,11 +818,11 @@ namespace Malx_AI
             try
             {
                 Clipboard.SetText(msg.Content ?? string.Empty);
-                AppendSystemMessage("Copied assistant response.");
+                ShowTransientStatus("Copied assistant response.");
             }
             catch (Exception ex)
             {
-                AppendSystemMessage($"Copy failed: {ex.Message}");
+                ShowTransientStatus($"Copy failed: {ex.Message}");
             }
         }
 
@@ -862,7 +863,7 @@ namespace Malx_AI
                         int readableChars = (result.Attachment.Content ?? string.Empty).Count(char.IsLetterOrDigit);
                         if (readableChars < 40)
                         {
-                            AppendSystemMessage(
+                            ShowTransientStatus(
                                 $"⚠ Only {readableChars} readable characters were extracted from {result.Attachment.Name}. " +
                                 "It may be a scanned/image-only PDF or an unsupported format, so the model may not be able to read it. " +
                                 "Try a text-based export of the file.");
@@ -871,7 +872,7 @@ namespace Malx_AI
                 }
                 catch (Exception ex)
                 {
-                    AppendSystemMessage($"Attachment import failed for {Path.GetFileName(file)}: {ex.Message}");
+                    ShowTransientStatus($"Attachment import failed for {Path.GetFileName(file)}: {ex.Message}");
                 }
             }
 
@@ -891,7 +892,7 @@ namespace Malx_AI
                         : _mtmdWeights != null
                             ? " Images can be analyzed by the loaded local vision model."
                             : " Images need a vision model: place the matching mmproj .gguf next to the model file and re-import, or switch to cloud mode.";
-                AppendSystemMessage($"Attached: {string.Join(", ", importedNames)} ({summary} total).{imageNote}");
+                ShowTransientStatus($"Attached: {string.Join(", ", importedNames)} ({summary} total).{imageNote}");
                 SaveCurrentChat();
             }
         }
@@ -1325,7 +1326,7 @@ namespace Malx_AI
             _activeBranchId = branch.Id;
             RefreshBranchNavigator();
             SaveChatAdvancedState();
-            AppendSystemMessage($"Created branch '{branch.Name}'.");
+            ShowTransientStatus($"Created branch '{branch.Name}'.");
             _ = CloneKvStateForBranchAsync(branch.Id);
         }
 
@@ -1339,6 +1340,9 @@ namespace Malx_AI
             _chatMessages.Clear();
             foreach (var m in branch.Messages)
             {
+                if (IsNormalChatNotificationRole(m.Role))
+                    continue;
+
                 _chatMessages.Add(new ChatMessage(m.Role, m.Content)
                 {
                     Id = m.Id,
@@ -1818,7 +1822,7 @@ namespace Malx_AI
                 }
             }
 
-            AppendSystemMessage($"Loaded {workplaceName}");
+            ShowTransientStatus($"Loaded {workplaceName}");
         }
 
         private void AddChatToHistory(string chatName, int chatId)
@@ -1886,6 +1890,9 @@ namespace Malx_AI
             {
                 foreach (var m in persisted.Messages)
                 {
+                    if (IsNormalChatNotificationRole(m.Role))
+                        continue;
+
                     _chatMessages.Add(new ChatMessage(m.Role, m.Content)
                     {
                         Id = m.Id,
@@ -1914,7 +1921,7 @@ namespace Malx_AI
             }
             else if (_chatContent.ContainsKey(chatId))
             {
-                AddChatMessage("system", $"Loaded chat: {chatName}");
+                ShowTransientStatus($"Loaded chat: {chatName}");
             }
 
             RefreshAttachmentTray();
@@ -2009,9 +2016,24 @@ namespace Malx_AI
 
         private void AppendSystemMessage(string message)
         {
-            AddChatMessage("system", message);
-            ScrollChatToEnd();
-            SaveCurrentChat();
+            ShowTransientStatus(message);
+        }
+
+        private void ShowTransientStatus(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            _ = ShowNonIntrusiveErrorAsync(message);
+        }
+
+        private static bool IsNormalChatNotificationRole(string? role)
+        {
+            return role is not null
+                && (role.Equals("system", StringComparison.OrdinalIgnoreCase)
+                    || role.Equals("warning", StringComparison.OrdinalIgnoreCase)
+                    || role.Equals("error", StringComparison.OrdinalIgnoreCase)
+                    || role.Equals("memory", StringComparison.OrdinalIgnoreCase));
         }
 
         private sealed class PendingChatPersistencePayload
@@ -2267,17 +2289,22 @@ namespace Malx_AI
             {
                 var state = _chatAdvancedStatePersistence.Load();
                 if (!string.IsNullOrWhiteSpace(_chatAdvancedStatePersistence.LastLoadStatusMessage))
-                    AppendSystemMessage(_chatAdvancedStatePersistence.LastLoadStatusMessage);
+                    ShowTransientStatus(_chatAdvancedStatePersistence.LastLoadStatusMessage);
                 if (state == null)
                     return;
 
                 _branches.Clear();
-                _branches.AddRange(state.Branches);
+                _branches.AddRange(state.Branches.Select(CloneChatBranch));
                 _activeBranchId = state.ActiveBranchId;
 
                 _pinnedMessages.Clear();
                 foreach (var p in state.PinnedMessages)
+                {
+                    if (IsNormalChatNotificationRole(p.Role))
+                        continue;
+
                     _pinnedMessages.Add(p);
+                }
 
                 _promptTemplates.Clear();
                 _promptTemplates.AddRange(state.PromptTemplates);
@@ -2466,7 +2493,10 @@ namespace Malx_AI
                 Id = branch.Id,
                 Name = branch.Name,
                 ForkMessageIndex = branch.ForkMessageIndex,
-                Messages = branch.Messages.Select(CloneChatMessageState).ToList()
+                Messages = branch.Messages
+                    .Where(message => !IsNormalChatNotificationRole(message.Role))
+                    .Select(CloneChatMessageState)
+                    .ToList()
             };
         }
 
@@ -2482,13 +2512,19 @@ namespace Malx_AI
                 BuilderContextSize = snapshot.BuilderContextSize,
                 CriticContextSize = snapshot.CriticContextSize,
                 AutoOptimizeRoleContexts = snapshot.AutoOptimizeRoleContexts,
-                ChatCards = snapshot.ChatCards.Select(card => new WorkplaceChatMessageDto
+                ChatCards = (snapshot.ChatCards ?? []).Select(card => new WorkplaceChatMessageDto
                 {
                     Role = card.Role,
                     Content = card.Content,
                     Timestamp = card.Timestamp
                 }).ToList(),
-                Documents = snapshot.Documents.Select(document => new WorkplaceDocumentDto
+                SystemNotifications = (snapshot.SystemNotifications ?? []).Select(notification => new WorkplaceChatMessageDto
+                {
+                    Role = notification.Role,
+                    Content = notification.Content,
+                    Timestamp = notification.Timestamp
+                }).ToList(),
+                Documents = (snapshot.Documents ?? []).Select(document => new WorkplaceDocumentDto
                 {
                     Name = document.Name,
                     FilePath = document.FilePath,
@@ -2496,7 +2532,10 @@ namespace Malx_AI
                     Info = document.Info,
                     ChunkCount = document.ChunkCount
                 }).ToList(),
-                CouncilModels = snapshot.CouncilModels.ToDictionary(
+                TaskHistory = (snapshot.TaskHistory ?? []).ToList(),
+                PerformanceLog = (snapshot.PerformanceLog ?? []).ToList(),
+                IsRunStateIsolated = snapshot.IsRunStateIsolated,
+                CouncilModels = (snapshot.CouncilModels ?? new Dictionary<string, WorkplaceCouncilModelDto>(StringComparer.OrdinalIgnoreCase)).ToDictionary(
                     kvp => kvp.Key,
                     kvp => new WorkplaceCouncilModelDto
                     {
@@ -2507,7 +2546,7 @@ namespace Malx_AI
                         CloudModelId = kvp.Value.CloudModelId
                     },
                     StringComparer.OrdinalIgnoreCase),
-                HippocampusEntries = snapshot.HippocampusEntries.Select(entry => new SessionHippocampusEntry
+                HippocampusEntries = (snapshot.HippocampusEntries ?? []).Select(entry => new SessionHippocampusEntry
                 {
                     Content = entry.Content,
                     Source = entry.Source,
@@ -2521,6 +2560,13 @@ namespace Malx_AI
                 StudySessionCompleted = snapshot.StudySessionCompleted,
                 StudySessionProcessedDocumentCount = snapshot.StudySessionProcessedDocumentCount,
                 CompletedCouncilRunCount = snapshot.CompletedCouncilRunCount,
+                LastSandboxOutput = snapshot.LastSandboxOutput,
+                LastFinalOutput = snapshot.LastFinalOutput,
+                LastConfidenceLabel = snapshot.LastConfidenceLabel,
+                CanvasDiffBaseSource = snapshot.CanvasDiffBaseSource,
+                CanvasDiffCurrentSource = snapshot.CanvasDiffCurrentSource,
+                CanvasDiffAdditionCount = snapshot.CanvasDiffAdditionCount,
+                CanvasDiffRemovalCount = snapshot.CanvasDiffRemovalCount,
                 SavedAt = snapshot.SavedAt
             };
         }
@@ -2553,6 +2599,9 @@ namespace Malx_AI
 
             foreach (var msg in _chatMessages)
             {
+                if (IsNormalChatNotificationRole(msg.Role))
+                    continue;
+
                 session.Messages.Add(new ChatMessage(msg.Role, msg.Content)
                 {
                     Id = msg.Id,
@@ -2591,6 +2640,9 @@ namespace Malx_AI
 
             foreach (var msg in _chatMessages)
             {
+                if (IsNormalChatNotificationRole(msg.Role))
+                    continue;
+
                 snapshot.Messages.Add(new ChatMessageState
                 {
                     Id = msg.Id,
@@ -2813,13 +2865,15 @@ namespace Malx_AI
             {
                 Branches = _branches.Select(CloneChatBranch).ToList(),
                 ActiveBranchId = _activeBranchId,
-                PinnedMessages = _pinnedMessages.Select(p => new PinnedMessageEntry
-                {
-                    Id = p.Id,
-                    Role = p.Role,
-                    Content = p.Content,
-                    Timestamp = p.Timestamp
-                }).ToList(),
+                PinnedMessages = _pinnedMessages
+                    .Where(p => !IsNormalChatNotificationRole(p.Role))
+                    .Select(p => new PinnedMessageEntry
+                    {
+                        Id = p.Id,
+                        Role = p.Role,
+                        Content = p.Content,
+                        Timestamp = p.Timestamp
+                    }).ToList(),
                 PromptTemplates = _promptTemplates.Select(t => new PromptTemplateEntry
                 {
                     Category = t.Category,
@@ -3146,6 +3200,12 @@ namespace Malx_AI
                 return;
             }
 
+            if (IsNormalChatNotificationRole(role))
+            {
+                ShowTransientStatus(content);
+                return;
+            }
+
             var msg = new ChatMessage(role, content);
             msg.Importance = SmartContextCompactionEngine.ClassifyImportance(role, content, false);
             _chatMessages.Add(msg);
@@ -3319,7 +3379,7 @@ namespace Malx_AI
             {
                 var snapshot = await _chatWorkspaceStatePersistence.LoadAsync();
                 if (!string.IsNullOrWhiteSpace(_chatWorkspaceStatePersistence.LastLoadStatusMessage))
-                    AppendSystemMessage(_chatWorkspaceStatePersistence.LastLoadStatusMessage);
+                    ShowTransientStatus(_chatWorkspaceStatePersistence.LastLoadStatusMessage);
                 if (snapshot == null || snapshot.Messages.Count == 0)
                     return;
 
@@ -3331,6 +3391,9 @@ namespace Malx_AI
                     _chatDocuments.Clear();
                     foreach (var msg in snapshot.Messages)
                     {
+                        if (IsNormalChatNotificationRole(msg.Role))
+                            continue;
+
                         _chatMessages.Add(new ChatMessage(msg.Role, msg.Content)
                         {
                             Id = msg.Id,
@@ -3581,10 +3644,13 @@ namespace Malx_AI
             }
             var strokeBrush = new SolidColorBrush(Color.FromRgb(0x30, 0x2D, 0x2A)); strokeBrush.Freeze();
             var labelFgBrush = new SolidColorBrush(Color.FromRgb(0xED, 0xE8, 0xE3)); labelFgBrush.Freeze();
-            var dimLabelBrush = new SolidColorBrush(Color.FromRgb(0x8A, 0x82, 0x79)); dimLabelBrush.Freeze();
+            var dimLabelBrush = new SolidColorBrush(Color.FromRgb(0xB0, 0xA8, 0x9F)); dimLabelBrush.Freeze();
             var labelFont = new FontFamily("Segoe UI");
 
             Point centerP = nodes[0].P;
+            AutomationProperties.SetName(NeuronCanvas, "Neuron activity graph");
+            AutomationProperties.SetHelpText(NeuronCanvas,
+                $"Graph relationships: User connects to Chat, Workplace, Documents, Study, and Calculator. Counts: Chat {normalMessages}, Workplace {workplaceMessages}, Documents {normalDocs + workplaceDocs}, Council {councilRuns}, Memory {hippocampusCount}.");
 
             // ═══ PASS 1: GLOW HALOS + ALL LINES (drawn first, render behind circles) ═══
 
@@ -3715,6 +3781,10 @@ namespace Malx_AI
                     StrokeThickness = 1.2,
                     Opacity = 0.90
                 };
+                AutomationProperties.SetName(ellipse, $"{node.Label} node");
+                AutomationProperties.SetHelpText(ellipse, i == 0
+                    ? $"Central node with weight {node.Weight}. Connected to Chat, Workplace, Documents, Study, and Calculator."
+                    : $"{node.Label} node with weight {node.Weight}. Connected to User and related concept terms.");
                 Canvas.SetLeft(ellipse, node.P.X - radius);
                 Canvas.SetTop(ellipse, node.P.Y - radius);
                 NeuronCanvas.Children.Add(ellipse);
@@ -3726,10 +3796,14 @@ namespace Malx_AI
                 {
                     Text = labelText,
                     Foreground = labelFgBrush,
-                    FontSize = 10,
+                    FontSize = 12,
                     FontFamily = labelFont,
                     FontWeight = FontWeights.SemiBold
                 };
+                AutomationProperties.SetName(label, $"{node.Label} node, weight {node.Weight}");
+                AutomationProperties.SetHelpText(label, i == 0
+                    ? "Central Neuron graph node connected to each activity category."
+                    : $"{node.Label} is connected to User and its orbiting concept labels.");
                 Canvas.SetLeft(label, lx);
                 Canvas.SetTop(label, ly);
                 NeuronCanvas.Children.Add(label);
@@ -3741,10 +3815,15 @@ namespace Malx_AI
                 var label = new TextBlock
                 {
                     Text = branch.Label,
-                    FontSize = 9,
+                    FontSize = 10,
                     Foreground = dimLabelBrush,
-                    FontFamily = labelFont
+                    FontFamily = labelFont,
+                    FontWeight = FontWeights.Medium
                 };
+                int sourceIndex = Math.Clamp(branch.SourceIndex, 0, nodes.Count - 1);
+                string sourceLabel = nodes[sourceIndex].Label;
+                AutomationProperties.SetName(label, $"Concept {branch.Label}");
+                AutomationProperties.SetHelpText(label, $"Concept term connected to {sourceLabel}. Weight {branch.Weight}.");
                 Canvas.SetLeft(label, bx + 5);
                 Canvas.SetTop(label, by - 7);
                 NeuronCanvas.Children.Add(label);

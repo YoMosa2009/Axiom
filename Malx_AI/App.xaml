@@ -7,14 +7,14 @@
         <!-- Global Color Palette -->
         <Color x:Key="DarkBackground">#171615</Color>
         <Color x:Key="DarkText">#EDE8E3</Color>
-        <Color x:Key="DarkSecondary">#8A8279</Color>
+        <Color x:Key="DarkSecondary">#B0A89F</Color>
         <Color x:Key="DarkSidebar">#171615</Color>
         <Color x:Key="PrimaryAccent">#B8924A</Color>
 
         <SolidColorBrush x:Key="NotebookBackgroundBrush" Color="#171615"/>
         <SolidColorBrush x:Key="NotebookSurfaceBrush" Color="#211F1D"/>
         <SolidColorBrush x:Key="NotebookTextBrush" Color="#EDE8E3"/>
-        <SolidColorBrush x:Key="DarkSecondaryBrush" Color="#8A8279"/>
+        <SolidColorBrush x:Key="DarkSecondaryBrush" Color="#B0A89F"/>
         <SolidColorBrush x:Key="NotebookBorderBrush" Color="#302D2A"/>
         <SolidColorBrush x:Key="PrimaryAccentBrush" Color="#B8924A"/>
         <SolidColorBrush x:Key="DarkSidebarBrush" Color="#171615"/>
@@ -42,22 +42,131 @@
             <Setter Property="Background" Value="{StaticResource NotebookSurfaceBrush}"/>
             <Setter Property="BorderBrush" Value="{StaticResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBox}">
+                        <Grid TextElement.Foreground="{TemplateBinding Foreground}">
+                            <ToggleButton x:Name="DropDownToggle"
+                                          Background="{TemplateBinding Background}"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          ClickMode="Press"
+                                          Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                        <Border x:Name="ToggleBorder"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="6">
+                                            <Path x:Name="DropDownArrow"
+                                                  Width="8"
+                                                  Height="5"
+                                                  HorizontalAlignment="Right"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,10,0"
+                                                  Fill="{StaticResource DarkSecondaryBrush}"
+                                                  Stretch="Uniform"
+                                                  Data="M 0 0 L 8 0 L 4 5 Z"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="#4A443D"/>
+                                                <Setter TargetName="DropDownArrow" Property="Fill" Value="{StaticResource NotebookTextBrush}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter TargetName="ToggleBorder" Property="Background" Value="#171615"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{StaticResource PrimaryAccentBrush}"/>
+                                                <Setter TargetName="DropDownArrow" Property="Fill" Value="{StaticResource PrimaryAccentBrush}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <ContentPresenter Margin="10,0,30,0"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"
+                                              IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   IsOpen="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                   Placement="Bottom"
+                                   PopupAnimation="Fade">
+                                <Border MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="220"
+                                        Margin="0,4,0,0"
+                                        Padding="4"
+                                        Background="{StaticResource NotebookSurfaceBrush}"
+                                        BorderBrush="{StaticResource NotebookBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="6">
+                                    <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource PrimaryAccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#665F58"/>
+                                <Setter Property="Background" Value="#171615"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="ComboBoxItem">
             <Setter Property="Foreground" Value="{StaticResource NotebookTextBrush}"/>
             <Setter Property="Background" Value="{StaticResource NotebookSurfaceBrush}"/>
-            <Setter Property="Padding" Value="8,4"/>
-            <Style.Triggers>
-                <Trigger Property="IsHighlighted" Value="True">
-                    <Setter Property="Background" Value="{StaticResource NotebookBorderBrush}"/>
-                    <Setter Property="Foreground" Value="{StaticResource NotebookTextBrush}"/>
-                </Trigger>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="{StaticResource PrimaryAccentBrush}"/>
-                    <Setter Property="Foreground" Value="{StaticResource NotebookTextBrush}"/>
-                </Trigger>
-            </Style.Triggers>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                        <Border x:Name="ItemBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#2A2826"/>
+                                <Setter Property="Foreground" Value="{StaticResource NotebookTextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#3A3328"/>
+                                <Setter Property="Foreground" Value="#F5D591"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#665F58"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- Soft Shadow -->
