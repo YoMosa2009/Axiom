@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using LLama.Sampling;
@@ -27,11 +28,18 @@ namespace Malx_AI
             bool allowBatchRecovery,
             bool showLiveCard,
             int? maxGenerationTokensOverride,
-            int? contextSizeOverride)
+            int? contextSizeOverride,
+            bool preferDeterministicPreflight = false)
         {
             var toolContext = new StringBuilder();
             var usedToolCalls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             Grammar grammar = CreateBuilderToolDecisionGrammar();
+            if (preferDeterministicPreflight
+                && TryBuildDeterministicBuilderToolDecision(userPayload, out BuilderToolDecision? forcedDecision)
+                && forcedDecision != null)
+            {
+                await RunBuilderPreflightToolAsync(forcedDecision, usedToolCalls, toolContext, token);
+            }
 
             for (int round = 0; round <= MaxBuilderPreflightTools; round++)
             {
@@ -86,28 +94,8 @@ namespace Malx_AI
                 if (decision == null || decision.Action == "final" || usedToolCalls.Count >= MaxBuilderPreflightTools)
                     break;
 
-                string callKey = decision.Tool + "\n" + decision.Query.Trim();
-                if (!usedToolCalls.Add(callKey))
-                {
-                    LogActivity("Builder attempted a duplicate preflight tool call; stopping tool loop.");
+                if (!await RunBuilderPreflightToolAsync(decision, usedToolCalls, toolContext, token))
                     break;
-                }
-
-                LogActivity($"Builder constrained tool decision {usedToolCalls.Count}/{MaxBuilderPreflightTools}: {decision.Tool}.");
-                AgenticPauseEngine.StructuredToolResult toolResult = _agenticPauseEngine == null
-                    ? AgenticPauseEngine.StructuredToolResult.Fail("The tool dispatcher is unavailable.")
-                    : await _agenticPauseEngine.ExecuteStructuredToolAsync(decision.Tool, decision.Query, token);
-
-                string resultText = toolResult.IsSuccess ? toolResult.Data : toolResult.ErrorMessage;
-                if (resultText.Length > BuilderToolResultMaxChars)
-                    resultText = resultText[..BuilderToolResultMaxChars] + "\n[tool result truncated]";
-
-                toolContext.AppendLine($"[[TOOL OBSERVATION {usedToolCalls.Count}]]");
-                toolContext.AppendLine($"Tool: {decision.Tool}");
-                toolContext.AppendLine($"Query: {decision.Query}");
-                toolContext.AppendLine($"Status: {(toolResult.IsSuccess ? "success" : "failed")}");
-                toolContext.AppendLine(resultText);
-                toolContext.AppendLine($"[[END TOOL OBSERVATION {usedToolCalls.Count}]]");
             }
 
             string finalSystemPrompt = systemPrompt.Replace(
@@ -138,6 +126,78 @@ namespace Malx_AI
                 outputGrammar: null,
                 allowAgenticPauses: false,
                 internalInferenceStep: false);
+        }
+
+        private async Task<bool> RunBuilderPreflightToolAsync(
+            BuilderToolDecision decision,
+            HashSet<string> usedToolCalls,
+            StringBuilder toolContext,
+            CancellationToken token)
+        {
+            string callKey = decision.Tool + "\n" + decision.Query.Trim();
+            if (!usedToolCalls.Add(callKey))
+            {
+                LogActivity("Builder attempted a duplicate preflight tool call; stopping tool loop.");
+                return false;
+            }
+
+            LogActivity($"Builder constrained tool decision {usedToolCalls.Count}/{MaxBuilderPreflightTools}: {decision.Tool}.");
+            AgenticPauseEngine.StructuredToolResult toolResult = _agenticPauseEngine == null
+                ? AgenticPauseEngine.StructuredToolResult.Fail("The tool dispatcher is unavailable.")
+                : await _agenticPauseEngine.ExecuteStructuredToolAsync(decision.Tool, decision.Query, token);
+
+            string resultText = toolResult.IsSuccess ? toolResult.Data : toolResult.ErrorMessage;
+            if (resultText.Length > BuilderToolResultMaxChars)
+                resultText = resultText[..BuilderToolResultMaxChars] + "\n[tool result truncated]";
+
+            toolContext.AppendLine($"[[TOOL OBSERVATION {usedToolCalls.Count}]]");
+            toolContext.AppendLine($"Tool: {decision.Tool}");
+            toolContext.AppendLine($"Query: {decision.Query}");
+            toolContext.AppendLine($"Status: {(toolResult.IsSuccess ? "success" : "failed")}");
+            toolContext.AppendLine(resultText);
+            toolContext.AppendLine($"[[END TOOL OBSERVATION {usedToolCalls.Count}]]");
+            return true;
+        }
+
+        private bool TryBuildDeterministicBuilderToolDecision(string userPayload, out BuilderToolDecision? decision)
+        {
+            decision = null;
+            string objective = ExtractOriginalRequestForToolRouting(userPayload);
+            if (string.IsNullOrWhiteSpace(objective))
+                objective = (userPayload ?? string.Empty).Trim();
+            if (objective.Length > BuilderToolDecisionMaxQueryChars)
+                objective = objective[..BuilderToolDecisionMaxQueryChars];
+
+            string lower = objective.ToLowerInvariant();
+            bool wantsCurrentFact = _isWebSearchEnabled
+                && Regex.IsMatch(lower, @"\b(latest|current|today|yesterday|recent|newest|release notes|version|price|news|202[5-9])\b");
+            if (wantsCurrentFact)
+            {
+                decision = new BuilderToolDecision("tool", "WEB_SEARCH", objective);
+                return true;
+            }
+
+            bool looksNumeric = Regex.IsMatch(objective, @"\d\s*(?:[+\-*/^=]|%|percent|mph|km/h|usd|dollars|kg|lbs|cm|mm|m2|m\^2|hours?|minutes?)", RegexOptions.IgnoreCase)
+                && Regex.IsMatch(lower, @"\b(calculate|compute|solve|convert|how many|how much|total|average|sum|rate|formula)\b");
+            if (looksNumeric)
+            {
+                decision = new BuilderToolDecision("tool", "CALCULATE", objective);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string ExtractOriginalRequestForToolRouting(string userPayload)
+        {
+            if (string.IsNullOrWhiteSpace(userPayload))
+                return string.Empty;
+
+            Match match = Regex.Match(
+                userPayload,
+                @"\[\[ORIGINAL REQUEST\]\]\s*(?<body>.*?)\s*\[\[END ORIGINAL REQUEST\]\]",
+                RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups["body"].Value.Trim() : string.Empty;
         }
 
         private string BuildBuilderToolDecisionSystemPrompt(bool isRepairAttempt, int toolsUsed)

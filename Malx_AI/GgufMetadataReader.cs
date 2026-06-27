@@ -14,6 +14,8 @@ namespace Malx_AI
         public int EmbeddingLength { get; init; }
         public int HeadCount { get; init; }
         public int HeadCountKv { get; init; }
+        public long? ParameterCount { get; init; }
+        public string SizeLabel { get; init; } = "";
 
         /// <summary>
         /// Number of layers that actually allocate an attention KV cache. Equals BlockCount
@@ -148,6 +150,8 @@ namespace Malx_AI
                 string architecture = "";
                 int blockCount = 0, contextLength = 0, embeddingLength = 0, headCount = 0, headCountKv = 0, slidingWindow = 0;
                 int attentionLayerCount = 0, keyLength = 0, valueLength = 0;
+                long? parameterCount = null;
+                string sizeLabel = "";
 
                 for (ulong i = 0; i < kvCount; i++)
                 {
@@ -157,6 +161,18 @@ namespace Malx_AI
                     if (key == "general.architecture" && valueType == 8)
                     {
                         architecture = ReadGgufString(reader);
+                        continue;
+                    }
+
+                    if (key == "general.size_label" && valueType == 8)
+                    {
+                        sizeLabel = ReadGgufString(reader);
+                        continue;
+                    }
+
+                    if (key == "general.parameter_count" && TryReadIntegerValue(reader, valueType, out long paramValue))
+                    {
+                        parameterCount = paramValue;
                         continue;
                     }
 
@@ -221,10 +237,12 @@ namespace Malx_AI
                     AttentionLayerCount = attentionLayerCount,
                     KeyLength = keyLength,
                     ValueLength = valueLength,
-                    SlidingWindow = slidingWindow
+                    SlidingWindow = slidingWindow,
+                    ParameterCount = parameterCount,
+                    SizeLabel = sizeLabel
                 };
 
-                Debug.WriteLine($"[GgufMetadataReader] {Path.GetFileName(modelPath)}: arch={architecture}, layers={blockCount}, attnLayers={attentionLayerCount}, trainedCtx={contextLength}, kv/token={meta.KvBytesPerTokenF16}, swa={slidingWindow}");
+                Debug.WriteLine($"[GgufMetadataReader] {Path.GetFileName(modelPath)}: arch={architecture}, size={sizeLabel}, params={parameterCount}, layers={blockCount}, attnLayers={attentionLayerCount}, trainedCtx={contextLength}, kv/token={meta.KvBytesPerTokenF16}, swa={slidingWindow}");
                 return meta;
             }
             catch (Exception ex)

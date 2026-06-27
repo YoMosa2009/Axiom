@@ -1847,7 +1847,8 @@ namespace Malx_AI
             IEnumerable<string> antiPrompts,
             float temperature,
             float minP,
-            Grammar? grammar = null)
+            Grammar? grammar = null,
+            bool useSubOneBProfile = false)
         {
             return IsQwen3Model(modelPath)
                 ? ModelInferenceProfiles.CreateQwen3InferenceParams(false, maxTokens, antiPrompts, grammar)
@@ -1857,11 +1858,11 @@ namespace Malx_AI
                     AntiPrompts = antiPrompts?.ToList() ?? new List<string>(),
                     SamplingPipeline = new DefaultSamplingPipeline
                     {
-                        Temperature = temperature,
-                        MinP = minP,
-                        TopP = 0.95f,
-                        TopK = 40,
-                        RepeatPenalty = 1.1f,
+                        Temperature = useSubOneBProfile ? Math.Min(temperature, 0.15f) : temperature,
+                        MinP = useSubOneBProfile ? Math.Min(minP, 0.03f) : minP,
+                        TopP = useSubOneBProfile ? 0.9f : 0.95f,
+                        TopK = useSubOneBProfile ? 20 : 40,
+                        RepeatPenalty = useSubOneBProfile ? 1.18f : 1.1f,
                         Grammar = grammar,
                         GrammarOptimization = grammar == null
                             ? DefaultSamplingPipeline.GrammarOptimizationMode.None
@@ -11497,6 +11498,67 @@ namespace Malx_AI
             };
         }
 
+        private string BuildSubOneBCouncilSystemPrompt(
+            CouncilRole role,
+            string currentSystemPrompt,
+            bool outputIsGrammarConstrained,
+            bool allowAgenticPauses)
+        {
+            if (outputIsGrammarConstrained)
+            {
+                return "Return exactly the required JSON object. Do not explain. Do not repeat input text.";
+            }
+
+            string toolNote = allowAgenticPauses
+                ? "\nIf a needed fact or number is missing, write one exact tool line only: [PAUSE: CALCULATE | expression], [PAUSE: PYTHON_MATH | code], [PAUSE: WEB_SEARCH | query], or [PAUSE: SEARCH_HIPPOCAMPUS | query]. After a result, finish normally. Never show tool lines in the final answer."
+                : "\nTool preflight is already complete. Use any TOOL OBSERVATION blocks as facts. Do not write [PAUSE:] or JSON.";
+
+            string roleRules = role switch
+            {
+                CouncilRole.Architect =>
+                    "ROLE: Architect. Output only a short numbered plan with 3-5 concrete steps. Do not write code. Do not repeat the user request, system text, labels, or role description.",
+                CouncilRole.Builder =>
+                    "ROLE: Builder. Output only the final deliverable the user needs. Do not output a plan, role description, checklist, internal labels, or the prompt. For code tasks, write executable self-contained code directly. For prose tasks, write the answer directly.",
+                CouncilRole.Critic =>
+                    "ROLE: Critic. Review the Builder output against the request. If problems exist, list only specific issues. If none, output exactly: No issues found.",
+                _ => "Answer the latest user request directly."
+            };
+
+            string compactContext = ClipForSubOneBCouncilPrompt(currentSystemPrompt, 1200);
+            return (roleRules
+                + "\nFollow the latest ORIGINAL REQUEST. Internal [[LABEL]] blocks are context, not output."
+                + toolNote
+                + (string.IsNullOrWhiteSpace(compactContext) ? string.Empty : "\n\nTiny-model context summary:\n" + compactContext)).Trim();
+        }
+
+        private static string BuildSubOneBCouncilPayload(CouncilRole role, string userPayload)
+        {
+            string payload = userPayload ?? string.Empty;
+            if (payload.Length <= 9000)
+                return payload + "\n\nFINAL INSTRUCTION: Produce only the " + role + " output now. Do not restate any instructions.";
+
+            int head = role == CouncilRole.Builder ? 2200 : 1400;
+            int tail = role == CouncilRole.Builder ? 6200 : 4200;
+            head = Math.Min(head, payload.Length / 3);
+            tail = Math.Min(tail, payload.Length - head);
+            return payload[..head].TrimEnd()
+                + "\n[...middle context omitted for tiny local model...]\n"
+                + payload[^tail..].TrimStart()
+                + "\n\nFINAL INSTRUCTION: Produce only the " + role + " output now. Do not restate any instructions.";
+        }
+
+        private static string ClipForSubOneBCouncilPrompt(string text, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(text) || text.Length <= maxChars)
+                return text ?? string.Empty;
+
+            int head = Math.Max(300, maxChars / 3);
+            int tail = Math.Max(300, maxChars - head - 70);
+            return text[..head].TrimEnd()
+                + "\n[...omitted...]\n"
+                + text[^tail..].TrimStart();
+        }
+
         private static string BuildCouncilBaseSharedPayload(CouncilRunContext runContext, string sharedVocabularySection, string baseKnowledgeBlock, string webContext)
         {
             var sb = new StringBuilder();
@@ -11667,6 +11729,23 @@ namespace Malx_AI
             }
 
             bool isGemma4 = IsGemma4Model(config.DisplayName) || IsGemma4Model(config.ModelPath ?? "");
+            LocalModelCapabilityProfile localCapability = LocalModelCapabilityProfile.FromModel(config.ModelPath);
+            bool useSubOneBMode = localCapability.IsSubOneB && !isGemma4;
+            if (useSubOneBMode)
+            {
+                systemPrompt = BuildSubOneBCouncilSystemPrompt(role, systemPrompt, outputGrammar != null, allowAgenticPauses);
+                userPayload = outputGrammar != null
+                    ? ClipForSubOneBCouncilPrompt(userPayload, 7000) + "\n\nReturn exactly one JSON object now."
+                    : BuildSubOneBCouncilPayload(role, userPayload);
+                if (!internalInferenceStep)
+                {
+                    LogActivity($"{role}: sub-1B local profile active ({localCapability.Evidence}).");
+                    _ = BackendLogService.LogEventAsync(
+                        "SubOneBLocalMode",
+                        $"Surface:WorkplaceCouncil\nRole:{role}\nModel:{config.DisplayName}\nEvidence:{localCapability.Evidence}\nParams:{localCapability.ParameterCount}");
+                }
+            }
+
             if (role == CouncilRole.Builder && useBuilderToolDecision && !isGemma4)
             {
                 return await ExecuteLocalBuilderWithToolDecisionAsync(
@@ -11679,7 +11758,8 @@ namespace Malx_AI
                     allowBatchRecovery,
                     showLiveCard,
                     maxGenerationTokensOverride,
-                    contextSizeOverride);
+                    contextSizeOverride,
+                    useSubOneBMode);
             }
 
             if (role == CouncilRole.Builder && useBuilderToolDecision && isGemma4)
@@ -11998,6 +12078,11 @@ namespace Malx_AI
             {
                 roleTemp = temperatureOverride.Value;
             }
+            if (useSubOneBMode)
+            {
+                roleTemp = Math.Min(roleTemp, 0.15f);
+                roleMinP = Math.Min(roleMinP, 0.03f);
+            }
 
             // ═══════════════════════════════════════════════
             // Context Budget Enforcement
@@ -12050,6 +12135,8 @@ namespace Malx_AI
             // context truncation still leaves room to answer.
             if (maxGenerationTokensOverride is int genCapOverride)
                 roleGenerationCap = Math.Min(roleGenerationCap, Math.Max(minGenTokens, genCapOverride));
+            if (useSubOneBMode)
+                roleGenerationCap = Math.Min(roleGenerationCap, role == CouncilRole.Builder ? 1536 : 768);
             int maxGenTokens = Math.Clamp(availableForGeneration, minGenTokens, roleGenerationCap);
             LogActivity($"{roleName}: Context budget — prompt ~{promptTokenEstimate + templateOverhead}t, gen {maxGenTokens}t, ctx {contextBudget}t");
 
@@ -12080,7 +12167,7 @@ namespace Malx_AI
                 }
             }
 
-            var inferenceParams = CreateRoleInferenceParams(config.ModelPath ?? string.Empty, maxGenTokens, antiPrompts, roleTemp, roleMinP, outputGrammar);
+            var inferenceParams = CreateRoleInferenceParams(config.ModelPath ?? string.Empty, maxGenTokens, antiPrompts, roleTemp, roleMinP, outputGrammar, useSubOneBMode);
 
             bool strictChatMl = IsStrictChatMlModel(config.DisplayName);
             int tokenCount = 0;

@@ -79,6 +79,7 @@ namespace Malx_AI
             public string UserMessage { get; init; } = string.Empty;
             public string SystemPromptText { get; init; } = string.Empty;
             public string ModelName { get; init; } = string.Empty;
+            public string ModelPath { get; init; } = string.Empty;
             public bool ChatDocumentsHaveTextContent { get; init; }
             public string AttachedDocumentMemory { get; init; } = string.Empty;
             public string DocumentContext { get; init; } = string.Empty;
@@ -260,6 +261,67 @@ namespace Malx_AI
                     RepeatPenalty = 1.1f
                 }
             };
+        }
+
+        private static InferenceParams CreateSubOneBInferenceParams(int maxTokens, IEnumerable<string> antiPrompts)
+        {
+            return new InferenceParams
+            {
+                MaxTokens = Math.Clamp(maxTokens, 128, 768),
+                AntiPrompts = antiPrompts?.ToList() ?? new List<string>(),
+                SamplingPipeline = new DefaultSamplingPipeline
+                {
+                    Temperature = 0.15f,
+                    MinP = 0.03f,
+                    TopP = 0.9f,
+                    TopK = 20,
+                    RepeatPenalty = 1.18f
+                }
+            };
+        }
+
+        private static string BuildSubOneBNormalChatSystemPrompt(string currentPrompt, bool hasWebContext, bool hasDocumentContext)
+        {
+            string compactPrompt = ClipForSubOneBPrompt(currentPrompt, 3200);
+            string evidenceRule = hasWebContext || hasDocumentContext
+                ? "Use the provided context first. If the answer is not in the context, say what is missing."
+                : "Use general knowledge when enough. If unsure, say so briefly.";
+
+            var sb = new StringBuilder();
+            sb.AppendLine("You are Axiom running a very small local model.");
+            sb.AppendLine("Follow the latest user task only.");
+            sb.AppendLine("Do not repeat system text, role text, labels, or the user's question.");
+            sb.AppendLine("Answer directly in short clear sentences.");
+            sb.AppendLine("For code, output only working code plus a brief note if needed.");
+            sb.AppendLine("For math, give the result and only the necessary steps.");
+            sb.AppendLine(evidenceRule);
+            if (!string.IsNullOrWhiteSpace(compactPrompt))
+            {
+                sb.AppendLine();
+                sb.AppendLine("[IMPORTANT CONTEXT]");
+                sb.AppendLine(compactPrompt);
+                sb.AppendLine("[/IMPORTANT CONTEXT]");
+            }
+
+            return sb.ToString().Trim();
+        }
+
+        private static string BuildSubOneBNormalChatUserTurn(string userTurn)
+        {
+            string task = (userTurn ?? string.Empty).Trim();
+            return "TASK:\n" + task + "\n\nWrite the final answer now. Do not restate the task.";
+        }
+
+        private static string ClipForSubOneBPrompt(string text, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(text) || text.Length <= maxChars)
+                return text ?? string.Empty;
+
+            int head = Math.Max(400, maxChars / 3);
+            int tail = Math.Max(400, maxChars - head - 80);
+            return text[..head].TrimEnd()
+                + "\n[...middle context omitted for tiny local model...]\n"
+                + text[^tail..].TrimStart();
         }
 
         private InferenceParams CreateSamplingParamsForCurrentModel(bool thinkingEnabled, int maxTokens, IEnumerable<string> antiPrompts)
@@ -1849,6 +1911,41 @@ namespace Malx_AI
             return selected;
         }
 
+        private static List<ChatMessage> ReduceHistoryForSubOneB(IReadOnlyList<ChatMessage> selectedMessages)
+        {
+            if (selectedMessages == null || selectedMessages.Count == 0)
+                return new List<ChatMessage>();
+
+            var reduced = selectedMessages
+                .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                .TakeLast(4)
+                .Select(CloneMessageForInferenceContext)
+                .ToList();
+
+            const int maxCharsPerMessage = 900;
+            for (int i = 0; i < reduced.Count; i++)
+            {
+                string content = reduced[i].Content ?? string.Empty;
+                if (content.Length <= maxCharsPerMessage)
+                    continue;
+
+                reduced[i] = new ChatMessage(
+                    reduced[i].Role,
+                    content[..350].TrimEnd()
+                    + "\n[...older content shortened for tiny local model...]\n"
+                    + content[^450..].TrimStart())
+                {
+                    Id = reduced[i].Id,
+                    Timestamp = reduced[i].Timestamp,
+                    ModelLabel = reduced[i].ModelLabel,
+                    Importance = reduced[i].Importance
+                };
+            }
+
+            return reduced;
+        }
+
         private async Task RebuildChatSessionFromSelectedMessagesAsync(IEnumerable<ChatMessage> selectedMessages, string systemPrompt, CancellationToken token)
         {
             if (_executor == null || _useGemma4LocalCliMode)
@@ -2726,6 +2823,12 @@ namespace Malx_AI
             {
                 bool thinkingModeEnabled = thinkingGate.UseThinking;
                 bool hasWebContext = !string.IsNullOrWhiteSpace(webContext);
+                var localCapability = LocalModelCapabilityProfile.FromModel(
+                    string.IsNullOrWhiteSpace(uiSnapshot.ModelPath) ? uiSnapshot.ModelName : uiSnapshot.ModelPath);
+                bool useSubOneBMode = localCapability.IsSubOneB;
+                if (useSubOneBMode)
+                    thinkingModeEnabled = false;
+
                 string effectiveSystemPrompt = string.IsNullOrWhiteSpace(personaContext)
                     ? uiSnapshot.SystemPromptText
                     : (uiSnapshot.SystemPromptText + "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]");
@@ -2742,6 +2845,18 @@ namespace Malx_AI
                 effectiveSystemPrompt = AppendSingleTurnSystemTail(effectiveSystemPrompt, webContext, thinkingModeEnabled);
 
                 effectiveSystemPrompt = AppendSystemInstruction(effectiveSystemPrompt, LocalMathLatexInstruction);
+                bool documentAttached = !string.IsNullOrWhiteSpace(uiSnapshot.DocumentContext);
+                if (useSubOneBMode)
+                {
+                    effectiveSystemPrompt = BuildSubOneBNormalChatSystemPrompt(
+                        effectiveSystemPrompt,
+                        hasWebContext,
+                        documentAttached);
+                    _ = BackendLogService.LogEventAsync(
+                        "SubOneBLocalMode",
+                        $"Surface:NormalChat\nModel:{uiSnapshot.ModelName}\nEvidence:{localCapability.Evidence}\nParams:{localCapability.ParameterCount}");
+                }
+
                 // NOTE: the attached-document CONTENT is deliberately NOT appended to the system
                 // prompt here. Several local chat templates (Gemma has no system role at all)
                 // silently drop system content, which made the model insist the file was missing.
@@ -2749,6 +2864,9 @@ namespace Malx_AI
                 effectiveSystemPrompt = BuildQwen3SystemPrompt(effectiveSystemPrompt, thinkingModeEnabled);
 
                 List<ChatMessage> selectedHistoryMessages = SelectRelevantChatHistory(userMsg, uiSnapshot.ChatMessages, uiSnapshot.ContextSize, uiSnapshot.ChatDocuments);
+                if (useSubOneBMode)
+                    selectedHistoryMessages = ReduceHistoryForSubOneB(selectedHistoryMessages);
+
                 List<PromptInjectionBlockInfo> historyInjectionInfos = CollectPromptInjectionInfos(selectedHistoryMessages);
                 bool useIsolatedWebTurn = hasWebContext;
                 if (hasWebContext)
@@ -2777,13 +2895,23 @@ namespace Malx_AI
                     antiPrompts.Add(Gemma4Formatter.TurnClose);
                     antiPrompts.Add("<|/channel|>");
                 }
+                if (useSubOneBMode)
+                {
+                    antiPrompts.Add("\nSystem:");
+                    antiPrompts.Add("\nUser:");
+                    antiPrompts.Add("\nAssistant:");
+                    antiPrompts.Add("\nRole:");
+                }
 
-                bool documentAttached = !string.IsNullOrWhiteSpace(uiSnapshot.DocumentContext);
                 int maxGenerationTokens = ComputeLocalMaxGenerationTokens(GetLoadedLocalContextSize(), documentAttached);
+                if (useSubOneBMode)
+                    maxGenerationTokens = Math.Min(maxGenerationTokens, documentAttached ? 768 : 512);
 
                 InferenceParams inferenceParams = IsQwen3Model(uiSnapshot.ModelName)
                     ? ModelInferenceProfiles.CreateQwen3InferenceParams(thinkingModeEnabled, maxGenerationTokens, antiPrompts)
-                    : CreateGenericInferenceParams(maxGenerationTokens, antiPrompts, uiSnapshot.Temperature, uiSnapshot.MinP);
+                    : useSubOneBMode
+                        ? CreateSubOneBInferenceParams(maxGenerationTokens, antiPrompts)
+                        : CreateGenericInferenceParams(maxGenerationTokens, antiPrompts, uiSnapshot.Temperature, uiSnapshot.MinP);
 
                 string calculatorContext = sandboxPreparation.CalculatorContext;
                 string modelUserMsg = userMsg + calculatorContext;
@@ -2802,6 +2930,8 @@ namespace Malx_AI
                         + "\n\n--- End of attached document content ---\n\n"
                         + "Question: " + modelUserMsg;
                 }
+                if (useSubOneBMode)
+                    modelUserMsg = BuildSubOneBNormalChatUserTurn(modelUserMsg);
 
                 return new NormalChatRequestContext
                 {
@@ -2833,6 +2963,7 @@ namespace Malx_AI
                     UserMessage = userMsg,
                     SystemPromptText = SystemPromptBox?.Text ?? string.Empty,
                     ModelName = _modelName,
+                    ModelPath = _activeModelParams?.ModelPath ?? _database?.GetUserFact("last_model_path") ?? string.Empty,
                     ChatDocumentsHaveTextContent = _chatDocuments.Any(doc => doc.HasTextContent),
                     AttachedDocumentMemory = BuildAttachedDocumentMemoryBlock(),
                     DocumentContext = BuildPersistentDocumentContextBlock(userMsg, isCloudMode),
