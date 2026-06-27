@@ -43,7 +43,7 @@ namespace Malx_AI
         ];
 
         private static readonly Regex NumberedFindingPattern = new(@"\b\d+[\.|\)]", RegexOptions.Compiled);
-        private static readonly Regex StructuredFieldRegex = new(@"^(?<field>Reference|Issue|Problem|Fix|SuggestedFix|Suggested Fix|Severity|Evidence|Location)\s*:\s*(?<value>.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex StructuredFieldRegex = new(@"^(?<field>Reference|Issue|Problem|Fix|SuggestedFix|Suggested Fix|Exact Builder Fix|Exact_Builder_Fix|Severity|Evidence|Location)\s*:\s*(?<value>.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SeverityRegex = new(@"\b(low|medium|high|critical)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public static string ContractInstruction =>
@@ -53,6 +53,12 @@ namespace Malx_AI
 
         public static CriticReport Parse(string criticOutput)
         {
+            if (TryParseArtifactHandoff(criticOutput, out var handoffReport))
+            {
+                NormalizeReportState(handoffReport, criticOutput);
+                return handoffReport;
+            }
+
             if (TryParseJson(criticOutput, out var report))
             {
                 NormalizeReportState(report, criticOutput);
@@ -82,6 +88,88 @@ namespace Malx_AI
                 return false;
 
             return !ContainsNumberedFindingPattern(text);
+        }
+
+        public static bool IsStructuredArtifactPass(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return text.Contains("CRITIC_HANDOFF", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("END_CRITIC_HANDOFF", StringComparison.OrdinalIgnoreCase)
+                && Regex.IsMatch(text, @"(?im)^\s*overall\s*:\s*pass\s*$")
+                && !Regex.IsMatch(text, @"(?im)^\s*status\s*:\s*fail\s*$")
+                && !Regex.IsMatch(text, @"(?im)^\s*overall\s*:\s*fail\s*$");
+        }
+
+        private static bool TryParseArtifactHandoff(string text, out CriticReport report)
+        {
+            report = new CriticReport();
+            if (string.IsNullOrWhiteSpace(text)
+                || !text.Contains("CRITIC_HANDOFF", StringComparison.OrdinalIgnoreCase)
+                || !text.Contains("END_CRITIC_HANDOFF", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (IsStructuredArtifactPass(text))
+            {
+                report.Status = "ok";
+                report.Issues = new List<CriticIssue>();
+                return true;
+            }
+
+            var issues = new List<CriticIssue>();
+            var blocks = Regex.Split(text, @"(?im)^\s*-\s+severity\s*:")
+                .Skip(1)
+                .Select(block => "severity:" + block.Trim())
+                .ToList();
+
+            foreach (string block in blocks)
+            {
+                string severity = ExtractField(block, "severity");
+                string evidence = ExtractField(block, "evidence");
+                string fix = ExtractField(block, "exact_builder_fix");
+                if (string.IsNullOrWhiteSpace(fix))
+                    fix = ExtractField(block, "exact builder fix");
+                string summary = ExtractField(block, "issue");
+                if (string.IsNullOrWhiteSpace(summary))
+                    summary = string.IsNullOrWhiteSpace(evidence) ? "Artifact requirement failed." : evidence;
+
+                if (!string.IsNullOrWhiteSpace(summary) || !string.IsNullOrWhiteSpace(evidence) || !string.IsNullOrWhiteSpace(fix))
+                {
+                    issues.Add(new CriticIssue
+                    {
+                        Severity = string.IsNullOrWhiteSpace(severity) ? "medium" : GuessSeverity(severity),
+                        Summary = string.IsNullOrWhiteSpace(summary) ? "Artifact requirement failed." : summary,
+                        Evidence = evidence,
+                        SuggestedFix = fix
+                    });
+                }
+            }
+
+            bool overallFail = Regex.IsMatch(text, @"(?im)^\s*overall\s*:\s*fail\s*$")
+                || Regex.IsMatch(text, @"(?im)^\s*status\s*:\s*fail\s*$");
+            if (overallFail && issues.Count == 0)
+            {
+                issues.Add(new CriticIssue
+                {
+                    Severity = "medium",
+                    Summary = "Critic handoff marked the artifact as failed without a parseable issue.",
+                    Evidence = text.Length > 240 ? text[..240] + "..." : text,
+                    SuggestedFix = "Review failed requirement checks and revise the artifact."
+                });
+            }
+
+            report.Status = issues.Count > 0 || overallFail ? "issues" : "ok";
+            report.Issues = issues;
+            return true;
+        }
+
+        private static string ExtractField(string block, string field)
+        {
+            Match match = Regex.Match(block ?? string.Empty, @"(?im)^\s*" + Regex.Escape(field).Replace("_", "[_ ]") + @"\s*:\s*(?<value>.+?)\s*$");
+            return match.Success ? match.Groups["value"].Value.Trim() : string.Empty;
         }
 
         private static bool TryParseJson(string text, out CriticReport report)
@@ -249,6 +337,8 @@ namespace Malx_AI
                     case "fix":
                     case "suggestedfix":
                     case "suggested fix":
+                    case "exact builder fix":
+                    case "exact_builder_fix":
                         fix = value;
                         break;
                     case "severity":
@@ -276,7 +366,7 @@ namespace Malx_AI
         {
             report.Issues ??= new List<CriticIssue>();
 
-            if (IsExplicitCleanPass(rawOutput) && !ContainsNumberedFindingPattern(rawOutput))
+            if ((IsExplicitCleanPass(rawOutput) && !ContainsNumberedFindingPattern(rawOutput)) || IsStructuredArtifactPass(rawOutput))
             {
                 report.Status = "ok";
                 report.Issues.Clear();

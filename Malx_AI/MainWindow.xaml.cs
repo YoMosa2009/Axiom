@@ -428,6 +428,7 @@ namespace Malx_AI
         private bool _normalThinkingModeEnabled;
         private bool _normalWebSearchEnabled = false;
         private bool _chatScrollPending;
+        private CouncilPetWindow? _councilPetWindow;
 
         public MainWindow()
         {
@@ -438,6 +439,8 @@ namespace Malx_AI
                 // Let a LOCAL council run free the Normal-Chat model before it loads its own role
                 // models — on a single GPU both cannot be resident at once (see the method).
                 WorkplaceViewControl.ReleaseHostChatModelAsync = ReleaseChatModelForCouncilAsync;
+                WorkplaceViewControl.CouncilPetToggleRequested += WorkplaceCouncilPetToggleRequested;
+                WorkplaceViewControl.CouncilPetStatusChanged += WorkplaceCouncilPetStatusChanged;
                 LoadEmptyChatLogo();
                 TemperatureSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
                 TopPSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
@@ -1430,6 +1433,7 @@ namespace Malx_AI
 
             if (show)
             {
+                WorkplaceViewControl?.SetNativePreviewSuppressedForOverlay(true);
                 SettingsPanel.Visibility = Visibility.Visible;
             }
 
@@ -1464,6 +1468,7 @@ namespace Malx_AI
                 if (!show)
                 {
                     SettingsPanel.Visibility = Visibility.Collapsed;
+                    WorkplaceViewControl?.SetNativePreviewSuppressedForOverlay(false);
                 }
 
                 _isSettingsAnimating = false;
@@ -3459,6 +3464,52 @@ namespace Malx_AI
             InputBox.IsEnabled = isReady;
         }
 
+        private void WorkplaceCouncilPetToggleRequested(bool enabled)
+        {
+            SetCouncilPetEnabled(enabled);
+        }
+
+        private void WorkplaceCouncilPetStatusChanged(string role, string message)
+        {
+            _councilPetWindow?.UpdateStatus(role, message);
+        }
+
+        private void SetCouncilPetEnabled(bool enabled)
+        {
+            if (!enabled)
+            {
+                if (_councilPetWindow != null)
+                {
+                    _councilPetWindow.DisableRequested -= CouncilPetWindow_DisableRequested;
+                    _councilPetWindow.Close();
+                    _councilPetWindow = null;
+                }
+
+                WorkplaceViewControl?.SetCouncilPetEnabled(false);
+                return;
+            }
+
+            if (_councilPetWindow == null)
+            {
+                _councilPetWindow = new CouncilPetWindow();
+                _councilPetWindow.DisableRequested += CouncilPetWindow_DisableRequested;
+                _councilPetWindow.UpdateStatus("Council Bit", "Watching the council.");
+                _councilPetWindow.Show();
+            }
+            else
+            {
+                if (!_councilPetWindow.IsVisible)
+                    _councilPetWindow.Show();
+            }
+
+            WorkplaceViewControl?.SetCouncilPetEnabled(true);
+        }
+
+        private void CouncilPetWindow_DisableRequested(object? sender, EventArgs e)
+        {
+            SetCouncilPetEnabled(false);
+        }
+
         private void SwitchToChat_Click(object sender, RoutedEventArgs e)
         {
             if (_isViewTransitionAnimating || ChatView.Visibility == Visibility.Visible)
@@ -3563,7 +3614,10 @@ namespace Malx_AI
 
         private void SetNormalChatSidebarActionsVisible(bool visible)
         {
-            NewChatButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            Visibility visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            NewChatButton.Visibility = visibility;
+            ImportModelSidebarButton.Visibility = visibility;
+            DeleteChatSidebarButton.Visibility = visibility;
         }
 
         private UIElement GetActiveContentView()
@@ -3950,6 +4004,13 @@ namespace Malx_AI
 
         protected override void OnClosed(EventArgs e)
         {
+            if (_councilPetWindow != null)
+            {
+                _councilPetWindow.DisableRequested -= CouncilPetWindow_DisableRequested;
+                _councilPetWindow.Close();
+                _councilPetWindow = null;
+            }
+
             SaveCurrentWorkplaceChat();
             SaveCurrentChat();
             try

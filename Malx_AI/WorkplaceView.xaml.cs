@@ -40,6 +40,34 @@ namespace Malx_AI
             Critic
         }
 
+        public event Action<bool>? CouncilPetToggleRequested;
+        public event Action<string, string>? CouncilPetStatusChanged;
+
+        public void SetCouncilPetEnabled(bool enabled)
+        {
+            _isCouncilPetEnabled = enabled;
+            RefreshCouncilPetToggleUi();
+            PublishCouncilPetStatus(enabled ? "Council Bit" : "Council", enabled ? "Watching the council." : "Hidden.");
+        }
+
+        private void RefreshCouncilPetToggleUi()
+        {
+            if (FindName("CouncilPetToggleButton") is not Button petButton)
+                return;
+
+            petButton.Content = _isCouncilPetEnabled ? "Bit On" : "Bit";
+            petButton.Opacity = _isCouncilPetEnabled ? 1.0 : 0.68;
+            petButton.ToolTip = _isCouncilPetEnabled
+                ? "Hide the Council Bit status companion"
+                : "Show the draggable Council Bit status companion";
+        }
+
+        private void PublishCouncilPetStatus(string role, string message)
+        {
+            if (_isCouncilPetEnabled)
+                CouncilPetStatusChanged?.Invoke(role, message);
+        }
+
         private void RefreshWorkplaceWebToggleUi()
         {
             if (WebSearchToggleButton == null)
@@ -1692,8 +1720,10 @@ namespace Malx_AI
         private string _lastCriticRawOutput = "";
         private string _lastSandboxOutput = "";
         private string _lastFinalOutput = "";
+        private bool _isCouncilPetEnabled;
         private ArtifactRenderInfo _canvasArtifact = ArtifactRenderInfo.None(string.Empty);
         private bool _isCanvasPreviewMode;
+        private bool _suppressCanvasNativePreviewForOverlay;
         private bool _canvasArtifactWebViewReady;
         private string _canvasArtifactNavSource = string.Empty;
         private bool _canvasArtifactNavRetried;
@@ -1935,9 +1965,11 @@ namespace Malx_AI
                 msg => UpdateAgenticPauseStatus(msg));
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
+            RefreshCouncilPetToggleUi();
             UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
             SizeChanged += (_, _) => ApplyDesktopLayout(ActualWidth);
+            ProjectCanvasPane.SizeChanged += (_, _) => UpdateCanvasHeaderLayout();
         }
 
         private sealed class ProjectCanvasMentionColorizer : DocumentColorizingTransformer
@@ -2035,6 +2067,7 @@ namespace Malx_AI
             InputAreaContainer.Padding = centerWidth < 650
                 ? new Thickness(12, 10, 12, 10)
                 : new Thickness(24, 12, 24, 12);
+            UpdateCanvasHeaderLayout();
         }
 
         private void SetProjectCanvasVisibilityInstant(bool visible)
@@ -2132,6 +2165,30 @@ namespace Malx_AI
             _isCodeOutputExpanded = !_isCodeOutputExpanded;
             AnimateCodeOutputPanel(_isCodeOutputExpanded);
             RefreshCanvasArtifactUi();
+        }
+
+        private void CanvasMoreActionsButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (CanvasMoreActionsButton.ContextMenu == null)
+                return;
+
+            CanvasMoreActionsButton.ContextMenu.PlacementTarget = CanvasMoreActionsButton;
+            CanvasMoreActionsButton.ContextMenu.IsOpen = true;
+        }
+
+        private void CanvasMoreCopyItem_Click(object sender, RoutedEventArgs e)
+        {
+            CopyCanvasButton_Click(sender, e);
+        }
+
+        private void CanvasMoreDiffItem_Click(object sender, RoutedEventArgs e)
+        {
+            ShowDiffButton_Click(sender, e);
+        }
+
+        private void CanvasMoreOutputItem_Click(object sender, RoutedEventArgs e)
+        {
+            CodeOutputToggleButton_Click(sender, e);
         }
 
         private void AnimateProjectCanvasPane(bool expand)
@@ -3202,6 +3259,7 @@ namespace Malx_AI
         private void StopMessage_Click(object sender, RoutedEventArgs e)
         {
             RelayStatusBlock.Text = "Relay: Stopping...";
+            PublishCouncilPetStatus("Council", "Stopping the run.");
             StopButton.IsEnabled = false;
             _cancellationTokenSource?.Cancel();
         }
@@ -3215,6 +3273,11 @@ namespace Malx_AI
             AppendChat("system", _isWebSearchEnabled
                 ? "Web Search tool enabled. Future requests will automatically use strategic web lookup when relevant."
                 : "Web Search tool disabled for Agentic Pause.");
+        }
+
+        private void CouncilPetToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            CouncilPetToggleRequested?.Invoke(!_isCouncilPetEnabled);
         }
 
         private async void WorkplaceCloudModeButton_Click(object sender, RoutedEventArgs e)
@@ -3890,10 +3953,10 @@ namespace Malx_AI
             {
                 CouncilRole.Architect =>
                     "\n[PROJECT CANVAS ARTIFACT REQUEST] The user is asking for a renderable artifact deliverable for Project Canvas. " +
-                    "Plan toward one concrete visual artifact implementation, not a prose explanation. " +
-                    "Your steps should guide the Builder toward producing a single offline-renderable artifact source file or code block. " +
+                    "Produce a compact build contract, not a procedural recipe and not a numbered step plan. " +
+                    "Name the artifact type, required output format, explicit user requirements, hard constraints, Builder instruction, and acceptance tests. " +
                     $"The artifact will display in a {viewportWidth}px wide pane on a dark background — plan sections that stack vertically and fit a narrow column, not wide multi-column desktop layouts. " +
-                    "End your plan with a step that explicitly names the output format (e.g., 'Output as a self-contained HTML file'). " +
+                    "The Builder should receive a crisp source-of-truth handoff that tells it to return complete renderable code only. " +
                     formatHint,
                 CouncilRole.Builder =>
                     "\n[PROJECT CANVAS ARTIFACT REQUEST] The final deliverable must be a renderable artifact for Project Canvas. " +
@@ -3911,7 +3974,8 @@ namespace Malx_AI
                 CouncilRole.Critic =>
                     "\n[PROJECT CANVAS ARTIFACT REQUEST] Review the Builder output as a renderable artifact deliverable. " +
                     $"It will render in a {viewportWidth}px wide pane whose host background is dark (#171615). " +
-                    "Check that: (1) the output is a single correctly tagged code-fenced artifact with no text before or after the fence, " +
+                    "The Builder source may be raw HTML/SVG/JS because the pipeline strips code fences before rendering; do not fail valid raw artifact source solely for missing markdown fences. " +
+                    "Check that: (1) the output is one complete artifact source, not prose or multiple alternatives, " +
                     "(2) it matches the requested visual/task outcome, " +
                     "(3) it is self-contained and does not rely on external internet resources, " +
                     "(4) it uses responsive/fluid sizing — flag SVG root elements with hardcoded width/height but no viewBox, " +
@@ -3920,9 +3984,9 @@ namespace Malx_AI
                     "(5) it is legible — flag a body with no explicit background-color or text color (browser-default black text is invisible on the dark host), " +
                     "flag base font sizes under 12px, and flag low-contrast text/background color pairs. " +
                     "If the requested artifact involves simulation, animation, calculation, user controls, or changing readouts, standalone SVG is insufficient unless it contains working script behavior; prefer HTML/JS. " +
-                    "Severity guidance: CRITICAL for non-rendering output, broken syntax/runtime, missing artifact fence, or mathematically wrong results; HIGH for missing a core requested behavior; MEDIUM for responsiveness/legibility issues that materially hurt use; LOW for subjective polish. " +
-                    "Do not request a Builder rewrite for LOW-only subjective style preferences when the artifact renders, fulfills the request, and is usable. " +
-                    "If the output contains prose commentary around the artifact or drifts into explanation instead of implementation, treat that as a failure.",
+                    "Severity guidance: CRITICAL for non-rendering output, broken syntax/runtime, or mathematically wrong results; HIGH for missing a core requested behavior; MEDIUM for responsiveness/legibility issues that materially hurt use; LOW for subjective polish. " +
+                    "Only report evidence-backed failures. Do not request a Builder rewrite for LOW-only subjective style preferences when deterministic sandbox checks pass and the artifact renders, fulfills the request, and is usable. " +
+                    "If the output contains prose commentary instead of implementation, treat that as a failure.",
                 _ => string.Empty
             };
         }
@@ -4050,6 +4114,17 @@ namespace Malx_AI
         {
             if (string.IsNullOrWhiteSpace(architectOutput))
                 yield break;
+
+            if (IsArchitectArtifactHandoff(architectOutput))
+            {
+                foreach (string line in architectOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+                {
+                    string trimmed = line.Trim();
+                    if (trimmed.StartsWith("- ", StringComparison.Ordinal))
+                        yield return trimmed[2..].Trim();
+                }
+                yield break;
+            }
 
             foreach (string line in architectOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
             {
@@ -4545,9 +4620,9 @@ namespace Malx_AI
             {
                 CouncilRole.Architect =>
                     "\n[VISUAL ARTIFACT TASK] Plan a visual or interactive artifact — not a prose document and not a multi-file project. " +
-                    "Each step describes one visual section, interactive element, or data component: what it shows, what data drives it, and any key behavior. " +
-                    "Do NOT describe function signatures, class hierarchies, or server-side code. " +
-                    "Your FINAL numbered step must explicitly state the output format, for example: " +
+                    "Name the artifact type, required source format, hard constraints, explicit must-include items, Builder instruction, and acceptance tests. " +
+                    "Do NOT describe function signatures, class hierarchies, server-side code, or generic build steps. " +
+                    "The handoff must tell Builder to return one complete renderable source only, with no explanatory prose. " +
                     "'Output the complete implementation as a single ```html … ``` code block with no text outside the fence.'",
                 CouncilRole.Builder =>
                     "\n[VISUAL ARTIFACT TASK] This response is a renderable artifact — not a prose explanation and not a research document. " +
@@ -4561,9 +4636,9 @@ namespace Malx_AI
                     "THEME: the host pane is dark (#171615) — always set an explicit background-color and text color on body; never rely on browser defaults.",
                 CouncilRole.Critic =>
                     "\n[VISUAL ARTIFACT TASK] The Builder output must be a renderable artifact — not prose text. " +
-                    "Expect and require a single correctly tagged code-fenced deliverable (including HTML, SVG, Python, JavaScript, or Markdown). " +
+                    "The pipeline may strip markdown fences before rendering, so accept raw complete HTML/SVG/JS/Python/Markdown source. " +
                     "Do NOT penalize code output or suggest prose alternatives. " +
-                    "Flag: missing or multiple code fences, external CDN library imports, incomplete implementation, text outside the code fence, " +
+                    "Flag: external CDN library imports, incomplete implementation, prose instead of artifact source, multiple alternative artifacts, " +
                     "or illegible styling (no explicit body background/text color, base font under 12px, fixed widths wider than the canvas pane). " +
                     "For simulation, animation, calculators, time/state changes, or dynamic readouts, flag standalone static SVG as a format mismatch unless the user explicitly requested SVG.",
                 _ => string.Empty
@@ -4845,6 +4920,15 @@ namespace Malx_AI
             ArchitectStageText.Text = $"Architect · {architectLabel}";
             BuilderStageText.Text = $"Builder · {builderLabel}";
             CriticStageText.Text = $"Critic · {criticLabel}";
+
+            if (activeRole == CouncilRole.Architect)
+                PublishCouncilPetStatus("Architect", "Planning the handoff.");
+            else if (activeRole == CouncilRole.Builder)
+                PublishCouncilPetStatus("Builder", _canvasArtifact.SupportsPreview ? "Updating Project Canvas." : "Building the answer.");
+            else if (activeRole == CouncilRole.Critic)
+                PublishCouncilPetStatus("Critic", "Checking the result.");
+            else if (architectDone && builderDone && criticDone)
+                PublishCouncilPetStatus("Council", "Run complete.");
         }
 
         private static string FormatStageDuration(double seconds)
@@ -4898,8 +4982,33 @@ namespace Malx_AI
             return sb.ToString();
         }
 
-        private static string BuildArchitectContract(CouncilTaskType taskType)
+        private static string BuildArchitectContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false)
         {
+            if (isArtifactCanvasRequest)
+                return "\n[STRUCTURED OUTPUT CONTRACT] Output exactly this artifact handoff shape, with concise values and no prose before or after:\n" +
+                       "ARCHITECT_HANDOFF\n" +
+                       "artifact_type: standalone_html\n" +
+                       "output_target: ProjectCanvas\n" +
+                       "must_include:\n" +
+                       "- explicit user requirements\n" +
+                       "- embedded CSS\n" +
+                       "- embedded JavaScript when interactivity/animation is requested\n" +
+                       "- no external libraries or remote assets\n" +
+                       "hard_constraints:\n" +
+                       "- one complete offline-renderable source\n" +
+                       "- no prose in Builder output\n" +
+                       "builder_instruction:\n" +
+                       "Return only one complete standalone HTML document.\n" +
+                       "acceptance_tests:\n" +
+                       "- contains <!DOCTYPE html>\n" +
+                       "- contains <style>\n" +
+                       "- contains <script> when interactivity is requested\n" +
+                       "- has no external script/link/CDN references\n" +
+                       "- renders the requested UI elements\n" +
+                       "- requested controls change visible state\n" +
+                       "END_ARCHITECT_HANDOFF\n" +
+                       $"End with '{ArchitectCompletionMarker}' on its own line.";
+
             if (taskType == CouncilTaskType.Coding)
                 return "\n[STRUCTURED OUTPUT CONTRACT] Output only a numbered plan. Every line must follow 'N. concrete implementation step'. " +
                            "When the request implies a renderable artifact, explicitly plan toward a single HTML, SVG, or chart implementation that will render in Project Canvas. " +
@@ -4949,8 +5058,30 @@ namespace Malx_AI
                    $"End with '{BuilderCompletionMarker}' on its own line.";
         }
 
-        private static string BuildCriticContract(CouncilTaskType taskType)
+        private static string BuildCriticContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false)
         {
+            if (isArtifactCanvasRequest)
+                return "\n[OUTPUT CONTRACT] Output exactly this evidence-backed artifact review shape. Do not output vague warnings or unsupported speculation:\n" +
+                       "CRITIC_HANDOFF\n" +
+                       "requirement_checks:\n" +
+                       "- requirement: embedded CSS\n" +
+                       "  status: pass/fail\n" +
+                       "  evidence: exact tag, selector, snippet, or sandbox field checked\n" +
+                       "- requirement: no external libraries\n" +
+                       "  status: pass/fail\n" +
+                       "  evidence: cite external URL found, or cite sandbox external_dependencies_found:false\n" +
+                       "issues:\n" +
+                       "- severity: low|medium|high|critical\n" +
+                       "  evidence: exact source or sandbox evidence\n" +
+                       "  exact_builder_fix: exact change Builder should make\n" +
+                       "verified_passes:\n" +
+                       "- evidence-backed pass item\n" +
+                       "overall: pass/fail\n" +
+                       "END_CRITIC_HANDOFF\n" +
+                       "If all current sandbox checks pass and you have no exact failing evidence, set overall: pass and leave issues empty. " +
+                       "Do not fail raw HTML merely because markdown fences are absent. " +
+                       $"End with '{CriticCompletionMarker}' on its own line.";
+
             if (taskType == CouncilTaskType.Coding)
                 return "\n[OUTPUT CONTRACT] Output EITHER a numbered findings list where every item contains: Location, Severity (LOW|MEDIUM|HIGH|CRITICAL), Problem, Fix; " +
                        "Only report findings that are actionable. Do not report subjective preferences unless they materially affect correctness, rendering, usability, or the user's stated goal. " +
@@ -4990,6 +5121,28 @@ namespace Malx_AI
 
             cleaned = text[..idx].Trim();
             return true;
+        }
+
+        private static bool IsArchitectArtifactHandoff(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return text.Contains("ARCHITECT_HANDOFF", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("END_ARCHITECT_HANDOFF", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("artifact_type:", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("builder_instruction:", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("acceptance_tests:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsCriticArtifactHandoff(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return text.Contains("CRITIC_HANDOFF", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("END_CRITIC_HANDOFF", StringComparison.OrdinalIgnoreCase)
+                && text.Contains("overall:", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsLikelyCodeOutput(string output)
@@ -5089,6 +5242,7 @@ namespace Malx_AI
         private static bool ArchitectHasRoleDrift(string output)
         {
             if (string.IsNullOrWhiteSpace(output)) return true;
+            if (IsArchitectArtifactHandoff(output)) return false;
             string lower = output.ToLowerInvariant();
             return lower.Contains("```")
                    || lower.Contains("public class ")
@@ -5185,6 +5339,70 @@ namespace Malx_AI
         private static string BuildFallbackDocumentPlan(List<DocumentChunk> chunks)
         {
             return BuildDocumentTaskPlan("summarize", chunks);
+        }
+
+        private static string BuildArtifactArchitectHandoff(CouncilRunContext context)
+        {
+            string request = (context.UserPrompt + "\n" + context.Objective).ToLowerInvariant();
+            bool wantsHtml = request.Contains("html", StringComparison.Ordinal)
+                || request.Contains("dashboard", StringComparison.Ordinal)
+                || request.Contains("interactive", StringComparison.Ordinal)
+                || request.Contains("button", StringComparison.Ordinal)
+                || request.Contains("javascript", StringComparison.Ordinal);
+            string artifactType = wantsHtml ? "standalone_html" : "project_canvas_artifact";
+
+            var body = new StringBuilder();
+            body.AppendLine("ARCHITECT_HANDOFF");
+            body.AppendLine("artifact_type: " + artifactType);
+            body.AppendLine("output_target: ProjectCanvas");
+            body.AppendLine("required_output_format: one complete offline-renderable source; prefer raw complete HTML or one html code fence that the pipeline can strip");
+            body.AppendLine("must_include:");
+
+            var mustInclude = new List<string>();
+            if (context.GoalContract?.Requirements.Count > 0)
+                mustInclude.AddRange(context.GoalContract.Requirements);
+            else if (!string.IsNullOrWhiteSpace(context.UserPrompt))
+                mustInclude.Add(context.UserPrompt.Trim());
+
+            if (wantsHtml || request.Contains("css", StringComparison.Ordinal) || request.Contains("style", StringComparison.Ordinal))
+                mustInclude.Add("embedded CSS");
+            if (request.Contains("javascript", StringComparison.Ordinal) || request.Contains("interactive", StringComparison.Ordinal) || request.Contains("button", StringComparison.Ordinal) || request.Contains("animated", StringComparison.Ordinal))
+                mustInclude.Add("embedded JavaScript");
+            if (request.Contains("no external", StringComparison.Ordinal) || context.IsArtifactCanvasRequest)
+                mustInclude.Add("no external libraries, CDN links, remote scripts, or remote assets");
+
+            foreach (string item in mustInclude.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
+                body.AppendLine("- " + item.Trim());
+
+            body.AppendLine("hard_constraints:");
+            if (context.GoalContract?.Constraints.Count > 0)
+            {
+                foreach (string constraint in context.GoalContract.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
+                    body.AppendLine("- " + constraint.Trim());
+            }
+            body.AppendLine("- one complete self-contained artifact source");
+            body.AppendLine("- no prose, commentary, alternatives, TODOs, or pseudo-code in Builder output");
+            body.AppendLine("- responsive inside Project Canvas with explicit body background and text color");
+            body.AppendLine("builder_instruction:");
+            body.AppendLine("Return only one complete standalone HTML document unless the user explicitly required a different renderable artifact format.");
+            body.AppendLine("acceptance_tests:");
+
+            var checks = new List<string>
+            {
+                "contains <!DOCTYPE html> for standalone HTML",
+                "contains <style> with embedded CSS when styling is requested",
+                "contains <script> with embedded JavaScript when interactivity or animation is requested",
+                "has no external script/link/CDN references",
+                "renders the requested UI elements",
+                "requested controls change visible state"
+            };
+            if (context.GoalContract?.AcceptanceChecks.Count > 0)
+                checks.AddRange(context.GoalContract.AcceptanceChecks);
+            foreach (string check in checks.Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
+                body.AppendLine("- " + check.Trim());
+
+            body.AppendLine("END_ARCHITECT_HANDOFF");
+            return body.ToString().Trim();
         }
 
         // Last-resort Architect plan synthesized from the deterministic pre-flight decomposition.
@@ -5734,6 +5952,12 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(candidate))
                 return false;
 
+            if (IsArchitectArtifactHandoff(candidate))
+            {
+                normalizedPlan = candidate.Trim();
+                return true;
+            }
+
             var numbered = new List<string>();
             var bullets = new List<string>();
 
@@ -6210,6 +6434,12 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(candidate) || CriticContainsReasoningLeak(candidate))
                 return false;
 
+            if (IsCriticArtifactHandoff(candidate))
+            {
+                normalized = candidate.Trim();
+                return true;
+            }
+
             if (IsClearPassCriticOutput(candidate))
             {
                 normalized = "No issues found.";
@@ -6260,6 +6490,18 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(architectOutput))
                 return "";
 
+            if (IsArchitectArtifactHandoff(architectOutput))
+            {
+                string type = ExtractSimpleHandoffField(architectOutput, "artifact_type");
+                string target = ExtractSimpleHandoffField(architectOutput, "output_target");
+                string instruction = ExtractSimpleHandoffField(architectOutput, "builder_instruction");
+                var parts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(type)) parts.Add("Artifact type: " + type);
+                if (!string.IsNullOrWhiteSpace(target)) parts.Add("Target: " + target);
+                if (!string.IsNullOrWhiteSpace(instruction)) parts.Add(instruction);
+                return string.Join(". ", parts);
+            }
+
             var sentences = new List<string>();
             foreach (var line in architectOutput.Split('\n'))
             {
@@ -6275,6 +6517,12 @@ namespace Malx_AI
             }
 
             return string.Join(" ", sentences);
+        }
+
+        private static string ExtractSimpleHandoffField(string text, string fieldName)
+        {
+            Match match = Regex.Match(text ?? string.Empty, @"(?im)^\s*" + Regex.Escape(fieldName) + @":\s*(?<value>.+?)\s*$");
+            return match.Success ? match.Groups["value"].Value.Trim() : string.Empty;
         }
 
         private static string BuildBuilderSummaryFromCode(string builderOutput)
@@ -6800,6 +7048,9 @@ namespace Malx_AI
             var failures = new List<string>();
             string output = finalOutput ?? string.Empty;
 
+            if (context.IsArtifactCanvasRequest)
+                return BuildProjectCanvasFinalVerificationFailures(context, output);
+
             if (context.TaskType == CouncilTaskType.Coding)
             {
                 if (!context.BuilderRoutedToCanvas)
@@ -6854,6 +7105,9 @@ namespace Malx_AI
 
             if (CriticContractParser.IsExplicitCleanPass(criticOutput)
                 && !CriticContractParser.ContainsNumberedFindingPattern(criticOutput))
+                return false;
+
+            if (CriticContractParser.IsStructuredArtifactPass(criticOutput))
                 return false;
 
             string lower = criticOutput.ToLowerInvariant();
@@ -7101,6 +7355,16 @@ namespace Malx_AI
             RefineButton.Visibility = Visibility.Collapsed;
             RevisionNoticeBlock.Text = "Issues were found and the output was revised.";
             RevisionNoticeBlock.Visibility = Visibility.Collapsed;
+            if (!_isStudySessionRunning)
+            {
+                StudySessionNotificationBar.Visibility = Visibility.Collapsed;
+                StudySessionStatusText.Text = "Study Session idle";
+                StudySessionDetailText.Text = string.Empty;
+                StudySessionPhaseText.Text = "Idle";
+                StudySessionProgressBar.Value = 0;
+                StudySessionProgressLabel.Text = "0%";
+                StudySessionEntryCountText.Text = "0";
+            }
 
             string userQuery = QueryInput.Text.Trim();
             _submittedRunPrompt = userQuery;
@@ -7449,7 +7713,7 @@ namespace Malx_AI
                         + (runContext.IsArtifactCanvasRequest && smallLocalArchitectModel ? BuildSmallModelArtifactAssist(CouncilRole.Architect, runContext.PreferredArtifactFormatHint, runContext) : "")
                         + (isCalcTask ? GetCalculationBoost(CouncilRole.Architect) : "")
                         + (runContext.CalculatorUsed ? "\n[CALCULATOR TOOL] Use values from [[CALCULATOR TOOL RESULTS]] exactly when creating steps. Do not invent conflicting numbers." : "")
-                        + BuildArchitectContract(taskType)
+                        + BuildArchitectContract(taskType, runContext.IsArtifactCanvasRequest)
                         + (runContext.IsDocumentTask
                             ? "\n[CRITICAL — DOCUMENT CONTENT PROVIDED] Full source text is in [[DOCUMENT CONTENT]]. " +
                               "Your plan MUST describe operations on this specific content (extract, compare, synthesize, summarize specific sections). " +
@@ -7508,8 +7772,16 @@ namespace Malx_AI
                         AppendChat("system", "Architect plan auto-corrected: unstructured output replaced with content plan.");
                     }
 
+                    if (!architectNormalized && runContext.IsArtifactCanvasRequest)
+                    {
+                        architectCleaned = BuildArtifactArchitectHandoff(runContext);
+                        architectNormalized = true;
+                        architectMarkerFound = true;
+                        LogActivity("Architect produced unstructured output for Project Canvas; using deterministic artifact handoff.");
+                    }
+
                     // Deterministic sanitization: strip file-operation steps for non-coding tasks
-                    if (architectNormalized && taskType != CouncilTaskType.Coding)
+                    if (architectNormalized && taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest)
                     {
                         string sanitized = SanitizeArchitectPlan(architectCleaned, taskType);
                         if (string.IsNullOrWhiteSpace(sanitized))
@@ -7524,6 +7796,15 @@ namespace Malx_AI
                             architectCleaned = sanitized;
                             LogActivity($"Architect plan sanitized: file-operation steps removed, {CountArchitectSteps(sanitized)} steps remain.");
                         }
+                    }
+
+                    if (architectNormalized
+                        && runContext.IsArtifactCanvasRequest
+                        && !IsArchitectArtifactHandoff(architectCleaned))
+                    {
+                        architectCleaned = BuildArtifactArchitectHandoff(runContext);
+                        architectMarkerFound = true;
+                        LogActivity("Architect output normalized into Project Canvas artifact handoff contract.");
                     }
 
                     bool architectSchemaOk = architectNormalized
@@ -7566,7 +7847,7 @@ namespace Malx_AI
 
                         bool retryNormalized = TryNormalizeArchitectPlan(architectOutput, out architectCleaned, out bool retryMarkerFound);
 
-                        if (retryNormalized && taskType != CouncilTaskType.Coding)
+                        if (retryNormalized && taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest)
                         {
                             string sanitized = SanitizeArchitectPlan(architectCleaned, taskType);
                             if (string.IsNullOrWhiteSpace(sanitized))
@@ -7581,6 +7862,15 @@ namespace Malx_AI
                                 architectCleaned = sanitized;
                                 LogActivity("Architect retry plan sanitized.");
                             }
+                        }
+
+                        if (retryNormalized
+                            && runContext.IsArtifactCanvasRequest
+                            && !IsArchitectArtifactHandoff(architectCleaned))
+                        {
+                            architectCleaned = BuildArtifactArchitectHandoff(runContext);
+                            retryMarkerFound = true;
+                            LogActivity("Architect retry output normalized into Project Canvas artifact handoff contract.");
                         }
 
                         bool retryOk = retryNormalized
@@ -8284,7 +8574,32 @@ namespace Malx_AI
                 // ═══════════════════════════════════════════════════════════
                 // STATIC VALIDATION — deterministic checks before Critic
                 // ═══════════════════════════════════════════════════════════
-                if ((taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
+                if (runContext.IsArtifactCanvasRequest && !string.IsNullOrWhiteSpace(builderOutput))
+                {
+                    var staticFindings = runContext.StaticValidationFindings
+                        .Where(finding => !LooksLikeArtifactValidationFinding(finding))
+                        .ToList();
+                    ArtifactRenderInfo artifactInfo = ArtifactRenderService.DetectForCanvas(builderOutput, null);
+                    if (!artifactInfo.SupportsPreview)
+                    {
+                        staticFindings.Add("ARTIFACT CHECK: Builder output is not detected as a renderable Project Canvas artifact.");
+                    }
+                    else if (artifactInfo.Kind == ArtifactKind.Html)
+                    {
+                        var artifactValidation = ValidateProjectCanvasHtmlArtifact(builderOutput, runContext);
+                        staticFindings.AddRange(artifactValidation.Failures.Select(failure => "ARTIFACT CHECK: " + failure));
+                    }
+
+                    staticFindings = staticFindings.Distinct(StringComparer.OrdinalIgnoreCase).Take(24).ToList();
+                    runContext.StaticValidationFindings = staticFindings;
+                    runContext.StaticValidationIssuesFound = staticFindings.Count > 0;
+                    if (staticFindings.Count > 0)
+                    {
+                        LogActivity($"Artifact validation found {staticFindings.Count} pre-flagged issue(s).");
+                        AppendChat("system", $"Artifact validation: {staticFindings.Count} issue(s) pre-flagged for Critic.");
+                    }
+                }
+                else if ((taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
                     && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     var staticFindings = runContext.StaticValidationFindings.ToList();
@@ -8305,7 +8620,7 @@ namespace Malx_AI
                         _activePythonSandboxPreamble = runContext.PythonSandboxPreamble;
                         try
                         {
-                            string staticValidationSandbox = await ExecuteCodeSandboxAsync(builderOutput, "python");
+                            string staticValidationSandbox = await ExecuteCodeSandboxAsync(builderOutput, "python", runContext);
                             var staticValidationErrors = DetectSandboxErrors(staticValidationSandbox);
                             if (staticValidationErrors.Count > 0)
                             {
@@ -8338,15 +8653,16 @@ namespace Malx_AI
 
                 // --- Code Sandbox: execute builder code and inject results into critic ---
                 string sandboxResult = "";
-                if (taskType == CouncilTaskType.Coding && !string.IsNullOrWhiteSpace(builderOutput))
+                if ((taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest) && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     string detectedLang = DetectLanguage(builderOutput);
                     if (detectedLang is "python" or "java" or "html")
                     {
                         LogActivity($"Code sandbox triggered for '{detectedLang}'. Executing...");
                         RelayStatusBlock.Text = $"Relay: Running {detectedLang} sandbox...";
+                        PublishCouncilPetStatus("Sandbox", $"Validating {detectedLang.ToUpperInvariant()}.");
                         _activePythonSandboxPreamble = detectedLang == "python" ? _builderPythonSandboxPreamble : string.Empty;
-                        sandboxResult = await ExecuteCodeSandboxAsync(builderOutput, detectedLang);
+                        sandboxResult = await ExecuteCodeSandboxAsync(builderOutput, detectedLang, runContext);
                         if (detectedLang == "python" && !string.IsNullOrWhiteSpace(sandboxResult))
                         {
                             var runtimeErrors = DetectSandboxErrors(sandboxResult);
@@ -8359,7 +8675,7 @@ namespace Malx_AI
                                     runContext.BuilderOutput = correctedPython;
                                     contextState.BuilderOutput = correctedPython;
                                     UpdateProjectCanvas(correctedPython);
-                                    sandboxResult = await ExecuteCodeSandboxAsync(correctedPython, detectedLang);
+                                    sandboxResult = await ExecuteCodeSandboxAsync(correctedPython, detectedLang, runContext);
                                 }
                             }
                         }
@@ -8433,7 +8749,7 @@ namespace Malx_AI
                     string recheckLang = DetectLanguage(patched);
                     if (recheckLang is "python" or "java" or "html")
                     {
-                        sandboxResult = await ExecuteCodeSandboxAsync(patched, recheckLang);
+                        sandboxResult = await ExecuteCodeSandboxAsync(patched, recheckLang, runContext);
                         var recheckErrors = DetectSandboxErrors(sandboxResult);
                         sandboxFailed = recheckErrors.Count > 0;
                         runContext.SandboxExceptionsFound = sandboxFailed;
@@ -8495,7 +8811,7 @@ namespace Malx_AI
                         + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
                         + (isCalcTask ? GetCalculationBoost(CouncilRole.Critic) : "")
                         + (runContext.CalculatorUsed ? "\n[CALCULATOR TOOL] Verify Builder math against [[CALCULATOR TOOL RESULTS]] and flag numeric inconsistencies." : "")
-                        + BuildCriticContract(taskType)
+                        + BuildCriticContract(taskType, runContext.IsArtifactCanvasRequest)
                         + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract."
                         + webSearchSystemNote
                         + "\nIf any PIPELINE HEALTH flag is true, increase scrutiny and verify Builder output against Architect plan step-by-step."
@@ -8712,6 +9028,7 @@ namespace Malx_AI
 
                             UpdateStageIndicator(CouncilRole.Builder, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), false, true);
                             RelayStatusBlock.Text = "Relay: Bounded repair pass...";
+                            PublishCouncilPetStatus("Builder", "Applying a small repair.");
 
                             string patchSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                                 + objectiveClause
@@ -8771,9 +9088,19 @@ namespace Malx_AI
                             }
                             builderReasoningFallback = patchResult.IsReasoningFallback;
 
-                            // Post-patch verification for coding tasks
+                            // Post-patch verification for coding/artifact tasks
                             bool patchEscalate = false;
-                            if (taskType == CouncilTaskType.Coding || DetectCodeOutput(patchedOutput).IsCode)
+                            if (runContext.IsArtifactCanvasRequest)
+                            {
+                                var postPatchFindings = BuildProjectCanvasFinalVerificationFailures(runContext, patchedOutput);
+                                if (postPatchFindings.Count > 0)
+                                {
+                                    LogActivity($"Post-patch artifact validation found {postPatchFindings.Count} issue(s) - escalating to full revision.");
+                                    AppendChat("warning", $"Patch left {postPatchFindings.Count} artifact issue(s). Escalating to full revision.");
+                                    patchEscalate = true;
+                                }
+                            }
+                            else if (taskType == CouncilTaskType.Coding || DetectCodeOutput(patchedOutput).IsCode)
                             {
                                 var postPatchFindings = RunStaticValidation(patchedOutput);
                                 postPatchFindings.AddRange(VerifyFulfillment(runContext, patchedOutput));
@@ -8790,7 +9117,7 @@ namespace Malx_AI
                                     string postPatchLang = DetectLanguage(patchedOutput);
                                     if (postPatchLang is "python" or "java" or "html")
                                     {
-                                        string postPatchSandbox = await ExecuteCodeSandboxAsync(patchedOutput, postPatchLang);
+                                        string postPatchSandbox = await ExecuteCodeSandboxAsync(patchedOutput, postPatchLang, runContext);
                                         if (!string.IsNullOrWhiteSpace(postPatchSandbox))
                                         {
                                             var postPatchErrors = DetectSandboxErrors(postPatchSandbox);
@@ -8835,6 +9162,31 @@ namespace Malx_AI
                                         : "Builder patch sent to Project Canvas.");
                                     _chatHistory.Add(("builder-patch", builderOutput));
                                     UpdateWorkplaceTokenUsageIndicator();
+
+                                    if (runContext.IsArtifactCanvasRequest)
+                                    {
+                                        string artifactPatchLang = DetectLanguage(builderOutput);
+                                        if (artifactPatchLang == "html")
+                                        {
+                                            sandboxResult = await ExecuteCodeSandboxAsync(builderOutput, artifactPatchLang, runContext);
+                                            if (!string.IsNullOrWhiteSpace(sandboxResult))
+                                            {
+                                                var sandboxDisplay = BuildSandboxExecutionDisplay(sandboxResult);
+                                                AppendChat("sandbox", $"{artifactPatchLang} post-repair result:\n{sandboxDisplay.ChatDisplayPayload}");
+                                                sandboxResult = sandboxDisplay.CriticContextPayload;
+                                                var postRepairErrors = DetectSandboxErrors(sandboxResult);
+                                                if (postRepairErrors.Count > 0)
+                                                {
+                                                    runContext.SandboxExceptionsFound = true;
+                                                    runContext.StaticValidationFindings.AddRange(postRepairErrors);
+                                                }
+                                                else
+                                                {
+                                                    runContext.SandboxExceptionsFound = false;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 else if (runContext.IsArtifactCanvasRequest)
                                 {
@@ -8880,6 +9232,7 @@ namespace Malx_AI
                             // --- Revision Builder: full rewrite with Critic findings as structured checklist ---
                             UpdateStageIndicator(CouncilRole.Builder, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), false, true);
                             RelayStatusBlock.Text = "Relay: Bounded repair pass...";
+                            PublishCouncilPetStatus("Builder", "Revising the artifact.");
 
                             string revisionBuilderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                                 + objectiveClause
@@ -8959,7 +9312,13 @@ namespace Malx_AI
                             }
                             builderReasoningFallback = revisedBuilderResult.IsReasoningFallback;
 
-                            if (taskType == CouncilTaskType.Coding || DetectCodeOutput(revisedBuilderOutput).IsCode)
+                            if (runContext.IsArtifactCanvasRequest)
+                            {
+                                var revisionFindings = BuildProjectCanvasFinalVerificationFailures(runContext, revisedBuilderOutput);
+                                foreach (string finding in revisionFindings.Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
+                                    AppendChat("warning", "Post-revision artifact verification: " + finding);
+                            }
+                            else if (taskType == CouncilTaskType.Coding || DetectCodeOutput(revisedBuilderOutput).IsCode)
                             {
                                 var revisionFindings = RunStaticValidation(revisedBuilderOutput);
                                 revisionFindings.AddRange(VerifyFulfillment(runContext, revisedBuilderOutput));
@@ -9032,7 +9391,7 @@ namespace Malx_AI
                                 : "")
                         + objectiveClause
                         + (runContext.IsArtifactCanvasRequest && IsSmallLocalCouncilModel(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? GetEffectiveRoleConfig(CouncilRole.Critic).DisplayName, _isCloudModeEnabled) ? BuildSmallModelArtifactAssist(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
-                        + BuildCriticContract(taskType)
+                        + BuildCriticContract(taskType, runContext.IsArtifactCanvasRequest)
                         + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract.";
                     criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
                     if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? string.Empty))
@@ -9075,7 +9434,7 @@ namespace Malx_AI
                 if (hasCritic && !string.IsNullOrWhiteSpace(runContext.CriticReview))
                 {
                     var finalReview = CriticContractParser.Parse(runContext.CriticReview);
-                    string finalOutputForCheck = taskType == CouncilTaskType.Coding
+                    string finalOutputForCheck = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
                         ? ProjectCanvasEditor.Text
                         : (runContext.BuilderOutput ?? "");
                     finalVerificationFailures = BuildFinalVerificationFailures(runContext, finalOutputForCheck);
@@ -9088,7 +9447,7 @@ namespace Malx_AI
                 }
                 else
                 {
-                    string finalOutputForCheck = taskType == CouncilTaskType.Coding
+                    string finalOutputForCheck = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
                         ? ProjectCanvasEditor.Text
                         : (runContext.BuilderOutput ?? "");
                     finalVerificationFailures = BuildFinalVerificationFailures(runContext, finalOutputForCheck);
@@ -9100,10 +9459,16 @@ namespace Malx_AI
                     }
                 }
 
+                if (runContext.IsArtifactCanvasRequest)
+                {
+                    string finalArtifactOutput = ProjectCanvasEditor.Text;
+                    ReconcileArtifactValidationState(runContext, finalArtifactOutput);
+                }
+
                 if (finalVerificationFailures.Count > 0)
                 {
                     runContext.FinalVerificationFailed = true;
-                    RevisionNoticeBlock.Text = "Final verification found unresolved requirements.";
+                    RevisionNoticeBlock.Text = "Final verification found unresolved requirements: " + finalVerificationFailures[0];
                     RevisionNoticeBlock.Visibility = Visibility.Visible;
                 }
 
@@ -9133,7 +9498,7 @@ namespace Malx_AI
 
                 _lastRunContext = runContext;
                 _lastSandboxOutput = sandboxResult;
-                _lastFinalOutput = taskType == CouncilTaskType.Coding ? ProjectCanvasEditor.Text : runContext.BuilderOutput;
+                _lastFinalOutput = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest) ? ProjectCanvasEditor.Text : runContext.BuilderOutput;
 
                 if (refinementPass)
                 {
@@ -9143,6 +9508,8 @@ namespace Malx_AI
                 int criticFindings = CountCriticFindings(runContext.CriticReview);
                 if (runContext.FinalVerificationFailed)
                     criticFindings = Math.Max(criticFindings, finalVerificationFailures.Count);
+                else if (runContext.IsArtifactCanvasRequest)
+                    criticFindings = 0;
                 string confidenceLabel = runContext.FinalVerificationFailed
                     ? "Flagged for Review"
                     : BuildConfidenceLabel(criticFindings, runContext.RevisionTriggered);
@@ -9157,6 +9524,9 @@ namespace Malx_AI
                 RelayStatusBlock.Text = runContext.FinalVerificationFailed
                     ? "Relay: Completed with unresolved requirements"
                     : "Relay: Completed";
+                PublishCouncilPetStatus(
+                    runContext.FinalVerificationFailed ? "Review" : "Council",
+                    runContext.FinalVerificationFailed ? "Done, but needs review." : "Done. Looks good.");
                 _submittedRunPrompt = string.Empty;
                 _lastCancelledRunPrompt = string.Empty;
                 LogActivity(runContext.FinalVerificationFailed
@@ -9167,6 +9537,7 @@ namespace Malx_AI
             catch (OperationCanceledException)
             {
                 RelayStatusBlock.Text = "Relay: Stopped";
+                PublishCouncilPetStatus("Council", "Run stopped.");
                 UpdateStageIndicator(null, false, false, false);
                 PipelineProgressBlock.Text = string.Empty;
                 _lastCancelledRunPrompt = string.IsNullOrWhiteSpace(_submittedRunPrompt)
@@ -9187,6 +9558,7 @@ namespace Malx_AI
             catch (Exception ex)
             {
                 RelayStatusBlock.Text = "Relay: Error";
+                PublishCouncilPetStatus("Council", "Something needs attention.");
                 UpdateStageIndicator(null, false, false, false);
                 LogActivity($"Relay error: {ex.Message}");
                 await BackendLogService.LogErrorAsync("Workplace.Relay", ex);
@@ -9269,6 +9641,12 @@ namespace Malx_AI
         {
             if (string.IsNullOrWhiteSpace(architectOutput))
                 return 0;
+
+            if (IsArchitectArtifactHandoff(architectOutput))
+            {
+                int checks = Regex.Matches(architectOutput, @"(?m)^\s*-\s+").Count;
+                return Math.Max(1, checks);
+            }
 
             int count = 0;
             foreach (var line in architectOutput.Split('\n'))
@@ -10511,6 +10889,9 @@ namespace Malx_AI
         {
             if (string.IsNullOrWhiteSpace(output))
                 return false;
+
+            if (IsArchitectArtifactHandoff(output))
+                return true;
 
             var lines = output.Split('\n')
                 .Select(line => line.Trim())
@@ -12267,6 +12648,7 @@ namespace Malx_AI
         private void RefreshCanvasArtifactUi()
         {
             bool hasArtifact = _canvasArtifact.SupportsPreview;
+            bool showNativePreview = !_suppressCanvasNativePreviewForOverlay && !_isDiffViewActive && hasArtifact && _isCanvasPreviewMode;
             if (FindName("CanvasArtifactTogglePanel") is StackPanel togglePanel)
                 togglePanel.Visibility = hasArtifact ? Visibility.Visible : Visibility.Collapsed;
             if (FindName("CopyCanvasArtifactSourceButton") is Button copyButton)
@@ -12278,7 +12660,7 @@ namespace Malx_AI
             if (FindName("CanvasPreviewViewButton") is Button previewButton)
                 previewButton.Opacity = _isCanvasPreviewMode ? 1.0 : 0.65;
             if (FindName("CanvasArtifactPreviewHost") is Grid previewHost)
-                previewHost.Visibility = !_isDiffViewActive && hasArtifact && _isCanvasPreviewMode ? Visibility.Visible : Visibility.Collapsed;
+                previewHost.Visibility = showNativePreview ? Visibility.Visible : Visibility.Collapsed;
             ProjectCanvasEditor.Visibility = _isDiffViewActive || (hasArtifact && _isCanvasPreviewMode)
                 ? Visibility.Collapsed
                 : Visibility.Visible;
@@ -12290,6 +12672,86 @@ namespace Malx_AI
                     ? _canvasArtifact.DisplayTitle
                     : $"{_canvasArtifact.DisplayTitle} — code view"
                 : "Builder output rendered here.";
+            UpdateCanvasHeaderLayout();
+        }
+
+        private bool HasCanvasDiffAvailable()
+        {
+            return !string.IsNullOrWhiteSpace(_canvasDiffBaseSource)
+                && !string.IsNullOrWhiteSpace(_canvasDiffCurrentSource)
+                && (_canvasDiffAdditionCount > 0 || _canvasDiffRemovalCount > 0);
+        }
+
+        private void UpdateCanvasHeaderLayout()
+        {
+            if (!IsLoaded)
+                return;
+
+            double paneWidth = ProjectCanvasPane.ActualWidth;
+            if (paneWidth <= 0 || double.IsNaN(paneWidth))
+                paneWidth = ProjectCanvasPane.Width > 0 && !double.IsNaN(ProjectCanvasPane.Width)
+                    ? ProjectCanvasPane.Width
+                    : ProjectCanvasPane.MinWidth;
+
+            bool compact = paneWidth < 600;
+            bool narrow = paneWidth < 500;
+            bool veryNarrow = paneWidth < 420;
+            bool hasDiff = HasCanvasDiffAvailable();
+
+            Thickness buttonMargin = compact
+                ? new Thickness(0, 0, 5, 0)
+                : new Thickness(0, 0, 8, 0);
+            CanvasArtifactTogglePanel.Margin = compact
+                ? new Thickness(0, 0, 5, 0)
+                : new Thickness(0, 0, 8, 0);
+            CopyCanvasButton.Margin = buttonMargin;
+            RunCodeButton.Margin = buttonMargin;
+            ShowDiffButton.Margin = buttonMargin;
+            CodeOutputToggleButton.Margin = buttonMargin;
+            CanvasMoreActionsButton.Margin = buttonMargin;
+
+            SetCanvasHeaderButtonSize(CanvasCodeViewButton, veryNarrow ? 48 : compact ? 54 : double.NaN, veryNarrow ? 48 : 58, veryNarrow ? "Code" : "Code");
+            SetCanvasHeaderButtonSize(CanvasPreviewViewButton, veryNarrow ? 58 : compact ? 68 : double.NaN, veryNarrow ? 58 : 78, veryNarrow ? "Prev" : "Preview");
+            SetCanvasHeaderButtonSize(RunCodeButton, veryNarrow ? 54 : compact ? 62 : double.NaN, veryNarrow ? 54 : 72, compact ? "Run" : "▶ Run");
+
+            CopyCanvasButton.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+            CodeOutputToggleButton.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+            ShowDiffButton.Visibility = hasDiff && !narrow ? Visibility.Visible : Visibility.Collapsed;
+
+            CanvasMoreCopyItem.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+            CanvasMoreOutputItem.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+            CanvasMoreDiffItem.Visibility = hasDiff && narrow ? Visibility.Visible : Visibility.Collapsed;
+            CanvasMoreOutputItem.Header = _isCodeOutputExpanded ? "Hide output" : "Show output";
+            CanvasMoreActionsButton.Visibility =
+                CanvasMoreCopyItem.Visibility == Visibility.Visible
+                || CanvasMoreOutputItem.Visibility == Visibility.Visible
+                || CanvasMoreDiffItem.Visibility == Visibility.Visible
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+
+            CanvasSubtitleBlock.Visibility = veryNarrow ? Visibility.Collapsed : Visibility.Visible;
+            CanvasDiffSummaryBlock.Visibility = veryNarrow || !hasDiff ? Visibility.Collapsed : Visibility.Visible;
+            CanvasTitleBlock.FontSize = veryNarrow ? 13 : 14;
+        }
+
+        private static void SetCanvasHeaderButtonSize(Button button, double width, double minWidth, object content)
+        {
+            if (double.IsNaN(width))
+                button.ClearValue(WidthProperty);
+            else
+                button.Width = width;
+
+            button.MinWidth = minWidth;
+            button.Content = content;
+        }
+
+        public void SetNativePreviewSuppressedForOverlay(bool suppressed)
+        {
+            if (_suppressCanvasNativePreviewForOverlay == suppressed)
+                return;
+
+            _suppressCanvasNativePreviewForOverlay = suppressed;
+            RefreshCanvasArtifactUi();
         }
 
         private void CanvasCodeViewButton_Click(object sender, RoutedEventArgs e)
@@ -14662,7 +15124,7 @@ namespace Malx_AI
                     + objectiveClause
                     + GetTaskTypeBoost(_lastRunContext.TaskType, CouncilRole.Critic)
                     + (_lastRunContext.IsCalculationTask ? GetCalculationBoost(CouncilRole.Critic) : "")
-                    + BuildCriticContract(_lastRunContext.TaskType)
+                    + BuildCriticContract(_lastRunContext.TaskType, _lastRunContext.IsArtifactCanvasRequest)
                     + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract.";
                 criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, _lastRunContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
 
@@ -14844,7 +15306,7 @@ namespace Malx_AI
             return content;
         }
 
-        private async Task<string> ExecuteCodeSandboxAsync(string content, string language)
+        private async Task<string> ExecuteCodeSandboxAsync(string content, string language, CouncilRunContext? contextOverride = null)
         {
             string code = ExtractCodeBlock(content, language);
             string tempDir = Path.Combine(Path.GetTempPath(), "AxiomSandbox");
@@ -14856,7 +15318,7 @@ namespace Malx_AI
                 {
                     "python" => await RunPythonAsync(code, tempDir),
                     "java" => await RunJavaAsync(code, tempDir),
-                    "html" => ValidateHtml(code, tempDir),
+                    "html" => ValidateHtml(code, tempDir, contextOverride ?? _activeCouncilRunContext ?? _lastRunContext),
                     _ => $"Unsupported language: {language}"
                 };
             }
@@ -14899,28 +15361,12 @@ namespace Malx_AI
                 : $"Compile output:\n{compileResult}\n\nRun output:\n{runResult}";
         }
 
-        private static string ValidateHtml(string code, string tempDir)
+        private static string ValidateHtml(string code, string tempDir, CouncilRunContext? context = null)
         {
             string htmlPath = Path.Combine(tempDir, "sandbox_preview.html");
             File.WriteAllText(htmlPath, code);
 
-            var issues = new List<string>();
-            string lower = code.ToLowerInvariant();
-
-            if (!lower.Contains("<html")) issues.Add("Missing <html> tag");
-            if (!lower.Contains("<head")) issues.Add("Missing <head> tag");
-            if (!lower.Contains("<body")) issues.Add("Missing <body> tag");
-            if (!lower.Contains("</html>")) issues.Add("Missing </html> closing tag");
-
-            int openTags = lower.Split('<').Length - 1;
-            int closeTags = lower.Split(new[] { "</" }, StringSplitOptions.None).Length - 1;
-            if (Math.Abs(openTags - closeTags * 2) > openTags / 3)
-                issues.Add($"Possible unclosed tags (open: {openTags}, closing: {closeTags})");
-
-            if (issues.Count == 0)
-                return $"HTML validation passed. Saved to: {htmlPath}";
-
-            return $"HTML validation warnings:\n- {string.Join("\n- ", issues)}\nSaved to: {htmlPath}";
+            return BuildProjectCanvasSandboxResult(code, htmlPath, context);
         }
 
         private static string? FindExecutable(string name)

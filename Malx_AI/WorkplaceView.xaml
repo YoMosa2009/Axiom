@@ -409,6 +409,8 @@
                                         Style="{StaticResource SubtleButtonStyle}" Margin="4,0" ToolTip="Use local council models"/>
                                 <Button x:Name="WebSearchToggleButton" Content="Web" Click="WebSearchToggleButton_Click" Width="54" Height="36"
                                         Style="{StaticResource SubtleButtonStyle}" Margin="4,0" ToolTip="Web Search tool enabled"/>
+                                <Button x:Name="CouncilPetToggleButton" Content="Bit" Click="CouncilPetToggleButton_Click" Width="54" Height="36"
+                                        Style="{StaticResource SubtleButtonStyle}" Margin="4,0" ToolTip="Show the draggable Council Bit status companion"/>
                                 <Button x:Name="StopButton" Content="⏹ Stop" Click="StopMessage_Click" Width="80" Height="36"
                                         Style="{StaticResource SubtleButtonStyle}" Foreground="{StaticResource PrimaryAccentBrush}" IsEnabled="False" Margin="4,0"/>
                                 <Button x:Name="SendButton" Content="Run Council" Click="SendMessage_Click" Width="110" Height="36"
@@ -559,29 +561,80 @@
 
                 <!-- Canvas header -->
                 <Border Grid.Row="0" Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16" Margin="0,0,0,12">
-                    <DockPanel>
-                        <StackPanel>
-                            <TextBlock x:Name="CanvasTitleBlock" Text="Project Canvas" FontSize="14" FontWeight="SemiBold"/>
-                            <TextBlock x:Name="CanvasSubtitleBlock" Text="Builder output rendered here." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,3,0,0"/>
-                            <TextBlock x:Name="CanvasDiffSummaryBlock" Text="" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,2,0,0" Visibility="Collapsed"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" MinWidth="0"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                            <TextBlock x:Name="CanvasTitleBlock" Text="Project Canvas" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="CanvasSubtitleBlock" Text="Builder output rendered here." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="CanvasDiffSummaryBlock" Text="" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,2,0,0" Visibility="Collapsed" TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
-                            <StackPanel x:Name="CanvasArtifactTogglePanel" Orientation="Horizontal" Margin="0,0,6,0" Visibility="Collapsed">
-                                <Button x:Name="CanvasCodeViewButton" Content="Code" Click="CanvasCodeViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Width="54" Height="26" Padding="0" Margin="0,0,4,0"/>
-                                <Button x:Name="CanvasPreviewViewButton" Content="Preview" Click="CanvasPreviewViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Width="62" Height="26" Padding="0"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                            <StackPanel x:Name="CanvasArtifactTogglePanel" Orientation="Horizontal" Margin="0,0,8,0" Visibility="Collapsed">
+                                <Button x:Name="CanvasCodeViewButton" Content="Code" Click="CanvasCodeViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="58" Height="30" Padding="10,0" Margin="0,0,4,0"/>
+                                <Button x:Name="CanvasPreviewViewButton" Content="Preview" Click="CanvasPreviewViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="78" Height="30" Padding="12,0"/>
                             </StackPanel>
-                            <Button x:Name="CopyCanvasButton" Click="CopyCanvasButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Copy to clipboard" Margin="0,0,6,0" Width="28" Height="28">
+                            <Button x:Name="CopyCanvasButton" Click="CopyCanvasButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Copy to clipboard" Margin="0,0,8,0" Width="30" Height="30">
                                 <Canvas Width="14" Height="14">
                                     <Rectangle Canvas.Left="0" Canvas.Top="3" Width="9" Height="9" Stroke="{StaticResource DarkSecondaryBrush}" StrokeThickness="1.4" RadiusX="1.5" RadiusY="1.5"/>
                                     <Rectangle Canvas.Left="4" Canvas.Top="0" Width="9" Height="9" Stroke="{StaticResource NotebookTextBrush}" StrokeThickness="1.4" Fill="{StaticResource NotebookBackgroundBrush}" RadiusX="1.5" RadiusY="1.5"/>
                                 </Canvas>
                             </Button>
-                            <Button x:Name="RunCodeButton" Content="▶ Run" Margin="0,0,6,0" Click="RunCodeButton_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="10" Width="60" Height="26" Padding="0" ToolTip="Execute code in sandbox"/>
-                            <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,6,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Width="46" Height="26" Padding="0" ToolTip="Compare the current canvas source with its previous generated version" Visibility="Collapsed"/>
-                            <Button x:Name="CodeOutputToggleButton" Content="⌄" Margin="0,0,6,0" Click="CodeOutputToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide code output"/>
-                            <Button x:Name="ProjectCanvasToggleButton" Content="›" Click="ProjectCanvasToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide project canvas"/>
+                            <Button x:Name="RunCodeButton" Content="▶ Run" Margin="0,0,8,0" Click="RunCodeButton_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="10" MinWidth="72" Height="30" Padding="10,0" ToolTip="Execute code in sandbox"/>
+                            <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,8,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="52" Height="30" Padding="10,0" ToolTip="Compare the current canvas source with its previous generated version" Visibility="Collapsed"/>
+                            <Button x:Name="CodeOutputToggleButton" Content="⌄" Margin="0,0,8,0" Click="CodeOutputToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide code output" Width="30" Height="30"/>
+                            <Button x:Name="CanvasMoreActionsButton" Content="..." Margin="0,0,8,0" Click="CanvasMoreActionsButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="More canvas actions" Width="30" Height="30" Visibility="Collapsed">
+                                <Button.ContextMenu>
+                                    <ContextMenu Background="{StaticResource NotebookBackgroundBrush}"
+                                                 BorderBrush="{StaticResource NotebookBorderBrush}"
+                                                 Foreground="{StaticResource NotebookTextBrush}"
+                                                 BorderThickness="1"
+                                                 Padding="4">
+                                        <ContextMenu.ItemContainerStyle>
+                                            <Style TargetType="{x:Type MenuItem}">
+                                                <Setter Property="Background" Value="{StaticResource NotebookBackgroundBrush}"/>
+                                                <Setter Property="Foreground" Value="{StaticResource NotebookTextBrush}"/>
+                                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                                                <Setter Property="FontSize" Value="12"/>
+                                                <Setter Property="Padding" Value="12,7"/>
+                                                <Setter Property="MinWidth" Value="132"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="{x:Type MenuItem}">
+                                                            <Border x:Name="MenuItemBorder"
+                                                                    Background="{TemplateBinding Background}"
+                                                                    CornerRadius="6"
+                                                                    Padding="{TemplateBinding Padding}"
+                                                                    SnapsToDevicePixels="True">
+                                                                <ContentPresenter ContentSource="Header"
+                                                                                  RecognizesAccessKey="True"
+                                                                                  TextElement.Foreground="{TemplateBinding Foreground}"/>
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsHighlighted" Value="True">
+                                                                    <Setter TargetName="MenuItemBorder" Property="Background" Value="{StaticResource NotebookSurfaceBrush}"/>
+                                                                    <Setter Property="Foreground" Value="{StaticResource PrimaryAccentBrush}"/>
+                                                                </Trigger>
+                                                                <Trigger Property="IsEnabled" Value="False">
+                                                                    <Setter TargetName="MenuItemBorder" Property="Opacity" Value="0.45"/>
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </ContextMenu.ItemContainerStyle>
+                                        <MenuItem x:Name="CanvasMoreCopyItem" Header="Copy source" Click="CanvasMoreCopyItem_Click"/>
+                                        <MenuItem x:Name="CanvasMoreDiffItem" Header="Show diff" Click="CanvasMoreDiffItem_Click"/>
+                                        <MenuItem x:Name="CanvasMoreOutputItem" Header="Hide output" Click="CanvasMoreOutputItem_Click"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                            <Button x:Name="ProjectCanvasToggleButton" Content="›" Click="ProjectCanvasToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide project canvas" Width="30" Height="30"/>
                         </StackPanel>
-                    </DockPanel>
+                    </Grid>
                 </Border>
 
                 <!-- Code editor -->
