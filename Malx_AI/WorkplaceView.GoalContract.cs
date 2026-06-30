@@ -29,10 +29,12 @@ namespace Malx_AI
                 ? context.UserPrompt
                 : context.UserPrompt + " " + context.Objective, 700);
 
-            string deliverable = context.IsArtifactCanvasRequest
-                ? "One complete Project Canvas artifact that directly implements the request."
-                : context.TaskType == CouncilTaskType.Coding
-                    ? "One complete, working code deliverable in the requested or most appropriate language."
+            string deliverable = context.IsWorkspaceTask
+                ? "One valid connected-codebase patch proposal for the target file(s), suitable for Project Canvas review and host-side apply."
+                : context.IsArtifactCanvasRequest
+                    ? "One complete Project Canvas artifact that directly implements the request."
+                    : context.TaskType == CouncilTaskType.Coding
+                        ? "One complete, working code deliverable in the requested or most appropriate language."
                     : context.TaskType == CouncilTaskType.Document
                         ? "A complete answer grounded only in the attached document content."
                         : context.TaskType == CouncilTaskType.Research
@@ -58,16 +60,21 @@ namespace Malx_AI
             var checks = new List<string>();
             for (int i = 0; i < requirements.Count; i++)
             {
-                checks.Add($"R{i + 1} is materially present in the final deliverable; describing an unimplemented feature does not count.");
+                checks.Add($"Requirement satisfied: {requirements[i]}");
             }
 
-            if (context.TaskType == CouncilTaskType.Coding || context.IsArtifactCanvasRequest)
+            if (context.TaskType == CouncilTaskType.Coding || context.IsArtifactCanvasRequest || context.IsWorkspaceTask)
             {
                 checks.Add("The deliverable is complete: no TODO placeholders, omitted sections, pseudo-code, or unclosed syntax.");
                 checks.Add("Requested controls, functions, and behaviors are actually wired to working logic.");
             }
 
-            if (context.IsArtifactCanvasRequest)
+            if (context.IsWorkspaceTask)
+            {
+                checks.Add("The Builder output is a valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths and ACTION create/replace.");
+                checks.Add("Each changed file contains a complete coherent replacement/create source, not a fragment or standalone canvas-only artifact.");
+            }
+            else if (context.IsArtifactCanvasRequest)
             {
                 checks.Add("The artifact is one self-contained offline-renderable source with no CDN, remote asset, or package dependency.");
                 checks.Add($"The artifact is legible and responsive inside the {context.CanvasViewportWidth}x{context.CanvasViewportHeight} Project Canvas viewport.");
@@ -102,7 +109,11 @@ namespace Malx_AI
             string mode = context.IsCloudExecution ? "cloud council" : "local council";
             string environment =
                 $"Execution: {mode}. Output surface: " +
-                (context.IsArtifactCanvasRequest || context.TaskType == CouncilTaskType.Coding ? "Project Canvas" : "Workplace chat") + 
+                (context.IsWorkspaceTask
+                    ? "Project Canvas patch review for connected codebase changes"
+                    : context.IsArtifactCanvasRequest || context.TaskType == CouncilTaskType.Coding
+                        ? "Project Canvas"
+                        : "Workplace chat") +
                 $". {canvasState} {documentState} " +
                 $"{workspaceState} " +
                 $"Session memory: {sessionMemoryEntries} indexed entries. Web search: {(webSearchEnabled ? "enabled" : "disabled")}.";

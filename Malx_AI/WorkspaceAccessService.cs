@@ -129,6 +129,7 @@ namespace Malx_AI
         private const int MaxIndexedFiles = 5000;
         private const int MaxContextFiles = 8;
         private const int MaxContextCharsPerFile = 8000;
+        private const int MaxPromptNamedContextCharsPerFile = 24000;
         private const int MaxPatchFileChars = 1_000_000;
 
         private static readonly Regex PatchEnvelopeRegex = new(
@@ -137,6 +138,10 @@ namespace Malx_AI
 
         private static readonly Regex PatchFileRegex = new(
             @"FILE:\s*(?<path>[^\r\n]+)\s+ACTION:\s*(?<action>[^\r\n]+)\s+(?<fence>`{3,})[^\r\n]*\r?\n(?<content>[\s\S]*?)\r?\n\k<fence>(?:\s*\[\[END FILE\]\])?",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex PatchFileHeaderRegex = new(
+            @"(?im)^\s*FILE:\s*(?<path>[^\r\n]+)\s*\r?\n\s*ACTION:\s*(?<action>[^\r\n]+)\s*\r?\n",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public WorkspaceIndexResult IndexWorkspace(string rootPath)
@@ -202,7 +207,8 @@ namespace Malx_AI
             if (files.Count == 0)
                 return new WorkspaceContextResult(BuildUnavailablePacket(state), Array.Empty<string>());
 
-            var selected = SelectRelevantFiles(files, query, MaxContextFiles).ToList();
+            var selected = SelectPromptAwareRelevantFiles(files, state, query, MaxContextFiles).ToList();
+            var promptNamedReferences = ExtractMentionedWorkspaceFileReferences(query);
             var readFiles = new List<string>();
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("The user enabled Codebase Edit Access for this Workplace chat.");
@@ -247,8 +253,10 @@ namespace Malx_AI
                 }
 
                 string relative = GetDisplayPath(state, path);
-                string capped = content.Length > MaxContextCharsPerFile
-                    ? content[..MaxContextCharsPerFile] + "\n[...file truncated for context budget]"
+                bool promptNamedFile = IsPromptNamedContextFile(relative, path, promptNamedReferences);
+                int fileCharLimit = promptNamedFile ? MaxPromptNamedContextCharsPerFile : MaxContextCharsPerFile;
+                string capped = content.Length > fileCharLimit
+                    ? content[..fileCharLimit] + "\n[...file truncated for context budget]"
                     : content;
 
                 string block = $"--- {relative} ({content.Length:n0} chars) ---\n{capped}\n";
@@ -270,11 +278,9 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(text))
                 return false;
 
-            Match envelope = PatchEnvelopeRegex.Match(text);
-            if (!envelope.Success)
+            if (!TryExtractPatchBody(text, out string body))
                 return false;
 
-            string body = envelope.Groups["body"].Value;
             var files = new List<WorkspaceFilePatch>();
             foreach (Match match in PatchFileRegex.Matches(body))
             {
@@ -292,11 +298,114 @@ namespace Malx_AI
                 files.Add(new WorkspaceFilePatch(relativePath, action, content));
             }
 
+            string looseError = string.Empty;
+            if (files.Count == 0 && TryParseLoosePatchFiles(body, out IReadOnlyList<WorkspaceFilePatch> looseFiles, out looseError))
+                files.AddRange(looseFiles);
+
             if (files.Count == 0)
-                return RejectPatch("Patch envelope did not contain any valid file blocks.", out error);
+                return RejectPatch(string.IsNullOrWhiteSpace(looseError)
+                    ? "Patch envelope did not contain any valid file blocks."
+                    : looseError, out error);
 
             proposal = new WorkspacePatchProposal(files, text);
             return true;
+        }
+
+        private static bool TryExtractPatchBody(string text, out string body)
+        {
+            body = string.Empty;
+            Match envelope = PatchEnvelopeRegex.Match(text);
+            if (envelope.Success)
+            {
+                body = envelope.Groups["body"].Value;
+                return true;
+            }
+
+            int marker = text.IndexOf("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0)
+                return false;
+
+            body = text[(marker + "[[AXIOM_CODEBASE_PATCH]]".Length)..];
+            int endMarker = body.IndexOf("[[END AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
+            if (endMarker >= 0)
+                body = body[..endMarker];
+            return !string.IsNullOrWhiteSpace(body);
+        }
+
+        private static bool TryParseLoosePatchFiles(string body, out IReadOnlyList<WorkspaceFilePatch> files, out string error)
+        {
+            files = Array.Empty<WorkspaceFilePatch>();
+            error = string.Empty;
+            string source = body ?? string.Empty;
+            MatchCollection headers = PatchFileHeaderRegex.Matches(source);
+            if (headers.Count == 0)
+            {
+                error = "Patch envelope had no FILE/ACTION headers.";
+                return false;
+            }
+
+            var parsed = new List<WorkspaceFilePatch>();
+            for (int i = 0; i < headers.Count; i++)
+            {
+                if (headers[i] is not Match header)
+                    continue;
+
+                string relativePath = NormalizeRelativePatchPath(header.Groups["path"].Value.Trim());
+                string action = header.Groups["action"].Value.Trim().ToLowerInvariant();
+                int contentStart = header.Index + header.Length;
+                int contentEnd = source.Length;
+                if (i + 1 < headers.Count && headers[i + 1] is Match nextHeader)
+                    contentEnd = nextHeader.Index;
+                string content = source[contentStart..contentEnd];
+                content = TrimLoosePatchContent(relativePath, content);
+
+                if (relativePath.Length == 0)
+                {
+                    error = "Patch contains an empty file path.";
+                    return false;
+                }
+                if (action is not ("replace" or "create"))
+                {
+                    error = $"Unsupported patch action '{action}' for {relativePath}.";
+                    return false;
+                }
+                if (string.IsNullOrWhiteSpace(content))
+                {
+                    error = $"Patch content for {relativePath} is empty.";
+                    return false;
+                }
+                if (content.Length > MaxPatchFileChars)
+                {
+                    error = $"Patch content for {relativePath} is too large.";
+                    return false;
+                }
+
+                parsed.Add(new WorkspaceFilePatch(relativePath, action, content.Replace("\r\n", "\n", StringComparison.Ordinal)));
+            }
+
+            files = parsed;
+            return parsed.Count > 0;
+        }
+
+        private static string TrimLoosePatchContent(string relativePath, string content)
+        {
+            string trimmed = (content ?? string.Empty).Trim();
+            trimmed = Regex.Replace(trimmed, @"(?im)^\s*\[\[END FILE\]\]\s*$[\s\S]*$", string.Empty).Trim();
+            trimmed = Regex.Replace(trimmed, @"(?im)^\s*\[\[END AXIOM_CODEBASE_PATCH\]\]\s*$[\s\S]*$", string.Empty).Trim();
+
+            Match fenced = Regex.Match(trimmed, @"\A`{3,}[^\r\n]*\r?\n(?<content>[\s\S]*?)\r?\n`{3,}\s*\z");
+            if (fenced.Success)
+                trimmed = fenced.Groups["content"].Value.TrimEnd();
+
+            string extension = Path.GetExtension(relativePath).ToLowerInvariant();
+            if (extension is ".html" or ".htm")
+            {
+                int closingHtml = trimmed.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+                if (closingHtml >= 0)
+                    trimmed = trimmed[..(closingHtml + "</html>".Length)];
+            }
+
+            return trimmed.TrimEnd();
         }
 
         public WorkspacePatchApplyResult ApplyPatchProposal(ConnectedWorkspaceState state, WorkspacePatchProposal proposal)
@@ -565,6 +674,70 @@ namespace Malx_AI
                 foreach (string file in EnumerateCandidateFiles(state.RootPath))
                     yield return file;
             }
+        }
+
+        private static IEnumerable<string> SelectPromptAwareRelevantFiles(IReadOnlyList<string> files, ConnectedWorkspaceState state, string query, int maxFiles)
+        {
+            var forced = ResolvePromptNamedFiles(files, state, query)
+                .Take(Math.Max(0, maxFiles))
+                .ToList();
+            if (forced.Count >= maxFiles)
+                return forced;
+
+            return forced
+                .Concat(SelectRelevantFiles(files, query, maxFiles)
+                    .Where(path => !forced.Contains(path, StringComparer.OrdinalIgnoreCase)))
+                .Take(maxFiles);
+        }
+
+        private static IEnumerable<string> ResolvePromptNamedFiles(IReadOnlyList<string> files, ConnectedWorkspaceState state, string query)
+        {
+            if (files.Count == 0 || string.IsNullOrWhiteSpace(query))
+                return Array.Empty<string>();
+
+            var selected = new List<string>();
+            foreach (string mention in ExtractMentionedWorkspaceFileReferences(query))
+            {
+                string normalizedMention = mention.Replace('\\', '/');
+                var matches = files
+                    .Where(path =>
+                    {
+                        string display = GetDisplayPath(state, path).Replace('\\', '/');
+                        string fileName = Path.GetFileName(path);
+                        return string.Equals(display, normalizedMention, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(fileName, normalizedMention, StringComparison.OrdinalIgnoreCase)
+                            || display.EndsWith("/" + normalizedMention, StringComparison.OrdinalIgnoreCase);
+                    })
+                    .OrderBy(path => GetDisplayPath(state, path).Length)
+                    .ToList();
+
+                if (matches.Count == 1 && !selected.Contains(matches[0], StringComparer.OrdinalIgnoreCase))
+                    selected.Add(matches[0]);
+            }
+
+            return selected;
+        }
+
+        private static IReadOnlyList<string> ExtractMentionedWorkspaceFileReferences(string query)
+        {
+            return Regex.Matches(query ?? string.Empty, @"(?<![\w.-])(?<path>[\w./\\-]+\.(?:cs|xaml|csproj|sln|slnx|py|js|mjs|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml))(?![\w.-])", RegexOptions.IgnoreCase)
+                .Select(match => NormalizeRelativePatchPath(match.Groups["path"].Value.Trim()))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static bool IsPromptNamedContextFile(string relativePath, string fullPath, IReadOnlyList<string> promptNamedReferences)
+        {
+            if (promptNamedReferences.Count == 0)
+                return false;
+
+            string normalizedRelative = (relativePath ?? string.Empty).Replace('\\', '/');
+            string fileName = Path.GetFileName(fullPath);
+            return promptNamedReferences.Any(reference =>
+                string.Equals(normalizedRelative, reference, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fileName, reference, StringComparison.OrdinalIgnoreCase)
+                || normalizedRelative.EndsWith("/" + reference, StringComparison.OrdinalIgnoreCase));
         }
 
         private static IEnumerable<string> SelectRelevantFiles(IReadOnlyList<string> files, string query, int maxFiles)

@@ -169,13 +169,15 @@ namespace Malx_AI
             if (CodebaseReviewHintBlock != null)
                 CodebaseReviewHintBlock.Text = _hasPendingCodebaseChanges
                     ? "Patch ready: inspect Project Canvas, then accept or reject."
+                    : _lastCodebaseUndo != null
+                        ? "Last patch can be undone from Project Canvas or this panel."
                     : _connectedWorkspace.AutoApplyCodebaseChanges
                         ? "Step 3: ask for a change. Valid patches will be applied automatically."
                         : "Step 3: ask for a change. Proposed edits appear in Project Canvas for review.";
 
             if (CodebaseAutoApplyHintBlock != null)
                 CodebaseAutoApplyHintBlock.Text = _connectedWorkspace.AutoApplyCodebaseChanges
-                    ? "Auto mode: valid patches are written after parsing and path checks."
+                    ? "Auto mode: valid patches are written after parsing, path, and file checks."
                     : "Manual mode: review patches before writing files.";
 
             Visibility reviewVisibility = enabled && (!_connectedWorkspace.AutoApplyCodebaseChanges || _hasPendingCodebaseChanges)
@@ -190,6 +192,19 @@ namespace Malx_AI
             {
                 RejectCodebaseChangesButton.Visibility = reviewVisibility;
                 RejectCodebaseChangesButton.IsEnabled = _hasPendingCodebaseChanges;
+            }
+            Visibility undoVisibility = enabled && _lastCodebaseUndo != null && !_hasPendingCodebaseChanges
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            if (UndoCodebaseChangesButton != null)
+            {
+                UndoCodebaseChangesButton.Visibility = undoVisibility;
+                UndoCodebaseChangesButton.IsEnabled = undoVisibility == Visibility.Visible;
+            }
+            if (UndoCodebaseChangesSidebarButton != null)
+            {
+                UndoCodebaseChangesSidebarButton.Visibility = undoVisibility;
+                UndoCodebaseChangesSidebarButton.IsEnabled = undoVisibility == Visibility.Visible;
             }
             if (CodebaseReviewActionGrid != null)
                 CodebaseReviewActionGrid.Visibility = reviewVisibility;
@@ -1089,6 +1104,23 @@ namespace Malx_AI
             public bool IsCloudExecution { get; init; }
         }
 
+        private sealed record CodebasePatchValidationResult(bool IsValid, IReadOnlyList<string> Reasons)
+        {
+            public static CodebasePatchValidationResult Pass { get; } = new(true, Array.Empty<string>());
+        }
+
+        private sealed record CodebaseUndoFileSnapshot(
+            string RelativePath,
+            string TargetPath,
+            bool Existed,
+            string PreviousContent);
+
+        private sealed record CodebaseUndoSnapshot(
+            IReadOnlyList<CodebaseUndoFileSnapshot> Files,
+            IReadOnlyList<string> ChangedFiles,
+            bool WasAutomatic,
+            DateTime AppliedAt);
+
         private sealed class PreFlightDecomposition
         {
             public string ProblemStatement { get; set; } = "";
@@ -1201,7 +1233,11 @@ namespace Malx_AI
             string combined = string.IsNullOrWhiteSpace(objective)
                 ? userQuery
                 : userQuery + "\n" + objective;
-            int maxChars = runContext.IsCloudExecution ? 60000 : 14000;
+            bool promptNamesFile = Regex.IsMatch(combined, @"(?<![\w.-])[\w./\\-]+\.(?:cs|xaml|csproj|slnx|py|js|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml)(?![\w.-])", RegexOptions.IgnoreCase);
+            int localWorkspaceBudget = promptNamesFile
+                ? Math.Clamp((((int)GetRoleContextSize(CouncilRole.Builder)) - 2500) * 4, 18000, 36000)
+                : 14000;
+            int maxChars = runContext.IsCloudExecution ? 60000 : localWorkspaceBudget;
             WorkspaceContextResult context = _workspaceAccessService.BuildContextPacket(_connectedWorkspace, combined, maxChars);
             runContext.IsWorkspaceTask = true;
             runContext.WorkspaceAutoApply = _connectedWorkspace.AutoApplyCodebaseChanges;
@@ -1223,6 +1259,8 @@ namespace Malx_AI
                 "Output exactly one [[AXIOM_CODEBASE_PATCH]] envelope. Each file block must include FILE, ACTION, one complete fenced replacement/create file, and [[END FILE]]. " +
                 "Use relative paths only. Use ACTION: replace for existing files and ACTION: create for new files. Do not use delete actions. " +
                 "Use the exact connected workspace path for the target file; do not rename file extensions. " +
+                "Always wrap file content in a fenced code block immediately after ACTION; do not put raw HTML/CSS/JSON directly after ACTION. " +
+                "For .html/.htm replacements, return the complete file through all closing script/style/body/html tags; never return a partial document. " +
                 "Example:\n" +
                 "[[AXIOM_CODEBASE_PATCH]]\n" +
                 "FILE: path/from/workspace.ext\n" +
@@ -1531,6 +1569,7 @@ namespace Malx_AI
                 _connectedWorkspace = new ConnectedWorkspaceState();
                 _hasPendingCodebaseChanges = false;
                 _pendingCodebasePatch = null;
+                _lastCodebaseUndo = null;
             }
 
             QueryInput.Text = string.Empty;
@@ -1670,6 +1709,7 @@ namespace Malx_AI
             _connectedWorkspace = snapshot.ConnectedWorkspace ?? new ConnectedWorkspaceState();
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
+            _lastCodebaseUndo = null;
 
             _contextSize = snapshot.GlobalContextSize <= 0 ? _contextSize : Math.Clamp(snapshot.GlobalContextSize, MinRoleContext, MaxRoleContext);
             _architectContextSize = snapshot.ArchitectContextSize <= 0 ? _contextSize : Math.Clamp(snapshot.ArchitectContextSize, MinRoleContext, MaxRoleContext);
@@ -1742,6 +1782,7 @@ namespace Malx_AI
             _connectedWorkspace = new ConnectedWorkspaceState();
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
+            _lastCodebaseUndo = null;
             LoadOpenRouterKeyForWorkplace();
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
@@ -1824,6 +1865,7 @@ namespace Malx_AI
         private ConnectedWorkspaceState _connectedWorkspace = new();
         private bool _hasPendingCodebaseChanges;
         private WorkspacePatchProposal? _pendingCodebasePatch;
+        private CodebaseUndoSnapshot? _lastCodebaseUndo;
         private string _builderPythonSandboxPreamble = "";
         private string _activePythonSandboxPreamble = "";
         private bool _activePythonSessionForTurn;
@@ -3909,6 +3951,8 @@ namespace Malx_AI
             if (proposal == null)
                 return false;
 
+            proposal = PreferPromptNamedPatchTargets(proposal, runContext);
+
             try
             {
                 foreach (WorkspaceFilePatch patch in proposal.Files)
@@ -3916,14 +3960,16 @@ namespace Malx_AI
             }
             catch (Exception ex)
             {
-                if (hasPatchMarker)
-                {
-                    string reason = "the patch target could not be resolved: " + ex.Message;
-                    AppendChat("warning", "Builder attempted a codebase patch, but it needs revision: " + reason);
-                    LogActivity("Codebase patch parse failed: " + reason);
-                }
-
-                return false;
+                string reason = "the patch target could not be resolved: " + ex.Message;
+                _pendingCodebasePatch = proposal;
+                _hasPendingCodebaseChanges = true;
+                RenderCodebasePatchReview(proposal, autoMode: false);
+                AddCodebasePatchNoticeRow("Path check failed. No files were changed.\n- " + reason);
+                RefreshCodebaseAccessUi();
+                SavePersistedSession();
+                AppendChat("warning", "Builder produced a patch, but it is pending manual review because " + reason);
+                LogActivity("Codebase patch pending manual review: " + reason);
+                return true;
             }
 
             _pendingCodebasePatch = proposal;
@@ -4142,9 +4188,9 @@ namespace Malx_AI
             var review = new StringBuilder();
             review.AppendLine("# Codebase Patch Review");
             review.AppendLine();
-            review.AppendLine("No valid patch was produced, so no files were changed.");
+            review.AppendLine("No files were changed because the Builder output could not be applied as a codebase patch.");
             review.AppendLine();
-            review.AppendLine("## What happened");
+            review.AppendLine("## Specific Reason");
             review.AppendLine(reason);
             review.AppendLine();
             review.AppendLine("## What to try next");
@@ -4229,6 +4275,9 @@ namespace Malx_AI
             foreach (Match match in Regex.Matches(combined, @"(?<![\w.-])(?<path>[\w./\\-]+\.(?:cs|xaml|csproj|slnx|py|js|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml))(?![\w.-])", RegexOptions.IgnoreCase))
             {
                 string candidate = match.Groups["path"].Value.Trim().Replace('\\', '/');
+                string? contextPath = ResolvePromptNamedWorkspaceFilePath(runContext, candidate);
+                if (!string.IsNullOrWhiteSpace(contextPath) && CanResolveWorkspacePatchPath(contextPath))
+                    return contextPath;
                 if (CanResolveWorkspacePatchPath(candidate))
                     return candidate;
             }
@@ -4252,6 +4301,79 @@ namespace Malx_AI
 
             var resolvable = readableFiles.Where(CanResolveWorkspacePatchPath).ToList();
             return resolvable.Count == 1 ? resolvable[0] : null;
+        }
+
+        private WorkspacePatchProposal PreferPromptNamedPatchTargets(WorkspacePatchProposal proposal, CouncilRunContext runContext)
+        {
+            if (proposal.Files.Count == 0 || runContext.WorkspaceFilesRead.Count == 0)
+                return proposal;
+
+            var renamed = new List<WorkspaceFilePatch>(proposal.Files.Count);
+            bool changed = false;
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                string relativePath = (patch.RelativePath ?? string.Empty).Replace('\\', '/');
+                string fileName = Path.GetFileName(relativePath);
+                if (!relativePath.Contains('/', StringComparison.Ordinal)
+                    && PromptNamesWorkspaceFile(runContext, fileName))
+                {
+                    var matches = runContext.WorkspaceFilesRead
+                        .Select(path => path.Replace('\\', '/'))
+                        .Where(path => string.Equals(Path.GetFileName(path), fileName, StringComparison.OrdinalIgnoreCase))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    if (matches.Count == 1 && !string.Equals(matches[0], relativePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        renamed.Add(new WorkspaceFilePatch(matches[0], patch.Action, patch.Content));
+                        changed = true;
+                        LogActivity($"Codebase patch target adjusted from {relativePath} to prompt-named context file {matches[0]}.");
+                        continue;
+                    }
+                }
+
+                renamed.Add(patch);
+            }
+
+            return changed ? new WorkspacePatchProposal(renamed, proposal.RawText) : proposal;
+        }
+
+        private static bool PromptNamesWorkspaceFile(CouncilRunContext runContext, string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return false;
+
+            string combined = $"{runContext.UserPrompt}\n{runContext.Objective}";
+            return Regex.Matches(combined, @"(?<![\w.-])(?<path>[\w./\\-]+\.(?:cs|xaml|csproj|slnx|py|js|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml))(?![\w.-])", RegexOptions.IgnoreCase)
+                .Select(match => Path.GetFileName(match.Groups["path"].Value.Trim().Replace('\\', '/')))
+                .Any(mentioned => string.Equals(mentioned, fileName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string? ResolvePromptNamedWorkspaceFilePath(CouncilRunContext runContext, string candidate)
+        {
+            string normalized = (candidate ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+            if (string.IsNullOrWhiteSpace(normalized) || runContext.WorkspaceFilesRead.Count == 0)
+                return null;
+
+            var readableFiles = runContext.WorkspaceFilesRead
+                .Select(path => path.Replace('\\', '/'))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var exact = readableFiles
+                .Where(path => string.Equals(path, normalized, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (exact.Count == 1)
+                return exact[0];
+
+            if (normalized.Contains('/', StringComparison.Ordinal))
+                return null;
+
+            var fileNameMatches = readableFiles
+                .Where(path => string.Equals(Path.GetFileName(path), normalized, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return fileNameMatches.Count == 1 ? fileNameMatches[0] : null;
         }
 
         private bool CanResolveWorkspacePatchPath(string relativePath)
@@ -4514,18 +4636,40 @@ namespace Malx_AI
             try
             {
                 WorkspacePatchProposal proposal = _pendingCodebasePatch;
+                CodebasePatchValidationResult validation = ValidateCodebasePatchProposal(proposal);
+                if (!validation.IsValid)
+                {
+                    if (automatic)
+                    {
+                        HandleCodebasePreApplyFailure(proposal, automatic, validation.Reasons, allowManualOverride: true);
+                        return false;
+                    }
+
+                    AppendChat("warning", "Applying reviewed codebase patch despite validation warnings. Undo will be available.\n" +
+                        string.Join("\n", validation.Reasons.Select(reason => "- " + reason)));
+                }
+
+                if (!TryBuildCodebaseUndoSnapshot(proposal, automatic, out CodebaseUndoSnapshot? undoSnapshot, out IReadOnlyList<string> snapshotReasons))
+                {
+                    HandleCodebasePreApplyFailure(proposal, automatic, snapshotReasons, allowManualOverride: false);
+                    return false;
+                }
+                if (undoSnapshot == null)
+                {
+                    HandleCodebasePreApplyFailure(proposal, automatic, ["Could not capture undo state before applying the patch."], allowManualOverride: false);
+                    return false;
+                }
+
                 WorkspaceGitStatus gitBefore = GetConnectedWorkspaceGitStatus();
                 WorkspacePatchApplyResult result = _workspaceAccessService.ApplyPatchProposal(_connectedWorkspace, proposal);
+                _lastCodebaseUndo = undoSnapshot with { ChangedFiles = result.ChangedFiles.ToList() };
                 _pendingCodebasePatch = null;
                 _hasPendingCodebaseChanges = false;
                 RefreshConnectedWorkspaceIndexAfterPatch();
                 WorkspaceGitStatus gitAfter = GetConnectedWorkspaceGitStatus();
+                RenderCodebaseApplySummaryView(result, proposal, automatic, gitBefore, gitAfter, validation.Reasons);
                 RefreshCodebaseAccessUi();
-                CanvasTitleBlock.Text = automatic ? "Codebase Patch Applied" : "Codebase Patch Review";
-                CanvasSubtitleBlock.Text = automatic
-                    ? $"{result.ChangedFiles.Count:n0} file change(s) auto-applied."
-                    : $"{result.ChangedFiles.Count:n0} file change(s) applied.";
-                AppendChat("system", BuildCodebaseApplySummary(result, proposal, automatic, gitBefore, gitAfter));
+                AppendChat("system", BuildCodebaseApplySummary(result, proposal, automatic, gitBefore, gitAfter, validation.Reasons));
                 SavePersistedSession();
                 return true;
             }
@@ -4538,6 +4682,276 @@ namespace Malx_AI
                 SavePersistedSession();
                 return false;
             }
+        }
+
+        private CodebasePatchValidationResult ValidateCodebasePatchProposal(WorkspacePatchProposal proposal)
+        {
+            var reasons = new List<string>();
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                string extension = Path.GetExtension(patch.RelativePath).ToLowerInvariant();
+                string content = patch.Content ?? string.Empty;
+                switch (extension)
+                {
+                    case ".html":
+                    case ".htm":
+                        string originalHtml = string.Empty;
+                        try
+                        {
+                            string target = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+                            if (File.Exists(target))
+                                originalHtml = File.ReadAllText(target);
+                        }
+                        catch
+                        {
+                            // Path resolution is reported separately by the undo snapshot preflight.
+                        }
+                        reasons.AddRange(ValidateHtmlPatchContent(patch.RelativePath, content, originalHtml, patch.Action));
+                        break;
+                    case ".json":
+                    case ".jsonc":
+                        string? jsonError = ValidateJsonPatchContent(patch.RelativePath, content, extension == ".jsonc");
+                        if (!string.IsNullOrWhiteSpace(jsonError))
+                            reasons.Add(jsonError);
+                        break;
+                    case ".css":
+                    case ".scss":
+                        string? cssError = ValidateCssBraceBalance(patch.RelativePath, content);
+                        if (!string.IsNullOrWhiteSpace(cssError))
+                            reasons.Add(cssError);
+                        break;
+                }
+            }
+
+            return reasons.Count == 0
+                ? CodebasePatchValidationResult.Pass
+                : new CodebasePatchValidationResult(false, reasons);
+        }
+
+        private static IEnumerable<string> ValidateHtmlPatchContent(string relativePath, string content, string originalContent, string action)
+        {
+            string trimmed = (content ?? string.Empty).Trim();
+            if (trimmed.Length == 0)
+            {
+                yield return $"{relativePath}: HTML content is empty.";
+                yield break;
+            }
+
+            string lower = trimmed.ToLowerInvariant();
+            string originalLower = (originalContent ?? string.Empty).ToLowerInvariant();
+            bool originalLooksLikeFullDocument = string.IsNullOrWhiteSpace(originalContent)
+                || originalLower.Contains("<!doctype", StringComparison.Ordinal)
+                || originalLower.Contains("<html", StringComparison.Ordinal)
+                || originalLower.Contains("<body", StringComparison.Ordinal);
+            bool replacementLooksLikeFullDocument = lower.Contains("<!doctype", StringComparison.Ordinal)
+                || lower.Contains("<html", StringComparison.Ordinal)
+                || lower.Contains("<body", StringComparison.Ordinal);
+            bool requireFullDocumentTags = string.Equals(action, "create", StringComparison.OrdinalIgnoreCase)
+                || originalLooksLikeFullDocument
+                || replacementLooksLikeFullDocument;
+
+            if (trimmed.Contains("[...file truncated for context budget]", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Contains("[...workspace context budget exhausted]", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return $"{relativePath}: HTML replacement contains a workspace context truncation marker; regenerate the patch from the complete file.";
+            }
+
+            if (requireFullDocumentTags && !lower.Contains("<html", StringComparison.Ordinal))
+                yield return $"{relativePath}: HTML replacement is missing an <html> tag.";
+            if (requireFullDocumentTags && !lower.Contains("</html>", StringComparison.Ordinal))
+                yield return $"{relativePath}: HTML replacement is missing a closing </html> tag.";
+            if (requireFullDocumentTags && !lower.Contains("<body", StringComparison.Ordinal))
+                yield return $"{relativePath}: HTML replacement is missing a <body> tag.";
+            if (requireFullDocumentTags && !lower.Contains("</body>", StringComparison.Ordinal))
+                yield return $"{relativePath}: HTML replacement is missing a closing </body> tag.";
+            if (trimmed.EndsWith("<", StringComparison.Ordinal) || Regex.IsMatch(trimmed, @"<\s*/?\s*[A-Za-z][^>]*$"))
+                yield return $"{relativePath}: HTML appears truncated at the final tag.";
+            if (CountCaseInsensitive(lower, "<script") > CountCaseInsensitive(lower, "</script>"))
+                yield return $"{relativePath}: HTML appears to have an unclosed <script> block.";
+            if (CountCaseInsensitive(lower, "<style") > CountCaseInsensitive(lower, "</style>"))
+                yield return $"{relativePath}: HTML appears to have an unclosed <style> block.";
+        }
+
+        private static string? ValidateJsonPatchContent(string relativePath, string content, bool allowJsonc)
+        {
+            try
+            {
+                var options = new JsonDocumentOptions
+                {
+                    AllowTrailingCommas = allowJsonc,
+                    CommentHandling = allowJsonc ? JsonCommentHandling.Skip : JsonCommentHandling.Disallow
+                };
+                using JsonDocument _ = JsonDocument.Parse(content ?? string.Empty, options);
+                return null;
+            }
+            catch (JsonException ex)
+            {
+                long line = (ex.LineNumber ?? 0) + 1;
+                long bytePosition = (ex.BytePositionInLine ?? 0) + 1;
+                return $"{relativePath}: JSON parse failed at line {line}, byte {bytePosition}: {ex.Message}";
+            }
+            catch (Exception ex)
+            {
+                return $"{relativePath}: JSON parse failed: {ex.Message}";
+            }
+        }
+
+        private static string? ValidateCssBraceBalance(string relativePath, string content)
+        {
+            int depth = 0;
+            bool inSingleQuote = false;
+            bool inDoubleQuote = false;
+            bool inComment = false;
+            bool escaped = false;
+
+            string text = content ?? string.Empty;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                char next = i + 1 < text.Length ? text[i + 1] : '\0';
+
+                if (inComment)
+                {
+                    if (c == '*' && next == '/')
+                    {
+                        inComment = false;
+                        i++;
+                    }
+                    continue;
+                }
+
+                if (!inSingleQuote && !inDoubleQuote && c == '/' && next == '*')
+                {
+                    inComment = true;
+                    i++;
+                    continue;
+                }
+
+                if (escaped)
+                {
+                    escaped = false;
+                    continue;
+                }
+
+                if ((inSingleQuote || inDoubleQuote) && c == '\\')
+                {
+                    escaped = true;
+                    continue;
+                }
+
+                if (!inDoubleQuote && c == '\'')
+                {
+                    inSingleQuote = !inSingleQuote;
+                    continue;
+                }
+
+                if (!inSingleQuote && c == '"')
+                {
+                    inDoubleQuote = !inDoubleQuote;
+                    continue;
+                }
+
+                if (inSingleQuote || inDoubleQuote)
+                    continue;
+
+                if (c == '{')
+                    depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth < 0)
+                        return $"{relativePath}: CSS has an extra closing brace.";
+                }
+            }
+
+            if (inComment)
+                return $"{relativePath}: CSS has an unclosed comment.";
+            if (inSingleQuote || inDoubleQuote)
+                return $"{relativePath}: CSS has an unclosed string.";
+            return depth == 0 ? null : $"{relativePath}: CSS brace balance is off ({depth:n0} unclosed brace(s)).";
+        }
+
+        private static int CountCaseInsensitive(string value, string needle)
+        {
+            if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(needle))
+                return 0;
+
+            int count = 0;
+            int index = 0;
+            while ((index = value.IndexOf(needle, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                count++;
+                index += needle.Length;
+            }
+
+            return count;
+        }
+
+        private bool TryBuildCodebaseUndoSnapshot(
+            WorkspacePatchProposal proposal,
+            bool automatic,
+            out CodebaseUndoSnapshot? snapshot,
+            out IReadOnlyList<string> reasons)
+        {
+            snapshot = null;
+            var failures = new List<string>();
+            var files = new List<CodebaseUndoFileSnapshot>();
+
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                try
+                {
+                    string target = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+                    bool exists = File.Exists(target);
+                    if (patch.Action == "replace" && !exists)
+                        failures.Add($"{patch.RelativePath}: cannot replace because the target file does not exist.");
+                    if (patch.Action == "create" && exists)
+                        failures.Add($"{patch.RelativePath}: cannot create because the target file already exists.");
+
+                    string previousContent = exists ? File.ReadAllText(target) : string.Empty;
+                    files.Add(new CodebaseUndoFileSnapshot(patch.RelativePath, target, exists, previousContent));
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{patch.RelativePath}: path check failed: {ex.Message}");
+                }
+            }
+
+            if (failures.Count > 0)
+            {
+                reasons = failures;
+                return false;
+            }
+
+            snapshot = new CodebaseUndoSnapshot(
+                files,
+                proposal.Files.Select(file => file.RelativePath).ToList(),
+                automatic,
+                DateTime.Now);
+            reasons = Array.Empty<string>();
+            return true;
+        }
+
+        private void HandleCodebasePreApplyFailure(WorkspacePatchProposal proposal, bool automatic, IReadOnlyList<string> reasons, bool allowManualOverride)
+        {
+            _pendingCodebasePatch = proposal;
+            _hasPendingCodebaseChanges = true;
+            RenderCodebasePatchReview(proposal, autoMode: false);
+            string reasonText = reasons.Count == 0
+                ? "Pre-apply validation failed."
+                : string.Join("\n", reasons.Select(reason => "- " + reason));
+            CanvasTitleBlock.Text = "Codebase Patch Needs Review";
+            CanvasSubtitleBlock.Text = "Pre-apply checks failed; no files changed.";
+            AddCodebasePatchNoticeRow("Pre-apply checks failed. No files were changed.\n" + reasonText +
+                (allowManualOverride
+                    ? "\n\nAuto mode paused. Review the diff, then use Accept to apply anyway or Reject to discard it."
+                    : "\n\nThe patch is still pending for review, but this issue must be corrected before it can be safely written."));
+            AppendChat("warning", (automatic
+                ? "Auto apply paused; the patch is still pending for manual review because pre-apply checks failed:\n"
+                : "Codebase changes were not applied because pre-apply checks failed:\n") + reasonText);
+            LogActivity("Codebase pre-apply validation failed: " + string.Join("; ", reasons));
+            RefreshCodebaseAccessUi();
+            SavePersistedSession();
         }
 
         private WorkspaceGitStatus GetConnectedWorkspaceGitStatus()
@@ -4553,7 +4967,8 @@ namespace Malx_AI
             WorkspacePatchProposal proposal,
             bool automatic,
             WorkspaceGitStatus gitBefore,
-            WorkspaceGitStatus gitAfter)
+            WorkspaceGitStatus gitAfter,
+            IReadOnlyList<string> validationWarnings)
         {
             var sb = new StringBuilder();
             sb.AppendLine(automatic ? "Auto applied codebase changes." : result.Summary);
@@ -4561,6 +4976,14 @@ namespace Malx_AI
             sb.AppendLine("Changed files:");
             foreach (string file in result.ChangedFiles)
                 sb.AppendLine("- " + file);
+
+            if (validationWarnings.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Applied after manual validation override:");
+                foreach (string warning in validationWarnings)
+                    sb.AppendLine("- " + warning);
+            }
 
             string gitLine = BuildGitStatusTransition(gitBefore, gitAfter);
             if (!string.IsNullOrWhiteSpace(gitLine))
@@ -4579,6 +5002,64 @@ namespace Malx_AI
             }
 
             return sb.ToString().TrimEnd();
+        }
+
+        private void RenderCodebaseApplySummaryView(
+            WorkspacePatchApplyResult result,
+            WorkspacePatchProposal proposal,
+            bool automatic,
+            WorkspaceGitStatus gitBefore,
+            WorkspaceGitStatus gitAfter,
+            IReadOnlyList<string> validationWarnings)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("# Codebase Changes Applied");
+            sb.AppendLine();
+            sb.AppendLine(validationWarnings.Count > 0
+                ? "Accepted patch applied after manual review despite validation warnings."
+                : automatic ? "Auto mode applied the patch after all pre-apply checks passed." : "Accepted patch applied after all pre-apply checks passed.");
+            sb.AppendLine();
+            sb.AppendLine("## Changed Files");
+            foreach (string file in result.ChangedFiles)
+                sb.AppendLine("- " + file);
+
+            if (validationWarnings.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("## Validation Warnings");
+                foreach (string warning in validationWarnings)
+                    sb.AppendLine("- " + warning);
+            }
+
+            string gitLine = BuildGitStatusTransition(gitBefore, gitAfter);
+            if (!string.IsNullOrWhiteSpace(gitLine))
+            {
+                sb.AppendLine();
+                sb.AppendLine("## Git Checkpoint");
+                sb.AppendLine(gitLine);
+                string statusPreview = BuildGitStatusPreview(gitAfter);
+                if (!string.IsNullOrWhiteSpace(statusPreview))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("```text");
+                    sb.AppendLine(statusPreview);
+                    sb.AppendLine("```");
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("Undo is available for this last applied patch.");
+
+            ExitCanvasDiffView();
+            ClearCanvasDiff();
+            ProjectCanvasEditor.Text = sb.ToString().TrimEnd();
+            _canvasArtifact = ArtifactRenderInfo.None(ProjectCanvasEditor.Text);
+            _isCanvasPreviewMode = false;
+            SetCanvasHighlighting("markdown");
+            RefreshCanvasArtifactUi();
+            CanvasTitleBlock.Text = automatic ? "Codebase Patch Applied" : "Codebase Patch Applied";
+            CanvasSubtitleBlock.Text = $"{result.ChangedFiles.Count:n0} file change(s) applied. Undo is available.";
+            UpdateWorkplaceTokenUsageIndicator();
         }
 
         private static string BuildGitStatusTransition(WorkspaceGitStatus before, WorkspaceGitStatus after)
@@ -4613,6 +5094,77 @@ namespace Malx_AI
             return preview;
         }
 
+        private void UndoCodebaseChanges_Click(object sender, RoutedEventArgs e)
+        {
+            if (_lastCodebaseUndo == null)
+            {
+                AppendChat("system", "No applied codebase patch is available to undo.");
+                return;
+            }
+
+            try
+            {
+                CodebaseUndoSnapshot undo = _lastCodebaseUndo;
+                foreach (CodebaseUndoFileSnapshot file in undo.Files)
+                {
+                    string target = Path.GetFullPath(file.TargetPath);
+                    if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath)
+                        && Directory.Exists(_connectedWorkspace.RootPath)
+                        && !_workspaceAccessService.IsPathInsideWorkspace(_connectedWorkspace.RootPath, target))
+                    {
+                        throw new InvalidOperationException($"Undo target is outside the connected workspace: {file.RelativePath}");
+                    }
+
+                    if (file.Existed)
+                    {
+                        string? directory = Path.GetDirectoryName(target);
+                        if (!string.IsNullOrWhiteSpace(directory))
+                            Directory.CreateDirectory(directory);
+                        AtomicFileWriter.WriteAllText(target, file.PreviousContent ?? string.Empty);
+                    }
+                    else if (File.Exists(target))
+                    {
+                        File.Delete(target);
+                    }
+                }
+
+                _lastCodebaseUndo = null;
+                RefreshConnectedWorkspaceIndexAfterPatch();
+                RenderCodebaseUndoSummaryView(undo);
+                RefreshCodebaseAccessUi();
+                AppendChat("system", "Undid the last applied codebase patch:\n- " + string.Join("\n- ", undo.ChangedFiles));
+                SavePersistedSession();
+            }
+            catch (Exception ex)
+            {
+                AppendChat("error", "Undo failed: " + ex.Message);
+                RefreshCodebaseAccessUi();
+            }
+        }
+
+        private void RenderCodebaseUndoSummaryView(CodebaseUndoSnapshot undo)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("# Codebase Patch Undone");
+            sb.AppendLine();
+            sb.AppendLine($"Restored previous file contents from {undo.AppliedAt:HH:mm}.");
+            sb.AppendLine();
+            sb.AppendLine("## Restored Files");
+            foreach (string file in undo.ChangedFiles)
+                sb.AppendLine("- " + file);
+
+            ExitCanvasDiffView();
+            ClearCanvasDiff();
+            ProjectCanvasEditor.Text = sb.ToString().TrimEnd();
+            _canvasArtifact = ArtifactRenderInfo.None(ProjectCanvasEditor.Text);
+            _isCanvasPreviewMode = false;
+            SetCanvasHighlighting("markdown");
+            RefreshCanvasArtifactUi();
+            CanvasTitleBlock.Text = "Codebase Patch Undone";
+            CanvasSubtitleBlock.Text = $"{undo.ChangedFiles.Count:n0} file(s) restored.";
+            UpdateWorkplaceTokenUsageIndicator();
+        }
+
         private void RejectCodebaseChanges_Click(object sender, RoutedEventArgs e)
         {
             if (!_connectedWorkspace.CodebaseEditAccessEnabled)
@@ -4629,6 +5181,7 @@ namespace Malx_AI
 
             _pendingCodebasePatch = null;
             _hasPendingCodebaseChanges = false;
+            _lastCodebaseUndo = null;
             RefreshCodebaseAccessUi();
             AppendChat("system", "Proposed codebase changes rejected.");
             SavePersistedSession();
@@ -5422,8 +5975,8 @@ namespace Malx_AI
             return role switch
             {
                 CouncilRole.Architect =>
-                    "\n[SMALL MODEL ARTIFACT MODE] Keep the plan very short and literal. " +
-                    "Use 3-5 numbered steps maximum. " +
+                    "\n[SMALL MODEL ARTIFACT MODE] Keep the ARCHITECT_HANDOFF very short and literal. " +
+                    "Use concise bullets inside the required handoff sections. " +
                     "Plan for exactly one final artifact file only. " +
                     "Prefer simple HTML with inline CSS/JS over multi-file or framework solutions. " +
                     formatHint,
@@ -5477,7 +6030,9 @@ namespace Malx_AI
 
             var capsule = new StringBuilder();
             capsule.AppendLine("Purpose: " + (string.IsNullOrWhiteSpace(decomp.ProblemStatement) ? runContext.UserPrompt : decomp.ProblemStatement.Trim()));
-            capsule.AppendLine("Output target: " + (runContext.IsArtifactCanvasRequest ? "Project Canvas renderable artifact" : "Working code/script"));
+            capsule.AppendLine("Output target: " + (runContext.IsWorkspaceTask
+                ? "Connected codebase patch proposal"
+                : runContext.IsArtifactCanvasRequest ? "Project Canvas renderable artifact" : "Working code/script"));
             capsule.AppendLine("Task type: " + runContext.TaskType);
 
             if (runContext.IsArtifactCanvasRequest && !string.IsNullOrWhiteSpace(runContext.PreferredArtifactFormatHint))
@@ -5507,7 +6062,9 @@ namespace Malx_AI
             capsule.AppendLine("Final self-check before output:");
             capsule.AppendLine("- Every required behavior above is represented in the code/artifact.");
             capsule.AppendLine("- No placeholder TODOs, no missing event handlers, no broken closing tags/braces.");
-            capsule.AppendLine("- Output is one complete file/artifact, not a fragment.");
+            capsule.AppendLine(runContext.IsWorkspaceTask
+                ? "- Output is a valid [[AXIOM_CODEBASE_PATCH]] envelope with complete file content, not standalone code or prose."
+                : "- Output is one complete file/artifact, not a fragment.");
 
             return BuildLabeledBlock("BUILDER IMPLEMENTATION CAPSULE", capsule.ToString().Trim());
         }
@@ -5519,12 +6076,8 @@ namespace Malx_AI
 
             if (IsArchitectArtifactHandoff(architectOutput))
             {
-                foreach (string line in architectOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
-                {
-                    string trimmed = line.Trim();
-                    if (trimmed.StartsWith("- ", StringComparison.Ordinal))
-                        yield return trimmed[2..].Trim();
-                }
+                foreach (string item in ExtractArchitectHandoffBullets(architectOutput, "requirements", "must_include", "acceptance_tests"))
+                    yield return item;
                 yield break;
             }
 
@@ -5533,6 +6086,31 @@ namespace Malx_AI
                 string trimmed = line.Trim();
                 if (ArchitectNumberedStepRegex.IsMatch(trimmed))
                     yield return ArchitectNumberedStepRegex.Replace(trimmed, string.Empty).Trim();
+            }
+        }
+
+        private static IEnumerable<string> ExtractArchitectHandoffBullets(string architectOutput, params string[] sectionNames)
+        {
+            if (string.IsNullOrWhiteSpace(architectOutput) || sectionNames.Length == 0)
+                yield break;
+
+            var wanted = new HashSet<string>(sectionNames, StringComparer.OrdinalIgnoreCase);
+            string currentSection = string.Empty;
+            foreach (string line in architectOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                string trimmed = line.Trim();
+                if (trimmed.EndsWith(":", StringComparison.Ordinal))
+                {
+                    currentSection = trimmed.TrimEnd(':').Trim();
+                    continue;
+                }
+
+                if (wanted.Contains(currentSection) && trimmed.StartsWith("- ", StringComparison.Ordinal))
+                {
+                    string item = trimmed[2..].Trim();
+                    if (!string.IsNullOrWhiteSpace(item))
+                        yield return item;
+                }
             }
         }
 
@@ -6384,23 +6962,45 @@ namespace Malx_AI
             return sb.ToString();
         }
 
-        private static string BuildArchitectContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false)
+        private static string BuildArchitectContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false, bool isWorkspaceTask = false)
         {
+            if (isWorkspaceTask)
+                return "\n[STRUCTURED OUTPUT CONTRACT] Output exactly this connected-codebase handoff shape, with concise values and no prose before or after:\n" +
+                       "ARCHITECT_HANDOFF\n" +
+                       "artifact_type: connected_codebase_patch\n" +
+                       "output_target: ProjectCanvasPatchReview\n" +
+                       "required_output_format: valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths, ACTION create/replace, complete fenced file content, and [[END FILE]] per file\n" +
+                       "requirements:\n" +
+                       "- explicit user requirements as implementation outcomes\n" +
+                       "constraints:\n" +
+                       "- preserve unrelated code and connected workspace paths\n" +
+                       "- no standalone canvas artifact unless the user explicitly requested a new canvas-only artifact outside the connected codebase\n" +
+                       "builder_instruction:\n" +
+                       "Return only a valid [[AXIOM_CODEBASE_PATCH]] envelope for the connected workspace. Do not return standalone HTML/code outside the patch envelope.\n" +
+                       "acceptance_tests:\n" +
+                       "- patch targets the prompt-named or connected file path\n" +
+                       "- changed file content is complete and coherent, not a fragment\n" +
+                       "- requested controls/functions/behaviors are wired to working logic\n" +
+                       "- no unrelated files or unrelated behavior are changed\n" +
+                       "END_ARCHITECT_HANDOFF\n" +
+                       $"End with '{ArchitectCompletionMarker}' on its own line.";
+
             if (isArtifactCanvasRequest)
                 return "\n[STRUCTURED OUTPUT CONTRACT] Output exactly this artifact handoff shape, with concise values and no prose before or after:\n" +
                        "ARCHITECT_HANDOFF\n" +
                        "artifact_type: standalone_html\n" +
                        "output_target: ProjectCanvas\n" +
-                       "must_include:\n" +
-                       "- explicit user requirements\n" +
+                       "required_output_format: one complete self-contained offline-renderable artifact source\n" +
+                       "requirements:\n" +
+                       "- explicit user requirements as visible or interactive outcomes\n" +
+                       "constraints:\n" +
                        "- embedded CSS\n" +
                        "- embedded JavaScript when interactivity/animation is requested\n" +
                        "- no external libraries or remote assets\n" +
-                       "hard_constraints:\n" +
                        "- one complete offline-renderable source\n" +
                        "- no prose in Builder output\n" +
                        "builder_instruction:\n" +
-                       "Return only one complete standalone HTML document.\n" +
+                       "Return only one complete standalone HTML document unless the user explicitly required a different renderable artifact format.\n" +
                        "acceptance_tests:\n" +
                        "- contains <!DOCTYPE html>\n" +
                        "- contains <style>\n" +
@@ -6746,58 +7346,94 @@ namespace Malx_AI
         private static string BuildArtifactArchitectHandoff(CouncilRunContext context)
         {
             string request = (context.UserPrompt + "\n" + context.Objective).ToLowerInvariant();
+            bool workspaceMode = context.IsWorkspaceTask;
             bool wantsHtml = request.Contains("html", StringComparison.Ordinal)
                 || request.Contains("dashboard", StringComparison.Ordinal)
                 || request.Contains("interactive", StringComparison.Ordinal)
                 || request.Contains("button", StringComparison.Ordinal)
                 || request.Contains("javascript", StringComparison.Ordinal);
-            string artifactType = wantsHtml ? "standalone_html" : "project_canvas_artifact";
+            string artifactType = workspaceMode
+                ? "connected_codebase_patch"
+                : wantsHtml ? "standalone_html" : "project_canvas_artifact";
 
             var body = new StringBuilder();
             body.AppendLine("ARCHITECT_HANDOFF");
             body.AppendLine("artifact_type: " + artifactType);
-            body.AppendLine("output_target: ProjectCanvas");
-            body.AppendLine("required_output_format: one complete offline-renderable source; prefer raw complete HTML or one html code fence that the pipeline can strip");
-            body.AppendLine("must_include:");
+            body.AppendLine("output_target: " + (workspaceMode ? "ProjectCanvasPatchReview" : "ProjectCanvas"));
+            body.AppendLine("required_output_format: " + (workspaceMode
+                ? "valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths, ACTION create/replace, complete fenced file content, and [[END FILE]] per file"
+                : "one complete offline-renderable source; prefer raw complete HTML or one html code fence that the pipeline can strip"));
+            if (workspaceMode && context.WorkspaceFilesRead.Count > 0)
+            {
+                body.AppendLine("connected_context_files:");
+                foreach (string file in context.WorkspaceFilesRead.Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
+                    body.AppendLine("- " + file);
+            }
 
-            var mustInclude = new List<string>();
+            body.AppendLine("requirements:");
+
+            var requirements = new List<string>();
             if (context.GoalContract?.Requirements.Count > 0)
-                mustInclude.AddRange(context.GoalContract.Requirements);
+                requirements.AddRange(context.GoalContract.Requirements);
+            else if (context.Decomposition?.Requirements.Count > 0)
+                requirements.AddRange(context.Decomposition.Requirements);
             else if (!string.IsNullOrWhiteSpace(context.UserPrompt))
-                mustInclude.Add(context.UserPrompt.Trim());
+                requirements.Add(context.UserPrompt.Trim());
 
-            if (wantsHtml || request.Contains("css", StringComparison.Ordinal) || request.Contains("style", StringComparison.Ordinal))
-                mustInclude.Add("embedded CSS");
-            if (request.Contains("javascript", StringComparison.Ordinal) || request.Contains("interactive", StringComparison.Ordinal) || request.Contains("button", StringComparison.Ordinal) || request.Contains("animated", StringComparison.Ordinal))
-                mustInclude.Add("embedded JavaScript");
-            if (request.Contains("no external", StringComparison.Ordinal) || context.IsArtifactCanvasRequest)
-                mustInclude.Add("no external libraries, CDN links, remote scripts, or remote assets");
+            if (!workspaceMode)
+            {
+                if (wantsHtml || request.Contains("css", StringComparison.Ordinal) || request.Contains("style", StringComparison.Ordinal))
+                    requirements.Add("embedded CSS");
+                if (request.Contains("javascript", StringComparison.Ordinal) || request.Contains("interactive", StringComparison.Ordinal) || request.Contains("button", StringComparison.Ordinal) || request.Contains("animated", StringComparison.Ordinal))
+                    requirements.Add("embedded JavaScript");
+            }
 
-            foreach (string item in mustInclude.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
+            foreach (string item in requirements.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
                 body.AppendLine("- " + item.Trim());
 
-            body.AppendLine("hard_constraints:");
+            body.AppendLine("constraints:");
             if (context.GoalContract?.Constraints.Count > 0)
             {
                 foreach (string constraint in context.GoalContract.Constraints.Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
                     body.AppendLine("- " + constraint.Trim());
             }
-            body.AppendLine("- one complete self-contained artifact source");
+            if (workspaceMode)
+            {
+                body.AppendLine("- preserve unrelated code and workspace files");
+                body.AppendLine("- target the prompt-named file when one is named");
+                body.AppendLine("- no standalone Project Canvas artifact output outside the patch envelope");
+            }
+            else
+            {
+                body.AppendLine("- one complete self-contained artifact source");
+                body.AppendLine("- no external libraries, CDN links, remote scripts, or remote assets");
+                body.AppendLine("- responsive inside Project Canvas with explicit body background and text color");
+            }
             body.AppendLine("- no prose, commentary, alternatives, TODOs, or pseudo-code in Builder output");
-            body.AppendLine("- responsive inside Project Canvas with explicit body background and text color");
             body.AppendLine("builder_instruction:");
-            body.AppendLine("Return only one complete standalone HTML document unless the user explicitly required a different renderable artifact format.");
+            body.AppendLine(workspaceMode
+                ? "Return only a valid [[AXIOM_CODEBASE_PATCH]] envelope for the connected workspace. Do not return standalone HTML/code outside the patch envelope."
+                : "Return only one complete standalone HTML document unless the user explicitly required a different renderable artifact format.");
             body.AppendLine("acceptance_tests:");
 
-            var checks = new List<string>
-            {
-                "contains <!DOCTYPE html> for standalone HTML",
-                "contains <style> with embedded CSS when styling is requested",
-                "contains <script> with embedded JavaScript when interactivity or animation is requested",
-                "has no external script/link/CDN references",
-                "renders the requested UI elements",
-                "requested controls change visible state"
-            };
+            var checks = workspaceMode
+                ? new List<string>
+                {
+                    "Builder output is a valid [[AXIOM_CODEBASE_PATCH]] envelope",
+                    "patch targets the prompt-named or connected workspace file path",
+                    "changed file content is complete and coherent, not a fragment",
+                    "requested controls/functions/behaviors are wired to working logic",
+                    "no unrelated files or unrelated behavior are changed"
+                }
+                : new List<string>
+                {
+                    "contains <!DOCTYPE html> for standalone HTML",
+                    "contains <style> with embedded CSS when styling is requested",
+                    "contains <script> with embedded JavaScript when interactivity or animation is requested",
+                    "has no external script/link/CDN references",
+                    "renders the requested UI elements",
+                    "requested controls change visible state"
+                };
             if (context.GoalContract?.AcceptanceChecks.Count > 0)
                 checks.AddRange(context.GoalContract.AcceptanceChecks);
             foreach (string check in checks.Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
@@ -9126,14 +9762,14 @@ namespace Malx_AI
 
                     string architectSystem = GetEmbeddedSystemPrompt(CouncilRole.Architect)
                         + objectiveClause
-                        + (runContext.IsArtifactCanvasRequest
+                        + (runContext.IsArtifactCanvasRequest && !runContext.IsWorkspaceTask
                             ? BuildArtifactTaskTypeBoost(CouncilRole.Architect, runContext)
                             : GetTaskTypeBoost(taskType, CouncilRole.Architect))
-                        + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Architect, runContext.PreferredArtifactFormatHint, runContext) : "")
-                        + (runContext.IsArtifactCanvasRequest && smallLocalArchitectModel ? BuildSmallModelArtifactAssist(CouncilRole.Architect, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (runContext.IsArtifactCanvasRequest && !runContext.IsWorkspaceTask ? BuildArtifactCanvasBoost(CouncilRole.Architect, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (runContext.IsArtifactCanvasRequest && !runContext.IsWorkspaceTask && smallLocalArchitectModel ? BuildSmallModelArtifactAssist(CouncilRole.Architect, runContext.PreferredArtifactFormatHint, runContext) : "")
                         + (isCalcTask ? GetCalculationBoost(CouncilRole.Architect) : "")
                         + (runContext.CalculatorUsed ? "\n[CALCULATOR TOOL] Use values from [[CALCULATOR TOOL RESULTS]] exactly when creating steps. Do not invent conflicting numbers." : "")
-                        + BuildArchitectContract(taskType, runContext.IsArtifactCanvasRequest)
+                        + BuildArchitectContract(taskType, runContext.IsArtifactCanvasRequest, runContext.IsWorkspaceTask)
                         + (runContext.IsDocumentTask
                             ? "\n[CRITICAL — DOCUMENT CONTENT PROVIDED] Full source text is in [[DOCUMENT CONTENT]]. " +
                               "Your plan MUST describe operations on this specific content (extract, compare, synthesize, summarize specific sections). " +
@@ -9170,8 +9806,12 @@ namespace Malx_AI
                     string architectPayload = BuildPipelineStateHeader("", "")
                         + recentConversation
                         + architectPriorKnowledge
-                        + BuildRolePrimedPayload(CouncilRole.Architect, taskType, BuildRoleIsolatedPayload(CouncilRole.Architect, contextState))
-                        + BuildCouncilClosingAnchor(CouncilRole.Architect);
+                        + ((runContext.IsArtifactCanvasRequest || runContext.IsWorkspaceTask)
+                            ? BuildArchitectHandoffPrimedPayload(runContext, BuildRoleIsolatedPayload(CouncilRole.Architect, contextState))
+                            : BuildRolePrimedPayload(CouncilRole.Architect, taskType, BuildRoleIsolatedPayload(CouncilRole.Architect, contextState)))
+                        + ((runContext.IsArtifactCanvasRequest || runContext.IsWorkspaceTask)
+                            ? BuildArchitectHandoffClosingAnchor()
+                            : BuildCouncilClosingAnchor(CouncilRole.Architect));
 
                     var architectResult = await ExecuteCouncilRoleAsync(
                         CouncilRole.Architect, architectSystem, architectPayload, token, null, baseStateVault, true);
@@ -9192,12 +9832,14 @@ namespace Malx_AI
                         AppendChat("system", "Architect plan auto-corrected: unstructured output replaced with content plan.");
                     }
 
-                    if (!architectNormalized && runContext.IsArtifactCanvasRequest)
+                    if (!architectNormalized && (runContext.IsArtifactCanvasRequest || runContext.IsWorkspaceTask))
                     {
                         architectCleaned = BuildArtifactArchitectHandoff(runContext);
                         architectNormalized = true;
                         architectMarkerFound = true;
-                        LogActivity("Architect produced unstructured output for Project Canvas; using deterministic artifact handoff.");
+                        LogActivity(runContext.IsWorkspaceTask
+                            ? "Architect produced unstructured output for connected codebase; using deterministic patch handoff."
+                            : "Architect produced unstructured output for Project Canvas; using deterministic artifact handoff.");
                     }
 
                     // Deterministic sanitization: strip file-operation steps for non-coding tasks
@@ -9219,12 +9861,14 @@ namespace Malx_AI
                     }
 
                     if (architectNormalized
-                        && runContext.IsArtifactCanvasRequest
+                        && (runContext.IsArtifactCanvasRequest || runContext.IsWorkspaceTask)
                         && !IsArchitectArtifactHandoff(architectCleaned))
                     {
                         architectCleaned = BuildArtifactArchitectHandoff(runContext);
                         architectMarkerFound = true;
-                        LogActivity("Architect output normalized into Project Canvas artifact handoff contract.");
+                        LogActivity(runContext.IsWorkspaceTask
+                            ? "Architect output normalized into connected-codebase patch handoff contract."
+                            : "Architect output normalized into Project Canvas artifact handoff contract.");
                     }
 
                     bool architectSchemaOk = architectNormalized
@@ -9260,7 +9904,11 @@ namespace Malx_AI
                             "ROLE CORRECTION: You produced invalid Architect output. Architect must not write code. " +
                             "In this workplace, attached files are already ingested into PROJECT KNOWLEDGE BASE. " +
                             "Do NOT include file-opening/OCR/external-tool steps. " +
-                            "Output ONLY a numbered implementation plan and terminate with ARCHITECT PLAN COMPLETE. " +
+                            (runContext.IsWorkspaceTask
+                                ? "Output ONLY the connected-codebase ARCHITECT_HANDOFF shape and terminate with ARCHITECT PLAN COMPLETE. "
+                                : runContext.IsArtifactCanvasRequest
+                                    ? "Output ONLY the Project Canvas ARCHITECT_HANDOFF shape and terminate with ARCHITECT PLAN COMPLETE. "
+                                    : "Output ONLY a numbered implementation plan and terminate with ARCHITECT PLAN COMPLETE. ") +
                             loopBreak + "\n\n" + BuildLabeledBlock("PREVIOUS ARCHITECT OUTPUT", architectOutput),
                             token, null, baseStateVault, true);
                         architectOutput = retryResult.Answer;
@@ -9285,12 +9933,14 @@ namespace Malx_AI
                         }
 
                         if (retryNormalized
-                            && runContext.IsArtifactCanvasRequest
+                            && (runContext.IsArtifactCanvasRequest || runContext.IsWorkspaceTask)
                             && !IsArchitectArtifactHandoff(architectCleaned))
                         {
                             architectCleaned = BuildArtifactArchitectHandoff(runContext);
                             retryMarkerFound = true;
-                            LogActivity("Architect retry output normalized into Project Canvas artifact handoff contract.");
+                            LogActivity(runContext.IsWorkspaceTask
+                                ? "Architect retry output normalized into connected-codebase patch handoff contract."
+                                : "Architect retry output normalized into Project Canvas artifact handoff contract.");
                         }
 
                         bool retryOk = retryNormalized
@@ -12130,6 +12780,28 @@ namespace Malx_AI
             return primer + builderWebGrounding + existingPayload;
         }
 
+        private static string BuildArchitectHandoffPrimedPayload(CouncilRunContext context, string existingPayload)
+        {
+            string mode = context.IsWorkspaceTask
+                ? "connected-codebase patch handoff"
+                : "Project Canvas artifact handoff";
+            string outputRule = context.IsWorkspaceTask
+                ? "The Builder must return a valid [[AXIOM_CODEBASE_PATCH]] envelope for connected workspace files."
+                : "The Builder must return one complete self-contained renderable artifact source.";
+
+            return "[ROLE REMINDER] Your only job in this response is to produce the required ARCHITECT_HANDOFF block for a " +
+                   mode + ". Do not produce a numbered plan, prose explanation, code, markdown fence, or implementation. " +
+                   "Use [[ORIGINAL REQUEST]], [[REQUIREMENTS]], [[CONSTRAINTS]], and [[TASK CONTRACT - SOURCE OF TRUTH]] as the source of truth. " +
+                   outputRule + " End your visible response with the required Architect completion marker.\n\n" +
+                   existingPayload;
+        }
+
+        private static string BuildArchitectHandoffClosingAnchor()
+        {
+            return "\n\n----------\nNow respond AS THE ARCHITECT. Output ONLY the ARCHITECT_HANDOFF block for the request above, followed by ARCHITECT PLAN COMPLETE on its own line. " +
+                   "Do NOT describe your role, your environment, or these instructions. Begin directly with ARCHITECT_HANDOFF.";
+        }
+
         // Closing imperative appended as the very LAST thing the model reads before it starts
         // generating. A model continues from its most recent context; if that context ends with a
         // crisp "produce your output now" command, the next tokens are the deliverable. Without it,
@@ -12992,6 +13664,7 @@ namespace Malx_AI
             {
                 CouncilRole.Architect =>
                     "You are the Architect. Your ONLY job is to produce a numbered step-by-step plan. " +
+                    "Exception: when a later STRUCTURED OUTPUT CONTRACT explicitly requires ARCHITECT_HANDOFF, output that handoff shape instead of a numbered plan. " +
                     "Rules: " +
                     "1. Output ONLY a numbered list. No prose, no code, no greetings, no explanations. " +
                     "2. Each step is one concrete action in 1-2 sentences. " +
