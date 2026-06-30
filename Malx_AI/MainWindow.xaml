@@ -1607,7 +1607,7 @@
 
                             <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,12,0,0" Margin="0,12,0,0">
                                 <Grid>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.4.0" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.5.0" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{StaticResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>

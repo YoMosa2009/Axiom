@@ -33,6 +33,7 @@ namespace Malx_AI
         public string CanvasDiffCurrentSource { get; set; } = "";
         public int CanvasDiffAdditionCount { get; set; }
         public int CanvasDiffRemovalCount { get; set; }
+        public ConnectedWorkspaceState ConnectedWorkspace { get; set; } = new();
         public DateTime SavedAt { get; set; } = DateTime.Now;
     }
 

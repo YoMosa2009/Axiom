@@ -80,16 +80,180 @@ namespace Malx_AI
                 : "Web Search tool disabled";
         }
 
+        private void RefreshCodebaseAccessUi()
+        {
+            bool enabled = _connectedWorkspace.CodebaseEditAccessEnabled;
+            string lockedMode = string.IsNullOrWhiteSpace(_connectedWorkspace.LockedMode)
+                ? (_isCloudModeEnabled ? WorkspaceAgentMode.Cloud.ToString() : WorkspaceAgentMode.Local.ToString())
+                : _connectedWorkspace.LockedMode;
+
+            if (CodebaseAccessModeText != null)
+                CodebaseAccessModeText.Text = enabled ? lockedMode : "Off";
+
+            if (CodebaseEditAccessButton != null)
+            {
+                CodebaseEditAccessButton.Content = enabled ? "Enabled - locked for this chat" : "1. Enable for this chat";
+                CodebaseEditAccessButton.IsEnabled = !enabled && !_isProcessing;
+                CodebaseEditAccessButton.ToolTip = enabled
+                    ? "Locked for this Workplace chat. Start a new Workplace chat to disable or change mode."
+                    : "Enable codebase access and lock this Workplace chat to the current local/cloud mode.";
+            }
+
+            if (ConnectWorkspaceFolderButton != null)
+                ConnectWorkspaceFolderButton.IsEnabled = enabled && !_isProcessing;
+            if (ConnectWorkspaceFilesButton != null)
+                ConnectWorkspaceFilesButton.IsEnabled = enabled && !_isProcessing;
+            if (ConnectWorkspaceRepositoryButton != null)
+                ConnectWorkspaceRepositoryButton.IsEnabled = enabled && !_isProcessing;
+            if (CloneWorkspaceRepositoryButton != null)
+            {
+                bool canClone = enabled
+                    && !_isProcessing
+                    && !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
+                    && string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath);
+                CloneWorkspaceRepositoryButton.IsEnabled = canClone;
+                CloneWorkspaceRepositoryButton.Visibility = enabled && !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+
+            if (CodebaseAutoApplyToggle != null)
+            {
+                CodebaseAutoApplyToggle.IsEnabled = enabled && !_isProcessing;
+                CodebaseAutoApplyToggle.IsChecked = _connectedWorkspace.AutoApplyCodebaseChanges;
+                CodebaseAutoApplyToggle.Opacity = enabled ? 1.0 : 0.45;
+            }
+
+            if (ConnectedWorkspaceStatusBlock != null)
+            {
+                bool hasConnectedCode = !string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath)
+                    || _connectedWorkspace.ConnectedFiles.Count > 0;
+                ConnectedWorkspaceStatusBlock.Text = !enabled
+                    ? "Step 1: enable access. This locks the chat to the current local/cloud mode."
+                    : _hasPendingCodebaseChanges
+                        ? "Review pending code changes in Project Canvas."
+                        : hasConnectedCode
+                            ? $"Ready in {lockedMode} mode. Ask for a small code change to get a reviewable patch."
+                            : $"Enabled in {lockedMode} mode. Step 2: open a local folder or clone a repo.";
+            }
+
+            string details = "No code connected yet.";
+            if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath))
+            {
+                details = $"Connected: {_connectedWorkspace.DisplayName}\n{_connectedWorkspace.RootPath}\nIndexed {_connectedWorkspace.IndexedFileCount:n0} file(s)";
+                if (_connectedWorkspace.IndexedByteCount > 0)
+                    details += $" / {FormatByteCount(_connectedWorkspace.IndexedByteCount)}";
+            }
+            else if (_connectedWorkspace.ConnectedFiles.Count > 0)
+            {
+                details = $"Connected: {_connectedWorkspace.DisplayName}\n{_connectedWorkspace.ConnectedFiles.Count:n0} selected file(s)\nIndexed {_connectedWorkspace.IndexedFileCount:n0} file(s)";
+                if (_connectedWorkspace.IndexedByteCount > 0)
+                    details += $" / {FormatByteCount(_connectedWorkspace.IndexedByteCount)}";
+            }
+            else if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl))
+            {
+                details = $"Repo URL saved: {_connectedWorkspace.DisplayName}\n{_connectedWorkspace.RepositoryUrl}\nChoose a destination folder to clone before editing.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(_connectedWorkspace.StatusMessage))
+                details += "\n" + _connectedWorkspace.StatusMessage;
+
+            if (ConnectedWorkspaceDetailBlock != null)
+                ConnectedWorkspaceDetailBlock.Text = details;
+
+            if (ConnectedWorkspaceConnectHintBlock != null)
+                ConnectedWorkspaceConnectHintBlock.Text = enabled
+                    ? "Step 2: open local code, pick files, or clone a GitHub repo in one step."
+                    : "Step 2 unlocks after access is enabled.";
+
+            if (CodebaseReviewHintBlock != null)
+                CodebaseReviewHintBlock.Text = _hasPendingCodebaseChanges
+                    ? "Patch ready: inspect Project Canvas, then accept or reject."
+                    : _connectedWorkspace.AutoApplyCodebaseChanges
+                        ? "Step 3: ask for a change. Valid patches will be applied automatically."
+                        : "Step 3: ask for a change. Proposed edits appear in Project Canvas for review.";
+
+            if (CodebaseAutoApplyHintBlock != null)
+                CodebaseAutoApplyHintBlock.Text = _connectedWorkspace.AutoApplyCodebaseChanges
+                    ? "Auto mode: valid patches are written after parsing and path checks."
+                    : "Manual mode: review patches before writing files.";
+
+            Visibility reviewVisibility = enabled && (!_connectedWorkspace.AutoApplyCodebaseChanges || _hasPendingCodebaseChanges)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            if (AcceptCodebaseChangesButton != null)
+            {
+                AcceptCodebaseChangesButton.Visibility = reviewVisibility;
+                AcceptCodebaseChangesButton.IsEnabled = _hasPendingCodebaseChanges;
+            }
+            if (RejectCodebaseChangesButton != null)
+            {
+                RejectCodebaseChangesButton.Visibility = reviewVisibility;
+                RejectCodebaseChangesButton.IsEnabled = _hasPendingCodebaseChanges;
+            }
+            if (CodebaseReviewActionGrid != null)
+                CodebaseReviewActionGrid.Visibility = reviewVisibility;
+            if (AcceptCodebaseChangesSidebarButton != null)
+                AcceptCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges;
+            if (RejectCodebaseChangesSidebarButton != null)
+                RejectCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges;
+        }
+
+        private static string FormatByteCount(long bytes)
+        {
+            string[] units = ["B", "KB", "MB", "GB"];
+            double value = Math.Max(0, bytes);
+            int unit = 0;
+            while (value >= 1024 && unit < units.Length - 1)
+            {
+                value /= 1024;
+                unit++;
+            }
+
+            return unit == 0 ? $"{value:0} {units[unit]}" : $"{value:0.0} {units[unit]}";
+        }
+
+        private ConnectedWorkspaceState CloneConnectedWorkspaceState()
+        {
+            return new ConnectedWorkspaceState
+            {
+                CodebaseEditAccessEnabled = _connectedWorkspace.CodebaseEditAccessEnabled,
+                AutoApplyCodebaseChanges = _connectedWorkspace.AutoApplyCodebaseChanges,
+                LockedMode = _connectedWorkspace.LockedMode,
+                ConnectionKind = _connectedWorkspace.ConnectionKind,
+                RootPath = _connectedWorkspace.RootPath,
+                RepositoryUrl = _connectedWorkspace.RepositoryUrl,
+                DisplayName = _connectedWorkspace.DisplayName,
+                IndexedFileCount = _connectedWorkspace.IndexedFileCount,
+                IndexedByteCount = _connectedWorkspace.IndexedByteCount,
+                EnabledAt = _connectedWorkspace.EnabledAt,
+                IndexedAt = _connectedWorkspace.IndexedAt,
+                StatusMessage = _connectedWorkspace.StatusMessage,
+                ConnectedFiles = _connectedWorkspace.ConnectedFiles.ToList()
+            };
+        }
+
         private void RefreshWorkplaceCloudModeUi()
         {
             if (FindName("WorkplaceCloudModeButton") is not Button cloudModeButton)
                 return;
 
-            cloudModeButton.Content = _isCloudModeEnabled ? "Cloud On" : "Cloud Off";
-            cloudModeButton.Opacity = _isCloudModeEnabled ? 1.0 : 0.75;
-            cloudModeButton.ToolTip = _isCloudModeEnabled
+            if (_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                cloudModeButton.Content = _isCloudModeEnabled ? "Cloud On" : "Cloud Off";
+                cloudModeButton.Opacity = 0.55;
+                cloudModeButton.IsEnabled = false;
+                cloudModeButton.ToolTip = "Cloud/local mode is locked while Codebase Edit Access is enabled in this Workplace chat. Start a new Workplace chat to change it.";
+            }
+            else
+            {
+                cloudModeButton.IsEnabled = true;
+                cloudModeButton.Content = _isCloudModeEnabled ? "Cloud On" : "Cloud Off";
+                cloudModeButton.Opacity = _isCloudModeEnabled ? 1.0 : 0.75;
+                cloudModeButton.ToolTip = _isCloudModeEnabled
                     ? $"Council cloud mode enabled ({OpenRouterChatService.WorkplaceCouncilDisplayLabel})"
-                : "Use local council models";
+                    : "Use local council models";
+            }
 
             bool localControlsEnabled = !_isCloudModeEnabled;
             if (FindName("LoadArchitectModelButton") is Button architectLoadButton) architectLoadButton.IsEnabled = localControlsEnabled;
@@ -901,6 +1065,10 @@ namespace Malx_AI
             public bool IsDocumentTask { get; set; }
             public string DocumentContent { get; set; } = "";
             public List<string> DocumentFileNames { get; set; } = new();
+            public bool IsWorkspaceTask { get; set; }
+            public string WorkspaceContext { get; set; } = "";
+            public List<string> WorkspaceFilesRead { get; set; } = new();
+            public bool WorkspaceAutoApply { get; set; }
             public bool ArchitectDriftCorrected { get; set; }
             public bool BuilderDriftCorrected { get; set; }
             public bool BuilderTruncationRecovery { get; set; }
@@ -974,6 +1142,7 @@ namespace Malx_AI
             public string Objective { get; set; } = "";
             public string CalculatorContext { get; set; } = "";
             public string WebContext { get; set; } = "";
+            public string WorkspaceContext { get; set; } = "";
             public string ArchitectOutput { get; set; } = "";
             public string BuilderOutput { get; set; } = "";
             public string CriticOutput { get; set; } = "";
@@ -1022,6 +1191,47 @@ namespace Malx_AI
             // markers and corrupt the priority-ordered evidence digest.
 
             return "[WEB GROUNDING RULE] Web search is enabled and the evidence below is the authoritative source material for current, online, source-backed, or recently changed claims that it actually covers. Current UTC date: " + DateTime.UtcNow.ToString("yyyy-MM-dd") + ". Prefer High confidence sources over Medium confidence ones, and ignore Low confidence sources unless the user explicitly asks for them. Do not add current/source-backed claims from model training data, prior memory, or assumptions when they are not present in the sources. Stable non-current background context may come from the prompt, council plan, project knowledge, or general knowledge when it is not contradicted by the web evidence. Do not treat off-topic web results as evidence for the user's named entities; if the evidence is partial or mismatched, answer the supported portions first and briefly state what remains unconfirmed. For broad current-information requests, summarize the strongest supported developments from the provided sources instead of declaring the web data unusable. If sources conflict, report the conflict explicitly instead of guessing. Cite source titles or hosts naturally for source-backed/current claims, and do not make unsupported current claims that cannot be tied to a provided source.\n" + data;
+        }
+
+        private string BuildConnectedWorkspaceContext(string userQuery, string objective, CouncilRunContext runContext)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+                return string.Empty;
+
+            string combined = string.IsNullOrWhiteSpace(objective)
+                ? userQuery
+                : userQuery + "\n" + objective;
+            int maxChars = runContext.IsCloudExecution ? 60000 : 14000;
+            WorkspaceContextResult context = _workspaceAccessService.BuildContextPacket(_connectedWorkspace, combined, maxChars);
+            runContext.IsWorkspaceTask = true;
+            runContext.WorkspaceAutoApply = _connectedWorkspace.AutoApplyCodebaseChanges;
+            runContext.WorkspaceContext = context.Packet;
+            runContext.WorkspaceFilesRead = context.FilesRead.ToList();
+
+            if (context.FilesRead.Count > 0)
+                LogActivity($"Connected workspace context attached: {context.FilesRead.Count} file(s).");
+            else
+                LogActivity("Connected workspace access is enabled, but no readable local files were attached.");
+
+            return context.Packet;
+        }
+
+        private static string BuildCodebasePatchOutputContract()
+        {
+            return "Connected workspace changes must be proposed as one structured full-file patch review. " +
+                "Do not output standalone code fences, prose-only instructions, diffs, or claims that files were changed. " +
+                "Output exactly one [[AXIOM_CODEBASE_PATCH]] envelope. Each file block must include FILE, ACTION, one complete fenced replacement/create file, and [[END FILE]]. " +
+                "Use relative paths only. Use ACTION: replace for existing files and ACTION: create for new files. Do not use delete actions. " +
+                "Use the exact connected workspace path for the target file; do not rename file extensions. " +
+                "Example:\n" +
+                "[[AXIOM_CODEBASE_PATCH]]\n" +
+                "FILE: path/from/workspace.ext\n" +
+                "ACTION: replace\n" +
+                "```language\n" +
+                "complete replacement file content\n" +
+                "```\n" +
+                "[[END FILE]]\n" +
+                "[[END AXIOM_CODEBASE_PATCH]]";
         }
 
         private IReadOnlyList<ConversationSearchTurn> BuildCouncilSearchContextTurns(string currentQuery)
@@ -1318,6 +1528,9 @@ namespace Malx_AI
                 _nextPromptPriorityChunks.Clear();
                 _nextPromptPriorityConcept = null;
                 _sessionMemory = null;
+                _connectedWorkspace = new ConnectedWorkspaceState();
+                _hasPendingCodebaseChanges = false;
+                _pendingCodebasePatch = null;
             }
 
             QueryInput.Text = string.Empty;
@@ -1359,6 +1572,8 @@ namespace Malx_AI
 
             UpdateContextPressureLabel(0, (int)_contextSize, false);
             ResetWorkplaceTokenUsageIndicator();
+            RefreshCodebaseAccessUi();
+            RefreshWorkplaceCloudModeUi();
         }
 
         private void RestoreWorkspaceCollections(WorkplaceSessionSnapshot snapshot)
@@ -1452,6 +1667,9 @@ namespace Malx_AI
                 : snapshot.LastConfidenceLabel;
             RefreshCanvasArtifact(ProjectCanvasEditor.Text, _lastSandboxOutput);
             RestoreCanvasDiff(snapshot);
+            _connectedWorkspace = snapshot.ConnectedWorkspace ?? new ConnectedWorkspaceState();
+            _hasPendingCodebaseChanges = false;
+            _pendingCodebasePatch = null;
 
             _contextSize = snapshot.GlobalContextSize <= 0 ? _contextSize : Math.Clamp(snapshot.GlobalContextSize, MinRoleContext, MaxRoleContext);
             _architectContextSize = snapshot.ArchitectContextSize <= 0 ? _contextSize : Math.Clamp(snapshot.ArchitectContextSize, MinRoleContext, MaxRoleContext);
@@ -1501,6 +1719,7 @@ namespace Malx_AI
             UpdateContextInfo();
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
+            RefreshCodebaseAccessUi();
             UpdateSessionHippocampusIndicator();
             UpdatePerformanceAggregate();
             UpdateWorkplaceTokenUsageIndicator();
@@ -1520,9 +1739,13 @@ namespace Malx_AI
             SyncContextControls();
             _isWebSearchEnabled = true;
             _isCloudModeEnabled = false;
+            _connectedWorkspace = new ConnectedWorkspaceState();
+            _hasPendingCodebaseChanges = false;
+            _pendingCodebasePatch = null;
             LoadOpenRouterKeyForWorkplace();
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
+            RefreshCodebaseAccessUi();
             UpdateContextInfo();
             UpdateSessionHippocampusIndicator();
             UpdateWorkplaceTokenUsageIndicator();
@@ -1597,6 +1820,10 @@ namespace Malx_AI
         private readonly PersonaMemoryService _personaMemoryService = new();
         private readonly WebSearchService _webSearchService = new();
         private readonly PythonExecutionService _pythonExecutionService = new();
+        private readonly WorkspaceAccessService _workspaceAccessService = new();
+        private ConnectedWorkspaceState _connectedWorkspace = new();
+        private bool _hasPendingCodebaseChanges;
+        private WorkspacePatchProposal? _pendingCodebasePatch;
         private string _builderPythonSandboxPreamble = "";
         private string _activePythonSandboxPreamble = "";
         private bool _activePythonSessionForTurn;
@@ -1966,6 +2193,7 @@ namespace Malx_AI
                 msg => UpdateAgenticPauseStatus(msg));
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
+            RefreshCodebaseAccessUi();
             RefreshCouncilPetToggleUi();
             UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
@@ -3281,11 +3509,1173 @@ namespace Malx_AI
             CouncilPetToggleRequested?.Invoke(!_isCouncilPetEnabled);
         }
 
+        private void CodebaseEditAccessButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Codebase Edit Access is already locked for this Workplace chat. Start a new Workplace chat to change or disable it.");
+                return;
+            }
+
+            string lockedMode = _isCloudModeEnabled
+                ? WorkspaceAgentMode.Cloud.ToString()
+                : WorkspaceAgentMode.Local.ToString();
+
+            _connectedWorkspace.CodebaseEditAccessEnabled = true;
+            _connectedWorkspace.LockedMode = lockedMode;
+            _connectedWorkspace.EnabledAt = DateTime.Now;
+            _connectedWorkspace.StatusMessage = $"Enabled {DateTime.Now:HH:mm}; mode locked to {lockedMode}.";
+            RefreshCodebaseAccessUi();
+            RefreshWorkplaceCloudModeUi();
+            AppendChat("system", $"Codebase Edit Access enabled. This Workplace chat is locked to {lockedMode} mode until you start a new Workplace chat.");
+            SavePersistedSession();
+        }
+
+        private void CodebaseAutoApplyToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                if (CodebaseAutoApplyToggle != null)
+                    CodebaseAutoApplyToggle.IsChecked = false;
+                return;
+            }
+
+            bool enabled = CodebaseAutoApplyToggle?.IsChecked == true;
+            if (_connectedWorkspace.AutoApplyCodebaseChanges == enabled)
+                return;
+
+            _connectedWorkspace.AutoApplyCodebaseChanges = enabled;
+            _connectedWorkspace.StatusMessage = enabled
+                ? "Auto mode enabled. Valid patches will be applied after Builder produces them."
+                : "Auto mode disabled. New patches will wait for Accept or Reject.";
+            RefreshCodebaseAccessUi();
+            AppendChat("system", enabled
+                ? "Auto mode enabled for Codebase Edit Access. Valid patches will be written automatically after parsing and path checks."
+                : "Auto mode disabled. Future codebase patches will wait for manual Accept or Reject.");
+            SavePersistedSession();
+        }
+
+        private void ConnectWorkspaceFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Enable Codebase Edit Access before connecting a folder.");
+                return;
+            }
+
+            var dialog = new OpenFolderDialog
+            {
+                Title = "Connect Codebase Folder"
+            };
+
+            if (dialog.ShowDialog() != true)
+                return;
+
+            try
+            {
+                WorkspaceIndexResult index = _workspaceAccessService.IndexWorkspace(dialog.FolderName);
+                _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.Folder.ToString();
+                _connectedWorkspace.RootPath = index.RootPath;
+                _connectedWorkspace.RepositoryUrl = string.Empty;
+                _connectedWorkspace.ConnectedFiles.Clear();
+                _connectedWorkspace.DisplayName = index.DisplayName;
+                _connectedWorkspace.IndexedFileCount = index.Files.Count;
+                _connectedWorkspace.IndexedByteCount = index.TotalBytes;
+                _connectedWorkspace.IndexedAt = DateTime.Now;
+                WorkspaceGitStatus gitStatus = _workspaceAccessService.GetGitStatus(index.RootPath);
+                string gitSuffix = gitStatus.IsRepository
+                    ? $" Git branch: {(string.IsNullOrWhiteSpace(gitStatus.Branch) ? "detached HEAD" : gitStatus.Branch)}."
+                    : "";
+                _connectedWorkspace.StatusMessage = $"Indexed {index.Files.Count:n0} candidate source files at {_connectedWorkspace.IndexedAt:HH:mm}.{gitSuffix}";
+                RefreshCodebaseAccessUi();
+                AppendChat("system", $"Connected workspace '{index.DisplayName}' with {index.Files.Count:n0} indexed file(s).");
+                SavePersistedSession();
+            }
+            catch (Exception ex)
+            {
+                _connectedWorkspace.StatusMessage = "Folder connection failed: " + ex.Message;
+                RefreshCodebaseAccessUi();
+                AppendChat("error", $"Workspace connection failed: {ex.Message}");
+            }
+        }
+
+        private void ConnectWorkspaceFilesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Enable Codebase Edit Access before connecting files.");
+                return;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Filter = "Code and text files|*.cs;*.xaml;*.csproj;*.sln;*.slnx;*.py;*.js;*.ts;*.jsx;*.tsx;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.html;*.htm;*.css;*.md;*.txt;*.sql;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh|All files (*.*)|*.*",
+                Multiselect = true,
+                Title = "Connect Codebase Files"
+            };
+
+            if (dialog.ShowDialog() != true)
+                return;
+
+            try
+            {
+                WorkspaceIndexResult index = _workspaceAccessService.IndexFiles(dialog.FileNames);
+                _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.Files.ToString();
+                _connectedWorkspace.RootPath = string.Empty;
+                _connectedWorkspace.RepositoryUrl = string.Empty;
+                _connectedWorkspace.ConnectedFiles = dialog.FileNames.Select(Path.GetFullPath).ToList();
+                _connectedWorkspace.DisplayName = index.DisplayName;
+                _connectedWorkspace.IndexedFileCount = index.Files.Count;
+                _connectedWorkspace.IndexedByteCount = index.TotalBytes;
+                _connectedWorkspace.IndexedAt = DateTime.Now;
+                _connectedWorkspace.StatusMessage = $"Connected {index.Files.Count:n0} file(s) at {_connectedWorkspace.IndexedAt:HH:mm}.";
+                RefreshCodebaseAccessUi();
+                AppendChat("system", $"Connected {index.Files.Count:n0} codebase file(s).");
+                SavePersistedSession();
+            }
+            catch (Exception ex)
+            {
+                _connectedWorkspace.StatusMessage = "File connection failed: " + ex.Message;
+                RefreshCodebaseAccessUi();
+                AppendChat("error", $"Workspace file connection failed: {ex.Message}");
+            }
+        }
+
+        private async void ConnectWorkspaceRepositoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Enable Codebase Edit Access before connecting a repository.");
+                return;
+            }
+
+            string? url = ShowTextInputDialog(
+                "Clone GitHub/Repo",
+                "Paste a GitHub, GitLab, Bitbucket, or git repository URL. Next, choose where to clone it.",
+                _connectedWorkspace.RepositoryUrl);
+            if (string.IsNullOrWhiteSpace(url))
+                return;
+
+            url = url.Trim();
+            if (!_workspaceAccessService.LooksLikeRepositoryUrl(url))
+            {
+                AppendChat("error", "That does not look like a repository URL. Use an https://, git://, or ssh:// URL.");
+                return;
+            }
+
+            var dialog = new OpenFolderDialog
+            {
+                Title = "Choose Where To Clone The Repository"
+            };
+
+            if (dialog.ShowDialog() != true)
+                return;
+
+            _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.GitRepository.ToString();
+            _connectedWorkspace.RepositoryUrl = url;
+            _connectedWorkspace.RootPath = string.Empty;
+            _connectedWorkspace.ConnectedFiles.Clear();
+            _connectedWorkspace.DisplayName = BuildRepositoryDisplayName(url);
+            _connectedWorkspace.IndexedFileCount = 0;
+            _connectedWorkspace.IndexedByteCount = 0;
+            _connectedWorkspace.IndexedAt = DateTime.Now;
+            await CloneConnectedRepositoryToFolderAsync(url, dialog.FolderName, _connectedWorkspace.DisplayName);
+        }
+
+        private async void CloneWorkspaceRepositoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Enable Codebase Edit Access before cloning a repository.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl))
+            {
+                AppendChat("system", "Connect a GitHub/repo URL before cloning.");
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath))
+            {
+                AppendChat("system", "This repository already has a local folder connected.");
+                return;
+            }
+
+            var dialog = new OpenFolderDialog
+            {
+                Title = "Choose Where To Clone The Repository"
+            };
+
+            if (dialog.ShowDialog() != true)
+                return;
+
+            await CloneConnectedRepositoryToFolderAsync(
+                _connectedWorkspace.RepositoryUrl,
+                dialog.FolderName,
+                _connectedWorkspace.DisplayName);
+        }
+
+        private async Task CloneConnectedRepositoryToFolderAsync(string repositoryUrl, string parentFolder, string displayName)
+        {
+            SetCodebaseConnectionButtonsEnabled(false);
+            string previousStatus = _connectedWorkspace.StatusMessage;
+            _connectedWorkspace.StatusMessage = "Cloning repository...";
+            RefreshCodebaseAccessUi();
+            AppendChat("system", "Cloning repository. If it is private, Git may ask for credentials through your normal Git/GitHub sign-in.");
+
+            try
+            {
+                var progress = new Progress<string>(line =>
+                {
+                    string compact = line.Length > 120 ? line[..120] + "..." : line;
+                    _connectedWorkspace.StatusMessage = compact;
+                    RefreshCodebaseAccessUi();
+                });
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+                WorkspaceCloneResult clone = await _workspaceAccessService.CloneRepositoryAsync(
+                    repositoryUrl,
+                    parentFolder,
+                    displayName,
+                    progress,
+                    cts.Token);
+
+                WorkspaceIndexResult index = _workspaceAccessService.IndexWorkspace(clone.LocalPath);
+                _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.GitRepository.ToString();
+                _connectedWorkspace.RepositoryUrl = repositoryUrl;
+                _connectedWorkspace.RootPath = index.RootPath;
+                _connectedWorkspace.ConnectedFiles.Clear();
+                _connectedWorkspace.DisplayName = index.DisplayName;
+                _connectedWorkspace.IndexedFileCount = index.Files.Count;
+                _connectedWorkspace.IndexedByteCount = index.TotalBytes;
+                _connectedWorkspace.IndexedAt = DateTime.Now;
+                WorkspaceGitStatus gitStatus = _workspaceAccessService.GetGitStatus(index.RootPath);
+                string gitSuffix = gitStatus.IsRepository
+                    ? $" Git branch: {(string.IsNullOrWhiteSpace(gitStatus.Branch) ? "detached HEAD" : gitStatus.Branch)}."
+                    : "";
+                _connectedWorkspace.StatusMessage = $"Cloned and indexed {index.Files.Count:n0} candidate source files at {_connectedWorkspace.IndexedAt:HH:mm}.{gitSuffix}";
+                RefreshCodebaseAccessUi();
+                AppendChat("system", $"Repository cloned to {index.RootPath} and indexed with {index.Files.Count:n0} file(s).");
+                SavePersistedSession();
+            }
+            catch (OperationCanceledException)
+            {
+                _connectedWorkspace.StatusMessage = "Clone timed out after 10 minutes. Try again or connect an existing local clone folder.";
+                RefreshCodebaseAccessUi();
+                AppendChat("error", _connectedWorkspace.StatusMessage);
+            }
+            catch (Exception ex)
+            {
+                _connectedWorkspace.StatusMessage = string.IsNullOrWhiteSpace(previousStatus)
+                    ? "Clone failed."
+                    : previousStatus;
+                RefreshCodebaseAccessUi();
+                AppendChat("error", "Repository clone failed: " + ex.Message);
+            }
+            finally
+            {
+                SetCodebaseConnectionButtonsEnabled(true);
+                RefreshCodebaseAccessUi();
+            }
+        }
+
+        private void SetCodebaseConnectionButtonsEnabled(bool enabled)
+        {
+            if (CodebaseEditAccessButton != null)
+                CodebaseEditAccessButton.IsEnabled = enabled && !_connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
+            if (ConnectWorkspaceFolderButton != null)
+                ConnectWorkspaceFolderButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
+            if (ConnectWorkspaceFilesButton != null)
+                ConnectWorkspaceFilesButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
+            if (ConnectWorkspaceRepositoryButton != null)
+                ConnectWorkspaceRepositoryButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
+            if (CloneWorkspaceRepositoryButton != null)
+                CloneWorkspaceRepositoryButton.IsEnabled = enabled
+                    && _connectedWorkspace.CodebaseEditAccessEnabled
+                    && !_isProcessing
+                    && !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
+                    && string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath);
+        }
+
+        private static string BuildRepositoryDisplayName(string url)
+        {
+            try
+            {
+                var uri = new Uri(url);
+                string name = uri.Segments.LastOrDefault()?.Trim('/') ?? uri.Host;
+                if (name.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+                    name = name[..^4];
+                return string.IsNullOrWhiteSpace(name) ? uri.Host : name;
+            }
+            catch
+            {
+                string trimmed = url.TrimEnd('/');
+                int slash = trimmed.LastIndexOf('/');
+                string name = slash >= 0 ? trimmed[(slash + 1)..] : trimmed;
+                return name.EndsWith(".git", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
+            }
+        }
+
+        private static string? ShowTextInputDialog(string title, string prompt, string initialValue)
+        {
+            var window = new Window
+            {
+                Title = title,
+                Width = 440,
+                Height = 178,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                Background = new SolidColorBrush(Color.FromRgb(23, 22, 21)),
+                Foreground = new SolidColorBrush(Color.FromRgb(237, 232, 227)),
+                ShowInTaskbar = false
+            };
+
+            var root = new Grid { Margin = new Thickness(16) };
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var label = new TextBlock
+            {
+                Text = prompt,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            Grid.SetRow(label, 0);
+            root.Children.Add(label);
+
+            var input = new TextBox
+            {
+                Text = initialValue ?? string.Empty,
+                MinWidth = 380,
+                Height = 28,
+                Margin = new Thickness(0, 0, 0, 14)
+            };
+            Grid.SetRow(input, 1);
+            root.Children.Add(input);
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            var cancel = new Button { Content = "Cancel", MinWidth = 74, Height = 28, Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
+            var ok = new Button { Content = "Connect", MinWidth = 82, Height = 28, IsDefault = true };
+            ok.Click += (_, _) => window.DialogResult = true;
+            buttons.Children.Add(cancel);
+            buttons.Children.Add(ok);
+            Grid.SetRow(buttons, 2);
+            root.Children.Add(buttons);
+
+            window.Content = root;
+            input.SelectAll();
+            input.Focus();
+            return window.ShowDialog() == true ? input.Text : null;
+        }
+
+        private bool TryCaptureCodebasePatchProposal(string builderOutput, CouncilRunContext runContext)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled || string.IsNullOrWhiteSpace(builderOutput))
+                return false;
+
+            bool hasPatchMarker = builderOutput.Contains("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
+            if (!_workspaceAccessService.TryParsePatchProposal(builderOutput, out WorkspacePatchProposal? proposal, out string error))
+            {
+                if (TryRecoverCodebasePatchProposal(builderOutput, runContext, out WorkspacePatchProposal? recoveredProposal, out string recoveryReason)
+                    && recoveredProposal != null)
+                {
+                    proposal = recoveredProposal;
+                    LogActivity("Codebase patch recovered from Builder output: " + recoveryReason);
+                    AppendChat("system", "Recovered a reviewable codebase patch from the Builder's full-file output.");
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(recoveryReason))
+                        LogActivity("Codebase patch recovery skipped: " + recoveryReason);
+
+                    if (hasPatchMarker)
+                    {
+                        string reason = string.IsNullOrWhiteSpace(error) ? "the patch envelope could not be parsed." : error;
+                        AppendChat("warning", "Builder attempted a codebase patch, but it needs revision: " + reason);
+                        LogActivity("Codebase patch parse failed: " + reason);
+                    }
+
+                    return false;
+                }
+            }
+
+            if (proposal == null)
+                return false;
+
+            try
+            {
+                foreach (WorkspaceFilePatch patch in proposal.Files)
+                    _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+            }
+            catch (Exception ex)
+            {
+                if (hasPatchMarker)
+                {
+                    string reason = "the patch target could not be resolved: " + ex.Message;
+                    AppendChat("warning", "Builder attempted a codebase patch, but it needs revision: " + reason);
+                    LogActivity("Codebase patch parse failed: " + reason);
+                }
+
+                return false;
+            }
+
+            _pendingCodebasePatch = proposal;
+            _hasPendingCodebaseChanges = true;
+            RenderCodebasePatchReview(proposal, _connectedWorkspace.AutoApplyCodebaseChanges);
+            RefreshCodebaseAccessUi();
+            SavePersistedSession();
+
+            string summary = _connectedWorkspace.AutoApplyCodebaseChanges
+                ? proposal.Files.Count == 1
+                    ? "Builder proposed 1 codebase file change. Auto mode is applying it now."
+                    : $"Builder proposed {proposal.Files.Count:n0} codebase file changes. Auto mode is applying them now."
+                : proposal.Files.Count == 1
+                    ? "Builder proposed 1 codebase file change. Review it in Project Canvas, then Accept or Reject."
+                    : $"Builder proposed {proposal.Files.Count:n0} codebase file changes. Review them in Project Canvas, then Accept or Reject.";
+            AppendChat("builder", summary);
+            LogActivity($"Codebase patch captured for review ({proposal.Files.Count:n0} file(s)).");
+            if (_connectedWorkspace.AutoApplyCodebaseChanges)
+                TryApplyPendingCodebaseChanges(automatic: true);
+            return true;
+        }
+
+        private void RenderCodebasePatchReview(WorkspacePatchProposal proposal, bool autoMode)
+        {
+            string review = BuildCodebasePatchReviewText(proposal);
+            ExitCanvasDiffView();
+            ClearCanvasDiff();
+            ProjectCanvasEditor.Text = review;
+            _canvasArtifact = ArtifactRenderInfo.None(review);
+            _isCanvasPreviewMode = false;
+            SetCanvasHighlighting("markdown");
+            RenderCodebasePatchVisualDiff(proposal, autoMode);
+            RefreshCanvasArtifactUi();
+            CanvasTitleBlock.Text = "Codebase Patch Review";
+            CanvasSubtitleBlock.Text = autoMode
+                ? $"{proposal.Files.Count:n0} file change(s). Auto mode will apply after checks."
+                : $"{proposal.Files.Count:n0} pending file change(s). Review, then accept or reject.";
+            UpdateWorkplaceTokenUsageIndicator();
+        }
+
+        private void RenderCodebasePatchVisualDiff(WorkspacePatchProposal proposal, bool autoMode)
+        {
+            DiffViewerLines.Items.Clear();
+            int totalAdditions = 0;
+            int totalRemovals = 0;
+            var fileSummaries = new List<(WorkspaceFilePatch Patch, string Original, IReadOnlyList<LineDiffEntry> Diff, string? Error)>();
+
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                string original = string.Empty;
+                string? error = null;
+                try
+                {
+                    string target = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+                    if (File.Exists(target))
+                        original = File.ReadAllText(target);
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                }
+
+                IReadOnlyList<LineDiffEntry> diff = error == null
+                    ? LineDiff.Build(original, patch.Content)
+                    : Array.Empty<LineDiffEntry>();
+                totalAdditions += diff.Count(entry => entry.Kind == LineDiffKind.Added);
+                totalRemovals += diff.Count(entry => entry.Kind == LineDiffKind.Removed);
+                fileSummaries.Add((patch, original, diff, error));
+            }
+
+            AddCodebasePatchSummaryRow(proposal.Files.Count, totalAdditions, totalRemovals, autoMode);
+            foreach (var (patch, _, diff, error) in fileSummaries)
+            {
+                AddCodebasePatchFileHeader(patch, diff, error);
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    AddCodebasePatchNoticeRow("Unable to render this file diff: " + error);
+                    continue;
+                }
+
+                AddCodebasePatchDiffRows(diff);
+            }
+
+            _isDiffViewActive = true;
+            DiffViewerScroller.Visibility = Visibility.Visible;
+            ProjectCanvasEditor.Visibility = Visibility.Collapsed;
+        }
+
+        private void AddCodebasePatchSummaryRow(int fileCount, int additions, int removals, bool autoMode)
+        {
+            var panel = new StackPanel { Margin = new Thickness(14, 14, 14, 12) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"{fileCount:n0} file change(s)",
+                Foreground = new SolidColorBrush(Color.FromRgb(237, 232, 227)),
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 14
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = autoMode
+                    ? $"Auto mode is on; the app will apply this after parsing and path checks.  +{additions:n0} / -{removals:n0} lines"
+                    : $"Review below, then use Accept Changes or Reject.  +{additions:n0} / -{removals:n0} lines",
+                Foreground = new SolidColorBrush(Color.FromRgb(168, 160, 150)),
+                FontSize = 11,
+                Margin = new Thickness(0, 4, 0, 0)
+            });
+            DiffViewerLines.Items.Add(panel);
+        }
+
+        private void AddCodebasePatchFileHeader(WorkspaceFilePatch patch, IReadOnlyList<LineDiffEntry> diff, string? error)
+        {
+            int additions = diff.Count(entry => entry.Kind == LineDiffKind.Added);
+            int removals = diff.Count(entry => entry.Kind == LineDiffKind.Removed);
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(27, 26, 24)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(58, 54, 48)),
+                BorderThickness = new Thickness(0, 1, 0, 1),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+
+            var row = new DockPanel { LastChildFill = true };
+            var summary = new TextBlock
+            {
+                Text = error == null ? $"+{additions:n0} / -{removals:n0}" : "diff unavailable",
+                Foreground = error == null
+                    ? new SolidColorBrush(Color.FromRgb(120, 220, 140))
+                    : new SolidColorBrush(Color.FromRgb(255, 180, 120)),
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            DockPanel.SetDock(summary, Dock.Right);
+            row.Children.Add(summary);
+            row.Children.Add(new TextBlock
+            {
+                Text = $"{patch.RelativePath}  ({patch.Action})",
+                Foreground = new SolidColorBrush(Color.FromRgb(237, 232, 227)),
+                FontWeight = FontWeights.SemiBold,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+
+            border.Child = row;
+            DiffViewerLines.Items.Add(border);
+        }
+
+        private void AddCodebasePatchNoticeRow(string text)
+        {
+            DiffViewerLines.Items.Add(new TextBlock
+            {
+                Text = text,
+                Foreground = new SolidColorBrush(Color.FromRgb(255, 180, 120)),
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12,
+                Margin = new Thickness(14, 8, 14, 8),
+                TextWrapping = TextWrapping.Wrap
+            });
+        }
+
+        private void AddCodebasePatchDiffRows(IReadOnlyList<LineDiffEntry> diff)
+        {
+            if (diff.Count == 0)
+            {
+                AddCodebasePatchNoticeRow("No textual differences detected.");
+                return;
+            }
+
+            const int contextLines = 3;
+            const int maxVisibleLines = 900;
+            var visibleIndices = new HashSet<int>();
+            for (int i = 0; i < diff.Count; i++)
+            {
+                if (diff[i].Kind == LineDiffKind.Unchanged)
+                    continue;
+
+                int start = Math.Max(0, i - contextLines);
+                int end = Math.Min(diff.Count - 1, i + contextLines);
+                for (int index = start; index <= end; index++)
+                    visibleIndices.Add(index);
+            }
+
+            if (visibleIndices.Count == 0)
+            {
+                AddCodebasePatchNoticeRow("No textual differences detected.");
+                return;
+            }
+
+            int previousVisibleIndex = -2;
+            int rendered = 0;
+            foreach (int index in visibleIndices.OrderBy(value => value))
+            {
+                if (rendered >= maxVisibleLines)
+                {
+                    AddCodebasePatchNoticeRow("Diff truncated for review.");
+                    break;
+                }
+
+                if (index > previousVisibleIndex + 1)
+                    AddDiffOmissionRow();
+
+                AddDiffRow(diff[index]);
+                previousVisibleIndex = index;
+                rendered++;
+            }
+        }
+
+        private void RenderCodebasePatchFailureReview(string rejectedOutput, string reason)
+        {
+            _pendingCodebasePatch = null;
+            _hasPendingCodebaseChanges = false;
+
+            var review = new StringBuilder();
+            review.AppendLine("# Codebase Patch Review");
+            review.AppendLine();
+            review.AppendLine("No valid patch was produced, so no files were changed.");
+            review.AppendLine();
+            review.AppendLine("## What happened");
+            review.AppendLine(reason);
+            review.AppendLine();
+            review.AppendLine("## What to try next");
+            review.AppendLine("- Ask for a smaller change to one specific file.");
+            review.AppendLine("- Name the target file, for example `index.html` or `styles.css`.");
+            review.AppendLine("- Keep the request focused on editing the connected repo, not generating a standalone canvas artifact.");
+            review.AppendLine();
+            if (!string.IsNullOrWhiteSpace(rejectedOutput))
+            {
+                string capped = rejectedOutput.Length > 4000
+                    ? rejectedOutput[..4000] + "\n\n[...rejected output truncated...]"
+                    : rejectedOutput;
+                review.AppendLine("## Rejected Builder Output");
+                review.AppendLine("````text");
+                review.AppendLine(capped);
+                review.AppendLine("````");
+            }
+
+            ExitCanvasDiffView();
+            ClearCanvasDiff();
+            ProjectCanvasEditor.Text = review.ToString().TrimEnd();
+            _canvasArtifact = ArtifactRenderInfo.None(ProjectCanvasEditor.Text);
+            _isCanvasPreviewMode = false;
+            SetCanvasHighlighting("markdown");
+            RefreshCanvasArtifactUi();
+            RefreshCodebaseAccessUi();
+            CanvasTitleBlock.Text = "Codebase Patch Review";
+            CanvasSubtitleBlock.Text = "No files changed.";
+            UpdateWorkplaceTokenUsageIndicator();
+            SavePersistedSession();
+        }
+
+        private bool TryRecoverCodebasePatchProposal(string builderOutput, CouncilRunContext runContext, out WorkspacePatchProposal? proposal, out string reason)
+        {
+            proposal = null;
+            reason = string.Empty;
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled || string.IsNullOrWhiteSpace(builderOutput))
+                return false;
+
+            string? targetPath = ResolveRequestedWorkspacePatchPath(runContext, builderOutput);
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                reason = "No single target file could be identified from the request.";
+                return false;
+            }
+
+            string content = ExtractRecoverableWorkspaceFileContent(builderOutput, targetPath);
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                reason = "The Builder output did not contain recoverable full-file content.";
+                return false;
+            }
+
+            string target = _workspaceAccessService.ResolvePatchTargetPath(
+                _connectedWorkspace,
+                new WorkspaceFilePatch(targetPath, "replace", content));
+            bool exists = File.Exists(target);
+            string action = exists ? "replace" : "create";
+            if (!IsPlausibleRecoveredFileContent(targetPath, content, exists ? File.ReadAllText(target) : string.Empty))
+            {
+                reason = $"Recovered content did not look like a complete replacement for {targetPath}.";
+                return false;
+            }
+
+            string rawPatch = BuildRecoveredCodebasePatchEnvelope(targetPath, action, content);
+            if (!_workspaceAccessService.TryParsePatchProposal(rawPatch, out proposal, out string parseError) || proposal == null)
+            {
+                reason = string.IsNullOrWhiteSpace(parseError)
+                    ? "Recovered patch could not be parsed."
+                    : parseError;
+                proposal = null;
+                return false;
+            }
+
+            reason = $"Recovered a structured patch for {targetPath} from full-file Builder output.";
+            return true;
+        }
+
+        private string? ResolveRequestedWorkspacePatchPath(CouncilRunContext runContext, string builderOutput)
+        {
+            string combined = $"{runContext.UserPrompt}\n{runContext.Objective}\n{builderOutput}";
+            foreach (Match match in Regex.Matches(combined, @"(?<![\w.-])(?<path>[\w./\\-]+\.(?:cs|xaml|csproj|slnx|py|js|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml))(?![\w.-])", RegexOptions.IgnoreCase))
+            {
+                string candidate = match.Groups["path"].Value.Trim().Replace('\\', '/');
+                if (CanResolveWorkspacePatchPath(candidate))
+                    return candidate;
+            }
+
+            string recoveredContent = StripChatFromCode(builderOutput ?? string.Empty);
+            string recoveredExtension = GuessRecoveredContentExtension(recoveredContent);
+            var readableFiles = runContext.WorkspaceFilesRead
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(recoveredExtension))
+            {
+                var extensionMatches = readableFiles
+                    .Where(path => IsRecoveredExtensionCompatible(Path.GetExtension(path), recoveredExtension))
+                    .Where(CanResolveWorkspacePatchPath)
+                    .ToList();
+                if (extensionMatches.Count == 1)
+                    return extensionMatches[0];
+            }
+
+            var resolvable = readableFiles.Where(CanResolveWorkspacePatchPath).ToList();
+            return resolvable.Count == 1 ? resolvable[0] : null;
+        }
+
+        private bool CanResolveWorkspacePatchPath(string relativePath)
+        {
+            try
+            {
+                string target = _workspaceAccessService.ResolvePatchTargetPath(
+                    _connectedWorkspace,
+                    new WorkspaceFilePatch(relativePath, "replace", string.Empty));
+                return !string.IsNullOrWhiteSpace(target);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string ExtractRecoverableWorkspaceFileContent(string builderOutput, string targetPath)
+        {
+            string content = StripChatFromCode(builderOutput ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(content))
+                return string.Empty;
+
+            content = content
+                .Replace(BuilderCompletionMarker, "", StringComparison.OrdinalIgnoreCase)
+                .Replace("[[CODEBASE PATCH FORMAT ERROR]]", "", StringComparison.OrdinalIgnoreCase)
+                .Trim();
+
+            string extension = Path.GetExtension(targetPath).ToLowerInvariant();
+            if (extension is ".html" or ".htm")
+            {
+                int doctype = content.IndexOf("<!DOCTYPE", StringComparison.OrdinalIgnoreCase);
+                int html = content.IndexOf("<html", StringComparison.OrdinalIgnoreCase);
+                int start = doctype >= 0 ? doctype : html;
+                if (start > 0)
+                    content = content[start..].Trim();
+            }
+
+            return content;
+        }
+
+        private static bool IsPlausibleRecoveredFileContent(string relativePath, string content, string originalContent)
+        {
+            if (string.IsNullOrWhiteSpace(content) || content.Length < 8)
+                return false;
+
+            string extension = Path.GetExtension(relativePath).ToLowerInvariant();
+            string lower = content.ToLowerInvariant();
+            if (extension is ".html" or ".htm")
+                return lower.Contains("<html", StringComparison.Ordinal) || lower.Contains("<!doctype", StringComparison.Ordinal);
+            if (extension == ".css")
+                return content.Contains('{', StringComparison.Ordinal) && content.Contains('}', StringComparison.Ordinal);
+            if (extension is ".json" or ".jsonc")
+                return content.TrimStart().StartsWith("{", StringComparison.Ordinal) || content.TrimStart().StartsWith("[", StringComparison.Ordinal);
+            if (extension is ".md" or ".txt")
+                return true;
+
+            if (!string.IsNullOrWhiteSpace(originalContent) && content.Length < Math.Min(80, originalContent.Length / 3))
+                return false;
+
+            return true;
+        }
+
+        private static string GuessRecoveredContentExtension(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+                return string.Empty;
+
+            string trimmed = content.TrimStart();
+            if (trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+                return ".html";
+            if (trimmed.StartsWith("{", StringComparison.Ordinal) || trimmed.StartsWith("[", StringComparison.Ordinal))
+                return ".json";
+            if (trimmed.Contains('{', StringComparison.Ordinal) && trimmed.Contains('}', StringComparison.Ordinal))
+                return ".css";
+            return string.Empty;
+        }
+
+        private static bool IsRecoveredExtensionCompatible(string candidateExtension, string recoveredExtension)
+        {
+            if (string.IsNullOrWhiteSpace(candidateExtension) || string.IsNullOrWhiteSpace(recoveredExtension))
+                return false;
+
+            if (string.Equals(candidateExtension, recoveredExtension, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return (candidateExtension.Equals(".htm", StringComparison.OrdinalIgnoreCase)
+                    && recoveredExtension.Equals(".html", StringComparison.OrdinalIgnoreCase))
+                || (candidateExtension.Equals(".html", StringComparison.OrdinalIgnoreCase)
+                    && recoveredExtension.Equals(".htm", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string BuildRecoveredCodebasePatchEnvelope(string relativePath, string action, string content)
+        {
+            string fence = content.Contains("````", StringComparison.Ordinal) ? "`````" : "````";
+            string language = GuessFenceLanguage(relativePath);
+            var sb = new StringBuilder();
+            sb.AppendLine("[[AXIOM_CODEBASE_PATCH]]");
+            sb.AppendLine("FILE: " + relativePath.Replace('\\', '/'));
+            sb.AppendLine("ACTION: " + action);
+            sb.AppendLine(fence + language);
+            sb.AppendLine(content.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd());
+            sb.AppendLine(fence);
+            sb.AppendLine("[[END FILE]]");
+            sb.AppendLine("[[END AXIOM_CODEBASE_PATCH]]");
+            return sb.ToString();
+        }
+
+        private static string GuessFenceLanguage(string relativePath)
+        {
+            return Path.GetExtension(relativePath).ToLowerInvariant() switch
+            {
+                ".html" or ".htm" => "html",
+                ".css" or ".scss" => "css",
+                ".js" or ".jsx" or ".mjs" => "javascript",
+                ".ts" or ".tsx" => "typescript",
+                ".cs" => "csharp",
+                ".py" => "python",
+                ".json" or ".jsonc" => "json",
+                ".xml" or ".xaml" => "xml",
+                ".md" => "markdown",
+                ".yml" or ".yaml" => "yaml",
+                _ => ""
+            };
+        }
+
+        private string BuildCodebasePatchReviewText(WorkspacePatchProposal proposal)
+        {
+            var sb = new StringBuilder();
+            string mode = _connectedWorkspace.LockedMode?.ToString()
+                ?? (_isCloudModeEnabled ? WorkspaceAgentMode.Cloud.ToString() : WorkspaceAgentMode.Local.ToString());
+            string source = !string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath)
+                ? _connectedWorkspace.RootPath
+                : !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
+                    ? _connectedWorkspace.RepositoryUrl
+                    : _connectedWorkspace.DisplayName;
+
+            sb.AppendLine("# Codebase Patch Review");
+            sb.AppendLine();
+            sb.AppendLine($"Pending changes: {proposal.Files.Count:n0} file(s)");
+            sb.AppendLine($"Locked mode: {mode}");
+            sb.AppendLine($"Connected workspace: {source}");
+            if (_connectedWorkspace.IndexedFileCount > 0)
+                sb.AppendLine($"Indexed context: {_connectedWorkspace.IndexedFileCount:n0} file(s), {FormatByteCount(_connectedWorkspace.IndexedByteCount)}");
+            sb.AppendLine();
+            sb.AppendLine(_connectedWorkspace.AutoApplyCodebaseChanges
+                ? "Auto mode is enabled. The app will write these changes after parsing and path checks."
+                : "Use Accept to write these changes to the connected codebase, or Reject to discard the proposal.");
+            sb.AppendLine();
+
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                sb.AppendLine($"## {patch.RelativePath} ({patch.Action})");
+                sb.AppendLine();
+                sb.AppendLine("````diff");
+                sb.AppendLine($"--- {patch.RelativePath}");
+                sb.AppendLine($"+++ {patch.RelativePath}");
+                sb.AppendLine(BuildPatchFileDiff(patch));
+                sb.AppendLine("````");
+                sb.AppendLine();
+            }
+
+            return sb.ToString().TrimEnd();
+        }
+
+        private string BuildPatchFileDiff(WorkspaceFilePatch patch)
+        {
+            string original = string.Empty;
+            try
+            {
+                string target = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+                if (File.Exists(target))
+                    original = File.ReadAllText(target);
+            }
+            catch (Exception ex)
+            {
+                return $"! Unable to read current file for diff: {ex.Message}";
+            }
+
+            IReadOnlyList<LineDiffEntry> diff = LineDiff.Build(original, patch.Content);
+            if (diff.Count == 0)
+                return "  No differences.";
+
+            const int contextLines = 3;
+            const int maxVisibleLines = 700;
+            var visibleIndices = new HashSet<int>();
+
+            for (int i = 0; i < diff.Count; i++)
+            {
+                if (diff[i].Kind == LineDiffKind.Unchanged)
+                    continue;
+
+                int start = Math.Max(0, i - contextLines);
+                int end = Math.Min(diff.Count - 1, i + contextLines);
+                for (int index = start; index <= end; index++)
+                    visibleIndices.Add(index);
+            }
+
+            if (visibleIndices.Count == 0)
+                return "  No differences.";
+
+            var diffText = new StringBuilder();
+            int previousVisibleIndex = -2;
+            int rendered = 0;
+            foreach (int index in visibleIndices.OrderBy(value => value))
+            {
+                if (rendered >= maxVisibleLines)
+                {
+                    diffText.AppendLine("... diff truncated for review ...");
+                    break;
+                }
+
+                if (index > previousVisibleIndex + 1)
+                    diffText.AppendLine("@@ ...");
+
+                LineDiffEntry entry = diff[index];
+                string prefix = entry.Kind switch
+                {
+                    LineDiffKind.Removed => "-",
+                    LineDiffKind.Added => "+",
+                    _ => " "
+                };
+                string text = entry.Text ?? string.Empty;
+                if (text.Length > 1000)
+                    text = text[..1000] + "...";
+                diffText.AppendLine(prefix + text);
+                previousVisibleIndex = index;
+                rendered++;
+            }
+
+            return diffText.ToString().TrimEnd();
+        }
+
+        private void AcceptCodebaseChanges_Click(object sender, RoutedEventArgs e)
+        {
+            TryApplyPendingCodebaseChanges(automatic: false);
+        }
+
+        private bool TryApplyPendingCodebaseChanges(bool automatic)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Codebase Edit Access is not enabled in this Workplace chat.");
+                return false;
+            }
+
+            if (!_hasPendingCodebaseChanges)
+            {
+                AppendChat("system", "No proposed codebase changes are waiting to accept.");
+                return false;
+            }
+
+            if (_pendingCodebasePatch == null)
+            {
+                AppendChat("system", "No parsed codebase patch is available to apply.");
+                return false;
+            }
+
+            try
+            {
+                WorkspacePatchProposal proposal = _pendingCodebasePatch;
+                WorkspaceGitStatus gitBefore = GetConnectedWorkspaceGitStatus();
+                WorkspacePatchApplyResult result = _workspaceAccessService.ApplyPatchProposal(_connectedWorkspace, proposal);
+                _pendingCodebasePatch = null;
+                _hasPendingCodebaseChanges = false;
+                RefreshConnectedWorkspaceIndexAfterPatch();
+                WorkspaceGitStatus gitAfter = GetConnectedWorkspaceGitStatus();
+                RefreshCodebaseAccessUi();
+                CanvasTitleBlock.Text = automatic ? "Codebase Patch Applied" : "Codebase Patch Review";
+                CanvasSubtitleBlock.Text = automatic
+                    ? $"{result.ChangedFiles.Count:n0} file change(s) auto-applied."
+                    : $"{result.ChangedFiles.Count:n0} file change(s) applied.";
+                AppendChat("system", BuildCodebaseApplySummary(result, proposal, automatic, gitBefore, gitAfter));
+                SavePersistedSession();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppendChat("error", automatic
+                    ? "Auto apply failed, so the patch is still pending for manual review: " + ex.Message
+                    : "Accepting codebase changes failed: " + ex.Message);
+                RefreshCodebaseAccessUi();
+                SavePersistedSession();
+                return false;
+            }
+        }
+
+        private WorkspaceGitStatus GetConnectedWorkspaceGitStatus()
+        {
+            if (string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath))
+                return new WorkspaceGitStatus(false, string.Empty, 0, string.Empty, string.Empty);
+
+            return _workspaceAccessService.GetGitStatus(_connectedWorkspace.RootPath);
+        }
+
+        private static string BuildCodebaseApplySummary(
+            WorkspacePatchApplyResult result,
+            WorkspacePatchProposal proposal,
+            bool automatic,
+            WorkspaceGitStatus gitBefore,
+            WorkspaceGitStatus gitAfter)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(automatic ? "Auto applied codebase changes." : result.Summary);
+            sb.AppendLine();
+            sb.AppendLine("Changed files:");
+            foreach (string file in result.ChangedFiles)
+                sb.AppendLine("- " + file);
+
+            string gitLine = BuildGitStatusTransition(gitBefore, gitAfter);
+            if (!string.IsNullOrWhiteSpace(gitLine))
+            {
+                sb.AppendLine();
+                sb.AppendLine(gitLine);
+                string statusPreview = BuildGitStatusPreview(gitAfter);
+                if (!string.IsNullOrWhiteSpace(statusPreview))
+                    sb.AppendLine(statusPreview);
+            }
+
+            if (automatic && proposal.Files.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Auto mode remains enabled. Turn it off in Connected Workspace to return to manual review.");
+            }
+
+            return sb.ToString().TrimEnd();
+        }
+
+        private static string BuildGitStatusTransition(WorkspaceGitStatus before, WorkspaceGitStatus after)
+        {
+            if (!before.IsRepository && !after.IsRepository)
+                return string.Empty;
+
+            WorkspaceGitStatus status = after.IsRepository ? after : before;
+            string branch = string.IsNullOrWhiteSpace(status.Branch) ? "detached HEAD" : status.Branch;
+            string beforeCount = before.IsRepository ? before.ChangedFileCount.ToString("n0") : "unknown";
+            string afterCount = after.IsRepository ? after.ChangedFileCount.ToString("n0") : "unknown";
+            string suffix = string.IsNullOrWhiteSpace(after.Error) ? string.Empty : $" ({after.Error})";
+            return $"Git checkpoint: branch {branch}, changed files {beforeCount} -> {afterCount}{suffix}.";
+        }
+
+        private static string BuildGitStatusPreview(WorkspaceGitStatus status)
+        {
+            if (!status.IsRepository || string.IsNullOrWhiteSpace(status.ShortStatus))
+                return string.Empty;
+
+            string[] lines = status.ShortStatus
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Take(8)
+                .ToArray();
+            if (lines.Length == 0)
+                return string.Empty;
+
+            string preview = "Git status:\n" + string.Join("\n", lines.Select(line => "- " + line.TrimEnd()));
+            int total = status.ShortStatus.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
+            if (total > lines.Length)
+                preview += $"\n- ...and {total - lines.Length:n0} more";
+            return preview;
+        }
+
+        private void RejectCodebaseChanges_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Codebase Edit Access is not enabled in this Workplace chat.");
+                return;
+            }
+
+            if (!_hasPendingCodebaseChanges)
+            {
+                AppendChat("system", "No proposed codebase changes are waiting to reject.");
+                return;
+            }
+
+            _pendingCodebasePatch = null;
+            _hasPendingCodebaseChanges = false;
+            RefreshCodebaseAccessUi();
+            AppendChat("system", "Proposed codebase changes rejected.");
+            SavePersistedSession();
+        }
+
+        private void RefreshConnectedWorkspaceIndexAfterPatch()
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath)
+                    && Directory.Exists(_connectedWorkspace.RootPath))
+                {
+                    WorkspaceIndexResult index = _workspaceAccessService.IndexWorkspace(_connectedWorkspace.RootPath);
+                    _connectedWorkspace.DisplayName = index.DisplayName;
+                    _connectedWorkspace.IndexedFileCount = index.Files.Count;
+                    _connectedWorkspace.IndexedByteCount = index.TotalBytes;
+                    _connectedWorkspace.IndexedAt = DateTime.Now;
+                    _connectedWorkspace.StatusMessage = $"Applied patch and re-indexed {index.Files.Count:n0} files at {_connectedWorkspace.IndexedAt:HH:mm}.";
+                }
+                else if (_connectedWorkspace.ConnectedFiles.Count > 0)
+                {
+                    WorkspaceIndexResult index = _workspaceAccessService.IndexFiles(_connectedWorkspace.ConnectedFiles);
+                    _connectedWorkspace.DisplayName = index.DisplayName;
+                    _connectedWorkspace.IndexedFileCount = index.Files.Count;
+                    _connectedWorkspace.IndexedByteCount = index.TotalBytes;
+                    _connectedWorkspace.IndexedAt = DateTime.Now;
+                    _connectedWorkspace.StatusMessage = $"Applied patch and re-indexed {index.Files.Count:n0} connected file(s) at {_connectedWorkspace.IndexedAt:HH:mm}.";
+                }
+            }
+            catch (Exception ex)
+            {
+                _connectedWorkspace.StatusMessage = "Patch applied, but re-indexing failed: " + ex.Message;
+            }
+        }
+
         private async void WorkplaceCloudModeButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isProcessing)
             {
                 AppendChat("system", "Cannot switch workplace cloud mode during an active council run.");
+                return;
+            }
+
+            if (_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Cloud/local mode is locked because Codebase Edit Access is enabled. Start a new Workplace chat to change it.");
+                RefreshWorkplaceCloudModeUi();
                 return;
             }
 
@@ -3569,6 +4959,17 @@ namespace Malx_AI
 
             return Regex.IsMatch(combined, @"\b(?:write|create|build|generate|produce)\s+(?:a\s+|an\s+|the\s+)?(?:compilable\s+)?(?:c#|csharp|\.cs|source|code|program|class|implementation)(?!\w)", RegexOptions.IgnoreCase)
                 || Regex.IsMatch(combined, @"\b(?:implement|code)\s+(?:this|the|a|an)\b", RegexOptions.IgnoreCase);
+        }
+
+        private static bool LooksLikeWorkspaceCodingRequest(string userQuery, string objective = "")
+        {
+            string combined = $"{userQuery} {objective}".ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(combined))
+                return false;
+
+            return Regex.IsMatch(combined, @"\b(?:fix|debug|repair|refactor|implement|add|update|change|modify|wire|connect|remove|rename|test|tests|build|compile|review)\b", RegexOptions.IgnoreCase)
+                || Regex.IsMatch(combined, @"\b(?:bug|error|exception|failing|failure|codebase|repo|repository|project|solution|class|method|component|view|service|controller|xaml|csproj)\b", RegexOptions.IgnoreCase)
+                || Regex.IsMatch(combined, @"\.(?:cs|xaml|csproj|slnx|py|js|ts|tsx|jsx|json|css|html|htm)\b", RegexOptions.IgnoreCase);
         }
 
         private static bool DetectArtifactCanvasIntent(string userQuery, string objective)
@@ -6602,6 +8003,11 @@ namespace Malx_AI
                 userPrompt = userPrompt[..2000] + "\n[...prompt truncated for Critic context budget]";
             sb.AppendLine(BuildLabeledBlock("USER PROMPT", userPrompt));
 
+            if (!string.IsNullOrWhiteSpace(state.WorkspaceContext))
+            {
+                sb.AppendLine(BuildLabeledBlock("CONNECTED CODEBASE CONTEXT", state.WorkspaceContext));
+            }
+
             if (!string.IsNullOrWhiteSpace(state.CalculatorContext))
             {
                 sb.AppendLine(state.CalculatorContext.Trim());
@@ -7447,6 +8853,12 @@ namespace Malx_AI
                 : projectCanvasFollowUp && !isArtifactCanvasRequest
                     ? CouncilTaskType.Coding
                     : DetectTaskType(intentQuery, objective, isArtifactCanvasRequest);
+            if (!isDocumentTask
+                && _connectedWorkspace.CodebaseEditAccessEnabled
+                && LooksLikeWorkspaceCodingRequest(intentQuery, objective))
+            {
+                taskType = CouncilTaskType.Coding;
+            }
             if (refinementPass && _lastRunContext != null && !directArtifactCanvasRequest)
             {
                 taskType = IsExplicitCodingImplementationRequest(intentQuery, objective)
@@ -7534,8 +8946,15 @@ namespace Malx_AI
             {
                 UserPrompt = enrichedUserPrompt,
                 Objective = objective,
-                CalculatorContext = calculatorContext
+                CalculatorContext = calculatorContext,
+                WorkspaceContext = BuildConnectedWorkspaceContext(userQuery, objective, runContext)
             };
+            if (runContext.IsWorkspaceTask)
+            {
+                AppendChat("system", runContext.WorkspaceFilesRead.Count > 0
+                    ? $"Connected codebase context attached: {runContext.WorkspaceFilesRead.Count} file(s)."
+                    : "Codebase Edit Access is enabled, but no readable local code files are connected yet.");
+            }
             CouncilBaseStateVault? baseStateVault = null;
 
             UpdateTaskTypeBadge(taskType);
@@ -7929,6 +9348,7 @@ namespace Malx_AI
                 string builderOutput = "";
                 string builderPriorKnowledge = "";
                 int builderRetryAttempts = 0;
+                bool codebasePatchCaptured = false;
                 // Tracks whether the current builderOutput came purely from the cloud reasoning fallback
                 // (chain-of-thought with no final content). Cleared whenever real content replaces it.
                 bool builderReasoningFallback = false;
@@ -8011,7 +9431,9 @@ namespace Malx_AI
                         // Anchor block: placed at the very top of the payload so the model's
                         // first-read context locks onto the expected output format before it
                         // processes the architect plan or user prompt.
-                        if (runContext.IsArtifactCanvasRequest)
+                        if (runContext.IsWorkspaceTask)
+                            builderPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+                        else if (runContext.IsArtifactCanvasRequest)
                             builderPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
                         if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
                             builderPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
@@ -8065,6 +9487,9 @@ namespace Malx_AI
                                 : "Modify the current source above and output the COMPLETE updated source (not a diff or fragment). Preserve its language, artifact type, behavior, and every part the user did not ask to change. The final source must materially differ from the current source in the requested way.");
                         }
 
+                        if (runContext.IsWorkspaceTask)
+                            builderPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+
                         builderPayload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: _isWebSearchEnabled && !_isCloudModeEnabled));
 
                         var builderResult = await ExecuteCouncilRoleAsync(
@@ -8082,13 +9507,40 @@ namespace Malx_AI
                     string builderContractCleaned = "";
                     // Artifact canvas requests produce HTML/SVG code — exempt them from the role-drift
                     // and IsLikelyCodeOutput checks that exist to catch code leaking into prose tasks.
-                    bool builderNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out bool builderMarkerFound);
-                    bool builderOutputDetectedAsCode = builderNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
-                    bool builderContractOk = builderNormalized
-                        && (runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !BuilderHasRoleDrift(builderContractCleaned, taskType))
-                        && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !IsLikelyCodeOutput(builderContractCleaned))
-                        && !IsDegenerateBuilderOutput(builderContractCleaned, taskType)
-                        && !IsRepetitionLoop(builderContractCleaned, previousBuilderOutput);
+                    bool builderMarkerFound;
+                    bool builderNormalized;
+                    bool builderOutputDetectedAsCode;
+                    bool builderContractOk;
+                    if (runContext.IsWorkspaceTask
+                        && _workspaceAccessService.TryParsePatchProposal(builderOutput, out _, out _))
+                    {
+                        builderContractCleaned = builderOutput.Trim();
+                        builderMarkerFound = true;
+                        builderNormalized = true;
+                        builderOutputDetectedAsCode = false;
+                        builderContractOk = true;
+                    }
+                    else if (runContext.IsWorkspaceTask
+                        && TryRecoverCodebasePatchProposal(builderOutput, runContext, out WorkspacePatchProposal? recoveredBeforeRetry, out string preRetryRecoveryReason)
+                        && recoveredBeforeRetry != null)
+                    {
+                        builderContractCleaned = recoveredBeforeRetry.RawText.Trim();
+                        builderMarkerFound = true;
+                        builderNormalized = true;
+                        builderOutputDetectedAsCode = false;
+                        builderContractOk = true;
+                        LogActivity("Workspace Builder output recovered before correction retry: " + preRetryRecoveryReason);
+                    }
+                    else
+                    {
+                        builderNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound);
+                        builderOutputDetectedAsCode = builderNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
+                        builderContractOk = builderNormalized
+                            && (runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !BuilderHasRoleDrift(builderContractCleaned, taskType))
+                            && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !IsLikelyCodeOutput(builderContractCleaned))
+                            && !IsDegenerateBuilderOutput(builderContractCleaned, taskType)
+                            && !IsRepetitionLoop(builderContractCleaned, previousBuilderOutput);
+                    }
 
                     if (!builderContractOk)
                     {
@@ -8107,7 +9559,14 @@ namespace Malx_AI
                         AppendCouncilWebContext(correctionPayload, runContext);
                         if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
                             correctionPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
-                        if (runContext.IsArtifactCanvasRequest)
+                        if (runContext.IsWorkspaceTask)
+                        {
+                            correctionPayload.AppendLine("ROLE CORRECTION: Builder must output a connected-workspace patch proposal only. No standalone code fence, prose, numbered list, or raw file content.");
+                            correctionPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+                            if (!string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
+                                correctionPayload.AppendLine(BuildLabeledBlock("CONNECTED CODEBASE CONTEXT", runContext.WorkspaceContext));
+                        }
+                        else if (runContext.IsArtifactCanvasRequest)
                         {
                             correctionPayload.AppendLine("ROLE CORRECTION: Builder must output the renderable artifact as exactly ONE ```html, ```svg, or ```python code fence with NOTHING outside the fence. " +
                                 "Do NOT output a numbered plan, a step list, prose, or any restatement of the request or the Architect's plan.");
@@ -8145,14 +9604,44 @@ namespace Malx_AI
                         builderOutput = builderRetry.Answer;
                         builderReasoningFallback = builderRetry.IsReasoningFallback;
 
-                        bool retryNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound);
-                        builderOutputDetectedAsCode = retryNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
+                        bool retryNormalized;
+                        if (runContext.IsWorkspaceTask
+                            && _workspaceAccessService.TryParsePatchProposal(builderOutput, out _, out _))
+                        {
+                            builderContractCleaned = builderOutput.Trim();
+                            builderMarkerFound = true;
+                            retryNormalized = true;
+                            builderOutputDetectedAsCode = false;
+                        }
+                        else if (runContext.IsWorkspaceTask
+                            && TryRecoverCodebasePatchProposal(builderOutput, runContext, out WorkspacePatchProposal? recoveredRetryProposal, out string retryRecoveryReason)
+                            && recoveredRetryProposal != null)
+                        {
+                            builderContractCleaned = recoveredRetryProposal.RawText.Trim();
+                            builderMarkerFound = true;
+                            retryNormalized = true;
+                            builderOutputDetectedAsCode = false;
+                            LogActivity("Workspace Builder retry output recovered: " + retryRecoveryReason);
+                        }
+                        else
+                        {
+                            retryNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound);
+                            builderOutputDetectedAsCode = retryNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
+                        }
+
                         if (!retryNormalized
                             || (!runContext.IsArtifactCanvasRequest && !builderOutputDetectedAsCode && BuilderHasRoleDrift(builderContractCleaned, taskType))
                             || (taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest && !builderOutputDetectedAsCode && IsLikelyCodeOutput(builderContractCleaned))
                             || IsDegenerateBuilderOutput(builderContractCleaned, taskType))
                         {
-                            if (isCalcTask && TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound))
+                            if (runContext.IsWorkspaceTask)
+                            {
+                                builderContractCleaned = "[[CODEBASE PATCH FORMAT ERROR]]\nBuilder did not return a valid codebase patch proposal. No files were changed.";
+                                builderMarkerFound = true;
+                                LogActivity("Workspace Builder correction failed to produce a valid patch envelope; raw output suppressed.");
+                                AppendChat("warning", "Builder did not return a valid codebase patch format. No files were changed; try a smaller, specific file change.");
+                            }
+                            else if (isCalcTask && TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound))
                             {
                                 LogActivity("Builder correction fallback: accepted normalized calculation output despite strict validation miss.");
                                 AppendChat("warning", "Builder correction fallback applied for calculation response.");
@@ -8228,6 +9717,48 @@ namespace Malx_AI
 
                     builderOutput = builderContractCleaned;
                     builderOutput = PostProcessBuilderOutput(builderOutput, runContext);
+                    if (runContext.IsWorkspaceTask)
+                    {
+                        codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
+                        if (!codebasePatchCaptured)
+                        {
+                            LogActivity("Workspace Builder output was not a patch envelope; running one patch-format retry.");
+                            AppendChat("system", "Builder returned raw code instead of a reviewable codebase patch. Asking for a patch-format retry...");
+
+                            var patchFormatRetryPayload = new StringBuilder();
+                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
+                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("APPROVED ARCHITECTURE", runContext.ArchitectOutput));
+                            if (!string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
+                                patchFormatRetryPayload.AppendLine(BuildLabeledBlock("CONNECTED CODEBASE CONTEXT", runContext.WorkspaceContext));
+                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REJECTED BUILDER OUTPUT", builderOutput));
+                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REQUIRED OUTPUT FORMAT", BuildCodebasePatchOutputContract()));
+                            patchFormatRetryPayload.AppendLine("Return only the [[AXIOM_CODEBASE_PATCH]] envelope. Do not include standalone file content, explanations, or markdown outside the envelope.");
+                            patchFormatRetryPayload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: false));
+
+                            var patchFormatRetry = await ExecuteCouncilRoleAsync(
+                                CouncilRole.Builder,
+                                builderSystem,
+                                patchFormatRetryPayload.ToString(),
+                                token,
+                                0.15f,
+                                baseStateVault,
+                                true);
+
+                            builderOutput = PostProcessBuilderOutput(patchFormatRetry.Answer, runContext);
+                            builderReasoningFallback = patchFormatRetry.IsReasoningFallback;
+                            codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
+                            if (!codebasePatchCaptured)
+                            {
+                                builderOutput = "[[CODEBASE PATCH FORMAT ERROR]]\nBuilder did not return a valid codebase patch proposal. No files were changed.";
+                                AppendChat("warning", "Builder still did not return a valid codebase patch format. I suppressed the raw output so it cannot be mistaken for an applied change.");
+                                LogActivity("Workspace patch-format retry failed; raw output suppressed.");
+                                RenderCodebasePatchFailureReview(
+                                    patchFormatRetry.Answer,
+                                    "The Builder response did not contain a valid `[[AXIOM_CODEBASE_PATCH]]` envelope after a retry.");
+                                codebasePatchCaptured = true;
+                            }
+                        }
+                    }
 
                     if (runContext.WebGroundingRequired
                         && !HasCouncilWebEvidenceForRun(runContext)
@@ -8502,7 +10033,12 @@ namespace Malx_AI
                     // Previously only CouncilTaskType.Coding routed to canvas, so artifact requests
                     // classified as General/Research/Analysis (e.g. "make a datasheet") were silently
                     // sent to chat instead. Now IsArtifactCanvasRequest also triggers the canvas path.
-                    if (runContext.CanvasMutationFailed)
+                    if (codebasePatchCaptured)
+                    {
+                        _chatHistory.Add(("builder", builderOutput));
+                        UpdateWorkplaceTokenUsageIndicator();
+                    }
+                    else if (runContext.CanvasMutationFailed)
                     {
                         _chatHistory.Add(("builder", "[Canvas mutation rejected; existing Project Canvas preserved.]"));
                         UpdateWorkplaceTokenUsageIndicator();
@@ -8575,7 +10111,9 @@ namespace Malx_AI
                 // ═══════════════════════════════════════════════════════════
                 // STATIC VALIDATION — deterministic checks before Critic
                 // ═══════════════════════════════════════════════════════════
-                if (runContext.IsArtifactCanvasRequest && !string.IsNullOrWhiteSpace(builderOutput))
+                if (!codebasePatchCaptured
+                    && runContext.IsArtifactCanvasRequest
+                    && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     var staticFindings = runContext.StaticValidationFindings
                         .Where(finding => !LooksLikeArtifactValidationFinding(finding))
@@ -8600,7 +10138,8 @@ namespace Malx_AI
                         AppendChat("system", $"Artifact validation: {staticFindings.Count} issue(s) pre-flagged for Critic.");
                     }
                 }
-                else if ((taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
+                else if (!codebasePatchCaptured
+                    && (taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
                     && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     var staticFindings = runContext.StaticValidationFindings.ToList();
@@ -8654,7 +10193,9 @@ namespace Malx_AI
 
                 // --- Code Sandbox: execute builder code and inject results into critic ---
                 string sandboxResult = "";
-                if ((taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest) && !string.IsNullOrWhiteSpace(builderOutput))
+                if (!codebasePatchCaptured
+                    && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
+                    && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     string detectedLang = DetectLanguage(builderOutput);
                     if (detectedLang is "python" or "java" or "html")
@@ -8791,7 +10332,8 @@ namespace Malx_AI
                 string criticOutput = "";
                 bool hasCritic = HasEffectiveLocalRoleModel(CouncilRole.Critic) || CanUseCloudCouncil;
                 bool hasBuilder = HasEffectiveLocalRoleModel(CouncilRole.Builder) || CanUseCloudCouncil;
-                bool skipCriticForSandbox = taskType == CouncilTaskType.Coding && !sandboxFailed && sandboxAutoFixRetries > 0;
+                bool skipCriticForSandbox = (taskType == CouncilTaskType.Coding && !sandboxFailed && sandboxAutoFixRetries > 0)
+                    || codebasePatchCaptured;
 
                 if (hasCritic && !string.IsNullOrWhiteSpace(builderOutput) && !skipCriticForSandbox)
                 {
@@ -10107,6 +11649,15 @@ namespace Malx_AI
             // Strip echoed pipeline metadata FIRST — models often regurgitate [[LABEL]] blocks,
             // pipeline state headers, role reminders, and other structural payload content.
             string output = TrimRepeatedRestartTail(StripPipelineMetadata(raw));
+
+            if (context.IsWorkspaceTask
+                && (output.Contains("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase)
+                    || output.Contains("[[CODEBASE PATCH FORMAT ERROR]]", StringComparison.OrdinalIgnoreCase)))
+            {
+                output = output.Replace(BuilderCompletionMarker, "", StringComparison.OrdinalIgnoreCase).Trim();
+                context.BuilderOutputTruncated = DetectTruncation(output);
+                return output;
+            }
 
             // For coding tasks AND artifact-canvas requests, extract code from fenced blocks (before
             // markers get stripped). StripChatFromCode properly extracts content between ``` fences and
@@ -12683,7 +14234,7 @@ namespace Malx_AI
             // Default a renderable artifact straight to preview mode. Doing this BEFORE the UI
             // refresh guarantees the preview host (and its WebView2) is visible/realized at the
             // moment we navigate, which was the root cause of the intermittent blank canvas.
-            _isCanvasPreviewMode = _canvasArtifact.SupportsPreview;
+            _isCanvasPreviewMode = _canvasArtifact.SupportsPreview && !_connectedWorkspace.CodebaseEditAccessEnabled;
 
             RefreshCanvasArtifactUi();
             _ = RenderCanvasArtifactPreviewAsync();
@@ -12735,9 +14286,13 @@ namespace Malx_AI
         private void RefreshCanvasArtifactUi()
         {
             bool hasArtifact = _canvasArtifact.SupportsPreview;
+            bool suppressPreviewForCodebase = _connectedWorkspace.CodebaseEditAccessEnabled;
+            if (suppressPreviewForCodebase)
+                _isCanvasPreviewMode = false;
+
             bool showNativePreview = !_suppressCanvasNativePreviewForOverlay && !_isDiffViewActive && hasArtifact && _isCanvasPreviewMode;
             if (FindName("CanvasArtifactTogglePanel") is StackPanel togglePanel)
-                togglePanel.Visibility = hasArtifact ? Visibility.Visible : Visibility.Collapsed;
+                togglePanel.Visibility = hasArtifact && !suppressPreviewForCodebase ? Visibility.Visible : Visibility.Collapsed;
             if (FindName("CopyCanvasArtifactSourceButton") is Button copyButton)
                 copyButton.Visibility = hasArtifact ? Visibility.Visible : Visibility.Collapsed;
             if (FindName("SaveCanvasArtifactButton") is Button saveButton)
@@ -12745,7 +14300,10 @@ namespace Malx_AI
             if (FindName("CanvasCodeViewButton") is Button codeButton)
                 codeButton.Opacity = !_isCanvasPreviewMode ? 1.0 : 0.65;
             if (FindName("CanvasPreviewViewButton") is Button previewButton)
+            {
                 previewButton.Opacity = _isCanvasPreviewMode ? 1.0 : 0.65;
+                previewButton.Visibility = suppressPreviewForCodebase ? Visibility.Collapsed : Visibility.Visible;
+            }
             if (FindName("CanvasArtifactPreviewHost") is Grid previewHost)
                 previewHost.Visibility = showNativePreview ? Visibility.Visible : Visibility.Collapsed;
             ProjectCanvasEditor.Visibility = _isDiffViewActive || (hasArtifact && _isCanvasPreviewMode)
@@ -13525,7 +15083,8 @@ namespace Malx_AI
                 CanvasDiffBaseSource = _canvasDiffBaseSource,
                 CanvasDiffCurrentSource = _canvasDiffCurrentSource,
                 CanvasDiffAdditionCount = _canvasDiffAdditionCount,
-                CanvasDiffRemovalCount = _canvasDiffRemovalCount
+                CanvasDiffRemovalCount = _canvasDiffRemovalCount,
+                ConnectedWorkspace = CloneConnectedWorkspaceState()
             };
 
             snapshot.CouncilModels["Architect"] = new WorkplaceCouncilModelDto

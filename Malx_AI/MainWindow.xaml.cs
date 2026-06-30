@@ -2572,6 +2572,23 @@ namespace Malx_AI
                 CanvasDiffCurrentSource = snapshot.CanvasDiffCurrentSource,
                 CanvasDiffAdditionCount = snapshot.CanvasDiffAdditionCount,
                 CanvasDiffRemovalCount = snapshot.CanvasDiffRemovalCount,
+                ConnectedWorkspace = snapshot.ConnectedWorkspace == null
+                    ? new ConnectedWorkspaceState()
+                    : new ConnectedWorkspaceState
+                    {
+                        CodebaseEditAccessEnabled = snapshot.ConnectedWorkspace.CodebaseEditAccessEnabled,
+                        LockedMode = snapshot.ConnectedWorkspace.LockedMode,
+                        ConnectionKind = snapshot.ConnectedWorkspace.ConnectionKind,
+                        RootPath = snapshot.ConnectedWorkspace.RootPath,
+                        RepositoryUrl = snapshot.ConnectedWorkspace.RepositoryUrl,
+                        DisplayName = snapshot.ConnectedWorkspace.DisplayName,
+                        IndexedFileCount = snapshot.ConnectedWorkspace.IndexedFileCount,
+                        IndexedByteCount = snapshot.ConnectedWorkspace.IndexedByteCount,
+                        EnabledAt = snapshot.ConnectedWorkspace.EnabledAt,
+                        IndexedAt = snapshot.ConnectedWorkspace.IndexedAt,
+                        StatusMessage = snapshot.ConnectedWorkspace.StatusMessage,
+                        ConnectedFiles = (snapshot.ConnectedWorkspace.ConnectedFiles ?? []).ToList()
+                    },
                 SavedAt = snapshot.SavedAt
             };
         }
@@ -2911,21 +2928,28 @@ namespace Malx_AI
             await QueueCoordinatedChatPersistenceAsync(includeChatSession: true, includeWorkspaceState: false, includeAdvancedState: false, includeKvState: true).ConfigureAwait(false);
         }
 
-        private async Task QueueCoordinatedChatPersistenceAsync(bool includeChatSession, bool includeWorkspaceState, bool includeAdvancedState, bool includeKvState)
+        private async Task QueueCoordinatedChatPersistenceAsync(bool includeChatSession, bool includeWorkspaceState, bool includeAdvancedState, bool includeKvState, bool waitForGateWhenBusy = true)
         {
             int requestedVersion = Interlocked.Increment(ref _coordinatedPersistenceVersion);
-            await Task.Yield();
 
-            if (!await _coordinatedPersistenceGate.WaitAsync(0).ConfigureAwait(false))
+            if (waitForGateWhenBusy)
+            {
+                await _coordinatedPersistenceGate.WaitAsync().ConfigureAwait(false);
+            }
+            else if (!await _coordinatedPersistenceGate.WaitAsync(0).ConfigureAwait(false))
+            {
                 return;
+            }
 
             try
             {
                 while (true)
                 {
-                    CoordinatedChatPersistenceSnapshot snapshot = await Dispatcher.InvokeAsync(
-                        () => CaptureCoordinatedChatPersistenceSnapshot(includeChatSession, includeWorkspaceState, includeAdvancedState, includeKvState),
-                        System.Windows.Threading.DispatcherPriority.Background);
+                    CoordinatedChatPersistenceSnapshot snapshot = Dispatcher.CheckAccess()
+                        ? CaptureCoordinatedChatPersistenceSnapshot(includeChatSession, includeWorkspaceState, includeAdvancedState, includeKvState)
+                        : await Dispatcher.InvokeAsync(
+                            () => CaptureCoordinatedChatPersistenceSnapshot(includeChatSession, includeWorkspaceState, includeAdvancedState, includeKvState),
+                            System.Windows.Threading.DispatcherPriority.Background);
 
                     if (snapshot.PendingPayload != null)
                         _chatContent[snapshot.PendingPayload.ChatId] = snapshot.PendingPayload.ConversationTranscript;
@@ -4015,7 +4039,7 @@ namespace Malx_AI
             SaveCurrentChat();
             try
             {
-                QueueCoordinatedChatPersistenceAsync(includeChatSession: true, includeWorkspaceState: true, includeAdvancedState: true, includeKvState: false).GetAwaiter().GetResult();
+                QueueCoordinatedChatPersistenceAsync(includeChatSession: true, includeWorkspaceState: true, includeAdvancedState: true, includeKvState: false, waitForGateWhenBusy: false).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {

@@ -127,6 +127,36 @@
 
                     <Rectangle Height="1" Fill="{StaticResource NotebookBorderBrush}" Margin="0,16,0,16"/>
 
+                    <!-- Connected Workspace -->
+                    <TextBlock Text="Connected Workspace" FontSize="12" FontWeight="SemiBold"/>
+                    <Border Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,12,0,0">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock Text="Codebase Edit Access" FontSize="11" FontWeight="SemiBold"/>
+                                <Border x:Name="CodebaseAccessModeBadge" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="6,1" Margin="6,0,0,0" DockPanel.Dock="Right">
+                                    <TextBlock x:Name="CodebaseAccessModeText" Text="Off" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                </Border>
+                            </DockPanel>
+                            <TextBlock x:Name="ConnectedWorkspaceStatusBlock" Text="Step 1: enable access. This locks the chat to the current local/cloud mode." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
+                            <Button x:Name="CodebaseEditAccessButton" Content="1. Enable for this chat" Click="CodebaseEditAccessButton_Click" Height="32" Style="{StaticResource PremiumButtonStyle}"/>
+                            <TextBlock x:Name="ConnectedWorkspaceConnectHintBlock" Text="Step 2: connect code from your computer or clone a repo." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,10,0,6" TextWrapping="Wrap"/>
+                            <Button x:Name="ConnectWorkspaceFolderButton" Content="Open Local Folder" Click="ConnectWorkspaceFolderButton_Click" Height="30" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                            <Button x:Name="ConnectWorkspaceFilesButton" Content="Pick Individual Files" Click="ConnectWorkspaceFilesButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                            <Button x:Name="ConnectWorkspaceRepositoryButton" Content="Clone GitHub/Repo" Click="ConnectWorkspaceRepositoryButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                            <Button x:Name="CloneWorkspaceRepositoryButton" Content="Clone Repo to Folder" Click="CloneWorkspaceRepositoryButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                            <TextBlock x:Name="ConnectedWorkspaceDetailBlock" Text="No code connected yet." FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="CodebaseReviewHintBlock" Text="Step 3: ask for a change. Proposed edits appear in Project Canvas for review." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,10,0,6" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="CodebaseAutoApplyToggle" Content="Auto apply valid patches" Margin="0,0,0,4" Checked="CodebaseAutoApplyToggle_Changed" Unchecked="CodebaseAutoApplyToggle_Changed" IsEnabled="False" ToolTip="When enabled, valid codebase patches are applied automatically after Builder produces them."/>
+                            <TextBlock x:Name="CodebaseAutoApplyHintBlock" Text="Manual mode: review patches before writing files." FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                            <UniformGrid x:Name="CodebaseReviewActionGrid" Columns="2" Margin="0,0,0,0">
+                                <Button x:Name="AcceptCodebaseChangesSidebarButton" Content="Accept Changes" Click="AcceptCodebaseChanges_Click" Height="28" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                                <Button x:Name="RejectCodebaseChangesSidebarButton" Content="Reject" Click="RejectCodebaseChanges_Click" Height="28" Margin="4,0,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                            </UniformGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <Rectangle Height="1" Fill="{StaticResource NotebookBorderBrush}" Margin="0,16,0,16"/>
+
                     <!-- Knowledge Base -->
                     <TextBlock Text="Project Knowledge Base" FontSize="12" FontWeight="SemiBold"/>
                     <Border x:Name="DropZone" Background="{StaticResource NotebookBackgroundBrush}" BorderThickness="1" BorderBrush="{StaticResource NotebookBorderBrush}"
@@ -326,7 +356,7 @@
                             <Grid x:Name="StageActionsPanel" Grid.Row="0" Grid.Column="0" MinWidth="340" MaxWidth="460" HorizontalAlignment="Left" VerticalAlignment="Center">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="26"/>
-                                    <RowDefinition Height="26"/>
+                                    <RowDefinition Height="0"/>
                                 </Grid.RowDefinitions>
                                 <UniformGrid Grid.Row="0" Columns="3" Margin="0,0,0,4">
                                     <Border x:Name="ArchitectStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="7,2" Margin="0,0,5,0">
@@ -339,7 +369,7 @@
                                         <TextBlock x:Name="CriticStageText" Text="Critic · Idle" FontSize="10" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
                                     </Border>
                                 </UniformGrid>
-                                <UniformGrid Grid.Row="1" Columns="4">
+                                <UniformGrid Grid.Row="1" Columns="4" Visibility="Collapsed">
                                     <Button Click="RerunBuilder_Click" Margin="0,0,5,0" Padding="6,2" FontSize="10" Style="{StaticResource SubtleButtonStyle}" ToolTip="Re-run Builder">
                                         <TextBlock Text="↻ Builder" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"/>
                                     </Button>
@@ -585,6 +615,8 @@
                             <Button x:Name="RunCodeButton" Content="▶ Run" Margin="0,0,8,0" Click="RunCodeButton_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="10" MinWidth="72" Height="30" Padding="10,0" ToolTip="Execute code in sandbox"/>
                             <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,8,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="52" Height="30" Padding="10,0" ToolTip="Compare the current canvas source with its previous generated version" Visibility="Collapsed"/>
                             <Button x:Name="CodeOutputToggleButton" Content="⌄" Margin="0,0,8,0" Click="CodeOutputToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide code output" Width="30" Height="30"/>
+                            <Button x:Name="AcceptCodebaseChangesButton" Content="Accept" Margin="0,0,8,0" Click="AcceptCodebaseChanges_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="10" MinWidth="64" Height="30" Padding="10,0" ToolTip="Accept proposed codebase changes" Visibility="Collapsed" IsEnabled="False"/>
+                            <Button x:Name="RejectCodebaseChangesButton" Content="Reject" Margin="0,0,8,0" Click="RejectCodebaseChanges_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="62" Height="30" Padding="10,0" ToolTip="Reject proposed codebase changes" Visibility="Collapsed" IsEnabled="False"/>
                             <Button x:Name="CanvasMoreActionsButton" Content="..." Margin="0,0,8,0" Click="CanvasMoreActionsButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="More canvas actions" Width="30" Height="30" Visibility="Collapsed">
                                 <Button.ContextMenu>
                                     <ContextMenu Background="{StaticResource NotebookBackgroundBrush}"

@@ -10,7 +10,7 @@
     <Prefer32Bit>false</Prefer32Bit>
     <!-- Source of truth for the GitHub release update check: bump this for every release
          so it matches the release tag (e.g. tag v1.4.0 -> Version 1.4.0). -->
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <ApplicationIcon>Assets\Malx_Logo.ico</ApplicationIcon>
   </PropertyGroup>
 
