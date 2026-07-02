@@ -39,6 +39,13 @@ namespace Malx_AI
         public DateTime IndexedAt { get; set; }
         public string StatusMessage { get; set; } = "Codebase edit access is off.";
         public List<string> ConnectedFiles { get; set; } = new();
+
+        // Relative paths of files changed by applied patches in this chat, most recent first.
+        // Follow-up prompts rarely re-name the file they are iterating on ("make the button
+        // bigger"), so these files get the same context priority and per-file character budget
+        // as prompt-named files — otherwise the Builder sees a truncated view of the code it
+        // just wrote and produces blind (often no-op) patches on turn 2+.
+        public List<string> RecentlyChangedFiles { get; set; } = new();
     }
 
     public sealed record WorkspaceFileEntry(
@@ -237,7 +244,13 @@ namespace Malx_AI
                 return new WorkspaceContextResult(BuildUnavailablePacket(state), Array.Empty<string>());
 
             var selected = SelectPromptAwareRelevantFiles(files, state, query, MaxContextFiles).ToList();
-            var promptNamedReferences = ExtractMentionedWorkspaceFileReferences(query);
+            // Prompt-named files and files changed by prior applied patches share priority: both
+            // are what the user is iterating on, and both need enough of their CURRENT content
+            // visible for SEARCH/REPLACE anchors to be written against real text.
+            var promptNamedReferences = ExtractMentionedWorkspaceFileReferences(query)
+                .Concat(NormalizeRecentlyChangedReferences(state))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             var readFiles = new List<string>();
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("The user enabled Codebase Edit Access for this Workplace chat.");
@@ -278,6 +291,11 @@ namespace Malx_AI
             sb.AppendLine("RELEVANT FILES:");
 
             int remaining = Math.Max(1200, maxChars);
+            // Per-file caps scale with the packet budget. The fixed 8k/24k caps were sized for
+            // small local-model windows; a cloud run hands this packet a 60k budget, and follow-up
+            // edits fail when the file being iterated on is truncated below its interesting parts.
+            int standardFileCap = Math.Clamp(maxChars / 4, MaxContextCharsPerFile, 16000);
+            int priorityFileCap = Math.Clamp(maxChars / 2, MaxPromptNamedContextCharsPerFile, 40000);
             foreach (string path in selected)
             {
                 if (remaining <= 0)
@@ -295,7 +313,7 @@ namespace Malx_AI
 
                 string relative = GetDisplayPath(state, path);
                 bool promptNamedFile = IsPromptNamedContextFile(relative, path, promptNamedReferences);
-                int fileCharLimit = promptNamedFile ? MaxPromptNamedContextCharsPerFile : MaxContextCharsPerFile;
+                int fileCharLimit = promptNamedFile ? priorityFileCap : standardFileCap;
                 string capped = content.Length > fileCharLimit
                     ? content[..fileCharLimit] + "\n[...file truncated for context budget]"
                     : content;
@@ -461,7 +479,7 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(text))
                 return false;
 
-            if (!TryExtractPatchBody(text, out string body))
+            if (!TryExtractPatchBody(text, out string body, out bool envelopeMarkerIsLeading))
                 return false;
 
             var files = new List<WorkspaceFilePatch>();
@@ -480,8 +498,15 @@ namespace Malx_AI
                 files.Add(patch);
             }
 
+            // The loose (unfenced) parser grabs everything between FILE/ACTION headers as content.
+            // That is only safe when the envelope marker actually LEADS the response, as the output
+            // contract demands. A marker quoted deep inside deliberation prose (a reasoning model
+            // re-reading its instructions) must never be treated as a patch attempt — the "content"
+            // it captures would be chain-of-thought, which then gets written into a real file.
             string looseError = string.Empty;
-            if (files.Count == 0 && TryParseLoosePatchFiles(body, out IReadOnlyList<WorkspaceFilePatch> looseFiles, out looseError))
+            if (files.Count == 0
+                && envelopeMarkerIsLeading
+                && TryParseLoosePatchFiles(body, out IReadOnlyList<WorkspaceFilePatch> looseFiles, out looseError))
                 files.AddRange(looseFiles);
 
             if (files.Count == 0)
@@ -493,9 +518,10 @@ namespace Malx_AI
             return true;
         }
 
-        private static bool TryExtractPatchBody(string text, out string body)
+        private static bool TryExtractPatchBody(string text, out string body, out bool envelopeMarkerIsLeading)
         {
             body = string.Empty;
+            envelopeMarkerIsLeading = IsPatchEnvelopeMarkerLeading(text);
             Match envelope = PatchEnvelopeRegex.Match(text);
             if (envelope.Success)
             {
@@ -507,11 +533,36 @@ namespace Malx_AI
             if (marker < 0)
                 return false;
 
+            // No closing marker anywhere: without the end sentinel this "envelope" is only
+            // trustworthy when the model actually led its response with the marker. A marker
+            // buried mid-prose with no end marker is deliberation quoting its instructions.
+            if (!envelopeMarkerIsLeading)
+                return false;
+
             body = text[(marker + "[[AXIOM_CODEBASE_PATCH]]".Length)..];
             int endMarker = body.IndexOf("[[END AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
             if (endMarker >= 0)
                 body = body[..endMarker];
             return !string.IsNullOrWhiteSpace(body);
+        }
+
+        // True when [[AXIOM_CODEBASE_PATCH]] actually LEADS the response as the output contract
+        // demands: first line, or preceded by at most one short announcement line ("Here is the
+        // patch:"). Multiple lines of prose before the marker means the model was deliberating and
+        // merely quoted its instructions — that text must never be mined for file content.
+        private static bool IsPatchEnvelopeMarkerLeading(string text)
+        {
+            string value = text ?? string.Empty;
+            int marker = value.IndexOf("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0)
+                return false;
+
+            string preamble = value[..marker].Trim();
+            if (preamble.Length == 0)
+                return true;
+
+            string[] preambleLines = preamble.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return preambleLines.Length <= 1 && preamble.Length <= 100;
         }
 
         private static bool TryParseLoosePatchFiles(string body, out IReadOnlyList<WorkspaceFilePatch> files, out string error)
@@ -704,6 +755,44 @@ namespace Malx_AI
                 ? $"Applied 1 codebase change: {changed[0]}"
                 : $"Applied {changed.Count} codebase changes:\n- " + string.Join("\n- ", changed);
             return new WorkspacePatchApplyResult(changed, summary);
+        }
+
+        // True when applying the proposal would leave every targeted file byte-identical (after
+        // newline normalization) — e.g. an edit whose SEARCH and REPLACE blocks are the same, or a
+        // replace that regurgitates the current file. Such a patch "succeeds" while changing
+        // nothing; the caller should reject it and ask the Builder for a real change instead of
+        // presenting the user an empty diff. Any materialization error means this is NOT a no-op —
+        // those failures are reported by the normal validation path.
+        public bool IsNoOpPatchProposal(ConnectedWorkspaceState state, WorkspacePatchProposal proposal, out string detail)
+        {
+            detail = string.Empty;
+            if (state == null || proposal == null || proposal.Files.Count == 0)
+                return false;
+
+            var unchanged = new List<string>();
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                try
+                {
+                    string target = ResolvePatchTargetPath(state, patch);
+                    if (!File.Exists(target))
+                        return false; // creating a new file is always a real change
+
+                    string current = NormalizePatchFragment(File.ReadAllText(target));
+                    string materialized = NormalizePatchFragment(MaterializePatchContent(state, patch));
+                    if (!string.Equals(materialized, current, StringComparison.Ordinal))
+                        return false;
+
+                    unchanged.Add(patch.RelativePath);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            detail = string.Join(", ", unchanged);
+            return unchanged.Count > 0;
         }
 
         public string MaterializePatchContent(ConnectedWorkspaceState state, WorkspaceFilePatch patch)
@@ -1096,13 +1185,29 @@ namespace Malx_AI
                 .Take(maxFiles);
         }
 
+        // Relative paths recorded when patches were applied in this chat, normalized for matching.
+        private static IReadOnlyList<string> NormalizeRecentlyChangedReferences(ConnectedWorkspaceState state)
+        {
+            return (state?.RecentlyChangedFiles ?? new List<string>())
+                .Select(path => NormalizeRelativePatchPath(path ?? string.Empty))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToList();
+        }
+
         private static IEnumerable<string> ResolvePromptNamedFiles(IReadOnlyList<string> files, ConnectedWorkspaceState state, string query)
         {
-            if (files.Count == 0 || string.IsNullOrWhiteSpace(query))
+            if (files.Count == 0)
                 return Array.Empty<string>();
 
+            var mentions = ExtractMentionedWorkspaceFileReferences(query ?? string.Empty)
+                .Concat(NormalizeRecentlyChangedReferences(state))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
             var selected = new List<string>();
-            foreach (string mention in ExtractMentionedWorkspaceFileReferences(query))
+            foreach (string mention in mentions)
             {
                 string normalizedMention = mention.Replace('\\', '/');
                 var matches = files
@@ -1312,9 +1417,16 @@ namespace Malx_AI
             return normalized;
         }
 
+        // NUL and other C0 control characters (degenerate provider output) must never be persisted
+        // into a workspace file — they render as empty boxes and can corrupt tooling. Tab/CR/LF kept.
+        private static readonly Regex FileWriteControlCharacterRegex = new(
+            @"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFE\uFFFF]",
+            RegexOptions.Compiled);
+
         private static string NormalizeFileContentForWrite(string content)
         {
-            string normalized = (content ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal);
+            string sanitized = FileWriteControlCharacterRegex.Replace(content ?? string.Empty, string.Empty);
+            string normalized = sanitized.Replace("\r\n", "\n", StringComparison.Ordinal);
             return normalized.Replace("\n", Environment.NewLine, StringComparison.Ordinal);
         }
 

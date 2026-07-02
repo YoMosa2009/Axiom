@@ -167,6 +167,12 @@ namespace Malx_AI
         private static readonly Regex PadSentinelTokenRegex = new(
             @"<\s*\|?\s*/?\s*pad\s*/?\s*\|?\s*>|\[\s*PAD\s*\]|<\|endofpad\|>",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        // Degenerate free-tier providers can emit NUL and other C0 control characters as trailing
+        // garbage. They render as empty boxes in every text surface and end up inside written files,
+        // so they are stripped everywhere alongside the pad sentinels. Tab/CR/LF are kept.
+        private static readonly Regex ControlCharacterRegex = new(
+            @"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFE\uFFFF]",
+            RegexOptions.Compiled);
         // This many consecutive content deltas that are PURE padding sentinels (nothing left after
         // stripping) while no real answer has accumulated marks the provider as degenerate.
         private const int PadDegenerationConsecutiveDeltaLimit = 24;
@@ -1086,6 +1092,16 @@ namespace Malx_AI
             {
                 payload["reasoning"] = new JsonObject { ["effort"] = "high" };
             }
+            else if (!thinkingEnabled && SupportsParameter(modelId, "reasoning"))
+            {
+                // Reasoning-by-default hybrids (Nemotron and friends) sit in the fallback chain.
+                // Without an explicit opt-out they burn thousands of tokens on chain-of-thought —
+                // minutes of extra latency — and some providers stream that deliberation inline in
+                // the content channel, where the council pipeline can mistake it for a deliverable.
+                // enabled:false turns reasoning off where the provider supports it; exclude:true
+                // keeps any reasoning a provider still produces out of the response.
+                payload["reasoning"] = new JsonObject { ["enabled"] = false, ["exclude"] = true };
+            }
 
             if (tools != null && tools.Count > 0 && SupportsParameter(modelId, "tools"))
             {
@@ -1331,10 +1347,12 @@ namespace Malx_AI
         }
 
         // Strips meaningless padding/sentinel tokens (e.g. Gemma's literal "<pad>") that a degenerate
-        // provider can leak into visible content. Runs of them collapse to nothing so callers never
-        // render or persist the "<pad><pad>…" spam.
+        // provider can leak into visible content, plus NUL/control-character garbage that would
+        // otherwise render as empty boxes or be persisted into written workspace files.
         internal static string StripPadSentinelTokens(string text)
-            => string.IsNullOrEmpty(text) ? text ?? string.Empty : PadSentinelTokenRegex.Replace(text, string.Empty);
+            => string.IsNullOrEmpty(text)
+                ? text ?? string.Empty
+                : ControlCharacterRegex.Replace(PadSentinelTokenRegex.Replace(text, string.Empty), string.Empty);
 
         private static string ExtractMessageContent(JsonElement message)
         {

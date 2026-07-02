@@ -437,6 +437,8 @@ namespace Malx_AI
                     "Codebase Access is active. The Builder's final deliverable is a connected-workspace patch review, not a standalone Project Canvas artifact. " +
                     "Your first visible output line must be [[AXIOM_CODEBASE_PATCH]]. " +
                     "Return only FILE/ACTION sections, SEARCH/REPLACE blocks or complete fenced file content inside those sections, [[END FILE]] markers, and [[END AXIOM_CODEBASE_PATCH]]. " +
+                    "Every patch must actually CHANGE the file: a REPLACE block identical to its SEARCH block is invalid and will be rejected. " +
+                    "If the visible file content is truncated and you cannot see the code that must change, call read_file to fetch it before writing the patch. " +
                     "Do not output analysis, chain-of-thought, approach notes, raw HTML outside the envelope, markdown explanations, or claims that files were changed.";
             }
 
@@ -681,7 +683,17 @@ namespace Malx_AI
                 finalText = forcedFinal.Text ?? string.Empty;
             }
 
-            string content = NormalizeCloudCouncilRoleOutput(role, StripAgenticMarkers(finalText)).Trim();
+            // Reasoning-hybrid fallback models can stream chain-of-thought inline in the CONTENT
+            // channel as <think> blocks — or hit the token cap mid-think, leaving deliberation as
+            // the entire "answer". Segregate it into the reasoning channel here so downstream
+            // consumers (Project Canvas, codebase patch capture) never treat deliberation as a
+            // deliverable. ReasoningParser handles both closed and unclosed <think> blocks.
+            ReasoningParser.ParsedResponse inlineThink = ReasoningParser.Parse(finalText);
+            if (inlineThink.HasThinking && !string.IsNullOrWhiteSpace(inlineThink.ThinkingContent))
+                reasoningParts.Add(inlineThink.ThinkingContent.Trim());
+            string visibleFinalText = inlineThink.IsReasoningFallback ? string.Empty : inlineThink.Answer;
+
+            string content = NormalizeCloudCouncilRoleOutput(role, StripAgenticMarkers(visibleFinalText)).Trim();
             string reasoning = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal));
             bool reasoningFallback = false;
             if (string.IsNullOrWhiteSpace(content) && !string.IsNullOrWhiteSpace(reasoning))
@@ -1393,9 +1405,16 @@ namespace Malx_AI
                 ? userQuery
                 : userQuery + "\n" + objective;
             bool promptNamesFile = Regex.IsMatch(combined, @"(?<![\w.-])[\w./\\-]+\.(?:cs|xaml|csproj|slnx|py|js|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml)(?![\w.-])", RegexOptions.IgnoreCase);
+            // The local budget scales with the Builder model's ACTUAL context window (which itself
+            // sizes to the imported model's GGUF trained length) instead of a fixed pessimistic cap.
+            // Follow-up prompts rarely re-name the file being iterated on, so the non-named budget
+            // must still be large enough to carry the current file content — the old fixed 14,000
+            // starved capable 4-10B models and caused blind (no-op) patches on turn 2+. The floor
+            // guards tiny windows: never hand a 4k-context model more packet than it can hold.
+            int builderWindowChars = Math.Max(4800, (((int)GetRoleContextSize(CouncilRole.Builder)) - 2500) * 4);
             int localWorkspaceBudget = promptNamesFile
-                ? Math.Clamp((((int)GetRoleContextSize(CouncilRole.Builder)) - 2500) * 4, 18000, 36000)
-                : 14000;
+                ? Math.Min(builderWindowChars, 36000)
+                : Math.Min(builderWindowChars * 3 / 4, 28000);
             int maxChars = runContext.IsCloudExecution ? 60000 : localWorkspaceBudget;
             WorkspaceContextResult context = _workspaceAccessService.BuildContextPacket(_connectedWorkspace, combined, maxChars);
             runContext.IsWorkspaceTask = true;
@@ -1433,6 +1452,39 @@ namespace Malx_AI
                 : AgenticPauseEngine.StructuredToolResult.Fail(result.Output);
         }
 
+        // Size-aware contract selection: sub-1B local Builders get the replace-only contract —
+        // exact SEARCH anchors are beyond them, and a "prefer ACTION: edit" instruction sitting
+        // next to the sub-1B system rule ("never use edit") makes tiny models freeze or mix
+        // formats. Mirrors the useSubOneBMode gate in ExecuteCouncilRoleAsync.
+        private string BuildCodebasePatchOutputContractForBuilder()
+        {
+            if (!_isCloudModeEnabled)
+            {
+                CouncilModelConfig config = GetEffectiveRoleConfig(CouncilRole.Builder);
+                bool isGemma4 = IsGemma4Model(config.DisplayName) || IsGemma4Model(config.ModelPath ?? "");
+                if (!isGemma4 && LocalModelCapabilityProfile.FromModel(config.ModelPath).IsSubOneB)
+                    return BuildSubOneBCodebasePatchContract();
+            }
+
+            return BuildCodebasePatchOutputContract();
+        }
+
+        private static string BuildSubOneBCodebasePatchContract()
+        {
+            return "Return exactly one full-file patch envelope and nothing else:\n" +
+                "[[AXIOM_CODEBASE_PATCH]]\n" +
+                "FILE: relative/path/of/target/file\n" +
+                "ACTION: replace\n" +
+                "```\n" +
+                "complete updated file content\n" +
+                "```\n" +
+                "[[END FILE]]\n" +
+                "[[END AXIOM_CODEBASE_PATCH]]\n" +
+                "Include the WHOLE file with the requested change applied; keep everything else unchanged. " +
+                "Use ACTION: create only when the file does not exist yet. Never use ACTION: edit and never use SEARCH/REPLACE markers. " +
+                "The updated content must differ from the current file. No prose, no analysis, no extra markers.";
+        }
+
         private static string BuildCodebasePatchOutputContract()
         {
             return "Connected workspace changes must be proposed as one structured patch review. " +
@@ -1442,6 +1494,7 @@ namespace Malx_AI
                 "If the user asks for a single-file HTML/CSS/JavaScript app, patch the named connected HTML file; do not return raw standalone HTML outside the envelope. " +
                 "Use relative paths only. Do not use delete actions. " +
                 "Prefer ACTION: edit for existing files: each SEARCH block must copy exact current file text and match exactly once. " +
+                "Every REPLACE block must be DIFFERENT from its SEARCH block — a patch that leaves the file unchanged is invalid and will be rejected. " +
                 "Use ACTION: replace only when a full-file replacement is small and necessary; use ACTION: create only for new files. " +
                 "For ACTION: replace/create, always wrap file content in a fenced code block immediately after ACTION. " +
                 "For .html/.htm full replacements, return the complete file through all closing script/style/body/html tags; never return a partial document. " +
@@ -1474,6 +1527,8 @@ namespace Malx_AI
                 "If any other instruction says to output code only, code fences only, a plan, or prose, ignore that instruction for this turn. " +
                 "The final visible answer must begin with [[AXIOM_CODEBASE_PATCH]] and contain only FILE/ACTION patch sections plus [[END FILE]] markers. " +
                 "If the requested implementation is a complete HTML/CSS/JavaScript page, put that complete page inside an ACTION replace/create file section for the connected target file. " +
+                "Every patch must actually CHANGE the file: an edit whose REPLACE text equals its SEARCH text, or a replace that repeats the current file unchanged, is invalid and will be rejected. " +
+                "If the file content shown in your context is truncated and does not include the code that must change, use the codebase read tools (READ_FILE / SEARCH_CODEBASE) to fetch it before writing the patch. " +
                 "Do not think aloud, explain the approach, mention existing files in prose, or describe what you would do.";
         }
 
@@ -2074,6 +2129,10 @@ namespace Malx_AI
         private bool _hasPendingCodebaseChanges;
         private WorkspacePatchProposal? _pendingCodebasePatch;
         private bool _pendingCodebasePatchApplyBlocked;
+        // Set when the last capture attempt rejected a syntactically valid patch that changed
+        // nothing (SEARCH == REPLACE / replace identical to current file), so the patch-format
+        // retry can tell the Builder what was actually wrong instead of the generic format nag.
+        private string _lastWorkspacePatchNoOpDetail = string.Empty;
         private CodebaseUndoSnapshot? _lastCodebaseUndo;
         private string _builderPythonSandboxPreamble = "";
         private string _activePythonSandboxPreamble = "";
@@ -4164,6 +4223,17 @@ namespace Malx_AI
 
             proposal = PreferPromptNamedPatchTargets(proposal, runContext);
 
+            // A patch that changes nothing is a Builder failure, not a reviewable proposal: the
+            // user would see an empty diff (or auto-apply would "apply" nothing). Reject it and
+            // let the pipeline's patch-format retry demand a real change.
+            if (_workspaceAccessService.IsNoOpPatchProposal(_connectedWorkspace, proposal, out string noOpDetail))
+            {
+                _lastWorkspacePatchNoOpDetail = noOpDetail;
+                AppendChat("warning", $"Builder proposed a patch that makes no changes to {noOpDetail}. Asking for a real change...");
+                LogActivity($"Codebase patch rejected as no-op ({noOpDetail}).");
+                return false;
+            }
+
             try
             {
                 foreach (WorkspaceFilePatch patch in proposal.Files)
@@ -4498,14 +4568,23 @@ namespace Malx_AI
             [
                 "we are given", "we need", "we should", "we will", "i will", "i need",
                 "the task is", "the user wants", "approach:", "steps:", "plan:",
-                "let's", "however,", "note that", "since the requirement"
+                "let's", "let me", "however,", "note that", "since the requirement",
+                "okay,", "ok,", "wait,", "hmm", "first,", "looking at", "the context",
+                "i'll", "i must", "we must", "so we", "but the", "now,", "alright"
             ];
 
             return reasoningOpeners.Any(opener => firstLine.StartsWith(opener, StringComparison.Ordinal))
                 || lower.Contains("\napproach:", StringComparison.Ordinal)
                 || lower.Contains("\nsteps", StringComparison.Ordinal)
                 || lower.Contains("we need to", StringComparison.Ordinal)
-                || lower.Contains("we should", StringComparison.Ordinal);
+                || lower.Contains("we should", StringComparison.Ordinal)
+                || lower.Contains("let me re-read", StringComparison.Ordinal)
+                || lower.Contains("let me look at", StringComparison.Ordinal)
+                || lower.Contains("the context says", StringComparison.Ordinal)
+                || lower.Contains("the context does not", StringComparison.Ordinal)
+                || lower.Contains("we are to ", StringComparison.Ordinal)
+                || lower.Contains("we must assume", StringComparison.Ordinal)
+                || lower.Contains("this is a problem", StringComparison.Ordinal);
         }
 
         private bool TryRecoverCodebasePatchProposal(string builderOutput, CouncilRunContext runContext, out WorkspacePatchProposal? proposal, out string reason)
@@ -4514,6 +4593,16 @@ namespace Malx_AI
             reason = string.Empty;
             if (!_connectedWorkspace.CodebaseEditAccessEnabled || string.IsNullOrWhiteSpace(builderOutput))
                 return false;
+
+            // Chain-of-thought is never a recoverable deliverable. A reasoning model that ran out
+            // of tokens mid-deliberation quotes file names and file fragments from the workspace
+            // context, which the recovery heuristics below would happily slice into a "full-file
+            // replacement" and write into the user's codebase. Fail closed instead.
+            if (LooksLikeWorkspacePatchReasoning(builderOutput))
+            {
+                reason = "Builder output looks like analysis/deliberation, not file content; patch recovery refused.";
+                return false;
+            }
 
             string? targetPath = ResolveRequestedWorkspacePatchPath(runContext, builderOutput);
             if (string.IsNullOrWhiteSpace(targetPath))
@@ -4632,9 +4721,17 @@ namespace Malx_AI
                 return null;
             }
 
+            // The rescue prompt demands the file content and nothing else — deliberation-shaped
+            // output here means the model failed again; never slice a "file" out of it.
+            if (LooksLikeWorkspacePatchReasoning(rescue.Answer))
+            {
+                LogActivity("Content-only patch rescue failed: the rewrite output was deliberation, not file content.");
+                return null;
+            }
+
             string content = ExtractRecoverableWorkspaceFileContent(rescue.Answer, targetPath);
             if (string.IsNullOrWhiteSpace(content)
-                || !IsPlausibleRecoveredFileContent(targetPath, content, existingContent))
+                || !IsPlausibleRecoveredFileContent(targetPath, content, existingContent, requireCompleteHtml: false))
             {
                 LogActivity("Content-only patch rescue failed: the rewrite output was not plausible full-file content.");
                 return null;
@@ -4915,12 +5012,18 @@ namespace Malx_AI
                 int start = doctype >= 0 ? doctype : html;
                 if (start > 0)
                     content = content[start..].Trim();
+
+                // Also cut everything after the document's closing tag. Without this, deliberation
+                // or commentary that FOLLOWS a quoted/emitted document gets appended to the file.
+                int closingHtml = content.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+                if (closingHtml >= 0)
+                    content = content[..(closingHtml + "</html>".Length)];
             }
 
             return content;
         }
 
-        private static bool IsPlausibleRecoveredFileContent(string relativePath, string content, string originalContent)
+        private static bool IsPlausibleRecoveredFileContent(string relativePath, string content, string originalContent, bool requireCompleteHtml = true)
         {
             if (string.IsNullOrWhiteSpace(content) || content.Length < 8)
                 return false;
@@ -4928,9 +5031,20 @@ namespace Malx_AI
             string extension = Path.GetExtension(relativePath).ToLowerInvariant();
             string lower = content.ToLowerInvariant();
             if (extension is ".html" or ".htm")
-                return lower.Contains("<html", StringComparison.Ordinal) || lower.Contains("<!doctype", StringComparison.Ordinal);
+            {
+                // Merely CONTAINING "<html" is not plausibility — deliberation that quotes the
+                // original file passes that test. A recoverable document must actually start as
+                // one; the closing tag is required except on the rescue path, whose continuation
+                // passes exist precisely to finish a truncated document.
+                string head = content.TrimStart();
+                return (head.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase)
+                        || head.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+                    && (!requireCompleteHtml || lower.Contains("</html>", StringComparison.Ordinal));
+            }
             if (extension == ".css")
-                return content.Contains('{', StringComparison.Ordinal) && content.Contains('}', StringComparison.Ordinal);
+                return content.Contains('{', StringComparison.Ordinal)
+                    && content.Contains('}', StringComparison.Ordinal)
+                    && !LooksLikeWorkspacePatchReasoning(content);
             if (extension is ".json" or ".jsonc")
                 return content.TrimStart().StartsWith("{", StringComparison.Ordinal) || content.TrimStart().StartsWith("[", StringComparison.Ordinal);
             if (extension is ".md" or ".txt")
@@ -5193,6 +5307,7 @@ namespace Malx_AI
                 WorkspaceGitStatus gitBefore = GetConnectedWorkspaceGitStatus();
                 WorkspacePatchApplyResult result = _workspaceAccessService.ApplyPatchProposal(_connectedWorkspace, proposal);
                 _lastCodebaseUndo = undoSnapshot with { ChangedFiles = result.ChangedFiles.ToList() };
+                RecordRecentlyChangedWorkspaceFiles(result.ChangedFiles);
                 _pendingCodebasePatch = null;
                 _hasPendingCodebaseChanges = false;
                 _pendingCodebasePatchApplyBlocked = false;
@@ -5890,6 +6005,23 @@ namespace Malx_AI
             RefreshCodebaseAccessUi();
             AppendChat("system", "Proposed codebase changes rejected.");
             SavePersistedSession();
+        }
+
+        // Files changed by applied patches get priority (and a larger per-file budget) in the
+        // workspace context packet on later turns, so follow-up requests like "make the button
+        // bigger" see the CURRENT content of the file being iterated on. Most recent first.
+        private void RecordRecentlyChangedWorkspaceFiles(IReadOnlyList<string> changedFiles)
+        {
+            const int maxTracked = 8;
+            foreach (string changed in (changedFiles ?? Array.Empty<string>()).Where(path => !string.IsNullOrWhiteSpace(path)))
+            {
+                _connectedWorkspace.RecentlyChangedFiles.RemoveAll(existing =>
+                    string.Equals(existing, changed, StringComparison.OrdinalIgnoreCase));
+                _connectedWorkspace.RecentlyChangedFiles.Insert(0, changed);
+            }
+
+            if (_connectedWorkspace.RecentlyChangedFiles.Count > maxTracked)
+                _connectedWorkspace.RecentlyChangedFiles.RemoveRange(maxTracked, _connectedWorkspace.RecentlyChangedFiles.Count - maxTracked);
         }
 
         private void RefreshConnectedWorkspaceIndexAfterPatch()
@@ -10970,7 +11102,7 @@ namespace Malx_AI
                         // first-read context locks onto the expected output format before it
                         // processes the architect plan or user prompt.
                         if (runContext.IsWorkspaceTask)
-                            builderPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+                            builderPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContractForBuilder()));
                         else if (useArtifactCanvasContract)
                             builderPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
                         if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || useArtifactCanvasContract || runContext.IsWorkspaceTask))
@@ -11026,7 +11158,7 @@ namespace Malx_AI
                         }
 
                         if (runContext.IsWorkspaceTask)
-                            builderPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+                            builderPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContractForBuilder()));
 
                         builderPayload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: _isWebSearchEnabled && !_isCloudModeEnabled));
 
@@ -11100,7 +11232,7 @@ namespace Malx_AI
                         if (runContext.IsWorkspaceTask)
                         {
                             correctionPayload.AppendLine("ROLE CORRECTION: Builder must output a connected-workspace patch proposal only. The first visible line must be [[AXIOM_CODEBASE_PATCH]]. No standalone code fence, prose, numbered list, analysis, approach, or raw file content outside the envelope.");
-                            correctionPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+                            correctionPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContractForBuilder()));
                             if (!string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
                                 correctionPayload.AppendLine(BuildLabeledBlock("CONNECTED CODEBASE CONTEXT", runContext.WorkspaceContext));
                         }
@@ -11271,17 +11403,32 @@ namespace Malx_AI
                         builderOutput = await TryCompleteTruncatedWorkspaceHtmlPatchAsync(
                             builderOutput, runContext, builderSystem, token, baseStateVault);
 
+                        _lastWorkspacePatchNoOpDetail = string.Empty;
                         codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                         if (!codebasePatchCaptured)
                         {
                             string firstRejectedWorkspaceOutput = builderOutput;
-                            LogActivity("Workspace Builder output was not a patch envelope; running one patch-format retry.");
-                            AppendChat("system", "Builder returned raw code instead of a reviewable codebase patch. Asking for a patch-format retry...");
+                            bool firstAttemptWasNoOp = !string.IsNullOrWhiteSpace(_lastWorkspacePatchNoOpDetail);
+                            string firstNoOpDetail = _lastWorkspacePatchNoOpDetail;
+                            LogActivity(firstAttemptWasNoOp
+                                ? "Workspace Builder patch was a no-op; running one corrective retry."
+                                : "Workspace Builder output was not a patch envelope; running one patch-format retry.");
+                            AppendChat("system", firstAttemptWasNoOp
+                                ? "Builder proposed a patch that changes nothing. Asking for a real change..."
+                                : "Builder returned raw code instead of a reviewable codebase patch. Asking for a patch-format retry...");
 
                             var patchFormatRetryPayload = new StringBuilder();
-                            patchFormatRetryPayload.AppendLine("FORMAT VIOLATION: the previous Builder response was prose/analysis instead of a connected-codebase patch envelope.");
+                            if (firstAttemptWasNoOp)
+                            {
+                                patchFormatRetryPayload.AppendLine($"PATCH REJECTED: your previous [[AXIOM_CODEBASE_PATCH]] made NO changes — after applying it, {firstNoOpDetail} was byte-identical to the current file. A SEARCH block whose REPLACE block is the same text is invalid.");
+                                patchFormatRetryPayload.AppendLine("Re-read the CONNECTED CODEBASE CONTEXT below, find the code that must change to satisfy the request, and return a patch whose REPLACE content actually differs from SEARCH.");
+                            }
+                            else
+                            {
+                                patchFormatRetryPayload.AppendLine("FORMAT VIOLATION: the previous Builder response was prose/analysis instead of a connected-codebase patch envelope.");
+                            }
                             patchFormatRetryPayload.AppendLine("Your response must start on the next line with [[AXIOM_CODEBASE_PATCH]].");
-                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REQUIRED OUTPUT FORMAT", BuildCodebasePatchOutputContract()));
+                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REQUIRED OUTPUT FORMAT", BuildCodebasePatchOutputContractForBuilder()));
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("APPROVED ARCHITECTURE", runContext.ArchitectOutput));
                             if (!string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
@@ -11301,9 +11448,11 @@ namespace Malx_AI
 
                             builderOutput = PostProcessBuilderOutput(patchFormatRetry.Answer, runContext);
                             builderReasoningFallback = patchFormatRetry.IsReasoningFallback;
+                            _lastWorkspacePatchNoOpDetail = string.Empty;
                             codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                             if (!codebasePatchCaptured)
                             {
+                                bool retryWasNoOp = !string.IsNullOrWhiteSpace(_lastWorkspacePatchNoOpDetail);
                                 // Envelope retries exhausted. Stop demanding the envelope: ask for raw
                                 // full-file content and wrap it into the envelope host-side.
                                 string? rescuedEnvelope = await TryContentOnlyCodebasePatchRescueAsync(
@@ -11320,7 +11469,9 @@ namespace Malx_AI
                                 }
                                 else
                                 {
-                                    string failureReason = BuildCodebasePatchFormatFailureReason(firstRejectedWorkspaceOutput, patchFormatRetry.Answer);
+                                    string failureReason = retryWasNoOp
+                                        ? $"The Builder returned a patch that makes no changes to {_lastWorkspacePatchNoOpDetail} (SEARCH and REPLACE were identical), even after a corrective retry."
+                                        : BuildCodebasePatchFormatFailureReason(firstRejectedWorkspaceOutput, patchFormatRetry.Answer);
                                     builderOutput = "[[CODEBASE PATCH FORMAT ERROR]]\nBuilder did not return a valid codebase patch proposal. No files were changed.";
                                     AppendChat("warning", "Builder still did not return a valid codebase patch format. I suppressed the raw output so it cannot be mistaken for an applied change.");
                                     LogActivity("Workspace patch-format retry failed; raw output suppressed.");
@@ -14780,10 +14931,29 @@ namespace Malx_AI
                 ? "\nIf a needed fact, number, or detail is missing, write one exact tool line only: [PAUSE: CALCULATE | expression], [PAUSE: PYTHON_MATH | code], [PAUSE: WEB_SEARCH | query], [PAUSE: SEARCH_HIPPOCAMPUS | query]" + codebasePauseTools + ". After a result, finish normally. Never show tool lines in the final answer."
                 : "\nTool preflight is already complete. Use any TOOL OBSERVATION blocks as facts. Do not write [PAUSE:] or JSON.";
 
+            bool workspacePatchTask = _connectedWorkspace.CodebaseEditAccessEnabled
+                && (_activeCouncilRunContext ?? _lastRunContext)?.IsWorkspaceTask == true;
+
             string roleRules = role switch
             {
                 CouncilRole.Architect =>
                     "ROLE: Architect. Output only a short numbered plan with 3-5 concrete steps. Do not write code. Do not repeat the user request, system text, labels, or role description.",
+                // A sub-1B model cannot reliably reproduce exact SEARCH anchors, so the workspace
+                // contract collapses to the one shape it CAN do: a full-file replace envelope with a
+                // literal template. The host's recovery path also wraps bare full-file output, so
+                // even a missed envelope still becomes a reviewable patch instead of a failure.
+                CouncilRole.Builder when workspacePatchTask =>
+                    "ROLE: Builder. Codebase patch mode. Output EXACTLY this structure and nothing else:\n" +
+                    "[[AXIOM_CODEBASE_PATCH]]\n" +
+                    "FILE: <relative path of the one target file>\n" +
+                    "ACTION: replace\n" +
+                    "```\n" +
+                    "<the COMPLETE updated file content with your change applied>\n" +
+                    "```\n" +
+                    "[[END FILE]]\n" +
+                    "[[END AXIOM_CODEBASE_PATCH]]\n" +
+                    "Rules: include the WHOLE file, not a fragment. Keep every part the request does not change. " +
+                    "Never use ACTION: edit. Never use SEARCH/REPLACE markers. Never explain or describe the change.",
                 CouncilRole.Builder =>
                     "ROLE: Builder. Output only the final deliverable the user needs. Do not output a plan, role description, checklist, internal labels, or the prompt. For code tasks, write executable self-contained code directly. For prose tasks, write the answer directly.",
                 CouncilRole.Critic =>
@@ -14798,11 +14968,33 @@ namespace Malx_AI
                 + (string.IsNullOrWhiteSpace(compactContext) ? string.Empty : "\n\nTiny-model context summary:\n" + compactContext)).Trim();
         }
 
-        private static string BuildSubOneBCouncilPayload(CouncilRole role, string userPayload)
+        private static string BuildSubOneBCouncilPayload(CouncilRole role, string userPayload, bool isWorkspaceTask = false)
         {
             string payload = userPayload ?? string.Empty;
             if (payload.Length <= 9000)
                 return payload + "\n\nFINAL INSTRUCTION: Produce only the " + role + " output now. Do not restate any instructions.";
+
+            // Workspace patch tasks: the CONNECTED CODEBASE CONTEXT block (the current file content
+            // the patch must be written against) sits in the MIDDLE of the payload — exactly what
+            // the head/tail compaction below discards. A Builder that cannot see the file cannot
+            // patch it, so carve the block out first and re-append it after the compacted framing.
+            string codebaseBlock = string.Empty;
+            if (isWorkspaceTask && role == CouncilRole.Builder)
+            {
+                const string blockStart = "[[CONNECTED CODEBASE CONTEXT]]";
+                const string blockEnd = "[[END CONNECTED CODEBASE CONTEXT]]";
+                int start = payload.IndexOf(blockStart, StringComparison.Ordinal);
+                int end = start >= 0 ? payload.IndexOf(blockEnd, start, StringComparison.Ordinal) : -1;
+                if (start >= 0 && end > start)
+                {
+                    codebaseBlock = payload[start..(end + blockEnd.Length)];
+                    payload = payload.Remove(start, end + blockEnd.Length - start);
+                    // A tiny model still cannot use unlimited context well; middle-clip the block
+                    // itself if it is enormous, keeping the header (file list + patch rules) and
+                    // the tail (the most recently appended / prompt-named file content).
+                    codebaseBlock = ClipForSubOneBCouncilPrompt(codebaseBlock, 12000);
+                }
+            }
 
             int head = role == CouncilRole.Builder ? 2200 : 1400;
             int tail = role == CouncilRole.Builder ? 6200 : 4200;
@@ -14811,6 +15003,7 @@ namespace Malx_AI
             return payload[..head].TrimEnd()
                 + "\n[...middle context omitted for tiny local model...]\n"
                 + payload[^tail..].TrimStart()
+                + (codebaseBlock.Length > 0 ? "\n\n" + codebaseBlock : string.Empty)
                 + "\n\nFINAL INSTRUCTION: Produce only the " + role + " output now. Do not restate any instructions.";
         }
 
@@ -15001,9 +15194,11 @@ namespace Malx_AI
             if (useSubOneBMode)
             {
                 systemPrompt = BuildSubOneBCouncilSystemPrompt(role, systemPrompt, outputGrammar != null, allowAgenticPauses);
+                bool subOneBWorkspaceTask = (_activeCouncilRunContext ?? _lastRunContext)?.IsWorkspaceTask == true
+                    && _connectedWorkspace.CodebaseEditAccessEnabled;
                 userPayload = outputGrammar != null
                     ? ClipForSubOneBCouncilPrompt(userPayload, 7000) + "\n\nReturn exactly one JSON object now."
-                    : BuildSubOneBCouncilPayload(role, userPayload);
+                    : BuildSubOneBCouncilPayload(role, userPayload, subOneBWorkspaceTask);
                 if (!internalInferenceStep)
                 {
                     LogActivity($"{role}: sub-1B local profile active ({localCapability.Evidence}).");
@@ -15396,14 +15591,33 @@ namespace Malx_AI
                 }
             }
 
-            int roleGenerationCap = role == CouncilRole.Builder ? 4096 : 2048;
+            // Builder deliverables (codebase patches, canvas artifacts, code) are the one place a
+            // local model legitimately needs a long completion: a full-file replace of a real HTML
+            // page runs 4-6k tokens. The old flat 4096 cap forced multi-pass continuation stitching
+            // even when the model's window had plenty of room. availableForGeneration (the space the
+            // window actually has left after the prompt) still bounds the final value, so a raised
+            // cap only takes effect on models whose imported window supports it.
+            bool builderDeliverableTask = role == CouncilRole.Builder
+                && ((_activeCouncilRunContext ?? _lastRunContext)?.IsWorkspaceTask == true
+                    || (_activeCouncilRunContext ?? _lastRunContext)?.IsArtifactCanvasRequest == true
+                    || (_activeCouncilRunContext ?? _lastRunContext)?.TaskType == CouncilTaskType.Coding);
+            int roleGenerationCap = role == CouncilRole.Builder
+                ? (builderDeliverableTask ? 6144 : 4096)
+                : 2048;
             // A caller-supplied per-call ceiling (the segmented-document Builder uses this to keep each
             // segment concise) tightens the role cap, but never below the role's minimum so a fit-to-
             // context truncation still leaves room to answer.
             if (maxGenerationTokensOverride is int genCapOverride)
                 roleGenerationCap = Math.Min(roleGenerationCap, Math.Max(minGenTokens, genCapOverride));
             if (useSubOneBMode)
-                roleGenerationCap = Math.Min(roleGenerationCap, role == CouncilRole.Builder ? 1536 : 768);
+            {
+                // Sub-1B models degenerate on very long completions, but 1536 tokens (~6k chars)
+                // cannot hold even a small complete HTML file, which forced every workspace/artifact
+                // build into repeated continuation stitching. 2560 keeps the anti-runaway ceiling
+                // while letting a tiny model finish a small deliverable in one pass.
+                int subOneBBuilderCap = builderDeliverableTask ? 2560 : 1536;
+                roleGenerationCap = Math.Min(roleGenerationCap, role == CouncilRole.Builder ? subOneBBuilderCap : 768);
+            }
             int maxGenTokens = Math.Clamp(availableForGeneration, minGenTokens, roleGenerationCap);
             LogActivity($"{roleName}: Context budget — prompt ~{promptTokenEstimate + templateOverhead}t, gen {maxGenTokens}t, ctx {contextBudget}t");
 
@@ -18613,7 +18827,7 @@ namespace Malx_AI
                 payload.AppendLine(BuildCouncilGoalContractBlock(_lastRunContext.GoalContract));
                 payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, _lastRunContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled));
                 if (_lastRunContext.IsWorkspaceTask)
-                    payload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+                    payload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContractForBuilder()));
                 else if (useArtifactCanvasContract)
                     payload.AppendLine(BuildCanvasArtifactAnchorBlock(_lastRunContext));
                 if (smallLocalBuilderModel && (_lastRunContext.TaskType == CouncilTaskType.Coding || useArtifactCanvasContract || _lastRunContext.IsWorkspaceTask))
