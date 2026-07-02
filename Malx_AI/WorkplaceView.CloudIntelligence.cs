@@ -53,7 +53,10 @@ namespace Malx_AI
                 CouncilRole.Builder => common +
                     "Implement the approved plan against the complete task contract and available source. Before finalizing, verify each A-item against the actual deliverable. " +
                     "Use tools only for observations that can change or validate the result. A tool request is not evidence until its returned observation is present. " +
-                    "For Canvas iteration, modify the supplied source, preserve unaffected behavior, and return one complete replacement. Produce only the required deliverable.",
+                    (context?.IsWorkspaceTask == true
+                        ? "For connected Codebase Access, return only a valid [[AXIOM_CODEBASE_PATCH]] envelope for review/apply. Do not return a standalone Project Canvas artifact, raw file content, or explanatory prose. "
+                        : "For Canvas iteration, modify the supplied source, preserve unaffected behavior, and return one complete replacement. ") +
+                    "Produce only the required deliverable.",
 
                 CouncilRole.Critic => common +
                     "Perform an independent falsification pass: inspect the Builder output itself rather than accepting its descriptions of what it did. " +
@@ -72,7 +75,7 @@ namespace Malx_AI
             packet.AppendLine("1. Requirement coverage: verify every R-item against actual output evidence.");
             packet.AppendLine("2. Constraint compliance: verify every C-item; substitutions require explicit user permission.");
             packet.AppendLine("3. Acceptance: decide pass/fail for every A-item.");
-            packet.AppendLine("4. Execution: reconcile source with static validation, sandbox, calculator, and tool observations.");
+            packet.AppendLine("4. Execution: reconcile source with static validation, executed acceptance harnesses, sandbox, calculator, and tool observations.");
             packet.AppendLine("5. Completeness: detect truncation, placeholders, missing handlers, partial Canvas replacements, and unsupported claims.");
             packet.AppendLine($"Web evidence required: {context.WebGroundingRequired}; usable web evidence present: {HasWebSearchEvidence(context.WebContext)}.");
             packet.AppendLine($"Canvas iteration: {context.IsProjectCanvasIteration}; supplied source truncated: {context.CurrentArtifactForIterationWasTruncated}.");

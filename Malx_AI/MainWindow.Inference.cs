@@ -8,6 +8,7 @@ using System.Linq;
 using System.Data;
 using System.Globalization;
 using System.Collections.Specialized;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -521,6 +522,7 @@ namespace Malx_AI
         {
             await InferenceBackendService.RunExclusiveAsync(async () =>
             {
+                InvalidateNormalChatPrefixCache();
                 _activeModelParams = plan.Parameters;
                 _model = await Task.Run(() => LLamaWeights.LoadFromFile(plan.Parameters));
                 await TryLoadMmprojWeightsAsync(plan.Parameters.ModelPath, plan.UsingGpu);
@@ -794,6 +796,8 @@ namespace Malx_AI
             if (_executor == null || _model == null)
                 return;
 
+            InvalidateNormalChatPrefixCache();
+
             string sysPrompt = SystemPromptBox?.Text?.Trim() ?? "";
             if (string.IsNullOrWhiteSpace(sysPrompt))
                 sysPrompt = "You are a helpful AI assistant and expert software engineer. Provide clear, concise, and accurate responses. Execute tasks directly and provide final output unless explicitly asked for step-by-step guidance.";
@@ -826,6 +830,7 @@ namespace Malx_AI
             await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, async () =>
             {
                 var oldExecutor = _executor;
+                InvalidateNormalChatPrefixCache();
                 _executor = null;
                 _chatSession = null;
                 try { oldExecutor?.Context?.Dispose(); } catch { }
@@ -1019,7 +1024,7 @@ namespace Malx_AI
                 return false;
 
             double maxRecentOverlap = recentUserMessages
-                .Select(message => ComputeWordOverlapRatio(currentWords, ExtractSignificantWords(message)))
+                .Select(message => ComputeSemanticAwareMessageSimilarity(currentUserMessage, message))
                 .DefaultIfEmpty(0)
                 .Max();
 
@@ -1176,6 +1181,20 @@ namespace Malx_AI
 
             int overlap = leftWords.Intersect(rightWords, StringComparer.OrdinalIgnoreCase).Count();
             return (double)overlap / Math.Max(leftWords.Count, rightWords.Count);
+        }
+
+        private static double ComputeSemanticAwareMessageSimilarity(string? left, string? right)
+        {
+            double lexical = ComputeWordOverlapRatio(
+                ExtractSignificantWords(left ?? string.Empty),
+                ExtractSignificantWords(right ?? string.Empty));
+            if (LocalSemanticEmbeddingService.Shared.TryGetSimilarity(left, right, out double semantic))
+            {
+                double mappedSemantic = Math.Clamp((semantic - 0.20) / 0.55, 0, 1);
+                return Math.Max(lexical, mappedSemantic);
+            }
+
+            return lexical;
         }
 
         private static int ScoreQueryComplexity(string message)
@@ -1479,6 +1498,70 @@ namespace Malx_AI
             public int EstimatedPromptTokens;
         }
 
+        private string? _normalChatSessionPrefixSignature;
+        private string? _normalChatStrictPrefixSignature;
+        private bool _normalChatLastTurnCanSeedPrefixCache;
+
+        private void InvalidateNormalChatPrefixCache()
+        {
+            _normalChatSessionPrefixSignature = null;
+            _normalChatStrictPrefixSignature = null;
+            _normalChatLastTurnCanSeedPrefixCache = false;
+        }
+
+        private string BuildLocalPrefixSignature(string kind, string systemPrompt, IEnumerable<ChatMessage> historyMessages)
+        {
+            var sb = new StringBuilder();
+            AppendSignaturePart(sb, kind);
+            AppendSignaturePart(sb, _activeModelParams?.ModelPath ?? _modelName);
+            AppendSignaturePart(sb, GetLoadedLocalContextSize().ToString(CultureInfo.InvariantCulture));
+            AppendSignaturePart(sb, systemPrompt ?? string.Empty);
+
+            foreach (ChatMessage message in NormalizeMessagesForChatSession(historyMessages))
+            {
+                AppendSignaturePart(sb, message.Role ?? string.Empty);
+                AppendSignaturePart(sb, message.Content ?? string.Empty);
+            }
+
+            return HashSignature(sb.ToString());
+        }
+
+        private string BuildStrictChatMlPrefixSignature(string systemPrompt, IEnumerable<(string Role, string Content)> historyTurns)
+        {
+            var sb = new StringBuilder();
+            AppendSignaturePart(sb, "strict-chatml");
+            AppendSignaturePart(sb, _activeModelParams?.ModelPath ?? _modelName);
+            AppendSignaturePart(sb, GetLoadedLocalContextSize().ToString(CultureInfo.InvariantCulture));
+            AppendSignaturePart(sb, systemPrompt ?? string.Empty);
+
+            foreach (var (role, content) in historyTurns ?? [])
+            {
+                AppendSignaturePart(sb, role ?? string.Empty);
+                AppendSignaturePart(sb, content ?? string.Empty);
+            }
+
+            return HashSignature(sb.ToString());
+        }
+
+        private static void AppendSignaturePart(StringBuilder sb, string value)
+        {
+            value ??= string.Empty;
+            sb.Append(value.Length.ToString(CultureInfo.InvariantCulture)).Append(':').Append(value).Append('\n');
+        }
+
+        private static string HashSignature(string value)
+        {
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(value ?? string.Empty));
+            return Convert.ToHexString(hash);
+        }
+
+        private static string BuildStrictChatMlContinuationPrompt(string userPrompt)
+        {
+            return "<|im_end|>\n<|im_start|>user\n"
+                + (userPrompt ?? string.Empty)
+                + "<|im_end|>\n<|im_start|>assistant\n";
+        }
+
         /// <summary>
         /// Tokenizer-verified fit guard for the ChatSession (non-strict-template) path. That
         /// path decodes the system prompt, every replayed history message, and the user turn
@@ -1671,19 +1754,17 @@ namespace Malx_AI
             if (userIndices.Count <= 1)
                 return allMessages;
 
-            HashSet<string> currentWords = ExtractSignificantWords(currentUserMessage);
             var candidates = new List<ChatTurnContextCandidate>();
             for (int i = 0; i < userIndices.Count - 1; i++)
             {
                 int startIndex = userIndices[i];
                 int endIndex = (i + 1 < userIndices.Count) ? userIndices[i + 1] - 1 : allMessages.Count - 1;
-                HashSet<string> turnWords = ExtractSignificantWords(allMessages[startIndex].Content);
                 candidates.Add(new ChatTurnContextCandidate
                 {
                     UserMessageIndex = i,
                     StartIndex = startIndex,
                     EndIndex = endIndex,
-                    Score = ComputeWordOverlapRatio(currentWords, turnWords)
+                    Score = ComputeSemanticAwareMessageSimilarity(currentUserMessage, allMessages[startIndex].Content)
                 });
             }
 
@@ -1792,7 +1873,7 @@ namespace Malx_AI
                         if (recentUserMessages.Count > 0)
                         {
                             double maxRecentOverlap = recentUserMessages
-                                .Select(message => ComputeWordOverlapRatio(currentWords, ExtractSignificantWords(message)))
+                                .Select(message => ComputeSemanticAwareMessageSimilarity(currentUserMessage, message))
                                 .DefaultIfEmpty(0)
                                 .Max();
 
@@ -1827,19 +1908,17 @@ namespace Malx_AI
             if (userIndices.Count <= 1)
                 return allMessages;
 
-            HashSet<string> currentWordsForSelection = ExtractSignificantWords(currentUserMessage);
             var candidates = new List<ChatTurnContextCandidate>();
             for (int i = 0; i < userIndices.Count - 1; i++)
             {
                 int startIndex = userIndices[i];
                 int endIndex = (i + 1 < userIndices.Count) ? userIndices[i + 1] - 1 : allMessages.Count - 1;
-                HashSet<string> turnWords = ExtractSignificantWords(allMessages[startIndex].Content);
                 candidates.Add(new ChatTurnContextCandidate
                 {
                     UserMessageIndex = i,
                     StartIndex = startIndex,
                     EndIndex = endIndex,
-                    Score = ComputeWordOverlapRatio(currentWordsForSelection, turnWords)
+                    Score = ComputeSemanticAwareMessageSimilarity(currentUserMessage, allMessages[startIndex].Content)
                 });
             }
 
@@ -2079,6 +2158,7 @@ namespace Malx_AI
         {
             bool isGemma4 = IsGemma4Model(_modelName);
             bool isStrictChatMl = IsStrictChatMlModel(_modelName);
+            _normalChatLastTurnCanSeedPrefixCache = false;
 
             // Strict-ChatML and Gemma4 models render the full transcript into a single prompt
             // and reset the executor context below — replaying history into the chat session
@@ -2095,6 +2175,7 @@ namespace Malx_AI
                     selectedHistoryMessages,
                     plannedUserText,
                     inferenceParams);
+                string untrimmedPrefixSignature = BuildLocalPrefixSignature("chat-session", effectiveSystemPrompt, selectedHistoryMessages);
 
                 NativeDecodeForensics.BeginDecode(
                     "NormalChat.SessionHistoryReplay",
@@ -2103,7 +2184,22 @@ namespace Malx_AI
                     _modelName);
                 try
                 {
-                    await RebuildChatSessionFromSelectedMessagesAsync(sessionPlan.HistoryMessages, sessionPlan.SystemPrompt, token);
+                    string requestedPrefixSignature = BuildLocalPrefixSignature("chat-session", sessionPlan.SystemPrompt, sessionPlan.HistoryMessages);
+                    _normalChatLastTurnCanSeedPrefixCache =
+                        string.Equals(untrimmedPrefixSignature, requestedPrefixSignature, StringComparison.Ordinal)
+                        && string.Equals(sessionPlan.UserMessage, plannedUserText, StringComparison.Ordinal);
+                    if (!string.Equals(_normalChatSessionPrefixSignature, requestedPrefixSignature, StringComparison.Ordinal)
+                        || _chatSession == null)
+                    {
+                        await RebuildChatSessionFromSelectedMessagesAsync(sessionPlan.HistoryMessages, sessionPlan.SystemPrompt, token);
+                        _normalChatSessionPrefixSignature = requestedPrefixSignature;
+                    }
+                    else
+                    {
+                        _ = BackendLogService.LogEventAsync(
+                            "NormalChatPrefixReuse",
+                            $"Path:ChatSession\nHistoryMessages:{sessionPlan.HistoryMessages.Count}\nPromptTokens:{sessionPlan.EstimatedPromptTokens}");
+                    }
                 }
                 finally
                 {
@@ -2111,7 +2207,7 @@ namespace Malx_AI
                 }
             }
 
-            if ((isStrictChatMl || isGemma4) && !_useGemma4LocalCliMode)
+            if ((isGemma4 || (isStrictChatMl && useIsolatedWebTurn)) && !_useGemma4LocalCliMode)
             {
                 await ResetExecutorContextAsync(token).ConfigureAwait(false);
             }
@@ -2173,17 +2269,46 @@ namespace Malx_AI
                     promptHistoryTurns.RemoveAt(promptHistoryTurns.Count - 1);
                 }
 
+                bool usedStrictPrefix = false;
+                bool canSeedStrictPrefix = false;
+                string? strictPrefixSignature = null;
+                string? strictPrompt = null;
+                if (isStrictChatMl && !isGemma4 && historyInjectionInfos.Count == 0 && queuedImages == 0)
+                {
+                    strictPrefixSignature = BuildStrictChatMlPrefixSignature(effectiveSystemPrompt, promptHistoryTurns);
+                    int fullStrictPromptTokens = CountLocalPromptTokens(BuildStrictChatMlPrompt(effectiveSystemPrompt, promptHistoryTurns, visionUserMsg));
+                    int generationReserve = Math.Clamp(inferenceParams?.MaxTokens ?? 2048, 256, 2048);
+                    bool fullPromptStillFits = fullStrictPromptTokens <= GetLoadedLocalContextSize() - generationReserve - 64;
+                    canSeedStrictPrefix = fullPromptStillFits;
+                    if (fullPromptStillFits
+                        && string.Equals(_normalChatStrictPrefixSignature, strictPrefixSignature, StringComparison.Ordinal))
+                    {
+                        strictPrompt = BuildStrictChatMlContinuationPrompt(visionUserMsg);
+                        usedStrictPrefix = true;
+                        _ = BackendLogService.LogEventAsync(
+                            "NormalChatPrefixReuse",
+                            $"Path:StrictChatML\nHistoryTurns:{promptHistoryTurns.Count}");
+                    }
+                }
+
                 // Fit-guard the rendered prompt against the real context window: an oversized
                 // decode aborts llama.cpp natively and crashes the whole app.
-                string prompt = FitLocalPromptToContextWindow(effectiveSystemPrompt, promptHistoryTurns, visionUserMsg, isGemma4, inferenceParams);
+                string prompt = strictPrompt ?? FitLocalPromptToContextWindow(effectiveSystemPrompt, promptHistoryTurns, visionUserMsg, isGemma4, inferenceParams);
 
-                prompt = ApplyPreInferenceContextReduction(prompt, historyInjectionInfos, userMsg);
+                if (!usedStrictPrefix)
+                {
+                    await ResetExecutorContextAsync(token).ConfigureAwait(false);
+                    prompt = ApplyPreInferenceContextReduction(prompt, historyInjectionInfos, userMsg);
+                }
 
                 int strictPromptTokens = CountLocalPromptTokens(prompt);
-                EnsureLocalPromptFitsOrThrow(strictPromptTokens, "NormalChat.StrictPrompt");
-                NativeDecodeForensics.BeginDecode("NormalChat.StrictPrompt", strictPromptTokens, GetLoadedLocalContextSize(), _modelName);
+                string strictStage = usedStrictPrefix ? "NormalChat.StrictPromptIncremental" : "NormalChat.StrictPrompt";
+                EnsureLocalPromptFitsOrThrow(strictPromptTokens, strictStage);
+                NativeDecodeForensics.BeginDecode(strictStage, strictPromptTokens, GetLoadedLocalContextSize(), _modelName);
                 try
                 {
+                    _normalChatStrictPrefixSignature = null;
+                    _normalChatLastTurnCanSeedPrefixCache = canSeedStrictPrefix;
                     return await StreamInferenceAsync(
                         () => _executor.InferAsync(prompt, inferenceParams, token),
                         responseBuilder,
@@ -2218,6 +2343,7 @@ namespace Malx_AI
             NativeDecodeForensics.BeginDecode("NormalChat.SessionTurn", sessionPromptTokens, GetLoadedLocalContextSize(), _modelName);
             try
             {
+                _normalChatSessionPrefixSignature = null;
                 return await StreamInferenceAsync(
                     () => _chatSession.ChatAsync(message, sessionParams, token),
                     responseBuilder,
@@ -2525,6 +2651,71 @@ namespace Malx_AI
                 .Trim();
         }
 
+        private void UpdateNormalChatPrefixCacheAfterSuccessfulTurn(
+            NormalChatRequestContext requestContext,
+            string userMsg,
+            string decodedUserMsg,
+            string rawOutput,
+            string finalizedAnswer,
+            bool thinkingModeEnabled)
+        {
+            bool isGemma4 = IsGemma4Model(_modelName);
+            bool isStrictChatMl = IsStrictChatMlModel(_modelName);
+            bool canSeedPrefixCache = _normalChatLastTurnCanSeedPrefixCache;
+            _normalChatLastTurnCanSeedPrefixCache = false;
+
+            bool decodedTurnMatchesUi =
+                canSeedPrefixCache
+                && _chatSession != null
+                && _executor != null
+                && !thinkingModeEnabled
+                && !_useGemma4LocalCliMode
+                && !requestContext.UseIsolatedWebTurn
+                && !requestContext.HasWebContext
+                && string.IsNullOrWhiteSpace(requestContext.PersonaContext)
+                && string.IsNullOrWhiteSpace(requestContext.CalculatorContext)
+                && string.IsNullOrWhiteSpace(requestContext.DocumentContext)
+                && requestContext.HistoryInjectionInfos.Count == 0
+                && !_chatDocuments.Any(d => d.IsImage)
+                && string.Equals(decodedUserMsg, userMsg, StringComparison.Ordinal);
+
+            string cleanedRaw = CleanOutputTokens(rawOutput ?? string.Empty);
+            bool assistantTurnMatchesUi = string.Equals(
+                cleanedRaw.Trim(),
+                (finalizedAnswer ?? string.Empty).Trim(),
+                StringComparison.Ordinal);
+
+            if (!decodedTurnMatchesUi || !assistantTurnMatchesUi || string.IsNullOrWhiteSpace(finalizedAnswer))
+            {
+                InvalidateNormalChatPrefixCache();
+                return;
+            }
+
+            var nextHistory = NormalizeMessagesForChatSession(requestContext.SelectedHistoryMessages);
+            nextHistory.Add(new ChatMessage("user", userMsg));
+            nextHistory.Add(new ChatMessage("assistant", finalizedAnswer));
+
+            if (isStrictChatMl && !isGemma4)
+            {
+                _normalChatSessionPrefixSignature = null;
+                _normalChatStrictPrefixSignature = BuildStrictChatMlPrefixSignature(
+                    requestContext.EffectiveSystemPrompt,
+                    BuildChatMlHistoryTurns(nextHistory));
+            }
+            else if (!isGemma4)
+            {
+                _normalChatStrictPrefixSignature = null;
+                _normalChatSessionPrefixSignature = BuildLocalPrefixSignature(
+                    "chat-session",
+                    requestContext.EffectiveSystemPrompt,
+                    nextHistory);
+            }
+            else
+            {
+                InvalidateNormalChatPrefixCache();
+            }
+        }
+
         private async Task ResetExecutorContextAsync(CancellationToken token = default)
         {
             if (_model == null || _activeModelParams == null)
@@ -2540,6 +2731,7 @@ namespace Malx_AI
                 {
                     // Dispose old context first to free VRAM before the new allocation.
                     var oldExecutor = _executor;
+                    InvalidateNormalChatPrefixCache();
                     _executor = null;
                     try { oldExecutor?.Context?.Dispose(); } catch { }
 
@@ -3005,6 +3197,8 @@ namespace Malx_AI
 
         private void DisposeInferenceResources(bool clearModel)
         {
+            InvalidateNormalChatPrefixCache();
+
             try
             {
                 if (_chatSession is IDisposable sessionDisposable)
@@ -3690,6 +3884,12 @@ namespace Malx_AI
 
         private async void Send_Click(object sender, RoutedEventArgs e)
         {
+            await SendUserMessageFromInputAsync();
+        }
+
+        private async Task SendUserMessageFromInputAsync(string? explicitUserMessage = null, string? temporaryCloudModelId = null)
+        {
+            string? cloudModelIdToRestore = null;
             try
             {
                 AnimateSendMicroFeedback();
@@ -3706,7 +3906,8 @@ namespace Malx_AI
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(InputBox.Text))
+                string pendingUserMessage = explicitUserMessage ?? InputBox.Text;
+                if (string.IsNullOrWhiteSpace(pendingUserMessage))
                 {
                     AppendSystemMessage("ERROR: Input is empty.");
                     return;
@@ -3725,8 +3926,17 @@ namespace Malx_AI
                 UpdateUIState(false);
                 UpdateResponseLoadingIndicator(true);
 
-                string userMsg = InputBox.Text.Trim();
-                InputBox.Clear();
+                if (_cloudModeActive && !string.IsNullOrWhiteSpace(temporaryCloudModelId))
+                {
+                    cloudModelIdToRestore = _selectedOpenRouterModelId;
+                    _selectedOpenRouterModelId = _openRouterChatService.NormalizeSelectableModelId(temporaryCloudModelId);
+                    RefreshCloudModeToggleUi();
+                    UpdateHeaderDisplay();
+                }
+
+                string userMsg = pendingUserMessage.Trim();
+                if (explicitUserMessage == null)
+                    InputBox.Clear();
                 _nextMessageModelOverride = "Default";
 
                 // The staged attachments belong to this message now — clear their input chips
@@ -3932,6 +4142,14 @@ namespace Malx_AI
                             Debug.WriteLine("Reasoning content detected in model response.");
                         }
 
+                        UpdateNormalChatPrefixCacheAfterSuccessfulTurn(
+                            requestContext,
+                            userMsg,
+                            modelUserMsg,
+                            responseBuilder.ToString(),
+                            finalizedResponse.Answer,
+                            thinkingModeEnabled);
+
                         double speedMetric = _tokenCount / Math.Max(_inferenceTimer.Elapsed.TotalSeconds, 0.001);
                         ShowTransientStatus($"Tokens: {_tokenCount}  •  Speed: {speedMetric:F2} tok/s");
                         _currentStreamingMessage = null;
@@ -3996,6 +4214,14 @@ namespace Malx_AI
             }
             finally
             {
+                if (!string.IsNullOrWhiteSpace(cloudModelIdToRestore))
+                {
+                    _selectedOpenRouterModelId = cloudModelIdToRestore;
+                    RefreshCloudModeToggleUi();
+                    RefreshInferenceSettingsUi();
+                    UpdateHeaderDisplay();
+                }
+
                 UpdateResponseLoadingIndicator(false);
                 _isProcessing = false;
                 UpdateUIState(true);

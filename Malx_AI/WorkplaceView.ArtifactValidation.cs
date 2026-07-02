@@ -75,6 +75,8 @@ namespace Malx_AI
                 result.Failures.Add("HTML syntax appears incomplete or badly unbalanced.");
             if (!result.ProjectCanvasRenderable)
                 result.Failures.Add("Project Canvas did not detect a renderable HTML artifact.");
+            if (ContainsMarkdownCodeFenceMarker(source))
+                result.Failures.Add("HTML source still contains markdown code fence markers; remove ```html/``` before rendering or saving.");
 
             bool expectsStandalone = context?.IsArtifactCanvasRequest == true
                 || lowerRequest.Contains("standalone html", StringComparison.Ordinal)
@@ -126,6 +128,8 @@ namespace Malx_AI
             result.ObviousInteractivityHooksFound = !expectsInteractivity || HasInteractivityHook(source);
             if (!result.ObviousInteractivityHooksFound)
                 result.Failures.Add("Expected interactivity, but no event handler, DOM query, timer, or animation hook was found.");
+
+            result.Failures.AddRange(ValidateRequestedHtmlBehavior(source, context));
 
             return result;
         }
@@ -332,6 +336,186 @@ namespace Malx_AI
             return Regex.IsMatch(source, @"addEventListener|onclick\s*=|querySelector|getElementById|classList|requestAnimationFrame|setInterval|setTimeout", RegexOptions.IgnoreCase);
         }
 
+        private static IReadOnlyList<string> ValidateRequestedHtmlBehavior(string source, CouncilRunContext? context, string? relativePath = null)
+        {
+            string request = BuildHtmlBehaviorValidationRequest(context);
+            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(request))
+                return Array.Empty<string>();
+
+            string lowerRequest = request.ToLowerInvariant();
+            string lowerSource = source.ToLowerInvariant();
+            string script = ExtractInlineScriptSource(source);
+            string lowerScript = script.ToLowerInvariant();
+            string evidence = lowerSource + "\n" + lowerScript;
+            var failures = new List<string>();
+
+            void Add(string message)
+            {
+                string full = string.IsNullOrWhiteSpace(relativePath)
+                    ? message
+                    : $"{relativePath}: {message}";
+                if (!failures.Contains(full, StringComparer.OrdinalIgnoreCase))
+                    failures.Add(full);
+            }
+
+            bool expectsInput = RequestMentionsAny(lowerRequest, "input", "paste", "type", "sequence", "amino acid");
+            bool expectsPrimaryAction = lowerRequest.Contains("generate fold", StringComparison.Ordinal)
+                || (lowerRequest.Contains("generate", StringComparison.Ordinal)
+                    && RequestMentionsAny(lowerRequest, "button", "control", "fold", "simulate", "simulation", "visualization", "protein"));
+            bool expectsCanvas = lowerRequest.Contains("canvas", StringComparison.Ordinal);
+            bool expectsVisualization = expectsCanvas
+                || RequestMentionsAny(lowerRequest, "visual", "visualization", "simulator", "simulation", "folding", "fold over time", "draw", "graph", "plot");
+            bool expectsAnimation = RequestMentionsAny(lowerRequest, "animation", "animated", "animate", "over time", "folding over time", "smooth");
+            bool expectsRandom = lowerRequest.Contains("random", StringComparison.Ordinal);
+            bool expectsReset = lowerRequest.Contains("reset", StringComparison.Ordinal);
+            bool expectsHover = RequestMentionsAny(lowerRequest, "hover", "tooltip", "inspect", "details");
+            bool expectsStats = RequestMentionsAny(lowerRequest, "statistic", "statistics", "stats", "score", "readout");
+            bool expectsProteinRules = lowerRequest.Contains("protein", StringComparison.Ordinal)
+                || lowerRequest.Contains("amino acid", StringComparison.Ordinal)
+                || lowerRequest.Contains("hydrophobic", StringComparison.Ordinal);
+
+            if (ContainsMarkdownCodeFenceMarker(source))
+                Add("HTML result contains markdown code fence markers; this would render visible ```html text instead of a clean page.");
+
+            if (expectsInput)
+            {
+                if (!Regex.IsMatch(lowerSource, @"<(input|textarea)\b", RegexOptions.IgnoreCase))
+                    Add("requested input is missing an <input> or <textarea> element.");
+                if (!lowerScript.Contains(".value", StringComparison.Ordinal))
+                    Add("requested input appears unused; inline JavaScript does not read an input value.");
+            }
+
+            if (expectsPrimaryAction && !HasNamedEventHandler(lowerSource, lowerScript, ["generate", "fold", "simulate", "start"]))
+                Add("primary Generate/Fold action appears unwired; no matching click/submit handler was found in JavaScript.");
+
+            if (expectsVisualization)
+            {
+                bool hasCanvas = lowerSource.Contains("<canvas", StringComparison.Ordinal);
+                bool hasSvg = lowerSource.Contains("<svg", StringComparison.Ordinal);
+                if (expectsCanvas && !hasCanvas)
+                    Add("request called for an HTML canvas visualization, but no <canvas> element was found.");
+                else if (!hasCanvas && !hasSvg)
+                    Add("requested visualization surface is missing; no canvas or SVG evidence was found.");
+
+                if (hasCanvas)
+                {
+                    if (!lowerScript.Contains("getcontext", StringComparison.Ordinal))
+                        Add("canvas exists but JavaScript never obtains a drawing context.");
+                    if (!HasCanvasDrawingEvidence(lowerScript))
+                        Add("canvas exists but no drawing calls were found, so the visualization is likely blank.");
+                }
+            }
+
+            if (expectsAnimation && !HasAnimationEvidence(evidence))
+                Add("requested animation/folding-over-time behavior is missing requestAnimationFrame, timer, or keyframe evidence.");
+
+            if (expectsRandom && !lowerScript.Contains("math.random", StringComparison.Ordinal))
+                Add("Random control was requested, but JavaScript does not generate random values.");
+
+            if (expectsReset && !HasNamedEventHandler(lowerSource, lowerScript, ["reset", "clear"]))
+                Add("Reset control was requested, but no matching reset handler was found.");
+
+            if (expectsHover && !Regex.IsMatch(evidence, @"mousemove|mouseover|mouseenter|pointermove|pointerenter|title\s*=|tooltip", RegexOptions.IgnoreCase))
+                Add("hover/inspection details were requested, but no pointer or tooltip handling was found.");
+
+            if (expectsStats && !Regex.IsMatch(lowerScript, @"textcontent|innertext|innerhtml|setattribute\s*\(", RegexOptions.IgnoreCase))
+                Add("stats/readouts were requested, but JavaScript does not appear to update visible text.");
+
+            if (expectsProteinRules)
+            {
+                if (!RequestMentionsAny(lowerScript, "hydrophobic", "polar", "charged", "positive", "negative"))
+                    Add("protein/amino-acid behavior was requested, but JavaScript lacks amino-acid property classification.");
+                if (RequestMentionsAny(lowerRequest, "spring", "physics", "force", "repel", "attract", "cluster", "fold")
+                    && !Regex.IsMatch(lowerScript, @"force|velocity|vx|vy|spring|distance|dx|dy|attract|repel|cluster|energy", RegexOptions.IgnoreCase))
+                {
+                    Add("folding behavior was requested, but JavaScript lacks force/position update logic.");
+                }
+            }
+
+            return failures.Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+        }
+
+        private static string BuildHtmlBehaviorValidationRequest(CouncilRunContext? context)
+        {
+            if (context == null)
+                return string.Empty;
+
+            var sb = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(context.UserPrompt))
+                sb.AppendLine(context.UserPrompt);
+            if (!string.IsNullOrWhiteSpace(context.Objective))
+                sb.AppendLine(context.Objective);
+            if (!string.IsNullOrWhiteSpace(context.ArchitectOutput))
+                sb.AppendLine(context.ArchitectOutput);
+            if (context.GoalContract != null)
+            {
+                sb.AppendLine(context.GoalContract.Goal);
+                foreach (string item in context.GoalContract.Requirements)
+                    sb.AppendLine(item);
+                foreach (string item in context.GoalContract.AcceptanceChecks)
+                    sb.AppendLine(item);
+            }
+
+            return sb.ToString();
+        }
+
+        private static string ExtractInlineScriptSource(string source)
+        {
+            if (string.IsNullOrWhiteSpace(source))
+                return string.Empty;
+
+            return string.Join("\n", Regex.Matches(source, @"<script\b(?![^>]*\bsrc\s*=)[^>]*>(?<code>[\s\S]*?)</script>", RegexOptions.IgnoreCase)
+                .Cast<Match>()
+                .Select(match => match.Groups["code"].Value));
+        }
+
+        private static bool ContainsMarkdownCodeFenceMarker(string source)
+        {
+            string value = source ?? string.Empty;
+            return value.TrimStart().StartsWith("```", StringComparison.Ordinal)
+                || value.Contains("```html", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("```javascript", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("```js", StringComparison.OrdinalIgnoreCase)
+                || value.TrimEnd().EndsWith("```", StringComparison.Ordinal);
+        }
+
+        private static bool RequestMentionsAny(string text, params string[] terms)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool HasNamedEventHandler(string lowerSource, string lowerScript, IReadOnlyList<string> names)
+        {
+            if (string.IsNullOrWhiteSpace(lowerScript))
+                return false;
+
+            string combined = lowerSource + "\n" + lowerScript;
+            bool hasEventHook = Regex.IsMatch(combined, @"addEventListener\s*\(\s*['""](?:click|submit|input|change|pointer|mouse)|\.onclick\s*=|onclick\s*=|onsubmit\s*=|oninput\s*=|onchange\s*=", RegexOptions.IgnoreCase);
+            if (!hasEventHook)
+                return false;
+
+            if (names.Any(name => lowerScript.Contains(name, StringComparison.Ordinal)))
+                return true;
+
+            bool genericPrimaryClick = lowerScript.Contains("click", StringComparison.Ordinal)
+                && lowerScript.Contains("button", StringComparison.Ordinal)
+                && (lowerScript.Contains(".value", StringComparison.Ordinal) || HasCanvasDrawingEvidence(lowerScript));
+            return genericPrimaryClick && names.Any(name => lowerSource.Contains(name, StringComparison.Ordinal));
+        }
+
+        private static bool HasCanvasDrawingEvidence(string lowerScript)
+        {
+            return Regex.IsMatch(lowerScript ?? string.Empty, @"\b(beginPath|moveTo|lineTo|arc|stroke|fill|fillRect|clearRect|drawImage|fillText|strokeRect|ellipse)\s*\(", RegexOptions.IgnoreCase);
+        }
+
+        private static bool HasAnimationEvidence(string source)
+        {
+            return Regex.IsMatch(source ?? string.Empty, @"requestAnimationFrame|setInterval\s*\(|setTimeout\s*\(|@keyframes|animation\s*:", RegexOptions.IgnoreCase);
+        }
+
         private static int ExtractExpectedCount(string lowerRequest, string pattern)
         {
             Match match = Regex.Match(lowerRequest, pattern, RegexOptions.IgnoreCase);
@@ -358,9 +542,17 @@ namespace Malx_AI
             };
         }
 
-        private static string BuildProjectCanvasSandboxResult(string code, string htmlPath, CouncilRunContext? context)
+        private static string BuildProjectCanvasSandboxResult(string code, string htmlPath, CouncilRunContext? context, IReadOnlyList<string>? runtimeErrors = null)
         {
             ProjectCanvasArtifactValidation validation = ValidateProjectCanvasHtmlArtifact(code, context);
+            foreach (string error in runtimeErrors ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(error))
+                    validation.RuntimeErrors.Add(error.Trim());
+            }
+            if (validation.RuntimeErrors.Count > 0)
+                validation.Failures.Add("WebView2 console-error gate failed: " + string.Join(" | ", validation.RuntimeErrors.Take(4)) + ".");
+
             var sb = new StringBuilder();
             sb.AppendLine("SANDBOX_RESULT");
             sb.AppendLine("syntax_valid: " + validation.SyntaxValid.ToString().ToLowerInvariant());
@@ -382,6 +574,7 @@ namespace Malx_AI
                     sb.AppendLine($"- {item.Key}: {item.Value.ToString().ToLowerInvariant()}");
             }
             sb.AppendLine("obvious_interactivity_hooks_found: " + validation.ObviousInteractivityHooksFound.ToString().ToLowerInvariant());
+            sb.AppendLine("webview2_console_error_gate: " + (validation.RuntimeErrors.Count == 0 ? "pass" : "fail"));
             sb.AppendLine("runtime_errors: " + (validation.RuntimeErrors.Count == 0 ? "[]" : string.Join(" | ", validation.RuntimeErrors)));
             if (validation.Failures.Count > 0)
             {
@@ -443,6 +636,12 @@ namespace Malx_AI
 
             string lower = finding.ToLowerInvariant();
             return lower.Contains("artifact", StringComparison.Ordinal)
+                || lower.Contains("behavior", StringComparison.Ordinal)
+                || lower.Contains("code fence", StringComparison.Ordinal)
+                || lower.Contains("generate/fold", StringComparison.Ordinal)
+                || lower.Contains("visualization", StringComparison.Ordinal)
+                || lower.Contains("canvas", StringComparison.Ordinal)
+                || lower.Contains("hover", StringComparison.Ordinal)
                 || lower.Contains("external", StringComparison.Ordinal)
                 || lower.Contains("embedded css", StringComparison.Ordinal)
                 || lower.Contains("embedded javascript", StringComparison.Ordinal)

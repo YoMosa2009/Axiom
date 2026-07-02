@@ -21,6 +21,8 @@ using LLama;
 using LLama.Common;
 using LLama.Sampling;
 using LLama.Transformers;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 using System.Windows.Threading;
@@ -168,7 +170,9 @@ namespace Malx_AI
 
             if (CodebaseReviewHintBlock != null)
                 CodebaseReviewHintBlock.Text = _hasPendingCodebaseChanges
-                    ? "Patch ready: inspect Project Canvas, then accept or reject."
+                    ? _pendingCodebasePatchApplyBlocked
+                        ? "Patch blocked: inspect Project Canvas, then reject or ask Builder to regenerate it."
+                        : "Patch ready: inspect Project Canvas, then accept or reject."
                     : _lastCodebaseUndo != null
                         ? "Last patch can be undone from Project Canvas or this panel."
                     : _connectedWorkspace.AutoApplyCodebaseChanges
@@ -186,7 +190,7 @@ namespace Malx_AI
             if (AcceptCodebaseChangesButton != null)
             {
                 AcceptCodebaseChangesButton.Visibility = reviewVisibility;
-                AcceptCodebaseChangesButton.IsEnabled = _hasPendingCodebaseChanges;
+                AcceptCodebaseChangesButton.IsEnabled = _hasPendingCodebaseChanges && !_pendingCodebasePatchApplyBlocked;
             }
             if (RejectCodebaseChangesButton != null)
             {
@@ -209,7 +213,7 @@ namespace Malx_AI
             if (CodebaseReviewActionGrid != null)
                 CodebaseReviewActionGrid.Visibility = reviewVisibility;
             if (AcceptCodebaseChangesSidebarButton != null)
-                AcceptCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges;
+                AcceptCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges && !_pendingCodebasePatchApplyBlocked;
             if (RejectCodebaseChangesSidebarButton != null)
                 RejectCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges;
         }
@@ -407,19 +411,35 @@ namespace Malx_AI
             // tool references (pause tools, WEB_SEARCH) with the cloud tool names.
             string cloudSystemPrompt = (systemPrompt ?? string.Empty)
                 .Replace(AgenticPauseRule, BuildCloudCouncilToolsNote(), StringComparison.Ordinal)
+                // Cloud roles get the snake_case tool names from the native-tools note; the
+                // [PAUSE:]-syntax codebase addendum must not survive alongside it.
+                .Replace(AgenticPauseCodebaseToolsAddendum, string.Empty, StringComparison.Ordinal)
                 .Replace("use the pause tools below", "use the tools provided", StringComparison.Ordinal)
                 .Replace("except through WEB_SEARCH", "except through the web_search tool", StringComparison.Ordinal);
-            cloudSystemPrompt += BuildCloudCouncilIntelligenceNote(role, _activeCouncilRunContext ?? _lastRunContext);
+            CouncilRunContext? activeRunContext = _activeCouncilRunContext ?? _lastRunContext;
+            cloudSystemPrompt += BuildCloudCouncilIntelligenceNote(role, activeRunContext);
             if (role == CouncilRole.Builder)
             {
+                string codebaseToolNames = _connectedWorkspace.CodebaseEditAccessEnabled
+                    ? ", read_file, search_codebase, list_files"
+                    : string.Empty;
                 cloudSystemPrompt += "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
-                    "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory) BEFORE you write your deliverable, " +
+                    "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + ") BEFORE you write your deliverable, " +
                     "whenever you need a real fact, number, computation, conversion, or current detail. Never guess or fabricate values you could verify with a tool. " +
                     "If proactive web evidence is partial, off-topic, or missing the user's named entities, call a narrower web_search before writing the final deliverable instead of treating the mismatched evidence as a reason to refuse the whole answer. " +
                     "For stable non-current background context, you may use the prompt, council plan, project knowledge, session memory, or general knowledge when not contradicted by source evidence. " +
                     "Gather every tool result you need first, then produce EXACTLY ONE final Builder deliverable that already incorporates those results. " +
                     "Once you begin writing the final deliverable, stop calling tools — do not restart, revise, repeat, or continue after it is complete.";
             }
+            if (role == CouncilRole.Builder && activeRunContext?.IsWorkspaceTask == true)
+            {
+                cloudSystemPrompt += "\n\n[CLOUD CODEBASE PATCH MODE]\n" +
+                    "Codebase Access is active. The Builder's final deliverable is a connected-workspace patch review, not a standalone Project Canvas artifact. " +
+                    "Your first visible output line must be [[AXIOM_CODEBASE_PATCH]]. " +
+                    "Return only FILE/ACTION sections, SEARCH/REPLACE blocks or complete fenced file content inside those sections, [[END FILE]] markers, and [[END AXIOM_CODEBASE_PATCH]]. " +
+                    "Do not output analysis, chain-of-thought, approach notes, raw HTML outside the envelope, markdown explanations, or claims that files were changed.";
+            }
+
             string adaptedSystemPrompt = _openRouterChatService.BuildSystemPromptForModel(
                 OpenRouterChatService.WorkplaceCouncilDefaultModelId,
                 cloudSystemPrompt);
@@ -535,6 +555,8 @@ namespace Malx_AI
 
                 bool builderHasGroundingToolCall = role == CouncilRole.Builder
                     && response.ToolCalls.Any(IsBuilderGroundingToolCall);
+                bool builderHasFinalizingGroundingToolCall = role == CouncilRole.Builder
+                    && response.ToolCalls.Any(IsBuilderFinalizingGroundingToolCall);
 
                 if (role == CouncilRole.Builder
                     && !builderHasGroundingToolCall
@@ -589,7 +611,7 @@ namespace Malx_AI
                     UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, CloudCouncilToolExecutionLimit)}/{CloudCouncilToolExecutionLimit} tools used");
                 }
 
-                if (builderHasGroundingToolCall)
+                if (builderHasFinalizingGroundingToolCall)
                 {
                     // The text before a grounding tool call is only a draft. Force the next pass to
                     // synthesize from the returned evidence without more tool calls, instead of using
@@ -667,7 +689,9 @@ namespace Malx_AI
                 // Model emitted only chain-of-thought (no final content). Builder has a downstream
                 // canvas-specific suppressor; Critic output is used as repair instructions, so never
                 // promote hidden reasoning into visible/actionable review text.
-                content = role == CouncilRole.Critic ? string.Empty : reasoning;
+                bool suppressBuilderReasoning = role == CouncilRole.Builder
+                    && (_activeCouncilRunContext?.IsWorkspaceTask == true || _lastRunContext?.IsWorkspaceTask == true);
+                content = role == CouncilRole.Critic || suppressBuilderReasoning ? string.Empty : reasoning;
                 reasoningFallback = true;
             }
 
@@ -696,6 +720,20 @@ namespace Malx_AI
             string name = toolCall?.Name?.Trim() ?? string.Empty;
             return name.Equals("web_search", StringComparison.OrdinalIgnoreCase)
                 || name.Equals("calculate", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("run_python", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("read_file", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("READ_FILE", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("search_codebase", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("SEARCH_CODEBASE", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("list_files", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("LIST_FILES", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsBuilderFinalizingGroundingToolCall(OpenRouterToolCall toolCall)
+        {
+            string name = toolCall?.Name?.Trim() ?? string.Empty;
+            return name.Equals("web_search", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("calculate", StringComparison.OrdinalIgnoreCase)
                 || name.Equals("run_python", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -709,6 +747,9 @@ namespace Malx_AI
                 "run_python" => "Running Python sandbox",
                 "calculate" => "Calculating" + detail,
                 "search_session_memory" => "Searching session memory" + detail,
+                "read_file" => "Reading code file" + detail,
+                "search_codebase" => "Searching codebase" + detail,
+                "list_files" => "Listing code files" + detail,
                 _ => "Running " + name + detail
             };
 
@@ -729,6 +770,8 @@ namespace Malx_AI
                     value = query.GetString() ?? string.Empty;
                 else if (root.TryGetProperty("expression", out JsonElement expression))
                     value = expression.GetString() ?? string.Empty;
+                else if (root.TryGetProperty("path", out JsonElement path))
+                    value = path.GetString() ?? string.Empty;
 
                 value = value.Trim();
                 if (value.Length == 0)
@@ -860,6 +903,63 @@ namespace Malx_AI
                     ["additionalProperties"] = false
                 }));
 
+            if (_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                defs.Add(new OpenRouterToolDefinition(
+                    "read_file",
+                    "Read one connected-workspace source file by relative path. This is read-only and cannot modify files.",
+                    new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["path"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Relative path from the connected workspace root, such as Malx_AI/WorkspaceAccessService.cs."
+                            }
+                        },
+                        ["required"] = new JsonArray("path"),
+                        ["additionalProperties"] = false
+                    }));
+
+                defs.Add(new OpenRouterToolDefinition(
+                    "search_codebase",
+                    "Search connected-workspace source files for text, symbols, methods, classes, or filenames. Returns relative paths, line numbers, and snippets.",
+                    new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["query"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Text, symbol, method, class, or filename to search for."
+                            }
+                        },
+                        ["required"] = new JsonArray("query"),
+                        ["additionalProperties"] = false
+                    }));
+
+                defs.Add(new OpenRouterToolDefinition(
+                    "list_files",
+                    "List readable source files in the connected workspace, optionally filtered by path text.",
+                    new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["query"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Optional path or filename filter. Use an empty string to list the first readable files."
+                            }
+                        },
+                        ["required"] = new JsonArray("query"),
+                        ["additionalProperties"] = false
+                    }));
+            }
+
             return defs;
         }
 
@@ -945,6 +1045,32 @@ namespace Malx_AI
                     return CalculatorToolAgent.TryEvaluateExpression(expression, out string resultText)
                         ? resultText
                         : "Calculator could not evaluate the requested expression.";
+                }
+
+                if (string.Equals(name, "read_file", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "READ_FILE", StringComparison.OrdinalIgnoreCase))
+                {
+                    string path = root.TryGetProperty("path", out JsonElement p)
+                        ? p.GetString() ?? string.Empty
+                        : root.TryGetProperty("query", out JsonElement rq) ? rq.GetString() ?? string.Empty : string.Empty;
+                    WorkspaceReadToolResult result = _workspaceAccessService.ReadFileForTool(_connectedWorkspace, path);
+                    return result.Output;
+                }
+
+                if (string.Equals(name, "search_codebase", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "SEARCH_CODEBASE", StringComparison.OrdinalIgnoreCase))
+                {
+                    string query = root.TryGetProperty("query", out JsonElement sq) ? sq.GetString() ?? string.Empty : string.Empty;
+                    WorkspaceReadToolResult result = _workspaceAccessService.SearchCodebaseForTool(_connectedWorkspace, query);
+                    return result.Output;
+                }
+
+                if (string.Equals(name, "list_files", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(name, "LIST_FILES", StringComparison.OrdinalIgnoreCase))
+                {
+                    string query = root.TryGetProperty("query", out JsonElement lq) ? lq.GetString() ?? string.Empty : string.Empty;
+                    WorkspaceReadToolResult result = _workspaceAccessService.ListFilesForTool(_connectedWorkspace, query);
+                    return result.Output;
                 }
 
                 return $"Unsupported tool: {name}";
@@ -1036,6 +1162,33 @@ namespace Malx_AI
             public int SchemaValidationPasses { get; set; } = 1;
         }
 
+        private sealed class AcceptanceProbe
+        {
+            public string Id { get; set; } = "";
+            public string Check { get; set; } = "";
+            public List<string> RequiredIdentifiers { get; } = new();
+            public List<string> RequiredClasses { get; } = new();
+            public List<string> RequiredTerms { get; } = new();
+            public int MinRequiredTerms { get; set; }
+            public bool NoPlaceholders { get; set; }
+            public bool RequiresExecutableTests { get; set; }
+            public bool HasDeterministicPredicate =>
+                RequiredIdentifiers.Count > 0
+                || RequiredClasses.Count > 0
+                || RequiredTerms.Count > 0
+                || NoPlaceholders
+                || RequiresExecutableTests;
+        }
+
+        private sealed class AcceptanceCheckExecutionResult
+        {
+            public string Id { get; set; } = "";
+            public string Check { get; set; } = "";
+            public bool Passed { get; set; }
+            public string Evidence { get; set; } = "";
+            public string HarnessLanguage { get; set; } = "";
+        }
+
         private sealed class CouncilRunContext
         {
             public string UserPrompt { get; init; } = "";
@@ -1090,6 +1243,8 @@ namespace Malx_AI
             public bool FinalVerificationFailed { get; set; }
             public bool StaticValidationIssuesFound { get; set; }
             public bool SandboxExceptionsFound { get; set; }
+            public bool AcceptanceCheckFailuresFound { get; set; }
+            public List<AcceptanceCheckExecutionResult> AcceptanceCheckResults { get; set; } = new();
             public TaskComplexity Complexity { get; set; } = TaskComplexity.Moderate;
             public Dictionary<string, string> SharedVocabulary { get; set; } = new(StringComparer.OrdinalIgnoreCase);
             public List<FormulaChecklistItem> FormulaChecklist { get; set; } = new();
@@ -1104,9 +1259,13 @@ namespace Malx_AI
             public bool IsCloudExecution { get; init; }
         }
 
-        private sealed record CodebasePatchValidationResult(bool IsValid, IReadOnlyList<string> Reasons)
+        private sealed record CodebasePatchValidationResult(
+            bool IsValid,
+            IReadOnlyList<string> Reasons,
+            IReadOnlyList<string> BlockingReasons)
         {
-            public static CodebasePatchValidationResult Pass { get; } = new(true, Array.Empty<string>());
+            public bool HasBlockingFailures => BlockingReasons.Count > 0;
+            public static CodebasePatchValidationResult Pass { get; } = new(true, Array.Empty<string>(), Array.Empty<string>());
         }
 
         private sealed record CodebaseUndoFileSnapshot(
@@ -1252,16 +1411,52 @@ namespace Malx_AI
             return context.Packet;
         }
 
+        private static bool ShouldUseArtifactCanvasContract(CouncilRunContext context)
+        {
+            return context.IsArtifactCanvasRequest && !context.IsWorkspaceTask;
+        }
+
+        private AgenticPauseEngine.StructuredToolResult ExecuteLocalWorkspaceReadTool(string tool, string query)
+        {
+            WorkspaceReadToolResult result;
+            if (string.Equals(tool, "READ_FILE", StringComparison.OrdinalIgnoreCase))
+                result = _workspaceAccessService.ReadFileForTool(_connectedWorkspace, query);
+            else if (string.Equals(tool, "SEARCH_CODEBASE", StringComparison.OrdinalIgnoreCase))
+                result = _workspaceAccessService.SearchCodebaseForTool(_connectedWorkspace, query);
+            else if (string.Equals(tool, "LIST_FILES", StringComparison.OrdinalIgnoreCase))
+                result = _workspaceAccessService.ListFilesForTool(_connectedWorkspace, query);
+            else
+                return AgenticPauseEngine.StructuredToolResult.Fail($"Unsupported codebase read tool: {tool}");
+
+            return result.Success
+                ? AgenticPauseEngine.StructuredToolResult.Ok(result.Output)
+                : AgenticPauseEngine.StructuredToolResult.Fail(result.Output);
+        }
+
         private static string BuildCodebasePatchOutputContract()
         {
-            return "Connected workspace changes must be proposed as one structured full-file patch review. " +
+            return "Connected workspace changes must be proposed as one structured patch review. " +
                 "Do not output standalone code fences, prose-only instructions, diffs, or claims that files were changed. " +
-                "Output exactly one [[AXIOM_CODEBASE_PATCH]] envelope. Each file block must include FILE, ACTION, one complete fenced replacement/create file, and [[END FILE]]. " +
-                "Use relative paths only. Use ACTION: replace for existing files and ACTION: create for new files. Do not use delete actions. " +
-                "Use the exact connected workspace path for the target file; do not rename file extensions. " +
-                "Always wrap file content in a fenced code block immediately after ACTION; do not put raw HTML/CSS/JSON directly after ACTION. " +
-                "For .html/.htm replacements, return the complete file through all closing script/style/body/html tags; never return a partial document. " +
-                "Example:\n" +
+                "Output exactly one [[AXIOM_CODEBASE_PATCH]] envelope. The first visible line of the response must be [[AXIOM_CODEBASE_PATCH]]. " +
+                "Never output analysis, reasoning, planning, explanations, summaries, or markdown outside the patch envelope. " +
+                "If the user asks for a single-file HTML/CSS/JavaScript app, patch the named connected HTML file; do not return raw standalone HTML outside the envelope. " +
+                "Use relative paths only. Do not use delete actions. " +
+                "Prefer ACTION: edit for existing files: each SEARCH block must copy exact current file text and match exactly once. " +
+                "Use ACTION: replace only when a full-file replacement is small and necessary; use ACTION: create only for new files. " +
+                "For ACTION: replace/create, always wrap file content in a fenced code block immediately after ACTION. " +
+                "For .html/.htm full replacements, return the complete file through all closing script/style/body/html tags; never return a partial document. " +
+                "Edit example:\n" +
+                "[[AXIOM_CODEBASE_PATCH]]\n" +
+                "FILE: path/from/workspace.ext\n" +
+                "ACTION: edit\n" +
+                "<<<<<<< SEARCH\n" +
+                "exact existing text to replace\n" +
+                "=======\n" +
+                "replacement text\n" +
+                ">>>>>>> REPLACE\n" +
+                "[[END FILE]]\n" +
+                "[[END AXIOM_CODEBASE_PATCH]]\n" +
+                "Full-file example:\n" +
                 "[[AXIOM_CODEBASE_PATCH]]\n" +
                 "FILE: path/from/workspace.ext\n" +
                 "ACTION: replace\n" +
@@ -1270,6 +1465,16 @@ namespace Malx_AI
                 "```\n" +
                 "[[END FILE]]\n" +
                 "[[END AXIOM_CODEBASE_PATCH]]";
+        }
+
+        private static string BuildWorkspaceBuilderPatchModeBoost()
+        {
+            return "\n[CONNECTED CODEBASE PATCH MODE - OVERRIDES GENERIC CODING RULES] " +
+                "This is not a standalone code-output task. The Builder must return a patch proposal for host-side review/apply. " +
+                "If any other instruction says to output code only, code fences only, a plan, or prose, ignore that instruction for this turn. " +
+                "The final visible answer must begin with [[AXIOM_CODEBASE_PATCH]] and contain only FILE/ACTION patch sections plus [[END FILE]] markers. " +
+                "If the requested implementation is a complete HTML/CSS/JavaScript page, put that complete page inside an ACTION replace/create file section for the connected target file. " +
+                "Do not think aloud, explain the approach, mention existing files in prose, or describe what you would do.";
         }
 
         private IReadOnlyList<ConversationSearchTurn> BuildCouncilSearchContextTurns(string currentQuery)
@@ -1569,6 +1774,7 @@ namespace Malx_AI
                 _connectedWorkspace = new ConnectedWorkspaceState();
                 _hasPendingCodebaseChanges = false;
                 _pendingCodebasePatch = null;
+                _pendingCodebasePatchApplyBlocked = false;
                 _lastCodebaseUndo = null;
             }
 
@@ -1709,6 +1915,7 @@ namespace Malx_AI
             _connectedWorkspace = snapshot.ConnectedWorkspace ?? new ConnectedWorkspaceState();
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
+            _pendingCodebasePatchApplyBlocked = false;
             _lastCodebaseUndo = null;
 
             _contextSize = snapshot.GlobalContextSize <= 0 ? _contextSize : Math.Clamp(snapshot.GlobalContextSize, MinRoleContext, MaxRoleContext);
@@ -1782,6 +1989,7 @@ namespace Malx_AI
             _connectedWorkspace = new ConnectedWorkspaceState();
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
+            _pendingCodebasePatchApplyBlocked = false;
             _lastCodebaseUndo = null;
             LoadOpenRouterKeyForWorkplace();
             RefreshWorkplaceCloudModeUi();
@@ -1865,6 +2073,7 @@ namespace Malx_AI
         private ConnectedWorkspaceState _connectedWorkspace = new();
         private bool _hasPendingCodebaseChanges;
         private WorkspacePatchProposal? _pendingCodebasePatch;
+        private bool _pendingCodebasePatchApplyBlocked;
         private CodebaseUndoSnapshot? _lastCodebaseUndo;
         private string _builderPythonSandboxPreamble = "";
         private string _activePythonSandboxPreamble = "";
@@ -1997,6 +2206,7 @@ namespace Malx_AI
         private string _canvasArtifactNavSource = string.Empty;
         private bool _canvasArtifactNavRetried;
         private bool _canvasArtifactNavOk;
+        private bool _canvasArtifactConsoleProbeInstalled;
         private TaskComplexity _activeTaskComplexity = TaskComplexity.Moderate;
         private int _completedCouncilRunCount;
 
@@ -2231,6 +2441,7 @@ namespace Malx_AI
                 (code, lang) => ExecuteCodeSandboxAsync(code, lang),
                 (query, ct) => ExecuteWebSearchAsync(query, ct),
                 (code, ct) => ExecutePythonMathAsync(code, ct),
+                ExecuteLocalWorkspaceReadTool,
                 msg => LogActivity(msg),
                 msg => UpdateAgenticPauseStatus(msg));
             RefreshWorkplaceCloudModeUi();
@@ -3963,6 +4174,7 @@ namespace Malx_AI
                 string reason = "the patch target could not be resolved: " + ex.Message;
                 _pendingCodebasePatch = proposal;
                 _hasPendingCodebaseChanges = true;
+                _pendingCodebasePatchApplyBlocked = true;
                 RenderCodebasePatchReview(proposal, autoMode: false);
                 AddCodebasePatchNoticeRow("Path check failed. No files were changed.\n- " + reason);
                 RefreshCodebaseAccessUi();
@@ -3972,9 +4184,28 @@ namespace Malx_AI
                 return true;
             }
 
+            CodebasePatchValidationResult initialValidation = ValidateCodebasePatchProposal(proposal, runContext);
+            if (!initialValidation.IsValid
+                && (_connectedWorkspace.AutoApplyCodebaseChanges || initialValidation.HasBlockingFailures))
+            {
+                HandleCodebasePreApplyFailure(
+                    proposal,
+                    automatic: _connectedWorkspace.AutoApplyCodebaseChanges,
+                    initialValidation.Reasons,
+                    allowManualOverride: !initialValidation.HasBlockingFailures);
+                return true;
+            }
+
             _pendingCodebasePatch = proposal;
             _hasPendingCodebaseChanges = true;
+            _pendingCodebasePatchApplyBlocked = false;
             RenderCodebasePatchReview(proposal, _connectedWorkspace.AutoApplyCodebaseChanges);
+            if (!initialValidation.IsValid)
+            {
+                AddCodebasePatchNoticeRow("Pre-apply checks found warning(s). No files have been changed yet.\n" +
+                    string.Join("\n", initialValidation.Reasons.Select(reason => "- " + reason)) +
+                    "\n\nReview the diff before accepting.");
+            }
             RefreshCodebaseAccessUi();
             SavePersistedSession();
 
@@ -4032,8 +4263,21 @@ namespace Malx_AI
                     error = ex.Message;
                 }
 
+                string proposed = string.Empty;
+                if (error == null)
+                {
+                    try
+                    {
+                        proposed = _workspaceAccessService.MaterializePatchContent(_connectedWorkspace, patch);
+                    }
+                    catch (Exception ex)
+                    {
+                        error = ex.Message;
+                    }
+                }
+
                 IReadOnlyList<LineDiffEntry> diff = error == null
-                    ? LineDiff.Build(original, patch.Content)
+                    ? LineDiff.Build(original, proposed)
                     : Array.Empty<LineDiffEntry>();
                 totalAdditions += diff.Count(entry => entry.Kind == LineDiffKind.Added);
                 totalRemovals += diff.Count(entry => entry.Kind == LineDiffKind.Removed);
@@ -4071,7 +4315,7 @@ namespace Malx_AI
             panel.Children.Add(new TextBlock
             {
                 Text = autoMode
-                    ? $"Auto mode is on; the app will apply this after parsing and path checks.  +{additions:n0} / -{removals:n0} lines"
+                    ? $"Auto mode is on; the app will apply this after parsing, syntax, and path checks.  +{additions:n0} / -{removals:n0} lines"
                     : $"Review below, then use Accept Changes or Reject.  +{additions:n0} / -{removals:n0} lines",
                 Foreground = new SolidColorBrush(Color.FromRgb(168, 160, 150)),
                 FontSize = 11,
@@ -4200,13 +4444,8 @@ namespace Malx_AI
             review.AppendLine();
             if (!string.IsNullOrWhiteSpace(rejectedOutput))
             {
-                string capped = rejectedOutput.Length > 4000
-                    ? rejectedOutput[..4000] + "\n\n[...rejected output truncated...]"
-                    : rejectedOutput;
                 review.AppendLine("## Rejected Builder Output");
-                review.AppendLine("````text");
-                review.AppendLine(capped);
-                review.AppendLine("````");
+                review.AppendLine("The invalid Builder response was suppressed because it was not a valid codebase patch envelope.");
             }
 
             ExitCanvasDiffView();
@@ -4221,6 +4460,52 @@ namespace Malx_AI
             CanvasSubtitleBlock.Text = "No files changed.";
             UpdateWorkplaceTokenUsageIndicator();
             SavePersistedSession();
+        }
+
+        private static string BuildCodebasePatchFormatFailureReason(string firstRejectedOutput, string retryRejectedOutput)
+        {
+            string retry = retryRejectedOutput ?? string.Empty;
+            string first = firstRejectedOutput ?? string.Empty;
+            string combined = string.IsNullOrWhiteSpace(retry) ? first : retry;
+
+            if (string.IsNullOrWhiteSpace(combined))
+                return "The Builder returned an empty response instead of a valid `[[AXIOM_CODEBASE_PATCH]]` envelope after a retry.";
+
+            if (LooksLikeWorkspacePatchReasoning(combined))
+                return "The Builder produced analysis/prose instead of a valid `[[AXIOM_CODEBASE_PATCH]]` envelope after a retry.";
+
+            if (combined.Contains("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase))
+                return "The Builder attempted a `[[AXIOM_CODEBASE_PATCH]]` envelope, but the patch syntax was invalid after a retry.";
+
+            if (DetectCodeOutput(combined).IsCode)
+                return "The Builder produced standalone code instead of wrapping the change in a valid `[[AXIOM_CODEBASE_PATCH]]` envelope after a retry.";
+
+            return "The Builder response did not contain a valid `[[AXIOM_CODEBASE_PATCH]]` envelope after a retry.";
+        }
+
+        private static bool LooksLikeWorkspacePatchReasoning(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output))
+                return false;
+
+            string head = StripSpecialTokenText(output).TrimStart();
+            if (head.Length > 1600)
+                head = head[..1600];
+            string lower = head.ToLowerInvariant();
+            string firstLine = lower.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.Length > 0) ?? string.Empty;
+
+            string[] reasoningOpeners =
+            [
+                "we are given", "we need", "we should", "we will", "i will", "i need",
+                "the task is", "the user wants", "approach:", "steps:", "plan:",
+                "let's", "however,", "note that", "since the requirement"
+            ];
+
+            return reasoningOpeners.Any(opener => firstLine.StartsWith(opener, StringComparison.Ordinal))
+                || lower.Contains("\napproach:", StringComparison.Ordinal)
+                || lower.Contains("\nsteps", StringComparison.Ordinal)
+                || lower.Contains("we need to", StringComparison.Ordinal)
+                || lower.Contains("we should", StringComparison.Ordinal);
         }
 
         private bool TryRecoverCodebasePatchProposal(string builderOutput, CouncilRunContext runContext, out WorkspacePatchProposal? proposal, out string reason)
@@ -4267,6 +4552,226 @@ namespace Malx_AI
 
             reason = $"Recovered a structured patch for {targetPath} from full-file Builder output.";
             return true;
+        }
+
+        // Last-resort rescue when the Builder repeatedly fails the envelope format: stop asking for
+        // the envelope at all. Ask for the raw full-file content of the one resolvable target file —
+        // the task models reliably complete — and wrap it into the envelope host-side, then push it
+        // through the normal parse/validation/review pipeline. Returns the wrapped envelope on
+        // success (after TryCaptureCodebasePatchProposal accepted it), null on failure.
+        private async Task<string?> TryContentOnlyCodebasePatchRescueAsync(
+            CouncilRunContext runContext,
+            string builderSystem,
+            string rejectedOutputs,
+            CancellationToken token,
+            CouncilBaseStateVault? baseStateVault)
+        {
+            string? targetPath = ResolveRequestedWorkspacePatchPath(runContext, rejectedOutputs);
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                LogActivity("Content-only patch rescue skipped: no single target file could be resolved.");
+                return null;
+            }
+
+            string existingContent = string.Empty;
+            bool targetExists;
+            try
+            {
+                string resolved = _workspaceAccessService.ResolvePatchTargetPath(
+                    _connectedWorkspace,
+                    new WorkspaceFilePatch(targetPath, "replace", string.Empty));
+                targetExists = File.Exists(resolved);
+                if (targetExists)
+                    existingContent = File.ReadAllText(resolved);
+            }
+            catch (Exception ex)
+            {
+                LogActivity("Content-only patch rescue skipped: " + ex.Message);
+                return null;
+            }
+
+            // A full-file regeneration of a large existing file by a struggling model is how content
+            // gets silently dropped. Beyond this size, fail closed and keep the manual-review guidance.
+            const int maxRescueSourceChars = 24000;
+            if (existingContent.Length > maxRescueSourceChars)
+            {
+                LogActivity($"Content-only patch rescue skipped: {targetPath} is too large for a safe full-file rewrite.");
+                return null;
+            }
+
+            AppendChat("system", $"Builder could not produce the patch envelope. Retrying as a plain full-file rewrite of {targetPath}; the app will wrap it into a reviewable patch.");
+            LogActivity($"Content-only patch rescue started for {targetPath}.");
+
+            var payload = new StringBuilder();
+            payload.AppendLine($"TASK: output the complete {(targetExists ? "updated" : "new")} content of the file {targetPath}. Output the file content and nothing else.");
+            payload.AppendLine("Do NOT output [[AXIOM_CODEBASE_PATCH]], FILE:, ACTION:, markdown fences, plans, analysis, or any prose.");
+            payload.AppendLine("Your first output character must be the first character of the file itself.");
+            payload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
+            if (!string.IsNullOrWhiteSpace(runContext.ArchitectOutput))
+                payload.AppendLine(BuildLabeledBlock("APPROVED ARCHITECTURE", runContext.ArchitectOutput));
+            if (targetExists && existingContent.Length > 0)
+            {
+                payload.AppendLine(BuildLabeledBlock($"CURRENT CONTENT OF {targetPath} — MODIFY THIS", existingContent));
+                payload.AppendLine("Return the COMPLETE updated file. Preserve every part the request does not ask to change.");
+            }
+            payload.AppendLine("The file must fully implement the requested behavior: inputs read, buttons wired to real handlers, rendering/logic actually executed — no placeholders or TODOs.");
+
+            var rescue = await ExecuteCouncilRoleAsync(
+                CouncilRole.Builder,
+                builderSystem,
+                payload.ToString(),
+                token,
+                0.2f,
+                baseStateVault,
+                true,
+                useBuilderToolDecision: false);
+
+            if (rescue.IsReasoningFallback)
+            {
+                LogActivity("Content-only patch rescue failed: the Builder returned reasoning instead of file content.");
+                return null;
+            }
+
+            string content = ExtractRecoverableWorkspaceFileContent(rescue.Answer, targetPath);
+            if (string.IsNullOrWhiteSpace(content)
+                || !IsPlausibleRecoveredFileContent(targetPath, content, existingContent))
+            {
+                LogActivity("Content-only patch rescue failed: the rewrite output was not plausible full-file content.");
+                return null;
+            }
+
+            // Small local models cap generation well below what a complete HTML file needs, so the
+            // first pass is usually truncated (unclosed <script>/<style>). Stitch continuation passes
+            // until the document is structurally complete, then fail closed if it still is not.
+            string extension = Path.GetExtension(targetPath).ToLowerInvariant();
+            if (extension is ".html" or ".htm" && !IsHtmlDocumentComplete(content))
+            {
+                content = await ContinueTruncatedHtmlAsync(targetPath, content, builderSystem, token, baseStateVault);
+                if (!IsHtmlDocumentComplete(content))
+                {
+                    LogActivity("Content-only patch rescue failed: HTML remained truncated after continuation passes.");
+                    return null;
+                }
+            }
+
+            string envelope = BuildRecoveredCodebasePatchEnvelope(targetPath, targetExists ? "replace" : "create", content);
+            if (!TryCaptureCodebasePatchProposal(envelope, runContext))
+            {
+                LogActivity("Content-only patch rescue failed: the wrapped patch was rejected by parse/validation.");
+                return null;
+            }
+
+            LogActivity($"Content-only patch rescue succeeded for {targetPath}.");
+            return envelope;
+        }
+
+        // If a valid patch envelope targets a single HTML file with full-file content (replace/create)
+        // that was cut off, complete it via continuation and rebuild the envelope. Only the single-file
+        // full-file case is handled; anything else is returned unchanged for validation to gate.
+        private async Task<string> TryCompleteTruncatedWorkspaceHtmlPatchAsync(
+            string builderOutput,
+            CouncilRunContext runContext,
+            string builderSystem,
+            CancellationToken token,
+            CouncilBaseStateVault? baseStateVault)
+        {
+            if (!_connectedWorkspace.CodebaseEditAccessEnabled || string.IsNullOrWhiteSpace(builderOutput))
+                return builderOutput;
+            if (!_workspaceAccessService.TryParsePatchProposal(builderOutput, out WorkspacePatchProposal? proposal, out _) || proposal == null)
+                return builderOutput;
+            if (proposal.Files.Count != 1)
+                return builderOutput;
+
+            WorkspaceFilePatch patch = proposal.Files[0];
+            string extension = Path.GetExtension(patch.RelativePath).ToLowerInvariant();
+            if (extension is not (".html" or ".htm"))
+                return builderOutput;
+            if (patch.Action is not ("replace" or "create"))
+                return builderOutput;
+            if (string.IsNullOrEmpty(patch.Content) || IsHtmlDocumentComplete(patch.Content))
+                return builderOutput;
+
+            LogActivity($"Workspace HTML patch for {patch.RelativePath} looks truncated; running continuation before capture.");
+            string completed = await ContinueTruncatedHtmlAsync(
+                patch.RelativePath, patch.Content, builderSystem, token, baseStateVault);
+            if (!IsHtmlDocumentComplete(completed) || completed.Length <= patch.Content.Length)
+                return builderOutput;
+
+            LogActivity($"Workspace HTML patch for {patch.RelativePath} completed via continuation ({patch.Content.Length:n0} -> {completed.Length:n0} chars).");
+            return BuildRecoveredCodebasePatchEnvelope(patch.RelativePath, patch.Action, completed);
+        }
+
+        // Structural completeness for a full HTML document: closing tags present and no unbalanced
+        // <script>/<style> blocks. This is the same signature the pre-apply validator now blocks on.
+        private static bool IsHtmlDocumentComplete(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+                return false;
+            string lower = content.ToLowerInvariant();
+            if (CountCaseInsensitive(lower, "<script") > CountCaseInsensitive(lower, "</script>"))
+                return false;
+            if (CountCaseInsensitive(lower, "<style") > CountCaseInsensitive(lower, "</style>"))
+                return false;
+            if (!lower.Contains("</body>", StringComparison.Ordinal) || !lower.Contains("</html>", StringComparison.Ordinal))
+                return false;
+            string trimmed = content.TrimEnd();
+            return !(trimmed.EndsWith("<", StringComparison.Ordinal) || Regex.IsMatch(trimmed, @"<\s*/?\s*[A-Za-z][^>]*$"));
+        }
+
+        // Stitch continuation passes onto a truncated HTML file. Each pass feeds back the tail of the
+        // current draft and asks the model to emit ONLY the remaining characters, which are appended.
+        private async Task<string> ContinueTruncatedHtmlAsync(
+            string targetPath,
+            string partialContent,
+            string builderSystem,
+            CancellationToken token,
+            CouncilBaseStateVault? baseStateVault)
+        {
+            string content = partialContent ?? string.Empty;
+            for (int pass = 1; pass <= 4 && !IsHtmlDocumentComplete(content); pass++)
+            {
+                LogActivity($"HTML continuation pass {pass} for {targetPath} ({content.Length:n0} chars so far).");
+                AppendChat("system", $"The generated {targetPath} was cut off. Continuing generation (pass {pass})...");
+
+                string tail = content.Length > 1200 ? content[^1200..] : content;
+                var payload = new StringBuilder();
+                payload.AppendLine($"The file {targetPath} below was cut off before completion. Output ONLY the text that continues it — do not repeat any of it, do not restart, and do not add explanations or markdown fences.");
+                payload.AppendLine("Continue exactly from where it stops and carry through to the closing </body> and </html> tags.");
+                payload.AppendLine(BuildLabeledBlock("FILE SO FAR (ENDS MID-STREAM)", tail));
+                payload.AppendLine("Continuation text only:");
+
+                var continuation = await ExecuteCouncilRoleAsync(
+                    CouncilRole.Builder,
+                    builderSystem,
+                    payload.ToString(),
+                    token,
+                    0.2f,
+                    baseStateVault,
+                    true,
+                    useBuilderToolDecision: false);
+
+                if (continuation.IsReasoningFallback || string.IsNullOrWhiteSpace(continuation.Answer))
+                {
+                    LogActivity($"HTML continuation pass {pass} produced no usable text; stopping.");
+                    break;
+                }
+
+                string addition = StripChatFromCode(continuation.Answer).Trim();
+                if (string.IsNullOrWhiteSpace(addition))
+                    break;
+
+                // Guard against the model restarting the document instead of continuing.
+                if (addition.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase)
+                    || addition.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+                {
+                    LogActivity($"HTML continuation pass {pass} restarted the document instead of continuing; stopping.");
+                    break;
+                }
+
+                content = content.TrimEnd() + addition;
+            }
+
+            return content;
         }
 
         private string? ResolveRequestedWorkspacePatchPath(CouncilRunContext runContext, string builderOutput)
@@ -4554,7 +5059,17 @@ namespace Malx_AI
                 return $"! Unable to read current file for diff: {ex.Message}";
             }
 
-            IReadOnlyList<LineDiffEntry> diff = LineDiff.Build(original, patch.Content);
+            string proposed;
+            try
+            {
+                proposed = _workspaceAccessService.MaterializePatchContent(_connectedWorkspace, patch);
+            }
+            catch (Exception ex)
+            {
+                return $"! Unable to materialize proposed patch: {ex.Message}";
+            }
+
+            IReadOnlyList<LineDiffEntry> diff = LineDiff.Build(original, proposed);
             if (diff.Count == 0)
                 return "  No differences.";
 
@@ -4633,15 +5148,21 @@ namespace Malx_AI
                 return false;
             }
 
+            if (_pendingCodebasePatchApplyBlocked)
+            {
+                AppendChat("warning", "This codebase patch is blocked by hard safety checks and must be regenerated or rejected before it can be applied.");
+                return false;
+            }
+
             try
             {
                 WorkspacePatchProposal proposal = _pendingCodebasePatch;
-                CodebasePatchValidationResult validation = ValidateCodebasePatchProposal(proposal);
+                CodebasePatchValidationResult validation = ValidateCodebasePatchProposal(proposal, _activeCouncilRunContext ?? _lastRunContext);
                 if (!validation.IsValid)
                 {
-                    if (automatic)
+                    if (automatic || validation.HasBlockingFailures)
                     {
-                        HandleCodebasePreApplyFailure(proposal, automatic, validation.Reasons, allowManualOverride: true);
+                        HandleCodebasePreApplyFailure(proposal, automatic, validation.Reasons, allowManualOverride: !validation.HasBlockingFailures);
                         return false;
                     }
 
@@ -4660,16 +5181,26 @@ namespace Malx_AI
                     return false;
                 }
 
+                WorkspaceGitCheckpointResult gitCheckpoint = automatic
+                    ? CreateAutoApplyGitCheckpoint()
+                    : new WorkspaceGitCheckpointResult(false, false, false, true, string.Empty);
+                if (!gitCheckpoint.Success)
+                {
+                    HandleCodebasePreApplyFailure(proposal, automatic, [gitCheckpoint.Summary], allowManualOverride: true);
+                    return false;
+                }
+
                 WorkspaceGitStatus gitBefore = GetConnectedWorkspaceGitStatus();
                 WorkspacePatchApplyResult result = _workspaceAccessService.ApplyPatchProposal(_connectedWorkspace, proposal);
                 _lastCodebaseUndo = undoSnapshot with { ChangedFiles = result.ChangedFiles.ToList() };
                 _pendingCodebasePatch = null;
                 _hasPendingCodebaseChanges = false;
+                _pendingCodebasePatchApplyBlocked = false;
                 RefreshConnectedWorkspaceIndexAfterPatch();
                 WorkspaceGitStatus gitAfter = GetConnectedWorkspaceGitStatus();
-                RenderCodebaseApplySummaryView(result, proposal, automatic, gitBefore, gitAfter, validation.Reasons);
+                RenderCodebaseApplySummaryView(result, proposal, automatic, gitBefore, gitAfter, validation.Reasons, gitCheckpoint);
                 RefreshCodebaseAccessUi();
-                AppendChat("system", BuildCodebaseApplySummary(result, proposal, automatic, gitBefore, gitAfter, validation.Reasons));
+                AppendChat("system", BuildCodebaseApplySummary(result, proposal, automatic, gitBefore, gitAfter, validation.Reasons, gitCheckpoint));
                 SavePersistedSession();
                 return true;
             }
@@ -4684,13 +5215,27 @@ namespace Malx_AI
             }
         }
 
-        private CodebasePatchValidationResult ValidateCodebasePatchProposal(WorkspacePatchProposal proposal)
+        private CodebasePatchValidationResult ValidateCodebasePatchProposal(WorkspacePatchProposal proposal, CouncilRunContext? context = null)
         {
-            var reasons = new List<string>();
+            var warnings = new List<string>();
+            var blockingReasons = new List<string>();
             foreach (WorkspaceFilePatch patch in proposal.Files)
             {
                 string extension = Path.GetExtension(patch.RelativePath).ToLowerInvariant();
-                string content = patch.Content ?? string.Empty;
+                string content;
+                try
+                {
+                    content = _workspaceAccessService.MaterializePatchContent(_connectedWorkspace, patch);
+                }
+                catch (Exception ex)
+                {
+                    blockingReasons.Add($"{patch.RelativePath}: patch could not be materialized: {ex.Message}");
+                    continue;
+                }
+
+                if (ContainsWorkspaceTruncationMarker(content))
+                    blockingReasons.Add($"{patch.RelativePath}: patch content contains a workspace context truncation marker; regenerate from the complete file.");
+
                 switch (extension)
                 {
                     case ".html":
@@ -4706,26 +5251,70 @@ namespace Malx_AI
                         {
                             // Path resolution is reported separately by the undo snapshot preflight.
                         }
-                        reasons.AddRange(ValidateHtmlPatchContent(patch.RelativePath, content, originalHtml, patch.Action));
+                        warnings.AddRange(ValidateHtmlPatchContent(patch.RelativePath, content, originalHtml, patch.Action));
+                        blockingReasons.AddRange(ValidateDangerousHtmlPatchContent(patch.RelativePath, content, originalHtml, patch.Action));
+                        warnings.AddRange(ValidateRequestedHtmlBehavior(content, context, patch.RelativePath));
                         break;
                     case ".json":
                     case ".jsonc":
                         string? jsonError = ValidateJsonPatchContent(patch.RelativePath, content, extension == ".jsonc");
                         if (!string.IsNullOrWhiteSpace(jsonError))
-                            reasons.Add(jsonError);
+                            warnings.Add(jsonError);
                         break;
                     case ".css":
                     case ".scss":
                         string? cssError = ValidateCssBraceBalance(patch.RelativePath, content);
                         if (!string.IsNullOrWhiteSpace(cssError))
-                            reasons.Add(cssError);
+                            warnings.Add(cssError);
+                        break;
+                    case ".cs":
+                        string? csharpError = ValidateCSharpPatchContent(patch.RelativePath, content);
+                        if (!string.IsNullOrWhiteSpace(csharpError))
+                            warnings.Add(csharpError);
                         break;
                 }
             }
 
+            var reasons = blockingReasons
+                .Concat(warnings.Where(reason => !blockingReasons.Contains(reason, StringComparer.OrdinalIgnoreCase)))
+                .ToList();
+
             return reasons.Count == 0
                 ? CodebasePatchValidationResult.Pass
-                : new CodebasePatchValidationResult(false, reasons);
+                : new CodebasePatchValidationResult(false, reasons, blockingReasons);
+        }
+
+        private static bool ContainsWorkspaceTruncationMarker(string content)
+        {
+            string value = content ?? string.Empty;
+            return value.Contains("[...file truncated for context budget]", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("[...workspace context budget exhausted]", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("[...file truncated for tool result]", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string? ValidateCSharpPatchContent(string relativePath, string content)
+        {
+            SyntaxTree tree = CSharpSyntaxTree.ParseText(
+                content ?? string.Empty,
+                new CSharpParseOptions(LanguageVersion.Preview, DocumentationMode.Parse, SourceCodeKind.Regular),
+                path: relativePath);
+
+            var errors = tree.GetDiagnostics()
+                .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+                .Take(5)
+                .Select(diagnostic =>
+                {
+                    FileLinePositionSpan span = diagnostic.Location.GetLineSpan();
+                    int line = span.StartLinePosition.Line + 1;
+                    int column = span.StartLinePosition.Character + 1;
+                    return $"line {line}, column {column}: {diagnostic.GetMessage()}";
+                })
+                .ToList();
+
+            if (errors.Count == 0)
+                return null;
+
+            return $"{relativePath}: C# syntax parse failed: " + string.Join("; ", errors);
         }
 
         private static IEnumerable<string> ValidateHtmlPatchContent(string relativePath, string content, string originalContent, string action)
@@ -4764,12 +5353,111 @@ namespace Malx_AI
                 yield return $"{relativePath}: HTML replacement is missing a <body> tag.";
             if (requireFullDocumentTags && !lower.Contains("</body>", StringComparison.Ordinal))
                 yield return $"{relativePath}: HTML replacement is missing a closing </body> tag.";
-            if (trimmed.EndsWith("<", StringComparison.Ordinal) || Regex.IsMatch(trimmed, @"<\s*/?\s*[A-Za-z][^>]*$"))
-                yield return $"{relativePath}: HTML appears truncated at the final tag.";
-            if (CountCaseInsensitive(lower, "<script") > CountCaseInsensitive(lower, "</script>"))
-                yield return $"{relativePath}: HTML appears to have an unclosed <script> block.";
-            if (CountCaseInsensitive(lower, "<style") > CountCaseInsensitive(lower, "</style>"))
-                yield return $"{relativePath}: HTML appears to have an unclosed <style> block.";
+            // Truncation-signal checks (unclosed script/style, truncated final tag) are reported as
+            // BLOCKING in ValidateDangerousHtmlPatchContent for full documents, since they overwrite
+            // the working file with a broken page. They remain here only as warnings for the partial
+            // (non-full-document) edit case where a blocking classification would be a false positive.
+            if (!requireFullDocumentTags)
+            {
+                if (trimmed.EndsWith("<", StringComparison.Ordinal) || Regex.IsMatch(trimmed, @"<\s*/?\s*[A-Za-z][^>]*$"))
+                    yield return $"{relativePath}: HTML appears truncated at the final tag.";
+                if (CountCaseInsensitive(lower, "<script") > CountCaseInsensitive(lower, "</script>"))
+                    yield return $"{relativePath}: HTML appears to have an unclosed <script> block.";
+                if (CountCaseInsensitive(lower, "<style") > CountCaseInsensitive(lower, "</style>"))
+                    yield return $"{relativePath}: HTML appears to have an unclosed <style> block.";
+            }
+        }
+
+        private static IEnumerable<string> ValidateDangerousHtmlPatchContent(string relativePath, string content, string originalContent, string action)
+        {
+            string proposed = (content ?? string.Empty).Trim();
+            string original = originalContent ?? string.Empty;
+            string proposedLower = proposed.ToLowerInvariant();
+            string originalLower = original.ToLowerInvariant();
+
+            if (proposed.Length == 0)
+            {
+                yield return $"{relativePath}: HTML content is empty and cannot be safely written.";
+                yield break;
+            }
+
+            if (proposed.StartsWith("```", StringComparison.Ordinal)
+                || proposed.Contains("```html", StringComparison.OrdinalIgnoreCase)
+                || proposed.Contains("```", StringComparison.Ordinal))
+            {
+                yield return $"{relativePath}: HTML result still contains markdown code fence markers; regenerate a clean patch.";
+            }
+
+            bool originalLooksLikeFullDocument = originalLower.Contains("<!doctype", StringComparison.Ordinal)
+                || originalLower.Contains("<html", StringComparison.Ordinal)
+                || originalLower.Contains("<body", StringComparison.Ordinal);
+            bool proposedLooksLikeFullDocument = proposedLower.Contains("<!doctype", StringComparison.Ordinal)
+                || proposedLower.Contains("<html", StringComparison.Ordinal)
+                || proposedLower.Contains("<body", StringComparison.Ordinal);
+
+            // A truncated full document (model hit its generation-token limit mid-file) is clearly
+            // unsafe: writing it overwrites the working page with unparseable HTML. Block it — the
+            // size heuristic below misses long-but-truncated files (lots of head/style before cutoff).
+            bool fullDocumentExpected = string.Equals(action, "create", StringComparison.OrdinalIgnoreCase)
+                || originalLooksLikeFullDocument
+                || proposedLooksLikeFullDocument;
+            if (fullDocumentExpected)
+            {
+                if (CountCaseInsensitive(proposedLower, "<script") > CountCaseInsensitive(proposedLower, "</script>"))
+                    yield return $"{relativePath}: HTML has an unclosed <script> block — the output was cut off before completion and would overwrite the file with broken markup.";
+                if (CountCaseInsensitive(proposedLower, "<style") > CountCaseInsensitive(proposedLower, "</style>"))
+                    yield return $"{relativePath}: HTML has an unclosed <style> block — the output was cut off before completion and would overwrite the file with broken markup.";
+                if (proposed.EndsWith("<", StringComparison.Ordinal) || Regex.IsMatch(proposed, @"<\s*/?\s*[A-Za-z][^>]*$"))
+                    yield return $"{relativePath}: HTML is truncated at the final tag — the output was cut off before completion.";
+                if (!proposedLower.Contains("</html>", StringComparison.Ordinal) || !proposedLower.Contains("</body>", StringComparison.Ordinal))
+                    yield return $"{relativePath}: HTML is missing its closing </body>/</html> tags — the full-document output is incomplete.";
+            }
+
+            if (originalLooksLikeFullDocument)
+            {
+                bool missingClosers = !proposedLower.Contains("</body>", StringComparison.Ordinal)
+                    || !proposedLower.Contains("</html>", StringComparison.Ordinal);
+                if (missingClosers && proposed.Length < Math.Max(600, original.Length * 3 / 4))
+                    yield return $"{relativePath}: HTML result appears to be a partial document and would overwrite the existing page.";
+
+                if (original.Length >= 1200 && proposed.Length < Math.Max(500, original.Length / 5))
+                    yield return $"{relativePath}: HTML result is much smaller than the existing file ({proposed.Length:n0} vs {original.Length:n0} chars), which looks like destructive truncation.";
+
+                int originalElementCount = CountHtmlFeatureElements(originalLower);
+                int proposedElementCount = CountHtmlFeatureElements(proposedLower);
+                if (originalElementCount >= 3 && proposedElementCount == 0 && proposed.Length < original.Length / 2)
+                    yield return $"{relativePath}: HTML result removes all existing interactive/style elements, which looks like an accidental file collapse.";
+            }
+
+            if (!string.Equals(action, "create", StringComparison.OrdinalIgnoreCase)
+                && original.Length > 0
+                && proposedLooksLikeFullDocument
+                && proposed.Length < 200
+                && CountHtmlTags(proposedLower) <= 3)
+            {
+                yield return $"{relativePath}: HTML result is only a minimal tag shell, not a complete replacement.";
+            }
+        }
+
+        private static int CountHtmlFeatureElements(string lowerHtml)
+        {
+            if (string.IsNullOrWhiteSpace(lowerHtml))
+                return 0;
+
+            string[] markers =
+            [
+                "<script", "<style", "<canvas", "<svg", "<button", "<input",
+                "<textarea", "<select", "addEventListener", "onclick", "requestanimationframe"
+            ];
+            return markers.Count(marker => lowerHtml.Contains(marker, StringComparison.Ordinal));
+        }
+
+        private static int CountHtmlTags(string lowerHtml)
+        {
+            if (string.IsNullOrWhiteSpace(lowerHtml))
+                return 0;
+
+            return Regex.Matches(lowerHtml, @"</?[a-z][^>]*>", RegexOptions.IgnoreCase).Count;
         }
 
         private static string? ValidateJsonPatchContent(string relativePath, string content, bool allowJsonc)
@@ -4903,8 +5591,8 @@ namespace Malx_AI
                 {
                     string target = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
                     bool exists = File.Exists(target);
-                    if (patch.Action == "replace" && !exists)
-                        failures.Add($"{patch.RelativePath}: cannot replace because the target file does not exist.");
+                    if ((patch.Action == "replace" || patch.Action == "edit") && !exists)
+                        failures.Add($"{patch.RelativePath}: cannot {patch.Action} because the target file does not exist.");
                     if (patch.Action == "create" && exists)
                         failures.Add($"{patch.RelativePath}: cannot create because the target file already exists.");
 
@@ -4936,6 +5624,7 @@ namespace Malx_AI
         {
             _pendingCodebasePatch = proposal;
             _hasPendingCodebaseChanges = true;
+            _pendingCodebasePatchApplyBlocked = !allowManualOverride;
             RenderCodebasePatchReview(proposal, autoMode: false);
             string reasonText = reasons.Count == 0
                 ? "Pre-apply validation failed."
@@ -4962,13 +5651,23 @@ namespace Malx_AI
             return _workspaceAccessService.GetGitStatus(_connectedWorkspace.RootPath);
         }
 
+        private WorkspaceGitCheckpointResult CreateAutoApplyGitCheckpoint()
+        {
+            if (string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath))
+                return new WorkspaceGitCheckpointResult(false, false, false, true, "No local Git workspace is connected.");
+
+            string message = "Axiom auto-apply checkpoint " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            return _workspaceAccessService.CreateGitCheckpointCommit(_connectedWorkspace.RootPath, message);
+        }
+
         private static string BuildCodebaseApplySummary(
             WorkspacePatchApplyResult result,
             WorkspacePatchProposal proposal,
             bool automatic,
             WorkspaceGitStatus gitBefore,
             WorkspaceGitStatus gitAfter,
-            IReadOnlyList<string> validationWarnings)
+            IReadOnlyList<string> validationWarnings,
+            WorkspaceGitCheckpointResult gitCheckpoint)
         {
             var sb = new StringBuilder();
             sb.AppendLine(automatic ? "Auto applied codebase changes." : result.Summary);
@@ -4989,6 +5688,8 @@ namespace Malx_AI
             if (!string.IsNullOrWhiteSpace(gitLine))
             {
                 sb.AppendLine();
+                if (!string.IsNullOrWhiteSpace(gitCheckpoint.Summary))
+                    sb.AppendLine(gitCheckpoint.Summary);
                 sb.AppendLine(gitLine);
                 string statusPreview = BuildGitStatusPreview(gitAfter);
                 if (!string.IsNullOrWhiteSpace(statusPreview))
@@ -5010,7 +5711,8 @@ namespace Malx_AI
             bool automatic,
             WorkspaceGitStatus gitBefore,
             WorkspaceGitStatus gitAfter,
-            IReadOnlyList<string> validationWarnings)
+            IReadOnlyList<string> validationWarnings,
+            WorkspaceGitCheckpointResult gitCheckpoint)
         {
             var sb = new StringBuilder();
             sb.AppendLine("# Codebase Changes Applied");
@@ -5036,6 +5738,8 @@ namespace Malx_AI
             {
                 sb.AppendLine();
                 sb.AppendLine("## Git Checkpoint");
+                if (!string.IsNullOrWhiteSpace(gitCheckpoint.Summary))
+                    sb.AppendLine(gitCheckpoint.Summary);
                 sb.AppendLine(gitLine);
                 string statusPreview = BuildGitStatusPreview(gitAfter);
                 if (!string.IsNullOrWhiteSpace(statusPreview))
@@ -5181,6 +5885,7 @@ namespace Malx_AI
 
             _pendingCodebasePatch = null;
             _hasPendingCodebaseChanges = false;
+            _pendingCodebasePatchApplyBlocked = false;
             _lastCodebaseUndo = null;
             RefreshCodebaseAccessUi();
             AppendChat("system", "Proposed codebase changes rejected.");
@@ -6002,7 +6707,9 @@ namespace Malx_AI
 
         private static string BuildLocalBuilderCognitionBoost(CouncilTaskType taskType, CouncilRunContext runContext)
         {
-            string outputKind = runContext.IsArtifactCanvasRequest
+            string outputKind = runContext.IsWorkspaceTask
+                ? "one valid [[AXIOM_CODEBASE_PATCH]] envelope for the connected workspace"
+                : runContext.IsArtifactCanvasRequest
                 ? "one complete renderable Project Canvas artifact"
                 : taskType == CouncilTaskType.Coding
                     ? "one complete working code/script deliverable"
@@ -6035,7 +6742,7 @@ namespace Malx_AI
                 : runContext.IsArtifactCanvasRequest ? "Project Canvas renderable artifact" : "Working code/script"));
             capsule.AppendLine("Task type: " + runContext.TaskType);
 
-            if (runContext.IsArtifactCanvasRequest && !string.IsNullOrWhiteSpace(runContext.PreferredArtifactFormatHint))
+            if (ShouldUseArtifactCanvasContract(runContext) && !string.IsNullOrWhiteSpace(runContext.PreferredArtifactFormatHint))
                 capsule.AppendLine("Artifact format: " + runContext.PreferredArtifactFormatHint.Trim());
 
             if (decomp.Requirements.Count > 0)
@@ -6063,7 +6770,7 @@ namespace Malx_AI
             capsule.AppendLine("- Every required behavior above is represented in the code/artifact.");
             capsule.AppendLine("- No placeholder TODOs, no missing event handlers, no broken closing tags/braces.");
             capsule.AppendLine(runContext.IsWorkspaceTask
-                ? "- Output is a valid [[AXIOM_CODEBASE_PATCH]] envelope with complete file content, not standalone code or prose."
+                ? "- Output is a valid [[AXIOM_CODEBASE_PATCH]] envelope using ACTION edit hunks for existing files unless a small full-file create/replace is necessary."
                 : "- Output is one complete file/artifact, not a fragment.");
 
             return BuildLabeledBlock("BUILDER IMPLEMENTATION CAPSULE", capsule.ToString().Trim());
@@ -6969,7 +7676,7 @@ namespace Malx_AI
                        "ARCHITECT_HANDOFF\n" +
                        "artifact_type: connected_codebase_patch\n" +
                        "output_target: ProjectCanvasPatchReview\n" +
-                       "required_output_format: valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths, ACTION create/replace, complete fenced file content, and [[END FILE]] per file\n" +
+                       "required_output_format: valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths, ACTION edit/create/replace, and [[END FILE]] per file\n" +
                        "requirements:\n" +
                        "- explicit user requirements as implementation outcomes\n" +
                        "constraints:\n" +
@@ -6979,7 +7686,7 @@ namespace Malx_AI
                        "Return only a valid [[AXIOM_CODEBASE_PATCH]] envelope for the connected workspace. Do not return standalone HTML/code outside the patch envelope.\n" +
                        "acceptance_tests:\n" +
                        "- patch targets the prompt-named or connected file path\n" +
-                       "- changed file content is complete and coherent, not a fragment\n" +
+                       "- edit SEARCH anchors match exactly once, or full-file content is complete and coherent\n" +
                        "- requested controls/functions/behaviors are wired to working logic\n" +
                        "- no unrelated files or unrelated behavior are changed\n" +
                        "END_ARCHITECT_HANDOFF\n" +
@@ -7030,10 +7737,18 @@ namespace Malx_AI
                    $"End with '{ArchitectCompletionMarker}' on its own line.";
         }
 
-        private static string BuildBuilderContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false)
+        private static string BuildBuilderContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false, bool isWorkspaceTask = false)
         {
             const string antiEcho = "Do NOT echo, restate, or reproduce any input labels, headers, [[BLOCK]] markers, or pipeline metadata in your output. " +
                 "Start directly with your implementation content.";
+
+            if (isWorkspaceTask)
+                return "\n[STRUCTURED OUTPUT CONTRACT - CONNECTED CODEBASE] Output exactly one connected-codebase patch envelope. " +
+                       "The first visible line must be [[AXIOM_CODEBASE_PATCH]]. " +
+                       "Do not output a plan, analysis, approach, explanation, markdown document, standalone code block, or raw file content outside the envelope. " +
+                       "Use only FILE/ACTION sections with relative workspace paths, SEARCH/REPLACE blocks for edits, and [[END FILE]] per file. " +
+                       "If you need a full replacement, place the complete file content inside that file section only. " +
+                       $"{antiEcho} End with '{BuilderCompletionMarker}' on its own line.";
 
             // An artifact-canvas request is a code-fenced renderable deliverable even when DetectTaskType
             // classified it as Research/Analysis/General (e.g. "visualize the analysis", "make a report
@@ -7361,13 +8076,32 @@ namespace Malx_AI
             body.AppendLine("artifact_type: " + artifactType);
             body.AppendLine("output_target: " + (workspaceMode ? "ProjectCanvasPatchReview" : "ProjectCanvas"));
             body.AppendLine("required_output_format: " + (workspaceMode
-                ? "valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths, ACTION create/replace, complete fenced file content, and [[END FILE]] per file"
+                ? "valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths, ACTION edit/create/replace, and [[END FILE]] per file"
                 : "one complete offline-renderable source; prefer raw complete HTML or one html code fence that the pipeline can strip"));
             if (workspaceMode && context.WorkspaceFilesRead.Count > 0)
             {
+                var contextFiles = context.WorkspaceFilesRead
+                    .Where(file => !IsBackupWorkspacePath(file))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var promptNamedFiles = ExtractPromptNamedFileReferences(context.UserPrompt + "\n" + context.Objective);
+                var targetFiles = contextFiles
+                    .Where(file => promptNamedFiles.Any(named => WorkspacePathMatchesMention(file, named)))
+                    .ToList();
+                if (targetFiles.Count > 0)
+                {
+                    body.AppendLine("target_files:");
+                    foreach (string file in targetFiles.Take(4))
+                        body.AppendLine("- " + file);
+                }
+
                 body.AppendLine("connected_context_files:");
-                foreach (string file in context.WorkspaceFilesRead.Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
+                foreach (string file in targetFiles
+                    .Concat(contextFiles.Where(file => !targetFiles.Contains(file, StringComparer.OrdinalIgnoreCase)))
+                    .Take(8))
+                {
                     body.AppendLine("- " + file);
+                }
             }
 
             body.AppendLine("requirements:");
@@ -7379,6 +8113,8 @@ namespace Malx_AI
                 requirements.AddRange(context.Decomposition.Requirements);
             else if (!string.IsNullOrWhiteSpace(context.UserPrompt))
                 requirements.Add(context.UserPrompt.Trim());
+
+            requirements.AddRange(BuildDerivedInteractiveRequirements(context));
 
             if (!workspaceMode)
             {
@@ -7401,6 +8137,8 @@ namespace Malx_AI
             {
                 body.AppendLine("- preserve unrelated code and workspace files");
                 body.AppendLine("- target the prompt-named file when one is named");
+                if (IsSingleFileHtmlRequest(request))
+                    body.AppendLine("- keep the implementation in the named HTML file with embedded CSS/JavaScript; do not split changes into CSS/JS files unless the existing file structure requires it");
                 body.AppendLine("- no standalone Project Canvas artifact output outside the patch envelope");
             }
             else
@@ -7421,7 +8159,7 @@ namespace Malx_AI
                 {
                     "Builder output is a valid [[AXIOM_CODEBASE_PATCH]] envelope",
                     "patch targets the prompt-named or connected workspace file path",
-                    "changed file content is complete and coherent, not a fragment",
+                    "edit SEARCH anchors match exactly once, or full-file content is complete and coherent",
                     "requested controls/functions/behaviors are wired to working logic",
                     "no unrelated files or unrelated behavior are changed"
                 }
@@ -7434,6 +8172,7 @@ namespace Malx_AI
                     "renders the requested UI elements",
                     "requested controls change visible state"
                 };
+            checks.AddRange(BuildDerivedInteractiveAcceptanceChecks(context));
             if (context.GoalContract?.AcceptanceChecks.Count > 0)
                 checks.AddRange(context.GoalContract.AcceptanceChecks);
             foreach (string check in checks.Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
@@ -7441,6 +8180,109 @@ namespace Malx_AI
 
             body.AppendLine("END_ARCHITECT_HANDOFF");
             return body.ToString().Trim();
+        }
+
+        private static IReadOnlyList<string> BuildDerivedInteractiveRequirements(CouncilRunContext context)
+        {
+            string text = (context.UserPrompt + "\n" + context.Objective).ToLowerInvariant();
+            var requirements = new List<string>();
+
+            if (text.Contains("amino acid", StringComparison.Ordinal) || text.Contains("sequence", StringComparison.Ordinal) || text.Contains("input", StringComparison.Ordinal))
+                requirements.Add("input control accepts the user's sequence/text and feeds it into the generated behavior");
+            if (text.Contains("generate fold", StringComparison.Ordinal) || (text.Contains("generate", StringComparison.Ordinal) && text.Contains("button", StringComparison.Ordinal)))
+                requirements.Add("Generate Fold control reads the sequence, creates/updates simulation state, draws visible output, and updates readouts");
+            if (text.Contains("canvas", StringComparison.Ordinal) || text.Contains("svg", StringComparison.Ordinal) || text.Contains("visual", StringComparison.Ordinal))
+                requirements.Add("visualization surface renders visible output after the user interaction");
+            if (text.Contains("animation", StringComparison.Ordinal) || text.Contains("animated", StringComparison.Ordinal) || text.Contains("folding over time", StringComparison.Ordinal))
+                requirements.Add("folding or transition animation visibly changes over time");
+            if (text.Contains("hover", StringComparison.Ordinal) || text.Contains("tooltip", StringComparison.Ordinal))
+                requirements.Add("hover/inspection state shows the requested per-item details");
+            if (text.Contains("disclaimer", StringComparison.Ordinal) || text.Contains("simplified educational", StringComparison.Ordinal))
+                requirements.Add("visible disclaimer explains that the model is simplified and educational");
+            if (text.Contains("protein", StringComparison.Ordinal) || text.Contains("amino acid", StringComparison.Ordinal) || text.Contains("hydrophobic", StringComparison.Ordinal))
+                requirements.Add("amino-acid properties are represented in working JavaScript rules/data, not only in static labels");
+            if (text.Contains("random", StringComparison.Ordinal))
+                requirements.Add("Random control generates a valid sample sequence and immediately refreshes the visualization state");
+            if (text.Contains("reset", StringComparison.Ordinal))
+                requirements.Add("Reset control clears or restores simulation state visibly");
+            if (text.Contains("speed", StringComparison.Ordinal) || text.Contains("slider", StringComparison.Ordinal))
+                requirements.Add("speed/range control affects the running animation or simulation timing");
+
+            return requirements;
+        }
+
+        private static IReadOnlyList<string> BuildDerivedInteractiveAcceptanceChecks(CouncilRunContext context)
+        {
+            string text = (context.UserPrompt + "\n" + context.Objective).ToLowerInvariant();
+            var checks = new List<string>();
+
+            if (text.Contains("input", StringComparison.Ordinal) || text.Contains("paste", StringComparison.Ordinal) || text.Contains("type", StringComparison.Ordinal) || text.Contains("sequence", StringComparison.Ordinal))
+                checks.Add("user-entered input is read by the implementation instead of ignored");
+            if (text.Contains("generate fold", StringComparison.Ordinal))
+                checks.Add("clicking Generate Fold reads the sequence, draws chain nodes/links, updates stats from zero, and starts or refreshes folding behavior");
+            else if (text.Contains("button", StringComparison.Ordinal) || text.Contains("control", StringComparison.Ordinal))
+                checks.Add("the requested control has an event handler that changes visible state");
+            if (text.Contains("canvas", StringComparison.Ordinal) || text.Contains("svg", StringComparison.Ordinal) || text.Contains("visual", StringComparison.Ordinal))
+                checks.Add("visual output is non-empty after the primary action");
+            if (text.Contains("animation", StringComparison.Ordinal) || text.Contains("animated", StringComparison.Ordinal) || text.Contains("folding over time", StringComparison.Ordinal))
+                checks.Add("animation updates positions/state over time, not just static drawing");
+            if (text.Contains("hover", StringComparison.Ordinal) || text.Contains("tooltip", StringComparison.Ordinal))
+                checks.Add("hovering or inspecting an item reveals the requested letter/category/index details");
+            if (text.Contains("no external", StringComparison.Ordinal) || text.Contains("offline", StringComparison.Ordinal) || text.Contains("locally", StringComparison.Ordinal))
+                checks.Add("final source has no external script/link/CDN/API dependency");
+            if (text.Contains("protein", StringComparison.Ordinal) || text.Contains("amino acid", StringComparison.Ordinal) || text.Contains("hydrophobic", StringComparison.Ordinal))
+                checks.Add("amino-acid categories influence the simulation through implemented JavaScript rules/data");
+            if (text.Contains("random", StringComparison.Ordinal))
+                checks.Add("Random control generates a valid sequence and redraws/restarts the simulation");
+            if (text.Contains("reset", StringComparison.Ordinal))
+                checks.Add("Reset control visibly restores the initial simulation state");
+            if (text.Contains("speed", StringComparison.Ordinal) || text.Contains("slider", StringComparison.Ordinal))
+                checks.Add("speed/range control changes the animation or simulation timing");
+
+            return checks;
+        }
+
+        private static IReadOnlyList<string> ExtractPromptNamedFileReferences(string text)
+        {
+            return Regex.Matches(text ?? string.Empty, @"(?<![\w.-])(?<path>[\w./\\-]+\.(?:cs|xaml|csproj|sln|slnx|py|js|mjs|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml))(?![\w.-])", RegexOptions.IgnoreCase)
+                .Select(match => match.Groups["path"].Value.Trim().Replace('\\', '/').TrimStart('/'))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static bool WorkspacePathMatchesMention(string workspacePath, string mention)
+        {
+            string normalizedPath = (workspacePath ?? string.Empty).Replace('\\', '/');
+            string normalizedMention = (mention ?? string.Empty).Replace('\\', '/').TrimStart('/');
+            return string.Equals(normalizedPath, normalizedMention, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Path.GetFileName(normalizedPath), normalizedMention, StringComparison.OrdinalIgnoreCase)
+                || normalizedPath.EndsWith("/" + normalizedMention, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsBackupWorkspacePath(string path)
+        {
+            string fileName = Path.GetFileName(path ?? string.Empty);
+            return fileName.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)
+                || fileName.EndsWith(".backup", StringComparison.OrdinalIgnoreCase)
+                || fileName.EndsWith(".old", StringComparison.OrdinalIgnoreCase)
+                || fileName.Contains(".bak.", StringComparison.OrdinalIgnoreCase)
+                || fileName.Contains(".backup.", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSingleFileHtmlRequest(string lowerRequest)
+        {
+            if (string.IsNullOrWhiteSpace(lowerRequest))
+                return false;
+
+            return (lowerRequest.Contains("one html file", StringComparison.Ordinal)
+                    || lowerRequest.Contains("single html file", StringComparison.Ordinal)
+                    || lowerRequest.Contains("one complete html", StringComparison.Ordinal)
+                    || lowerRequest.Contains("fully contained in one html", StringComparison.Ordinal)
+                    || lowerRequest.Contains("embedded css", StringComparison.Ordinal)
+                    || lowerRequest.Contains("embedded javascript", StringComparison.Ordinal))
+                && (lowerRequest.Contains(".html", StringComparison.Ordinal)
+                    || lowerRequest.Contains("html", StringComparison.Ordinal));
         }
 
         // Last-resort Architect plan synthesized from the deterministic pre-flight decomposition.
@@ -8607,6 +9449,7 @@ namespace Malx_AI
             if (context.BuilderTruncationRecovery) flags.Add("Builder truncation recovered");
             if (context.StaticValidationIssuesFound) flags.Add("Static validation issues");
             if (context.SandboxExceptionsFound) flags.Add("Sandbox exceptions");
+            if (context.AcceptanceCheckFailuresFound) flags.Add("Acceptance harness failures");
             if (context.WebGroundingRequired && HasWebSearchEvidence(context.WebContext)) flags.Add("Web evidence attached");
             if (context.WebGroundingRequired && !HasWebSearchEvidence(context.WebContext)) flags.Add("Web evidence required but unavailable");
 
@@ -9091,6 +9934,19 @@ namespace Malx_AI
             var failures = new List<string>();
             string output = finalOutput ?? string.Empty;
 
+            if (context.IsWorkspaceTask)
+            {
+                string builderOutput = context.BuilderOutput ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(builderOutput))
+                    failures.Add("No Builder patch output was produced for the connected codebase.");
+                else if (builderOutput.Contains("[[CODEBASE PATCH FORMAT ERROR]]", StringComparison.OrdinalIgnoreCase))
+                    failures.Add("Builder did not produce a valid connected-codebase patch envelope.");
+                else if (!builderOutput.Contains("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase))
+                    failures.Add("Builder output was not a connected-codebase patch envelope.");
+
+                return failures.Distinct(StringComparer.OrdinalIgnoreCase).Take(16).ToList();
+            }
+
             if (context.IsArtifactCanvasRequest)
                 return BuildProjectCanvasFinalVerificationFailures(context, output);
 
@@ -9168,6 +10024,31 @@ namespace Malx_AI
             return issueIndicators.Any(indicator => lower.Contains(indicator));
         }
 
+        private static string BuildAcceptanceCheckEvidenceBlock(CouncilRunContext context)
+        {
+            if (context.AcceptanceCheckResults.Count == 0)
+                return string.Empty;
+
+            int resultCap = context.IsCloudExecution ? 24 : 10;
+            int checkCap = context.IsCloudExecution ? 260 : 120;
+            int evidenceCap = context.IsCloudExecution ? 320 : 140;
+
+            var body = new StringBuilder();
+            body.AppendLine("Deterministic acceptance harness generated minimal assertions from A-items and executed them in the local Python/Java sandbox. Treat FAIL as blocking evidence unless the Builder output changed after this run.");
+            foreach (var result in context.AcceptanceCheckResults.Take(resultCap))
+            {
+                string check = NormalizeContractText(result.Check, checkCap);
+                string evidence = NormalizeContractText(result.Evidence, evidenceCap);
+                body.AppendLine($"{result.Id}: {(result.Passed ? "PASS" : "FAIL")} [{result.HarnessLanguage}] {check} :: {evidence}");
+            }
+
+            int omitted = context.AcceptanceCheckResults.Count - resultCap;
+            if (omitted > 0)
+                body.AppendLine($"...{omitted} additional acceptance result(s) omitted for local context budget.");
+
+            return BuildLabeledBlock("EXECUTED ACCEPTANCE CHECKS", body.ToString().Trim());
+        }
+
         private static string BuildCriticPayload(CouncilRunContext context, string sandboxResult)
         {
             var payload = new StringBuilder();
@@ -9176,6 +10057,10 @@ namespace Malx_AI
                 payload.AppendLine(taskContract);
             if (context.IsCloudExecution)
                 payload.AppendLine(BuildCloudVerificationPacket(context));
+
+            string acceptanceEvidence = BuildAcceptanceCheckEvidenceBlock(context);
+            if (!string.IsNullOrWhiteSpace(acceptanceEvidence))
+                payload.AppendLine(acceptanceEvidence);
 
             if (context.StaticValidationFindings.Count > 0)
             {
@@ -9702,7 +10587,7 @@ namespace Malx_AI
                     _isWebSearchEnabled,
                     _sessionHippocampus.GetMetadata().TotalEntryCount);
                 contextState.TaskContract = BuildCouncilGoalContractBlock(runContext.GoalContract)
-                    + BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution);
+                    + BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled);
                 runContext.Complexity = EstimateTaskComplexity(decomposition.Requirements.Count);
                 runContext.SharedVocabulary = BuildSharedVocabulary(userQuery, objective);
                 _activeTaskComplexity = runContext.Complexity;
@@ -9999,6 +10884,7 @@ namespace Malx_AI
                 string builderPriorKnowledge = "";
                 int builderRetryAttempts = 0;
                 bool codebasePatchCaptured = false;
+                bool useArtifactCanvasContract = ShouldUseArtifactCanvasContract(runContext);
                 // Tracks whether the current builderOutput came purely from the cloud reasoning fallback
                 // (chain-of-thought with no final content). Cleared whenever real content replaces it.
                 bool builderReasoningFallback = false;
@@ -10015,11 +10901,12 @@ namespace Malx_AI
 
                     string builderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                         + objectiveClause
-                        + (runContext.IsArtifactCanvasRequest
+                        + (useArtifactCanvasContract
                             ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, runContext)
                             : GetTaskTypeBoost(taskType, CouncilRole.Builder))
-                        + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
-                        + (runContext.IsArtifactCanvasRequest && smallLocalBuilderModel ? BuildSmallModelArtifactAssist(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (useArtifactCanvasContract ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (useArtifactCanvasContract && smallLocalBuilderModel ? BuildSmallModelArtifactAssist(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (runContext.IsWorkspaceTask ? BuildWorkspaceBuilderPatchModeBoost() : "")
                         + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(taskType, runContext) : "")
                         + GetTokenBudgetHint(runContext)
                         + (isCalcTask ? GetCalculationBoost(CouncilRole.Builder, taskType) : "")
@@ -10027,7 +10914,7 @@ namespace Malx_AI
                             ? "\n" + runContext.PythonSystemPromptInjection
                             : "")
                         + (runContext.CalculatorUsed ? "\n[CALCULATOR TOOL] Treat [[CALCULATOR TOOL RESULTS]] as authoritative computed values. Reuse them consistently in output." : "")
-                        + BuildBuilderContract(taskType, runContext.IsArtifactCanvasRequest)
+                        + BuildBuilderContract(taskType, runContext.IsArtifactCanvasRequest, runContext.IsWorkspaceTask)
                         + webSearchSystemNote
                         + builderWebPauseSystemNote
                         + sharedVocabularySystemNote;
@@ -10043,6 +10930,7 @@ namespace Malx_AI
                     string previousBuilderOutput = GetPreviousRoleOutput("builder");
 
                     bool useSegmented = taskType == CouncilTaskType.Coding && !runContext.IsCloudExecution
+                        && !runContext.IsWorkspaceTask
                         && !runContext.IsArtifactCanvasRequest   // a canvas artifact is ONE self-contained file — segmenting it emits partial code chunks that never render
                         && !runContext.IsProjectCanvasIteration // an edit must return one coherent replacement of the existing canvas source
                         && (runContext.Complexity == TaskComplexity.Complex || (runContext.Complexity != TaskComplexity.Simple && runContext.ArchitectStepCount > 4))
@@ -10083,9 +10971,9 @@ namespace Malx_AI
                         // processes the architect plan or user prompt.
                         if (runContext.IsWorkspaceTask)
                             builderPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
-                        else if (runContext.IsArtifactCanvasRequest)
+                        else if (useArtifactCanvasContract)
                             builderPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
-                        if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
+                        if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || useArtifactCanvasContract || runContext.IsWorkspaceTask))
                             builderPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
 
                         // Keep the small prior-request summary near the head. The full current source
@@ -10186,8 +11074,8 @@ namespace Malx_AI
                         builderNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound);
                         builderOutputDetectedAsCode = builderNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
                         builderContractOk = builderNormalized
-                            && (runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !BuilderHasRoleDrift(builderContractCleaned, taskType))
-                            && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest || builderOutputDetectedAsCode || !IsLikelyCodeOutput(builderContractCleaned))
+                            && (useArtifactCanvasContract || builderOutputDetectedAsCode || !BuilderHasRoleDrift(builderContractCleaned, taskType))
+                            && (taskType == CouncilTaskType.Coding || useArtifactCanvasContract || builderOutputDetectedAsCode || !IsLikelyCodeOutput(builderContractCleaned))
                             && !IsDegenerateBuilderOutput(builderContractCleaned, taskType)
                             && !IsRepetitionLoop(builderContractCleaned, previousBuilderOutput);
                     }
@@ -10207,16 +11095,16 @@ namespace Malx_AI
                         if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
                             correctionPayload.AppendLine(builderPriorKnowledge);
                         AppendCouncilWebContext(correctionPayload, runContext);
-                        if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
+                        if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || useArtifactCanvasContract || runContext.IsWorkspaceTask))
                             correctionPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
                         if (runContext.IsWorkspaceTask)
                         {
-                            correctionPayload.AppendLine("ROLE CORRECTION: Builder must output a connected-workspace patch proposal only. No standalone code fence, prose, numbered list, or raw file content.");
+                            correctionPayload.AppendLine("ROLE CORRECTION: Builder must output a connected-workspace patch proposal only. The first visible line must be [[AXIOM_CODEBASE_PATCH]]. No standalone code fence, prose, numbered list, analysis, approach, or raw file content outside the envelope.");
                             correctionPayload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
                             if (!string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
                                 correctionPayload.AppendLine(BuildLabeledBlock("CONNECTED CODEBASE CONTEXT", runContext.WorkspaceContext));
                         }
-                        else if (runContext.IsArtifactCanvasRequest)
+                        else if (useArtifactCanvasContract)
                         {
                             correctionPayload.AppendLine("ROLE CORRECTION: Builder must output the renderable artifact as exactly ONE ```html, ```svg, or ```python code fence with NOTHING outside the fence. " +
                                 "Do NOT output a numbered plan, a step list, prose, or any restatement of the request or the Architect's plan.");
@@ -10241,7 +11129,15 @@ namespace Malx_AI
                         }
                         correctionPayload.AppendLine($"Terminate with {BuilderCompletionMarker} on its own line.");
                         correctionPayload.AppendLine(loopBreak);
-                        correctionPayload.AppendLine(BuildLabeledBlock("PREVIOUS BUILDER OUTPUT", builderOutput));
+                        if (runContext.IsWorkspaceTask)
+                        {
+                            correctionPayload.AppendLine("PREVIOUS OUTPUT WAS REJECTED: it was not a valid [[AXIOM_CODEBASE_PATCH]] envelope. Do not continue or summarize it.");
+                            correctionPayload.AppendLine("Your next response must begin with [[AXIOM_CODEBASE_PATCH]].");
+                        }
+                        else
+                        {
+                            correctionPayload.AppendLine(BuildLabeledBlock("PREVIOUS BUILDER OUTPUT", builderOutput));
+                        }
 
                         var builderRetry = await ExecuteCouncilRoleAsync(
                             CouncilRole.Builder,
@@ -10280,8 +11176,8 @@ namespace Malx_AI
                         }
 
                         if (!retryNormalized
-                            || (!runContext.IsArtifactCanvasRequest && !builderOutputDetectedAsCode && BuilderHasRoleDrift(builderContractCleaned, taskType))
-                            || (taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest && !builderOutputDetectedAsCode && IsLikelyCodeOutput(builderContractCleaned))
+                            || (!useArtifactCanvasContract && !builderOutputDetectedAsCode && BuilderHasRoleDrift(builderContractCleaned, taskType))
+                            || (taskType != CouncilTaskType.Coding && !useArtifactCanvasContract && !builderOutputDetectedAsCode && IsLikelyCodeOutput(builderContractCleaned))
                             || IsDegenerateBuilderOutput(builderContractCleaned, taskType))
                         {
                             if (runContext.IsWorkspaceTask)
@@ -10304,7 +11200,7 @@ namespace Malx_AI
                                 // Artifact requests are code-fenced deliverables — extract the code, never
                                 // strip it as if it were prose, so the artifact-recovery stage below can
                                 // still find a renderable artifact in the corrected output.
-                                string rawFallback = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
+                                string rawFallback = (taskType == CouncilTaskType.Coding || useArtifactCanvasContract)
                                     ? StripChatFromCode(builderOutput)
                                     : StripMarkdownFences(builderOutput);
 
@@ -10322,7 +11218,7 @@ namespace Malx_AI
                                     builderContractCleaned = regenerated
                                         ?? BuildDeterministicDocumentResponse(runContext.UserPrompt, runContext.DocumentContent, runContext.DocumentFileNames);
                                 }
-                                else if (taskType != CouncilTaskType.Coding && !runContext.IsArtifactCanvasRequest)
+                                else if (taskType != CouncilTaskType.Coding && !useArtifactCanvasContract)
                                 {
                                     string candidate = string.IsNullOrWhiteSpace(rawFallback) ? builderOutput : rawFallback;
                                     if (IsDegenerateBuilderOutput(candidate, taskType))
@@ -10369,20 +11265,29 @@ namespace Malx_AI
                     builderOutput = PostProcessBuilderOutput(builderOutput, runContext);
                     if (runContext.IsWorkspaceTask)
                     {
+                        // Mode-agnostic (cloud or local): if the Builder emitted a valid envelope whose
+                        // HTML was cut off mid-file, complete it via continuation before capture, so a
+                        // truncated-but-parseable patch is not just blocked at validation with no recovery.
+                        builderOutput = await TryCompleteTruncatedWorkspaceHtmlPatchAsync(
+                            builderOutput, runContext, builderSystem, token, baseStateVault);
+
                         codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                         if (!codebasePatchCaptured)
                         {
+                            string firstRejectedWorkspaceOutput = builderOutput;
                             LogActivity("Workspace Builder output was not a patch envelope; running one patch-format retry.");
                             AppendChat("system", "Builder returned raw code instead of a reviewable codebase patch. Asking for a patch-format retry...");
 
                             var patchFormatRetryPayload = new StringBuilder();
+                            patchFormatRetryPayload.AppendLine("FORMAT VIOLATION: the previous Builder response was prose/analysis instead of a connected-codebase patch envelope.");
+                            patchFormatRetryPayload.AppendLine("Your response must start on the next line with [[AXIOM_CODEBASE_PATCH]].");
+                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REQUIRED OUTPUT FORMAT", BuildCodebasePatchOutputContract()));
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("APPROVED ARCHITECTURE", runContext.ArchitectOutput));
                             if (!string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
                                 patchFormatRetryPayload.AppendLine(BuildLabeledBlock("CONNECTED CODEBASE CONTEXT", runContext.WorkspaceContext));
-                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REJECTED BUILDER OUTPUT", builderOutput));
-                            patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REQUIRED OUTPUT FORMAT", BuildCodebasePatchOutputContract()));
-                            patchFormatRetryPayload.AppendLine("Return only the [[AXIOM_CODEBASE_PATCH]] envelope. Do not include standalone file content, explanations, or markdown outside the envelope.");
+                            patchFormatRetryPayload.AppendLine("Do not mention the prior failure. Do not explain your approach. Do not use prose. Return only the patch envelope.");
+                            patchFormatRetryPayload.AppendLine("First output line must be exactly: [[AXIOM_CODEBASE_PATCH]]");
                             patchFormatRetryPayload.Append(BuildCouncilClosingAnchor(CouncilRole.Builder, allowLocalWebPause: false));
 
                             var patchFormatRetry = await ExecuteCouncilRoleAsync(
@@ -10399,13 +11304,29 @@ namespace Malx_AI
                             codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                             if (!codebasePatchCaptured)
                             {
-                                builderOutput = "[[CODEBASE PATCH FORMAT ERROR]]\nBuilder did not return a valid codebase patch proposal. No files were changed.";
-                                AppendChat("warning", "Builder still did not return a valid codebase patch format. I suppressed the raw output so it cannot be mistaken for an applied change.");
-                                LogActivity("Workspace patch-format retry failed; raw output suppressed.");
-                                RenderCodebasePatchFailureReview(
-                                    patchFormatRetry.Answer,
-                                    "The Builder response did not contain a valid `[[AXIOM_CODEBASE_PATCH]]` envelope after a retry.");
-                                codebasePatchCaptured = true;
+                                // Envelope retries exhausted. Stop demanding the envelope: ask for raw
+                                // full-file content and wrap it into the envelope host-side.
+                                string? rescuedEnvelope = await TryContentOnlyCodebasePatchRescueAsync(
+                                    runContext,
+                                    builderSystem,
+                                    firstRejectedWorkspaceOutput + "\n" + patchFormatRetry.Answer,
+                                    token,
+                                    baseStateVault);
+                                if (rescuedEnvelope != null)
+                                {
+                                    builderOutput = rescuedEnvelope;
+                                    builderReasoningFallback = false;
+                                    codebasePatchCaptured = true;
+                                }
+                                else
+                                {
+                                    string failureReason = BuildCodebasePatchFormatFailureReason(firstRejectedWorkspaceOutput, patchFormatRetry.Answer);
+                                    builderOutput = "[[CODEBASE PATCH FORMAT ERROR]]\nBuilder did not return a valid codebase patch proposal. No files were changed.";
+                                    AppendChat("warning", "Builder still did not return a valid codebase patch format. I suppressed the raw output so it cannot be mistaken for an applied change.");
+                                    LogActivity("Workspace patch-format retry failed; raw output suppressed.");
+                                    RenderCodebasePatchFailureReview(patchFormatRetry.Answer, failureReason);
+                                    codebasePatchCaptured = true;
+                                }
                             }
                         }
                     }
@@ -10413,7 +11334,7 @@ namespace Malx_AI
                     if (runContext.WebGroundingRequired
                         && !HasCouncilWebEvidenceForRun(runContext)
                         && taskType != CouncilTaskType.Coding
-                        && !runContext.IsArtifactCanvasRequest
+                        && !useArtifactCanvasContract
                         && !DetectCodeOutput(builderOutput).IsCode
                         && !BuilderStatesWebEvidenceUnavailable(builderOutput))
                     {
@@ -10427,7 +11348,7 @@ namespace Malx_AI
                     // small local models. Cloud and large local models can also drift to prose.
                     // Stage 2 (prose extraction) rescues buried HTML/SVG from explanatory wrappers.
                     // Stage 3 (deterministic XY plotter) only fires on specific keyword patterns.
-                    if (runContext.IsArtifactCanvasRequest
+                    if (useArtifactCanvasContract
                         && !ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview)
                     {
                         string recoveredArtifact = TryBuildDeterministicArtifactRecovery(runContext, builderOutput);
@@ -10442,7 +11363,7 @@ namespace Malx_AI
                         }
                     }
 
-                    if (IsDynamicArtifactStaticSvgMismatch(runContext, builderOutput))
+                    if (useArtifactCanvasContract && IsDynamicArtifactStaticSvgMismatch(runContext, builderOutput))
                     {
                         LogActivity("Dynamic artifact validation rejected standalone SVG; running one focused HTML/JS correction pass.");
                         AppendChat("system", "Builder returned a static SVG for a dynamic artifact request. Running one focused HTML/JS correction before rendering...");
@@ -10482,12 +11403,12 @@ namespace Malx_AI
                         }
                     }
 
-                    if (runContext.IsProjectCanvasIteration && CanvasHasRealContent(ProjectCanvasEditor?.Text))
+                    if (useArtifactCanvasContract && runContext.IsProjectCanvasIteration && CanvasHasRealContent(ProjectCanvasEditor?.Text))
                     {
                         string existingCanvasSource = ProjectCanvasEditor.Text;
                         string candidateCanvasSource = StripChatFromCode(builderOutput ?? string.Empty);
                         bool candidateUnchanged = CanvasSourcesEquivalent(existingCanvasSource, candidateCanvasSource);
-                        bool candidateRenderable = !runContext.IsArtifactCanvasRequest
+                        bool candidateRenderable = !useArtifactCanvasContract
                             || ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview;
                         bool candidateLooksPartial = runContext.CurrentArtifactForIterationWasTruncated
                             && candidateCanvasSource.Length < existingCanvasSource.Length * 0.85;
@@ -10500,9 +11421,9 @@ namespace Malx_AI
                             AppendChat("system", "The Builder did not produce a verifiable canvas change. Running one focused correction pass...");
 
                             var mutationRetryPayload = new StringBuilder();
-                            if (runContext.IsArtifactCanvasRequest)
+                            if (useArtifactCanvasContract)
                                 mutationRetryPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
-                            if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest))
+                            if (smallLocalBuilderModel && (taskType == CouncilTaskType.Coding || useArtifactCanvasContract))
                                 mutationRetryPayload.AppendLine(BuildBuilderImplementationCapsule(runContext));
                             mutationRetryPayload.AppendLine(BuildLabeledBlock("CURRENT PROJECT CANVAS SOURCE — MODIFY THIS", existingCanvasSource));
                             mutationRetryPayload.AppendLine(BuildLabeledBlock("REQUESTED CANVAS CHANGE", runContext.UserPrompt));
@@ -10527,7 +11448,7 @@ namespace Malx_AI
                                 retryCandidate = normalizedRetryCandidate;
                             retryCandidate = PostProcessBuilderOutput(retryCandidate, runContext);
 
-                            if (runContext.IsArtifactCanvasRequest
+                            if (useArtifactCanvasContract
                                 && !ArtifactRenderService.DetectForCanvas(retryCandidate, null).SupportsPreview)
                             {
                                 string recoveredRetry = TryBuildDeterministicArtifactRecovery(runContext, retryCandidate);
@@ -10536,7 +11457,7 @@ namespace Malx_AI
                             }
 
                             bool retryChanged = !CanvasSourcesEquivalent(existingCanvasSource, retryCandidate);
-                            bool retryRenderable = !runContext.IsArtifactCanvasRequest
+                            bool retryRenderable = !useArtifactCanvasContract
                                 || ArtifactRenderService.DetectForCanvas(retryCandidate, null).SupportsPreview;
                             if (retryChanged && retryRenderable)
                             {
@@ -10705,7 +11626,7 @@ namespace Malx_AI
                     }
                     else if (taskType == CouncilTaskType.Coding
                         || runContext.BuilderProducedCode
-                        || (runContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
+                        || (useArtifactCanvasContract && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
                     {
                         LogActivity($"Builder responded ({builderOutput.Length} chars). Routing to Project Canvas...");
                         UpdateProjectCanvas(builderOutput);
@@ -10723,7 +11644,7 @@ namespace Malx_AI
                             ? (isRenderable
                                 ? $"Builder applied a verified source change to the {_canvasArtifact.DisplayTitle}."
                                 : "Builder applied a verified source change to Project Canvas.")
-                            : runContext.IsArtifactCanvasRequest
+                            : useArtifactCanvasContract
                                 ? (isRenderable
                                     ? $"Builder generated a renderable {_canvasArtifact.DisplayTitle} and sent it to the canvas."
                                     : "Builder output was routed to Project Canvas — no renderable artifact was detected in the output. The canvas shows the raw text. Try asking for an explicit HTML or SVG artifact.")
@@ -10731,7 +11652,7 @@ namespace Malx_AI
                         _chatHistory.Add(("builder", builderOutput));
                         UpdateWorkplaceTokenUsageIndicator();
                     }
-                    else if (runContext.IsArtifactCanvasRequest)
+                    else if (useArtifactCanvasContract)
                     {
                         // Canvas request whose output is NOT renderable: keep the canvas untouched
                         // (don't overwrite a previous artifact with raw prose) and show the output
@@ -10762,7 +11683,7 @@ namespace Malx_AI
                 // STATIC VALIDATION — deterministic checks before Critic
                 // ═══════════════════════════════════════════════════════════
                 if (!codebasePatchCaptured
-                    && runContext.IsArtifactCanvasRequest
+                    && useArtifactCanvasContract
                     && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     var staticFindings = runContext.StaticValidationFindings
@@ -10844,7 +11765,7 @@ namespace Malx_AI
                 // --- Code Sandbox: execute builder code and inject results into critic ---
                 string sandboxResult = "";
                 if (!codebasePatchCaptured
-                    && (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
+                    && (taskType == CouncilTaskType.Coding || useArtifactCanvasContract)
                     && !string.IsNullOrWhiteSpace(builderOutput))
                 {
                     string detectedLang = DetectLanguage(builderOutput);
@@ -10965,6 +11886,35 @@ namespace Malx_AI
                 // ═══════════════════════════════════════════════════════════════════
                 // RANGE VALIDATION — compare sandbox numerical output vs formula expected ranges
                 // ═══════════════════════════════════════════════════════════════════
+                // EXECUTED ACCEPTANCE CHECKS - convert A-items into small deterministic probes.
+                // Local models get compact pass/fail facts; cloud critics also receive the detail block.
+                if (!codebasePatchCaptured
+                    && taskType == CouncilTaskType.Coding
+                    && !string.IsNullOrWhiteSpace(builderOutput))
+                {
+                    string acceptanceLang = DetectLanguage(builderOutput);
+                    if (acceptanceLang is "python" or "java")
+                    {
+                        var acceptanceResults = await ExecuteAcceptanceCheckHarnessAsync(builderOutput, acceptanceLang, runContext);
+                        runContext.AcceptanceCheckResults = acceptanceResults;
+                        var failedAcceptance = acceptanceResults.Where(result => !result.Passed).ToList();
+                        runContext.AcceptanceCheckFailuresFound = failedAcceptance.Count > 0;
+                        if (failedAcceptance.Count > 0)
+                        {
+                            runContext.StaticValidationIssuesFound = true;
+                            runContext.StaticValidationFindings.AddRange(failedAcceptance
+                                .Select(result => $"ACCEPTANCE HARNESS: {result.Id} failed - {result.Evidence}"));
+                            LogActivity($"Acceptance harness found {failedAcceptance.Count} failing check(s).");
+                            AppendChat("warning", $"Acceptance harness: {failedAcceptance.Count} failing check(s) pre-flagged for Critic.");
+                        }
+                        else if (acceptanceResults.Count > 0)
+                        {
+                            LogActivity($"Acceptance harness passed {acceptanceResults.Count} check(s).");
+                            AppendChat("system", $"Acceptance harness: {acceptanceResults.Count} check(s) passed.");
+                        }
+                    }
+                }
+
                 if (isCalcTask && !string.IsNullOrWhiteSpace(sandboxResult) && runContext.FormulaChecklist.Count > 0)
                 {
                     var rangeViolations = ValidateOutputRanges(sandboxResult, runContext.FormulaChecklist);
@@ -10998,13 +11948,13 @@ namespace Malx_AI
                                 ? "\n[SENSITIVITY: CRITICAL ONLY] Report only failures that would cause incorrect results or complete failure. Ignore style and minor structure issues."
                                 : "")
                         + objectiveClause
-                        + (runContext.IsArtifactCanvasRequest
+                        + (useArtifactCanvasContract
                             ? BuildArtifactTaskTypeBoost(CouncilRole.Critic, runContext)
                             : GetTaskTypeBoost(taskType, CouncilRole.Critic))
-                        + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (useArtifactCanvasContract ? BuildArtifactCanvasBoost(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
                         + (isCalcTask ? GetCalculationBoost(CouncilRole.Critic) : "")
                         + (runContext.CalculatorUsed ? "\n[CALCULATOR TOOL] Verify Builder math against [[CALCULATOR TOOL RESULTS]] and flag numeric inconsistencies." : "")
-                        + BuildCriticContract(taskType, runContext.IsArtifactCanvasRequest)
+                        + BuildCriticContract(taskType, useArtifactCanvasContract)
                         + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract."
                         + webSearchSystemNote
                         + "\nIf any PIPELINE HEALTH flag is true, increase scrutiny and verify Builder output against Architect plan step-by-step."
@@ -11148,15 +12098,17 @@ namespace Malx_AI
                     LogActivity($"Critic responded ({criticOutput.Length} chars). Audit complete.");
                     UpdateStageIndicator(null, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), !string.IsNullOrWhiteSpace(runContext.BuilderOutput), true);
 
-                    // Safety net: if sandbox found runtime errors but Critic missed them, force revision
-                    if (!criticDetectedIssues && runContext.SandboxExceptionsFound)
+                    // Safety net: if executable gates failed but Critic missed them, force revision.
+                    // The routing layer trusts sandbox/harness observations over model prose.
+                    if (!criticDetectedIssues && (runContext.SandboxExceptionsFound || runContext.AcceptanceCheckFailuresFound))
                     {
                         criticDetectedIssues = true;
                         LogActivity("Safety net: Critic missed sandbox runtime errors — forcing revision.");
-                        AppendChat("warning", "Sandbox detected runtime errors that Critic did not flag. Triggering revision.");
+                        AppendChat("warning", "Executable verification detected failures that Critic did not flag. Triggering revision.");
                         if (!criticReport.HasIssues)
                         {
                             criticReport.Status = "issues";
+                            criticReport.Issues ??= new List<CriticIssue>();
                             foreach (var finding in runContext.StaticValidationFindings.Where(f => f.Contains("RUNTIME", StringComparison.OrdinalIgnoreCase)))
                             {
                                 criticReport.Issues.Add(new CriticIssue
@@ -11167,6 +12119,16 @@ namespace Malx_AI
                                     SuggestedFix = "Fix the runtime error in the code."
                                 });
                             }
+                            foreach (var failed in runContext.AcceptanceCheckResults.Where(result => !result.Passed).Take(8))
+                            {
+                                criticReport.Issues.Add(new CriticIssue
+                                {
+                                    Severity = "critical",
+                                    Summary = $"Acceptance check failed: {NormalizeContractText(failed.Check, 160)}",
+                                    Evidence = NormalizeContractText(failed.Evidence, 220),
+                                    SuggestedFix = "Update the implementation so the executed acceptance harness passes."
+                                });
+                            }
                             _lastCriticReport = criticReport;
                         }
                     }
@@ -11174,6 +12136,34 @@ namespace Malx_AI
                     // ═══════════════════════════════════════════════════════════════
                     // STAGE 4 — Weighted confidence routing after Critic
                     // ═══════════════════════════════════════════════════════════════
+                    var missedArtifactFindings = runContext.StaticValidationFindings
+                        .Where(finding => finding.StartsWith("ARTIFACT CHECK:", StringComparison.OrdinalIgnoreCase))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(8)
+                        .ToList();
+                    if (!criticDetectedIssues && missedArtifactFindings.Count > 0)
+                    {
+                        criticDetectedIssues = true;
+                        LogActivity("Safety net: Critic missed deterministic artifact validation findings; forcing revision.");
+                        AppendChat("warning", "Artifact validation found concrete issues that Critic did not flag. Triggering revision.");
+                        if (!criticReport.HasIssues)
+                        {
+                            criticReport.Status = "issues";
+                            criticReport.Issues ??= new List<CriticIssue>();
+                            foreach (string finding in missedArtifactFindings)
+                            {
+                                criticReport.Issues.Add(new CriticIssue
+                                {
+                                    Severity = "high",
+                                    Summary = NormalizeContractText(finding, 180),
+                                    Evidence = "Detected by deterministic Project Canvas artifact validation",
+                                    SuggestedFix = "Repair the HTML so requested controls are wired to visible behavior and the artifact renders cleanly."
+                                });
+                            }
+                            _lastCriticReport = criticReport;
+                        }
+                    }
+
                     if (hasBuilder && criticDetectedIssues)
                     {
                         int totalIssueCount = criticReport.Issues?.Count ?? 0;
@@ -11228,10 +12218,10 @@ namespace Malx_AI
                                 // Keep canvas-artifact requests on the artifact boost during patches —
                                 // the plain task boost reintroduces the "no code fences" contradiction
                                 // that the main builder pass already eliminates.
-                                + (runContext.IsArtifactCanvasRequest
+                                + (useArtifactCanvasContract
                                     ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, runContext)
                                     : GetTaskTypeBoost(taskType, CouncilRole.Builder))
-                                + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                                + (useArtifactCanvasContract ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
                                 + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(taskType, runContext) : "")
                                 + (isCalcTask ? GetCalculationBoost(CouncilRole.Builder, taskType) : "")
                                 + (taskType == CouncilTaskType.Coding
@@ -11248,9 +12238,9 @@ namespace Malx_AI
 
                             var patchPayload = new StringBuilder();
                             patchPayload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
-                            patchPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
+                            patchPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled));
                             // Mirror the main builder pass: anchor the expected artifact format first.
-                            if (runContext.IsArtifactCanvasRequest)
+                            if (useArtifactCanvasContract)
                                 patchPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
                             patchPayload.AppendLine(sharedVocabularySection);
                             if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
@@ -11273,7 +12263,7 @@ namespace Malx_AI
                             if (runContext.WebGroundingRequired
                                 && !HasCouncilWebEvidenceForRun(runContext)
                                 && taskType != CouncilTaskType.Coding
-                                && !runContext.IsArtifactCanvasRequest
+                                && !useArtifactCanvasContract
                                 && !DetectCodeOutput(patchedOutput).IsCode
                                 && !BuilderStatesWebEvidenceUnavailable(patchedOutput))
                             {
@@ -11283,7 +12273,7 @@ namespace Malx_AI
 
                             // Post-patch verification for coding/artifact tasks
                             bool patchEscalate = false;
-                            if (runContext.IsArtifactCanvasRequest)
+                            if (useArtifactCanvasContract)
                             {
                                 var postPatchFindings = BuildProjectCanvasFinalVerificationFailures(runContext, patchedOutput);
                                 if (postPatchFindings.Count > 0)
@@ -11347,16 +12337,16 @@ namespace Malx_AI
                                 }
                                 else if (taskType == CouncilTaskType.Coding
                                     || runContext.BuilderProducedCode
-                                    || (runContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
+                                    || (useArtifactCanvasContract && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
                                 {
                                     UpdateProjectCanvas(builderOutput);
-                                    AppendChat("builder", runContext.IsArtifactCanvasRequest
+                                    AppendChat("builder", useArtifactCanvasContract
                                         ? "Builder artifact patch sent to Project Canvas."
                                         : "Builder patch sent to Project Canvas.");
                                     _chatHistory.Add(("builder-patch", builderOutput));
                                     UpdateWorkplaceTokenUsageIndicator();
 
-                                    if (runContext.IsArtifactCanvasRequest)
+                                    if (useArtifactCanvasContract)
                                     {
                                         string artifactPatchLang = DetectLanguage(builderOutput);
                                         if (artifactPatchLang == "html")
@@ -11381,7 +12371,7 @@ namespace Malx_AI
                                         }
                                     }
                                 }
-                                else if (runContext.IsArtifactCanvasRequest)
+                                else if (useArtifactCanvasContract)
                                 {
                                     // Non-renderable patch output: keep the existing canvas artifact.
                                     AppendChat("builder", builderOutput);
@@ -11430,10 +12420,10 @@ namespace Malx_AI
                             string revisionBuilderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                                 + objectiveClause
                                 // Same artifact-boost continuity as the main pass and patch path.
-                                + (runContext.IsArtifactCanvasRequest
+                                + (useArtifactCanvasContract
                                     ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, runContext)
                                     : GetTaskTypeBoost(taskType, CouncilRole.Builder))
-                                + (runContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
+                                + (useArtifactCanvasContract ? BuildArtifactCanvasBoost(CouncilRole.Builder, runContext.PreferredArtifactFormatHint, runContext) : "")
                                 + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(taskType, runContext) : "")
                                 + GetTokenBudgetHint(runContext)
                                 + (isCalcTask ? GetCalculationBoost(CouncilRole.Builder, taskType) : "")
@@ -11453,9 +12443,9 @@ namespace Malx_AI
 
                             var revisionPayload = new StringBuilder();
                             revisionPayload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
-                            revisionPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
+                            revisionPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled));
                             // Mirror the main builder pass: anchor the expected artifact format first.
-                            if (runContext.IsArtifactCanvasRequest)
+                            if (useArtifactCanvasContract)
                                 revisionPayload.AppendLine(BuildCanvasArtifactAnchorBlock(runContext));
                             revisionPayload.AppendLine(sharedVocabularySection);
                             if (!string.IsNullOrWhiteSpace(builderPriorKnowledge))
@@ -11497,7 +12487,7 @@ namespace Malx_AI
                             if (runContext.WebGroundingRequired
                                 && !HasCouncilWebEvidenceForRun(runContext)
                                 && taskType != CouncilTaskType.Coding
-                                && !runContext.IsArtifactCanvasRequest
+                                && !useArtifactCanvasContract
                                 && !DetectCodeOutput(revisedBuilderOutput).IsCode
                                 && !BuilderStatesWebEvidenceUnavailable(revisedBuilderOutput))
                             {
@@ -11505,7 +12495,7 @@ namespace Malx_AI
                             }
                             builderReasoningFallback = revisedBuilderResult.IsReasoningFallback;
 
-                            if (runContext.IsArtifactCanvasRequest)
+                            if (useArtifactCanvasContract)
                             {
                                 var revisionFindings = BuildProjectCanvasFinalVerificationFailures(runContext, revisedBuilderOutput);
                                 foreach (string finding in revisionFindings.Distinct(StringComparer.OrdinalIgnoreCase).Take(12))
@@ -11541,14 +12531,14 @@ namespace Malx_AI
                             {
                                 if (taskType == CouncilTaskType.Coding
                                     || runContext.BuilderProducedCode
-                                    || (runContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
+                                    || (useArtifactCanvasContract && ArtifactRenderService.DetectForCanvas(builderOutput, null).SupportsPreview))
                                 {
                                     UpdateProjectCanvas(builderOutput);
-                                    AppendChat("builder", runContext.IsArtifactCanvasRequest
+                                    AppendChat("builder", useArtifactCanvasContract
                                         ? "Builder artifact revision sent to Project Canvas."
                                         : "Builder revision sent to Project Canvas.");
                                 }
-                                else if (runContext.IsArtifactCanvasRequest)
+                                else if (useArtifactCanvasContract)
                                 {
                                     // Non-renderable revision output: keep the existing canvas artifact.
                                     AppendChat("builder", builderOutput);
@@ -11583,8 +12573,8 @@ namespace Malx_AI
                                 ? "\n[SENSITIVITY: CRITICAL ONLY] Report only failures that would cause incorrect results or complete failure. Ignore style and minor structure issues."
                                 : "")
                         + objectiveClause
-                        + (runContext.IsArtifactCanvasRequest && IsSmallLocalCouncilModel(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? GetEffectiveRoleConfig(CouncilRole.Critic).DisplayName, _isCloudModeEnabled) ? BuildSmallModelArtifactAssist(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
-                        + BuildCriticContract(taskType, runContext.IsArtifactCanvasRequest)
+                        + (useArtifactCanvasContract && IsSmallLocalCouncilModel(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? GetEffectiveRoleConfig(CouncilRole.Critic).DisplayName, _isCloudModeEnabled) ? BuildSmallModelArtifactAssist(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + BuildCriticContract(taskType, useArtifactCanvasContract)
                         + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract.";
                     criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
                     if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? string.Empty))
@@ -11627,7 +12617,9 @@ namespace Malx_AI
                 if (hasCritic && !string.IsNullOrWhiteSpace(runContext.CriticReview))
                 {
                     var finalReview = CriticContractParser.Parse(runContext.CriticReview);
-                    string finalOutputForCheck = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
+                    string finalOutputForCheck = runContext.IsWorkspaceTask
+                        ? runContext.BuilderOutput
+                        : (taskType == CouncilTaskType.Coding || useArtifactCanvasContract)
                         ? ProjectCanvasEditor.Text
                         : (runContext.BuilderOutput ?? "");
                     finalVerificationFailures = BuildFinalVerificationFailures(runContext, finalOutputForCheck);
@@ -11640,7 +12632,9 @@ namespace Malx_AI
                 }
                 else
                 {
-                    string finalOutputForCheck = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest)
+                    string finalOutputForCheck = runContext.IsWorkspaceTask
+                        ? runContext.BuilderOutput
+                        : (taskType == CouncilTaskType.Coding || useArtifactCanvasContract)
                         ? ProjectCanvasEditor.Text
                         : (runContext.BuilderOutput ?? "");
                     finalVerificationFailures = BuildFinalVerificationFailures(runContext, finalOutputForCheck);
@@ -11652,7 +12646,7 @@ namespace Malx_AI
                     }
                 }
 
-                if (runContext.IsArtifactCanvasRequest)
+                if (useArtifactCanvasContract)
                 {
                     string finalArtifactOutput = ProjectCanvasEditor.Text;
                     ReconcileArtifactValidationState(runContext, finalArtifactOutput);
@@ -11691,7 +12685,7 @@ namespace Malx_AI
 
                 _lastRunContext = runContext;
                 _lastSandboxOutput = sandboxResult;
-                _lastFinalOutput = (taskType == CouncilTaskType.Coding || runContext.IsArtifactCanvasRequest) ? ProjectCanvasEditor.Text : runContext.BuilderOutput;
+                _lastFinalOutput = (runContext.IsWorkspaceTask || taskType == CouncilTaskType.Coding || useArtifactCanvasContract) ? ProjectCanvasEditor.Text : runContext.BuilderOutput;
 
                 if (refinementPass)
                 {
@@ -11701,7 +12695,7 @@ namespace Malx_AI
                 int criticFindings = CountCriticFindings(runContext.CriticReview);
                 if (runContext.FinalVerificationFailed)
                     criticFindings = Math.Max(criticFindings, finalVerificationFailures.Count);
-                else if (runContext.IsArtifactCanvasRequest)
+                else if (useArtifactCanvasContract)
                     criticFindings = 0;
                 string confidenceLabel = runContext.FinalVerificationFailed
                     ? "Flagged for Review"
@@ -11907,7 +12901,7 @@ namespace Malx_AI
 
                 var segmentPayload = new StringBuilder();
                 segmentPayload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
-                segmentPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
+                segmentPayload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled));
                 segmentPayload.AppendLine(pipelineStateHeader);
                 segmentPayload.AppendLine(sharedVocabularySection);
                 if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
@@ -12042,7 +13036,7 @@ namespace Malx_AI
 
             var payload = new StringBuilder();
             payload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
-            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
+            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled));
             payload.AppendLine(BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(runContext.ArchitectOutput), ""));
             payload.AppendLine(BuildSharedVocabularySection(runContext.SharedVocabulary));
             if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
@@ -12119,7 +13113,7 @@ namespace Malx_AI
 
             var payload = new StringBuilder();
             payload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
-            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution));
+            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled));
             payload.AppendLine(pipelineStateHeader);
             payload.AppendLine(sharedVocabularySection);
             if (!string.IsNullOrWhiteSpace(priorKnowledgeBlock))
@@ -12582,7 +13576,7 @@ namespace Malx_AI
             var constraintMarkers = new[]
             {
                 "only ", "without ", " no ", "must not ", "don't ", "do not ",
-                "using ", "in python", "in c#", "in java", "in javascript", "in html",
+                "in python", "in c#", "in java", "in javascript", "in html",
                 "standard library", "no external", "offline", "self-contained", "single file",
                 "at most", "at least", "under ", "over ", "exactly "
             };
@@ -12602,10 +13596,12 @@ namespace Malx_AI
                     continue;
 
                 string itemLower = " " + item.ToLowerInvariant() + " ";
-                bool isConstraint = constraintMarkers.Any(marker => itemLower.Contains(marker));
+                bool isFeatureRequirement = LooksLikeFeatureRequirement(itemLower);
+                bool isConstraint = constraintMarkers.Any(marker => itemLower.Contains(marker))
+                    && !isFeatureRequirement;
                 bool isRequirement = requirementMarkers.Any(marker => itemLower.Contains(marker));
 
-                if (isRequirement || isConstraint)
+                if (isRequirement || isConstraint || isFeatureRequirement)
                     decomp.Requirements.Add(item);
                 if (isConstraint)
                     decomp.Constraints.Add(item);
@@ -12637,6 +13633,22 @@ namespace Malx_AI
                 .ToList();
 
             return decomp;
+        }
+
+        private static bool LooksLikeFeatureRequirement(string normalizedLower)
+        {
+            if (string.IsNullOrWhiteSpace(normalizedLower))
+                return false;
+
+            string[] featureSignals =
+            [
+                " input ", " input box ", " button ", " control ", " slider ", " toggle ",
+                " canvas ", " svg ", " visual ", " visualization ", " animation ", " animated ",
+                " hover ", " tooltip ", " node ", " graph ", " chart ", " simulator ",
+                " generate ", " render ", " display ", " show ", " readout ", " panel "
+            ];
+
+            return featureSignals.Any(signal => normalizedLower.Contains(signal, StringComparison.Ordinal));
         }
 
         private string BuildArchitectInput(CouncilRunContext context, PreFlightDecomposition decomp, string knowledgePacket, bool hasKnowledge)
@@ -12972,7 +13984,10 @@ namespace Malx_AI
                 "Traceback", "Error:", "Exception:", "SyntaxError", "NameError",
                 "TypeError", "ValueError", "IndentationError", "KeyError",
                 "IndexError", "AttributeError", "ImportError", "ZeroDivisionError",
-                "FileNotFoundError", "RuntimeError", "OverflowError"
+                "FileNotFoundError", "RuntimeError", "OverflowError",
+                "WEBVIEW2 CONSOLE ERROR", "webview2_console_error_gate: fail",
+                "WEBVIEW2 BEHAVIOR ERROR",
+                "unhandledrejection", "window.error", "console.error"
             ];
 
             var lines = sandboxOutput.Split('\n');
@@ -13590,6 +14605,17 @@ namespace Malx_AI
             "When a WEB_SEARCH result is provided, treat that result as authoritative for current/source-backed claims it actually covers. Do not add unsupported current/source-backed facts from memory or guesses, and do not treat off-topic web results as support.\n" +
             "Do NOT output [PAUSE: ...] lines for things you already know with certainty.";
 
+        // ── Codebase read tools addendum ── appended AFTER AgenticPauseRule only while
+        // Codebase Edit Access is enabled, so roles never burn their pause budget on tools
+        // that would fail. ToolDecision strips this together with the pause rule when it
+        // disables pauses for the final Builder pass.
+        private const string AgenticPauseCodebaseToolsAddendum =
+            "\nADDITIONAL ALLOWED TOOLS (Codebase Edit Access is ON): READ_FILE, SEARCH_CODEBASE, LIST_FILES — read-only access to the connected workspace, via the same [PAUSE: ...] syntax and budget.\n" +
+            "Example: [PAUSE: SEARCH_CODEBASE | WorkspaceAccessService]\n" +
+            "Example: [PAUSE: READ_FILE | Malx_AI/WorkspaceAccessService.cs]\n" +
+            "Example: [PAUSE: LIST_FILES | Malx_AI]\n" +
+            "Use LIST_FILES to discover paths, SEARCH_CODEBASE to find symbols/text across connected files, and READ_FILE to open one known relative path.";
+
         // ── Cloud-native tools note ── replaces AgenticPauseRule for cloud council roles.
         // Cloud roles call real tools through OpenRouter's tool-calling protocol, so they must
         // NOT be told to emit [PAUSE:]/[RESULT:] markers (nothing intercepts them in cloud mode).
@@ -13610,9 +14636,13 @@ namespace Malx_AI
                 "Available tools: " + webSearchEntry +
                 "run_python (execute Python 3 for math or data processing; print() the final answer), " +
                 "calculate (evaluate a math or unit-conversion expression), " +
-                "search_session_memory (recall facts, prior plans, and outputs stored earlier in this workplace session).\n" +
+                "search_session_memory (recall facts, prior plans, and outputs stored earlier in this workplace session)" +
+                (_connectedWorkspace.CodebaseEditAccessEnabled
+                    ? ", read_file (read one connected-workspace source file by relative path), search_codebase (find symbols/text across connected code files), list_files (inspect connected workspace paths)"
+                    : "") +
+                ".\n" +
                 webDisabledNote +
-                "Tool choice: use calculate for simple arithmetic or unit conversion; use run_python for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use web_search for current/latest/source-backed facts; use search_session_memory for facts from this chat or prior council work.\n" +
+                "Tool choice: use calculate for simple arithmetic or unit conversion; use run_python for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use web_search for current/latest/source-backed facts; use search_session_memory for facts from this chat or prior council work; use list_files, search_codebase, and read_file for read-only connected-workspace code inspection when those tools are available.\n" +
                 "Before calling web_search, connect the current role payload to the user's latest objective and recent workplace turns. Make the query standalone: include the actual title, person, organization, product, document, API, or topic instead of references like 'the movie', 'this model', 'that article', or pronouns.\n" +
                 "For relationship questions, preserve the relation in the query, such as what X does to Y, what happens to character Z at the end of title X, how API A differs from API B, or which version changed a behavior.\n" +
                 "Tool results only cover the specific current/source-backed claim or computation they actually address; off-topic web results are not support for the user's named entities. If web evidence is partial, mismatched, or misses a required named entity, call one narrower web_search query before finalizing when the tool is available.\n" +
@@ -13622,7 +14652,17 @@ namespace Malx_AI
                 "Do NOT call tools for things you already know with certainty.";
         }
 
-        private static string GetEmbeddedSystemPrompt(CouncilRole role)
+        // Instance wrapper: appends the codebase read-tools addendum only while Codebase
+        // Edit Access is enabled, so the pause rule never advertises tools that would fail.
+        private string GetEmbeddedSystemPrompt(CouncilRole role)
+        {
+            string prompt = BuildEmbeddedSystemPromptCore(role);
+            return _connectedWorkspace.CodebaseEditAccessEnabled
+                ? prompt + AgenticPauseCodebaseToolsAddendum
+                : prompt;
+        }
+
+        private static string BuildEmbeddedSystemPromptCore(CouncilRole role)
         {
             // ── Environment briefing ── injected into every role so the model understands where it
             // runs, where its output goes, and the hard limits of the workplace. Grounds the model
@@ -13639,9 +14679,9 @@ namespace Malx_AI
                 "web fonts, remote images, or online libraries (no <script src=\"http...\">, no Google Fonts, no CDN <link>). Everything " +
                 "must be fully self-contained and inline so it works with zero network access.\n" +
                 "WHAT YOU CAN DO: reason, write text and code, and use the pause tools below (sandbox execution, web search, Python math, " +
-                "memory lookup, calculator).\n" +
+                "memory lookup, calculator, and read-only connected-codebase inspection when Codebase Edit Access is enabled).\n" +
                 "WHAT YOU CANNOT DO: you cannot browse the live web except through WEB_SEARCH, cannot access the user's files except " +
-                "documents they explicitly attach, cannot install packages, and cannot run anything outside the provided tools. " +
+                "documents they explicitly attach or connected-workspace files through READ_FILE/SEARCH_CODEBASE/LIST_FILES, cannot install packages, and cannot run anything outside the provided tools. " +
                 "Do not claim to perform actions you cannot actually do.";
 
             // ── Role boundary rule ── keeps each role in its lane and stops internal routing
@@ -13733,8 +14773,11 @@ namespace Malx_AI
                 return "Return exactly the required JSON object. Do not explain. Do not repeat input text.";
             }
 
+            string codebasePauseTools = _connectedWorkspace.CodebaseEditAccessEnabled
+                ? ", [PAUSE: SEARCH_CODEBASE | symbol or text], [PAUSE: READ_FILE | relative/path.ext], or [PAUSE: LIST_FILES | filter]"
+                : string.Empty;
             string toolNote = allowAgenticPauses
-                ? "\nIf a needed fact or number is missing, write one exact tool line only: [PAUSE: CALCULATE | expression], [PAUSE: PYTHON_MATH | code], [PAUSE: WEB_SEARCH | query], or [PAUSE: SEARCH_HIPPOCAMPUS | query]. After a result, finish normally. Never show tool lines in the final answer."
+                ? "\nIf a needed fact, number, or detail is missing, write one exact tool line only: [PAUSE: CALCULATE | expression], [PAUSE: PYTHON_MATH | code], [PAUSE: WEB_SEARCH | query], [PAUSE: SEARCH_HIPPOCAMPUS | query]" + codebasePauseTools + ". After a result, finish normally. Never show tool lines in the final answer."
                 : "\nTool preflight is already complete. Use any TOOL OBSERVATION blocks as facts. Do not write [PAUSE:] or JSON.";
 
             string roleRules = role switch
@@ -14899,6 +15942,249 @@ namespace Malx_AI
             {
                 _canvasArtifactWebViewReady = false;
             }
+        }
+
+        private async Task<List<string>> ProbeHtmlConsoleErrorsWithWebView2Async(string html, CouncilRunContext? context = null)
+        {
+            var errors = new List<string>();
+
+            await EnsureCanvasArtifactWebViewInitializedAsync();
+            var webView = FindName("CanvasArtifactWebView") as Microsoft.Web.WebView2.Wpf.WebView2;
+            if (!_canvasArtifactWebViewReady || webView?.CoreWebView2 == null)
+            {
+                errors.Add("WEBVIEW2 CONSOLE ERROR: WebView2 console probe unavailable; HTML runtime gate could not execute.");
+                return errors;
+            }
+
+            await EnsureCanvasConsoleProbeInstalledAsync(webView.CoreWebView2);
+
+            var navigationCompleted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler<CoreWebView2NavigationCompletedEventArgs>? navHandler = null;
+            EventHandler<CoreWebView2WebMessageReceivedEventArgs>? messageHandler = null;
+
+            navHandler = (_, args) =>
+            {
+                if (!args.IsSuccess)
+                    errors.Add($"WEBVIEW2 CONSOLE ERROR: Navigation failed with {args.WebErrorStatus}.");
+                navigationCompleted.TrySetResult(args.IsSuccess);
+            };
+
+            messageHandler = (_, args) =>
+            {
+                try
+                {
+                    JsonNode? node = JsonNode.Parse(args.WebMessageAsJson);
+                    if (node?["source"]?.GetValue<string>() != "axiom-console-probe")
+                        return;
+
+                    string kind = node["kind"]?.GetValue<string>() ?? "runtime";
+                    string message = node["message"]?.GetValue<string>() ?? "";
+                    if (string.IsNullOrWhiteSpace(message))
+                        message = "Unknown WebView2 runtime error.";
+                    errors.Add($"WEBVIEW2 CONSOLE ERROR: {kind}: {NormalizeContractText(message, 320)}");
+                }
+                catch
+                {
+                    // Ignore non-probe messages from the artifact.
+                }
+            };
+
+            webView.CoreWebView2.NavigationCompleted += navHandler;
+            webView.CoreWebView2.WebMessageReceived += messageHandler;
+            try
+            {
+                if (Encoding.UTF8.GetByteCount(html) > 1_400_000)
+                {
+                    string tempPath = Path.Combine(Path.GetTempPath(), "axiom_canvas_artifact_probe.html");
+                    await File.WriteAllTextAsync(tempPath, html, Encoding.UTF8);
+                    webView.CoreWebView2.Navigate(new Uri(tempPath).AbsoluteUri);
+                }
+                else
+                {
+                    webView.NavigateToString(html);
+                }
+
+                Task completed = await Task.WhenAny(navigationCompleted.Task, Task.Delay(2500));
+                if (completed != navigationCompleted.Task)
+                    errors.Add("WEBVIEW2 CONSOLE ERROR: Console probe timed out before navigation completed.");
+
+                // Give synchronous startup scripts and rejected promises a brief chance to report.
+                await Task.Delay(500);
+
+                IReadOnlyList<string> behaviorErrors = await ProbeHtmlBehaviorWithWebView2Async(webView.CoreWebView2, context);
+                errors.AddRange(behaviorErrors);
+            }
+            catch (Exception ex)
+            {
+                errors.Add("WEBVIEW2 CONSOLE ERROR: Console probe failed to navigate: " + ex.Message);
+            }
+            finally
+            {
+                webView.CoreWebView2.NavigationCompleted -= navHandler;
+                webView.CoreWebView2.WebMessageReceived -= messageHandler;
+            }
+
+            return errors.Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+        }
+
+        private static async Task<IReadOnlyList<string>> ProbeHtmlBehaviorWithWebView2Async(CoreWebView2 coreWebView, CouncilRunContext? context)
+        {
+            string request = BuildHtmlBehaviorValidationRequest(context).ToLowerInvariant();
+            bool expectsPrimaryAction = request.Contains("generate fold", StringComparison.Ordinal)
+                || (request.Contains("generate", StringComparison.Ordinal)
+                    && RequestMentionsAny(request, "button", "control", "fold", "simulate", "simulation", "visualization", "protein"));
+            bool expectsCanvas = request.Contains("canvas", StringComparison.Ordinal);
+            bool expectsVisualization = expectsCanvas
+                || RequestMentionsAny(request, "visual", "visualization", "simulator", "simulation", "folding", "draw");
+
+            if (!expectsPrimaryAction && !expectsCanvas && !expectsVisualization)
+                return Array.Empty<string>();
+
+            const string smokeScript = """
+(async () => {
+  const result = {
+    inputFound: false,
+    buttonFound: false,
+    canvasCount: 0,
+    canvasChanged: false,
+    canvasHasInk: false,
+    error: ''
+  };
+  try {
+    const canvases = Array.from(document.querySelectorAll('canvas'));
+    result.canvasCount = canvases.length;
+    const before = canvases.map(canvas => {
+      try { return canvas.toDataURL(); } catch (_) { return ''; }
+    });
+
+    const input = document.querySelector('textarea, input[type="text"], input[type="search"], input:not([type])');
+    if (input) {
+      result.inputFound = true;
+      input.value = 'MKWVTFISLLFLFSSAYSRGVFRRDTHKSEIAHRFKDLGE';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    const controls = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+    const primary = controls.find(control => {
+      const label = [
+        control.innerText || '',
+        control.value || '',
+        control.id || '',
+        control.className || '',
+        control.getAttribute('aria-label') || ''
+      ].join(' ');
+      return /generate|fold|simulate|start|run/i.test(label);
+    }) || (controls.length === 1 ? controls[0] : null);
+
+    if (primary) {
+      result.buttonFound = true;
+      primary.click();
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 650));
+
+    function canvasHasInk(canvas) {
+      const width = Math.min(canvas.width || 0, 96);
+      const height = Math.min(canvas.height || 0, 96);
+      if (width < 2 || height < 2) return false;
+      const context = canvas.getContext('2d');
+      if (!context) return false;
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let painted = 0;
+      for (let i = 3; i < pixels.length; i += 4) {
+        if (pixels[i] > 8) {
+          painted++;
+          if (painted > 20) return true;
+        }
+      }
+      return false;
+    }
+
+    result.canvasHasInk = canvases.some(canvasHasInk);
+    const after = canvases.map(canvas => {
+      try { return canvas.toDataURL(); } catch (_) { return ''; }
+    });
+    result.canvasChanged = after.some((value, index) => value && value !== before[index]);
+    return result;
+  } catch (error) {
+    result.error = error && error.message ? error.message : String(error);
+    return result;
+  }
+})()
+""";
+
+            string rawResult = await coreWebView.ExecuteScriptAsync(smokeScript);
+            JsonObject? node = JsonNode.Parse(rawResult) as JsonObject;
+            var errors = new List<string>();
+            if (node == null)
+            {
+                errors.Add("WEBVIEW2 BEHAVIOR ERROR: HTML behavior smoke probe returned no structured result.");
+                return errors;
+            }
+
+            string? probeError = node?["error"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(probeError))
+            {
+                errors.Add("WEBVIEW2 BEHAVIOR ERROR: HTML behavior smoke probe failed: " + NormalizeContractText(probeError, 220));
+                return errors;
+            }
+
+            int canvasCount = node?["canvasCount"]?.GetValue<int>() ?? 0;
+            bool buttonFound = node?["buttonFound"]?.GetValue<bool>() == true;
+            bool canvasChanged = node?["canvasChanged"]?.GetValue<bool>() == true;
+            bool canvasHasInk = node?["canvasHasInk"]?.GetValue<bool>() == true;
+
+            if (expectsPrimaryAction && !buttonFound)
+                errors.Add("WEBVIEW2 BEHAVIOR ERROR: requested primary Generate/Fold action was not clickable in the rendered HTML.");
+            if (expectsCanvas && canvasCount == 0)
+                errors.Add("WEBVIEW2 BEHAVIOR ERROR: requested canvas visualization was not present in the rendered HTML.");
+            if ((expectsCanvas || expectsVisualization) && canvasCount > 0 && !canvasHasInk && !canvasChanged)
+                errors.Add("WEBVIEW2 BEHAVIOR ERROR: canvas stayed blank after seeding input and clicking the primary control.");
+
+            return errors;
+        }
+
+        private async Task EnsureCanvasConsoleProbeInstalledAsync(CoreWebView2 coreWebView)
+        {
+            if (_canvasArtifactConsoleProbeInstalled)
+                return;
+
+            const string probeScript = """
+(() => {
+  if (window.__axiomConsoleProbeInstalled) return;
+  window.__axiomConsoleProbeInstalled = true;
+  const send = (kind, args) => {
+    try {
+      const message = Array.from(args || []).map(value => {
+        try {
+          if (value instanceof Error) return value.name + ': ' + value.message;
+          if (typeof value === 'object') return JSON.stringify(value);
+          return String(value);
+        } catch (_) {
+          return String(value);
+        }
+      }).join(' ');
+      chrome.webview.postMessage({ source: 'axiom-console-probe', kind, message });
+    } catch (_) {}
+  };
+  const originalError = console.error ? console.error.bind(console) : null;
+  console.error = (...args) => {
+    send('console.error', args);
+    if (originalError) originalError(...args);
+  };
+  window.addEventListener('error', event => {
+    send('window.error', [event && event.message ? event.message : 'Unhandled JavaScript error']);
+  });
+  window.addEventListener('unhandledrejection', event => {
+    const reason = event ? event.reason : null;
+    send('unhandledrejection', [reason && reason.message ? reason.message : reason || 'Unhandled promise rejection']);
+  });
+})();
+""";
+
+            await coreWebView.AddScriptToExecuteOnDocumentCreatedAsync(probeScript);
+            _canvasArtifactConsoleProbeInstalled = true;
         }
 
         private void RefreshCanvasArtifact(string builderOutput, string? sandboxOutput)
@@ -17302,17 +18588,19 @@ namespace Malx_AI
                 string knowledge = BuildKnowledgePacket(chunks, _nextPromptPriorityConcept);
                 var builderConfig = GetEffectiveRoleConfig(CouncilRole.Builder);
                 bool smallLocalBuilderModel = IsSmallLocalCouncilModel(builderConfig.ModelPath ?? builderConfig.DisplayName, _isCloudModeEnabled);
+                bool useArtifactCanvasContract = ShouldUseArtifactCanvasContract(_lastRunContext);
 
                 string builderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                     + objectiveClause
-                    + (_lastRunContext.IsArtifactCanvasRequest
+                    + (useArtifactCanvasContract
                         ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, _lastRunContext)
                         : GetTaskTypeBoost(_lastRunContext.TaskType, CouncilRole.Builder))
-                    + (_lastRunContext.IsArtifactCanvasRequest ? BuildArtifactCanvasBoost(CouncilRole.Builder, _lastRunContext.PreferredArtifactFormatHint, _lastRunContext) : "")
-                    + (_lastRunContext.IsArtifactCanvasRequest && smallLocalBuilderModel ? BuildSmallModelArtifactAssist(CouncilRole.Builder, _lastRunContext.PreferredArtifactFormatHint, _lastRunContext) : "")
+                    + (useArtifactCanvasContract ? BuildArtifactCanvasBoost(CouncilRole.Builder, _lastRunContext.PreferredArtifactFormatHint, _lastRunContext) : "")
+                    + (useArtifactCanvasContract && smallLocalBuilderModel ? BuildSmallModelArtifactAssist(CouncilRole.Builder, _lastRunContext.PreferredArtifactFormatHint, _lastRunContext) : "")
+                    + (_lastRunContext.IsWorkspaceTask ? BuildWorkspaceBuilderPatchModeBoost() : "")
                     + (!_isCloudModeEnabled ? BuildLocalBuilderCognitionBoost(_lastRunContext.TaskType, _lastRunContext) : "")
                     + (_lastRunContext.IsCalculationTask ? GetCalculationBoost(CouncilRole.Builder, _lastRunContext.TaskType) : "")
-                    + BuildBuilderContract(_lastRunContext.TaskType, _lastRunContext.IsArtifactCanvasRequest)
+                    + BuildBuilderContract(_lastRunContext.TaskType, _lastRunContext.IsArtifactCanvasRequest, _lastRunContext.IsWorkspaceTask)
                     + BuildCouncilWebSystemNote(_lastRunContext.WebContext, _lastRunContext.WebGroundingRequired)
                     + BuildBuilderWebPauseSystemNote()
                     + "\n[SHARED VOCABULARY]\nUse user terms exactly as named.";
@@ -17323,10 +18611,12 @@ namespace Malx_AI
 
                 var payload = new StringBuilder();
                 payload.AppendLine(BuildCouncilGoalContractBlock(_lastRunContext.GoalContract));
-                payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, _lastRunContext.IsCloudExecution));
-                if (_lastRunContext.IsArtifactCanvasRequest)
+                payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, _lastRunContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled));
+                if (_lastRunContext.IsWorkspaceTask)
+                    payload.AppendLine(BuildLabeledBlock("CODEBASE PATCH OUTPUT CONTRACT", BuildCodebasePatchOutputContract()));
+                else if (useArtifactCanvasContract)
                     payload.AppendLine(BuildCanvasArtifactAnchorBlock(_lastRunContext));
-                if (smallLocalBuilderModel && (_lastRunContext.TaskType == CouncilTaskType.Coding || _lastRunContext.IsArtifactCanvasRequest))
+                if (smallLocalBuilderModel && (_lastRunContext.TaskType == CouncilTaskType.Coding || useArtifactCanvasContract || _lastRunContext.IsWorkspaceTask))
                     payload.AppendLine(BuildBuilderImplementationCapsule(_lastRunContext));
                 payload.AppendLine(pipelineState);
                 payload.AppendLine(sharedVocabularySection);
@@ -17362,7 +18652,7 @@ namespace Malx_AI
                 if (_lastRunContext.WebGroundingRequired
                     && !HasCouncilWebEvidenceForRun(_lastRunContext)
                     && _lastRunContext.TaskType != CouncilTaskType.Coding
-                    && !_lastRunContext.IsArtifactCanvasRequest
+                    && !useArtifactCanvasContract
                     && !rerunProducedCode
                     && !BuilderStatesWebEvidenceUnavailable(rerunOutput))
                 {
@@ -17371,9 +18661,30 @@ namespace Malx_AI
                 _lastRunContext.BuilderOutput = rerunOutput;
                 _lastRunContext.BuilderProducedCode = rerunProducedCode;
 
+                if (_lastRunContext.IsWorkspaceTask)
+                {
+                    rerunOutput = await TryCompleteTruncatedWorkspaceHtmlPatchAsync(
+                        rerunOutput,
+                        _lastRunContext,
+                        builderSystem,
+                        _cancellationTokenSource.Token,
+                        null);
+                    _lastRunContext.BuilderOutput = rerunOutput;
+                    if (!TryCaptureCodebasePatchProposal(rerunOutput, _lastRunContext))
+                    {
+                        string failureReason = BuildCodebasePatchFormatFailureReason(rerunOutput, string.Empty);
+                        RenderCodebasePatchFailureReview(rerunOutput, failureReason);
+                        AppendChat("warning", "Builder re-run did not return a valid codebase patch. No files were changed.");
+                    }
+
+                    _lastFinalOutput = ProjectCanvasEditor.Text;
+                    SavePersistedSession();
+                    return;
+                }
+
                 bool rerunToCanvas = _lastRunContext.TaskType == CouncilTaskType.Coding
                     || rerunProducedCode
-                    || (_lastRunContext.IsArtifactCanvasRequest && ArtifactRenderService.DetectForCanvas(rerunOutput, null).SupportsPreview);
+                    || (useArtifactCanvasContract && ArtifactRenderService.DetectForCanvas(rerunOutput, null).SupportsPreview);
                 if (rerunToCanvas)
                 {
                     UpdateProjectCanvas(rerunOutput);
@@ -17443,7 +18754,7 @@ namespace Malx_AI
                     + objectiveClause
                     + GetTaskTypeBoost(_lastRunContext.TaskType, CouncilRole.Critic)
                     + (_lastRunContext.IsCalculationTask ? GetCalculationBoost(CouncilRole.Critic) : "")
-                    + BuildCriticContract(_lastRunContext.TaskType, _lastRunContext.IsArtifactCanvasRequest)
+                    + BuildCriticContract(_lastRunContext.TaskType, ShouldUseArtifactCanvasContract(_lastRunContext))
                     + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract.";
                 criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, _lastRunContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
 
@@ -17625,6 +18936,404 @@ namespace Malx_AI
             return content;
         }
 
+        private async Task<List<AcceptanceCheckExecutionResult>> ExecuteAcceptanceCheckHarnessAsync(string content, string language, CouncilRunContext context)
+        {
+            string code = ExtractCodeBlock(content, language);
+            var probes = BuildAcceptanceProbes(context);
+            if (probes.Count == 0)
+                return new List<AcceptanceCheckExecutionResult>();
+
+            return language switch
+            {
+                "python" => await RunPythonAcceptanceHarnessAsync(code, probes),
+                "java" => await RunJavaAcceptanceHarnessAsync(code, probes),
+                _ => new List<AcceptanceCheckExecutionResult>()
+            };
+        }
+
+        private static List<AcceptanceProbe> BuildAcceptanceProbes(CouncilRunContext context)
+        {
+            var checks = context.GoalContract?.AcceptanceChecks ?? new List<string>();
+            var probes = new List<AcceptanceProbe>();
+            string request = $"{context.UserPrompt}\n{context.Objective}";
+
+            for (int i = 0; i < checks.Count; i++)
+            {
+                string check = checks[i];
+                if (string.IsNullOrWhiteSpace(check))
+                    continue;
+
+                var probe = new AcceptanceProbe
+                {
+                    Id = $"A{i + 1}",
+                    Check = check.Trim()
+                };
+
+                string lower = check.ToLowerInvariant();
+                if (lower.Contains("todo", StringComparison.Ordinal)
+                    || lower.Contains("placeholder", StringComparison.Ordinal)
+                    || lower.Contains("pseudo-code", StringComparison.Ordinal)
+                    || lower.Contains("unclosed syntax", StringComparison.Ordinal))
+                {
+                    probe.NoPlaceholders = true;
+                }
+
+                if (RequestsExecutableTests(request + "\n" + check))
+                    probe.RequiresExecutableTests = true;
+
+                foreach (string identifier in ExtractAcceptanceIdentifiers(check))
+                    probe.RequiredIdentifiers.Add(identifier);
+                foreach (string className in ExtractAcceptanceClasses(check))
+                    probe.RequiredClasses.Add(className);
+
+                if (check.StartsWith("Requirement satisfied:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var terms = ExtractAcceptanceTerms(check["Requirement satisfied:".Length..]);
+                    probe.RequiredTerms.AddRange(terms);
+                    probe.MinRequiredTerms = terms.Count >= 6 ? 2 : Math.Min(1, terms.Count);
+                }
+
+                probes.Add(probe);
+            }
+
+            return probes.Take(context.IsCloudExecution ? 16 : 10).ToList();
+        }
+
+        private static IEnumerable<string> ExtractAcceptanceIdentifiers(string text)
+        {
+            var identifiers = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Match match in Regex.Matches(text ?? string.Empty, @"\b(?:function|method|handler|endpoint|route|property|field)\s+([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.IgnoreCase))
+                identifiers.Add(match.Groups[1].Value);
+            foreach (Match match in Regex.Matches(text ?? string.Empty, @"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.IgnoreCase))
+                identifiers.Add(match.Groups[1].Value);
+            return identifiers.Where(id => !IsCommonAcceptanceIdentifier(id)).Take(8);
+        }
+
+        private static IEnumerable<string> ExtractAcceptanceClasses(string text)
+        {
+            return Regex.Matches(text ?? string.Empty, @"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)", RegexOptions.IgnoreCase)
+                .Select(match => match.Groups[1].Value)
+                .Distinct(StringComparer.Ordinal)
+                .Take(6);
+        }
+
+        private static List<string> ExtractAcceptanceTerms(string text)
+        {
+            var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "about", "after", "also", "application", "before", "build", "code", "complete",
+                "create", "deliverable", "ensure", "feature", "final", "from", "function", "implement",
+                "include", "inside", "make", "must", "need", "output", "project", "provide", "request",
+                "satisfied", "should", "system", "that", "their", "then", "this", "user", "using", "want",
+                "with", "working", "logic", "wired"
+            };
+
+            return Regex.Matches(text ?? string.Empty, @"\b[A-Za-z_][A-Za-z0-9_-]{3,}\b")
+                .Select(match => match.Value)
+                .Where(token => !stopWords.Contains(token))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(10)
+                .ToList();
+        }
+
+        private static bool IsCommonAcceptanceIdentifier(string value)
+        {
+            string lower = (value ?? string.Empty).ToLowerInvariant();
+            return lower is "if" or "for" or "while" or "switch" or "catch" or "print" or "println"
+                or "console" or "return" or "assert" or "input" or "main";
+        }
+
+        private async Task<List<AcceptanceCheckExecutionResult>> RunPythonAcceptanceHarnessAsync(string code, List<AcceptanceProbe> probes)
+        {
+            string harness = BuildPythonAcceptanceHarness(code, probes);
+            // sanitizeInput MUST stay off: the input() sanitizer rewrites matches inside the
+            // JSON string literal that embeds the builder source, corrupting the harness.
+            // input() is neutralized inside the harness's exec namespace instead.
+            var result = await _pythonExecutionService.ExecuteMathScriptAsync(
+                harness, string.Empty, 10000, CancellationToken.None, sanitizeInput: false).ConfigureAwait(false);
+            string output = result.TimedOut ? "[[PYTHON TIMEOUT]] Acceptance harness timed out." : result.Output;
+            return ParseAcceptanceHarnessOutput(output, probes, "python");
+        }
+
+        private static string BuildPythonAcceptanceHarness(string code, List<AcceptanceProbe> probes)
+        {
+            string sourceJson = JsonSerializer.Serialize(code);
+            string probesJson = JsonSerializer.Serialize(probes.Select(probe => new
+            {
+                id = probe.Id,
+                check = probe.Check,
+                identifiers = probe.RequiredIdentifiers,
+                classes = probe.RequiredClasses,
+                terms = probe.RequiredTerms,
+                min_terms = probe.MinRequiredTerms,
+                no_placeholders = probe.NoPlaceholders,
+                requires_tests = probe.RequiresExecutableTests,
+                has_predicate = probe.HasDeterministicPredicate
+            }));
+
+            return
+$@"import json, re, traceback
+source = {sourceJson}
+probes = json.loads({JsonSerializer.Serialize(probesJson)})
+
+def emit(pid, passed, evidence):
+    evidence = re.sub(r'\s+', ' ', str(evidence)).strip().replace('|', '/')
+    print('AXIOM_ACCEPTANCE|' + pid + '|' + ('PASS' if passed else 'FAIL') + '|' + evidence[:500])
+
+compiled = None
+# input() is shadowed so interactive builder scripts cannot block until the sandbox timeout.
+namespace = {{'__name__': '__axiom_acceptance__', 'input': (lambda *args, **kwargs: '0')}}
+setup_error = ''
+try:
+    compiled = compile(source, '<builder_output>', 'exec')
+    exec(compiled, namespace)
+except BaseException as exc:
+    setup_error = type(exc).__name__ + ': ' + str(exc)
+
+source_lower = source.lower()
+for probe in probes:
+    pid = probe.get('id', 'A?')
+    if setup_error:
+        emit(pid, False, 'Harness setup failed before assertions: ' + setup_error)
+        continue
+
+    ok = True
+    notes = []
+    predicates = 0
+
+    if probe.get('no_placeholders'):
+        predicates += 1
+        if re.search(r'\b(TODO|FIXME|pass\s*(#.*)?$|NotImplementedError|placeholder|pseudo-code)\b', source, re.I | re.M):
+            ok = False
+            notes.append('placeholder/TODO signal found')
+        else:
+            notes.append('no placeholders detected')
+
+    if probe.get('requires_tests'):
+        predicates += 1
+        if re.search(r'\bassert\b|unittest|pytest|TestCase', source, re.I):
+            notes.append('test/assertion signal present')
+        else:
+            ok = False
+            notes.append('requested executable test/assertion signal missing')
+
+    terms = probe.get('terms') or []
+    if terms:
+        predicates += 1
+        hits = [term for term in terms if term.lower() in source_lower]
+        required = max(1, int(probe.get('min_terms') or 1))
+        if len(hits) >= required:
+            notes.append('requirement terms found: ' + ', '.join(hits[:5]))
+        else:
+            ok = False
+            notes.append('requirement terms missing; found ' + str(len(hits)) + '/' + str(required))
+
+    for name in probe.get('identifiers') or []:
+        predicates += 1
+        exists = name in namespace or re.search(r'\b(def|class)\s+' + re.escape(name) + r'\b', source)
+        if exists:
+            notes.append('identifier present: ' + name)
+        else:
+            ok = False
+            notes.append('identifier missing: ' + name)
+
+    for cls in probe.get('classes') or []:
+        predicates += 1
+        exists = cls in namespace or re.search(r'\bclass\s+' + re.escape(cls) + r'\b', source)
+        if exists:
+            notes.append('class present: ' + cls)
+        else:
+            ok = False
+            notes.append('class missing: ' + cls)
+
+    if predicates == 0:
+        notes.append('source compiled and executed; no deterministic assertion could be derived from this A-item')
+
+    emit(pid, ok, '; '.join(notes))
+";
+        }
+
+        private static async Task<List<AcceptanceCheckExecutionResult>> RunJavaAcceptanceHarnessAsync(string code, List<AcceptanceProbe> probes)
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "AxiomSandbox", "Acceptance_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+
+            var classMatch = Regex.Match(code, @"public\s+class\s+(\w+)");
+            string className = classMatch.Success ? classMatch.Groups[1].Value : "Main";
+            string javaPath = Path.Combine(tempDir, $"{className}.java");
+            await File.WriteAllTextAsync(javaPath, code);
+
+            string javacExe = FindExecutable("javac") ?? "javac";
+            string compileResult = await RunProcessAsync(javacExe, $"\"{javaPath}\"", tempDir);
+            if (compileResult.Contains("error", StringComparison.OrdinalIgnoreCase))
+            {
+                return probes.Select(probe => new AcceptanceCheckExecutionResult
+                {
+                    Id = probe.Id,
+                    Check = probe.Check,
+                    Passed = false,
+                    Evidence = "Harness compile failed before assertions: " + NormalizeContractText(compileResult, 420),
+                    HarnessLanguage = "java"
+                }).ToList();
+            }
+
+            string harnessPath = Path.Combine(tempDir, "AxiomAcceptanceHarness.java");
+            await File.WriteAllTextAsync(harnessPath, BuildJavaAcceptanceHarness(className, javaPath, probes));
+            string harnessCompile = await RunProcessAsync(javacExe, $"\"{harnessPath}\"", tempDir);
+            if (harnessCompile.Contains("error", StringComparison.OrdinalIgnoreCase))
+            {
+                return probes.Select(probe => new AcceptanceCheckExecutionResult
+                {
+                    Id = probe.Id,
+                    Check = probe.Check,
+                    Passed = false,
+                    Evidence = "Generated Java acceptance harness did not compile: " + NormalizeContractText(harnessCompile, 420),
+                    HarnessLanguage = "java"
+                }).ToList();
+            }
+
+            string javaExe = FindExecutable("java") ?? "java";
+            string output = await RunProcessAsync(javaExe, $"-cp \"{tempDir}\" AxiomAcceptanceHarness", tempDir);
+            return ParseAcceptanceHarnessOutput(output, probes, "java");
+        }
+
+        private static string BuildJavaAcceptanceHarness(string primaryClassName, string sourcePath, List<AcceptanceProbe> probes)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("import java.lang.reflect.*;");
+            sb.AppendLine("import java.nio.file.*;");
+            sb.AppendLine("import java.util.*;");
+            sb.AppendLine("import java.util.regex.*;");
+            sb.AppendLine();
+            sb.AppendLine("public class AxiomAcceptanceHarness {");
+            sb.AppendLine("    static String sanitize(String value) {");
+            sb.AppendLine("        return value == null ? \"\" : value.replace('|', '/').replaceAll(\"\\\\s+\", \" \").trim();");
+            sb.AppendLine("    }");
+            sb.AppendLine("    static void emit(String id, boolean pass, String evidence) {");
+            sb.AppendLine("        System.out.println(\"AXIOM_ACCEPTANCE|\" + id + \"|\" + (pass ? \"PASS\" : \"FAIL\") + \"|\" + sanitize(evidence));");
+            sb.AppendLine("    }");
+            sb.AppendLine("    static boolean hasMethod(Class<?> cls, String name) {");
+            sb.AppendLine("        for (Method method : cls.getDeclaredMethods()) if (method.getName().equals(name)) return true;");
+            sb.AppendLine("        return false;");
+            sb.AppendLine("    }");
+            sb.AppendLine("    static boolean classExists(String name) {");
+            sb.AppendLine("        try { Class.forName(name); return true; } catch (Throwable ignored) { return false; }");
+            sb.AppendLine("    }");
+            sb.AppendLine("    public static void main(String[] args) throws Exception {");
+            sb.AppendLine($"        String source = Files.readString(Path.of({JavaStringLiteral(sourcePath)}));");
+            sb.AppendLine("        String sourceLower = source.toLowerCase(Locale.ROOT);");
+            sb.AppendLine($"        Class<?> primaryClass = Class.forName({JavaStringLiteral(primaryClassName)});");
+
+            foreach (AcceptanceProbe probe in probes)
+            {
+                sb.AppendLine("        {");
+                sb.AppendLine($"            String id = {JavaStringLiteral(probe.Id)};");
+                sb.AppendLine("            boolean ok = true;");
+                sb.AppendLine("            List<String> notes = new ArrayList<>();");
+                sb.AppendLine("            int predicates = 0;");
+
+                if (probe.NoPlaceholders)
+                {
+                    sb.AppendLine("            predicates++;");
+                    sb.AppendLine("            if (Pattern.compile(\"\\\\b(TODO|FIXME|NotImplementedException|placeholder|pseudo-code)\\\\b\", Pattern.CASE_INSENSITIVE).matcher(source).find()) {");
+                    sb.AppendLine("                ok = false;");
+                    sb.AppendLine("                notes.add(\"placeholder/TODO signal found\");");
+                    sb.AppendLine("            } else {");
+                    sb.AppendLine("                notes.add(\"no placeholders detected\");");
+                    sb.AppendLine("            }");
+                }
+
+                if (probe.RequiresExecutableTests)
+                {
+                    sb.AppendLine("            predicates++;");
+                    sb.AppendLine("            if (Pattern.compile(\"\\\\bassert\\\\b|@Test|Assert\\\\.|TestCase\", Pattern.CASE_INSENSITIVE).matcher(source).find()) {");
+                    sb.AppendLine("                notes.add(\"test/assertion signal present\");");
+                    sb.AppendLine("            } else {");
+                    sb.AppendLine("                ok = false;");
+                    sb.AppendLine("                notes.add(\"requested executable test/assertion signal missing\");");
+                    sb.AppendLine("            }");
+                }
+
+                if (probe.RequiredTerms.Count > 0)
+                {
+                    sb.AppendLine("            predicates++;");
+                    sb.AppendLine("            int hits = 0;");
+                    foreach (string term in probe.RequiredTerms)
+                        sb.AppendLine($"            if (sourceLower.contains({JavaStringLiteral(term.ToLowerInvariant())})) hits++;");
+                    sb.AppendLine($"            int required = {Math.Max(1, probe.MinRequiredTerms)};");
+                    sb.AppendLine("            if (hits >= required) notes.add(\"requirement term hits: \" + hits + \"/\" + required);");
+                    sb.AppendLine("            else { ok = false; notes.add(\"requirement terms missing; found \" + hits + \"/\" + required); }");
+                }
+
+                foreach (string identifier in probe.RequiredIdentifiers)
+                {
+                    sb.AppendLine("            predicates++;");
+                    sb.AppendLine($"            if (source.contains({JavaStringLiteral(identifier)}) || hasMethod(primaryClass, {JavaStringLiteral(identifier)})) notes.add(\"identifier present: \" + {JavaStringLiteral(identifier)});");
+                    sb.AppendLine($"            else {{ ok = false; notes.add(\"identifier missing: \" + {JavaStringLiteral(identifier)}); }}");
+                }
+
+                foreach (string className in probe.RequiredClasses)
+                {
+                    sb.AppendLine("            predicates++;");
+                    sb.AppendLine($"            if (classExists({JavaStringLiteral(className)}) || source.contains(\"class \" + {JavaStringLiteral(className)})) notes.add(\"class present: \" + {JavaStringLiteral(className)});");
+                    sb.AppendLine($"            else {{ ok = false; notes.add(\"class missing: \" + {JavaStringLiteral(className)}); }}");
+                }
+
+                sb.AppendLine("            if (predicates == 0) notes.add(\"source compiled; no deterministic assertion could be derived from this A-item\");");
+                sb.AppendLine("            emit(id, ok, String.join(\"; \", notes));");
+                sb.AppendLine("        }");
+            }
+
+            sb.AppendLine("    }");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        private static string JavaStringLiteral(string value)
+            => JsonSerializer.Serialize(value ?? string.Empty);
+
+        private static List<AcceptanceCheckExecutionResult> ParseAcceptanceHarnessOutput(string output, List<AcceptanceProbe> probes, string language)
+        {
+            var byId = probes.ToDictionary(probe => probe.Id, StringComparer.OrdinalIgnoreCase);
+            var parsed = new List<AcceptanceCheckExecutionResult>();
+            foreach (string line in (output ?? string.Empty).Split('\n'))
+            {
+                string trimmed = line.Trim();
+                if (!trimmed.StartsWith("AXIOM_ACCEPTANCE|", StringComparison.Ordinal))
+                    continue;
+
+                string[] parts = trimmed.Split('|', 4);
+                if (parts.Length < 4)
+                    continue;
+
+                string id = parts[1];
+                byId.TryGetValue(id, out AcceptanceProbe? probe);
+                parsed.Add(new AcceptanceCheckExecutionResult
+                {
+                    Id = id,
+                    Check = probe?.Check ?? id,
+                    Passed = string.Equals(parts[2], "PASS", StringComparison.OrdinalIgnoreCase),
+                    Evidence = parts[3],
+                    HarnessLanguage = language
+                });
+            }
+
+            if (parsed.Count > 0)
+                return parsed;
+
+            string evidence = string.IsNullOrWhiteSpace(output)
+                ? "Acceptance harness produced no parseable output."
+                : NormalizeContractText(output, 420);
+            return probes.Select(probe => new AcceptanceCheckExecutionResult
+            {
+                Id = probe.Id,
+                Check = probe.Check,
+                Passed = false,
+                Evidence = evidence,
+                HarnessLanguage = language
+            }).ToList();
+        }
+
         private async Task<string> ExecuteCodeSandboxAsync(string content, string language, CouncilRunContext? contextOverride = null)
         {
             string code = ExtractCodeBlock(content, language);
@@ -17637,7 +19346,7 @@ namespace Malx_AI
                 {
                     "python" => await RunPythonAsync(code, tempDir),
                     "java" => await RunJavaAsync(code, tempDir),
-                    "html" => ValidateHtml(code, tempDir, contextOverride ?? _activeCouncilRunContext ?? _lastRunContext),
+                    "html" => await ValidateHtmlAsync(code, tempDir, contextOverride ?? _activeCouncilRunContext ?? _lastRunContext),
                     _ => $"Unsupported language: {language}"
                 };
             }
@@ -17680,12 +19389,13 @@ namespace Malx_AI
                 : $"Compile output:\n{compileResult}\n\nRun output:\n{runResult}";
         }
 
-        private static string ValidateHtml(string code, string tempDir, CouncilRunContext? context = null)
+        private async Task<string> ValidateHtmlAsync(string code, string tempDir, CouncilRunContext? context = null)
         {
             string htmlPath = Path.Combine(tempDir, "sandbox_preview.html");
-            File.WriteAllText(htmlPath, code);
+            await File.WriteAllTextAsync(htmlPath, code);
 
-            return BuildProjectCanvasSandboxResult(code, htmlPath, context);
+            var runtimeErrors = await ProbeHtmlConsoleErrorsWithWebView2Async(code, context);
+            return BuildProjectCanvasSandboxResult(code, htmlPath, context, runtimeErrors);
         }
 
         private static string? FindExecutable(string name)

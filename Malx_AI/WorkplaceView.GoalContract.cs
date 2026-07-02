@@ -57,11 +57,27 @@ namespace Malx_AI
                 .Take(8)
                 .ToList();
 
-            var checks = new List<string>();
-            for (int i = 0; i < requirements.Count; i++)
+            var featureConstraints = constraints
+                .Where(item => LooksLikeFeatureRequirement(" " + item.ToLowerInvariant() + " "))
+                .ToList();
+            foreach (string feature in featureConstraints)
             {
-                checks.Add($"Requirement satisfied: {requirements[i]}");
+                if (!requirements.Contains(feature, StringComparer.OrdinalIgnoreCase))
+                    requirements.Add(feature);
             }
+            constraints = constraints
+                .Where(item => !featureConstraints.Contains(item, StringComparer.OrdinalIgnoreCase))
+                .Take(8)
+                .ToList();
+            requirements = requirements
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(12)
+                .ToList();
+
+            var requirementChecks = requirements
+                .Select(item => $"Requirement satisfied: {item}")
+                .ToList();
+            var checks = new List<string>();
 
             if (context.TaskType == CouncilTaskType.Coding || context.IsArtifactCanvasRequest || context.IsWorkspaceTask)
             {
@@ -71,8 +87,8 @@ namespace Malx_AI
 
             if (context.IsWorkspaceTask)
             {
-                checks.Add("The Builder output is a valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths and ACTION create/replace.");
-                checks.Add("Each changed file contains a complete coherent replacement/create source, not a fragment or standalone canvas-only artifact.");
+                checks.Add("The Builder output is a valid [[AXIOM_CODEBASE_PATCH]] envelope with relative FILE paths and ACTION edit/create/replace.");
+                checks.Add("Each edit block has an exact unique SEARCH anchor, or each full-file create/replace is complete and coherent.");
             }
             else if (context.IsArtifactCanvasRequest)
             {
@@ -87,6 +103,23 @@ namespace Malx_AI
 
             if (constraints.Count > 0)
                 checks.Add("Every explicit constraint is satisfied; no convenience substitution silently changes the requested technology or format.");
+
+            string behaviorText = (goal + " " + string.Join(" ", requirements)).ToLowerInvariant();
+            if (behaviorText.Contains("input", StringComparison.Ordinal) || behaviorText.Contains("paste", StringComparison.Ordinal) || behaviorText.Contains("type", StringComparison.Ordinal))
+                checks.Add("The requested input field exists and accepts representative user input.");
+            if (behaviorText.Contains("button", StringComparison.Ordinal) || behaviorText.Contains("generate", StringComparison.Ordinal))
+                checks.Add("The requested button/control has an attached handler and changes visible state when used.");
+            if (behaviorText.Contains("canvas", StringComparison.Ordinal) || behaviorText.Contains("svg", StringComparison.Ordinal) || behaviorText.Contains("visual", StringComparison.Ordinal))
+                checks.Add("The visualization surface renders visible content after the requested interaction.");
+            if (behaviorText.Contains("animation", StringComparison.Ordinal) || behaviorText.Contains("animated", StringComparison.Ordinal))
+                checks.Add("The requested animation runs smoothly and does not depend on external assets.");
+            if (behaviorText.Contains("hover", StringComparison.Ordinal) || behaviorText.Contains("tooltip", StringComparison.Ordinal))
+                checks.Add("Hover or inspection behavior exposes the requested contextual details.");
+            if (behaviorText.Contains("disclaimer", StringComparison.Ordinal))
+                checks.Add("The requested disclaimer is present in the user-visible UI.");
+
+            int remainingRequirementSlots = Math.Max(0, 12 - checks.Count);
+            checks.AddRange(requirementChecks.Take(remainingRequirementSlots));
 
             var assumptions = new List<string>
             {
@@ -149,7 +182,7 @@ namespace Malx_AI
             return BuildLabeledBlock("TASK CONTRACT - SOURCE OF TRUTH", body.ToString().Trim());
         }
 
-        private static string BuildCouncilCapabilityCard(bool webSearchEnabled, bool cloudExecution = false)
+        private static string BuildCouncilCapabilityCard(bool webSearchEnabled, bool cloudExecution = false, bool codebaseToolsEnabled = false)
         {
             var body = new StringBuilder();
             if (cloudExecution)
@@ -157,10 +190,18 @@ namespace Malx_AI
                 body.AppendLine("search_session_memory | input: a focused topic or identifier | returns: relevant prior-session facts and plans.");
                 body.AppendLine("calculate | input: one arithmetic or unit-conversion expression | returns: a checked numeric result.");
                 body.AppendLine("run_python | input: small Python using print() | returns: execution output for numeric/data verification; no package installation.");
+                if (codebaseToolsEnabled)
+                {
+                    body.AppendLine("read_file | input: connected-workspace relative path | returns: capped file contents (read-only).");
+                    body.AppendLine("search_codebase | input: symbol, filename, or text | returns: connected-workspace path/line snippets.");
+                    body.AppendLine("list_files | input: optional path filter | returns: connected-workspace readable source paths.");
+                }
                 body.AppendLine(webSearchEnabled
                     ? "web_search | input: one standalone, named query | returns: current web evidence."
                     : "web_search | unavailable because the user disabled web search.");
-                body.AppendLine("NO TOOL can edit user files, install packages, operate the UI, or modify Project Canvas. The Builder modifies Canvas only by returning one complete replacement artifact.");
+                body.AppendLine(codebaseToolsEnabled
+                    ? "NO TOOL can edit user files, install packages, operate the UI, or modify Project Canvas. Connected-codebase changes happen only when the Builder returns a valid [[AXIOM_CODEBASE_PATCH]] envelope and the host review/apply pipeline accepts it."
+                    : "NO TOOL can edit user files, install packages, operate the UI, or modify Project Canvas. The Builder modifies Canvas only by returning one complete replacement artifact.");
                 body.AppendLine("Decision rule: call a tool only when its observation can change or verify the deliverable; never claim an action without an observation.");
                 return BuildLabeledBlock("CAPABILITY MAP", body.ToString().Trim());
             }
@@ -169,11 +210,19 @@ namespace Malx_AI
             body.AppendLine("CALCULATE | input: one arithmetic or unit-conversion expression | returns: a checked numeric result | use for simple calculations only.");
             body.AppendLine("PYTHON_MATH | input: small Python using print() | returns: execution output | use for multi-step numeric/data verification; no package installation.");
             body.AppendLine("RUN_SANDBOX | input: a complete small code snippet | returns: compiler/runtime output | use to test a concrete hypothesis, not to create the deliverable or edit Canvas.");
+            if (codebaseToolsEnabled)
+            {
+                body.AppendLine("READ_FILE | input: connected-workspace relative path | returns: capped file contents (read-only).");
+                body.AppendLine("SEARCH_CODEBASE | input: symbol, filename, or text | returns: connected-workspace path/line snippets.");
+                body.AppendLine("LIST_FILES | input: optional path filter | returns: connected-workspace readable source paths.");
+            }
             if (webSearchEnabled)
                 body.AppendLine("WEB_SEARCH | input: one standalone, named query | returns: web evidence | use for current or source-backed facts; it does not browse interactively.");
             else
                 body.AppendLine("WEB_SEARCH | unavailable because the user disabled web search.");
-            body.AppendLine("NO TOOL can edit user files, install packages, operate the UI, or modify Project Canvas. The Builder modifies Canvas only by returning one complete replacement artifact.");
+            body.AppendLine(codebaseToolsEnabled
+                ? "NO TOOL can edit user files, install packages, operate the UI, or modify Project Canvas. Connected-codebase changes happen only when the Builder returns a valid [[AXIOM_CODEBASE_PATCH]] envelope and the host review/apply pipeline accepts it."
+                : "NO TOOL can edit user files, install packages, operate the UI, or modify Project Canvas. The Builder modifies Canvas only by returning one complete replacement artifact.");
             body.AppendLine("Decision rule: use a tool only when its returned observation can change or verify the deliverable. Never use a tool ceremonially and never claim an action without an observation.");
             return BuildLabeledBlock("CAPABILITY MAP", body.ToString().Trim());
         }

@@ -30,12 +30,16 @@ namespace Malx_AI
         private const string ToolSandbox     = "RUN_SANDBOX";
         private const string ToolWebSearch   = "WEB_SEARCH";
         private const string ToolPythonMath  = "PYTHON_MATH";
+        private const string ToolReadFile    = "READ_FILE";
+        private const string ToolSearchCodebase = "SEARCH_CODEBASE";
+        private const string ToolListFiles   = "LIST_FILES";
 
         // ── Injected backend callbacks ────────────────────────────────────────
         private readonly SessionHippocampus _hippocampus;
         private readonly Func<string, string, Task<string>> _sandboxExecute;
         private readonly Func<string, CancellationToken, Task<string>> _webSearchExecute;
         private readonly Func<string, CancellationToken, Task<string>> _pythonMathExecute;
+        private readonly Func<string, string, StructuredToolResult> _workspaceReadExecute;
         private readonly Action<string> _activityLogger;
 
         // ── Live UI status callback (dispatcher-safe, may be null) ────────────
@@ -49,6 +53,7 @@ namespace Malx_AI
             Func<string, string, Task<string>> sandboxExecute,
             Func<string, CancellationToken, Task<string>> webSearchExecute,
             Func<string, CancellationToken, Task<string>> pythonMathExecute,
+            Func<string, string, StructuredToolResult>? workspaceReadExecute,
             Action<string> activityLogger,
             Action<string> onStatusUpdate)
         {
@@ -56,6 +61,7 @@ namespace Malx_AI
             _sandboxExecute = sandboxExecute ?? throw new ArgumentNullException(nameof(sandboxExecute));
             _webSearchExecute = webSearchExecute ?? throw new ArgumentNullException(nameof(webSearchExecute));
             _pythonMathExecute = pythonMathExecute ?? throw new ArgumentNullException(nameof(pythonMathExecute));
+            _workspaceReadExecute = workspaceReadExecute ?? ((_, _) => StructuredToolResult.Fail("Codebase read tools are unavailable."));
             _activityLogger = activityLogger ?? (_ => { });
             _onStatusUpdate = onStatusUpdate ?? (_ => { });
         }
@@ -428,6 +434,9 @@ namespace Malx_AI
                 if (cmd.Tool == ToolPythonMath)
                     return await RoutePythonMathAsync(cmd.Query, token);
 
+                if (cmd.Tool is ToolReadFile or ToolSearchCodebase or ToolListFiles)
+                    return RouteWorkspaceRead(cmd.Tool, cmd.Query);
+
                 if (cmd.Tool == "INVALID_PAUSE")
                     return ToolDispatchResult.Fail(cmd.Query);
 
@@ -508,6 +517,14 @@ namespace Malx_AI
                 return ToolDispatchResult.Fail(result);
 
             return ToolDispatchResult.Ok(result);
+        }
+
+        private ToolDispatchResult RouteWorkspaceRead(string tool, string query)
+        {
+            StructuredToolResult result = _workspaceReadExecute(tool, query);
+            return result.IsSuccess
+                ? ToolDispatchResult.Ok(result.Data)
+                : ToolDispatchResult.Fail(result.ErrorMessage);
         }
 
         // Math-aware normalization for the Python sandbox. A single bare expression is wrapped in
@@ -638,6 +655,9 @@ namespace Malx_AI
                 ToolSandbox     => $"Running sandbox: {Truncate(cmd.Query, 48)}",
                 ToolWebSearch   => $"Searching the web for '{Truncate(cmd.Query, 48)}'...",
                 ToolPythonMath  => "Running embedded Python math...",
+                ToolReadFile    => $"Reading file: {Truncate(cmd.Query, 48)}",
+                ToolSearchCodebase => $"Searching codebase: {Truncate(cmd.Query, 48)}",
+                ToolListFiles   => $"Listing files: {Truncate(cmd.Query, 48)}",
                 _               => $"Tool '{cmd.Tool}': {Truncate(cmd.Query, 48)}"
             };
             _onStatusUpdate($"⏸  Agentic Pause {currentPauseCount}/{MaxPausesPerTurn}  ·  {toolLabel}");

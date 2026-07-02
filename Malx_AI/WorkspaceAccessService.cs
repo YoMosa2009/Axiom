@@ -60,10 +60,18 @@ namespace Malx_AI
         string LocalPath,
         string Output);
 
+    public sealed record WorkspacePatchEditBlock(
+        string Search,
+        string Replace);
+
     public sealed record WorkspaceFilePatch(
         string RelativePath,
         string Action,
-        string Content);
+        string Content,
+        IReadOnlyList<WorkspacePatchEditBlock>? EditBlocks = null)
+    {
+        public IReadOnlyList<WorkspacePatchEditBlock> Blocks => EditBlocks ?? Array.Empty<WorkspacePatchEditBlock>();
+    }
 
     public sealed record WorkspacePatchProposal(
         IReadOnlyList<WorkspaceFilePatch> Files,
@@ -79,6 +87,17 @@ namespace Malx_AI
         int ChangedFileCount,
         string ShortStatus,
         string Error);
+
+    public sealed record WorkspaceGitCheckpointResult(
+        bool IsRepository,
+        bool Attempted,
+        bool Created,
+        bool Success,
+        string Summary);
+
+    public sealed record WorkspaceReadToolResult(
+        bool Success,
+        string Output);
 
     public sealed class WorkspaceAccessService
     {
@@ -123,7 +142,10 @@ namespace Malx_AI
             ".pdf",
             ".zip",
             ".7z",
-            ".rar"
+            ".rar",
+            ".bak",
+            ".backup",
+            ".old"
         };
 
         private const int MaxIndexedFiles = 5000;
@@ -131,6 +153,9 @@ namespace Malx_AI
         private const int MaxContextCharsPerFile = 8000;
         private const int MaxPromptNamedContextCharsPerFile = 24000;
         private const int MaxPatchFileChars = 1_000_000;
+        private const int MaxToolReadChars = 24000;
+        private const int MaxToolSearchOutputChars = 24000;
+        private const int MaxToolListOutputChars = 16000;
 
         private static readonly Regex PatchEnvelopeRegex = new(
             @"\[\[AXIOM_CODEBASE_PATCH\]\](?<body>[\s\S]*?)\[\[END AXIOM_CODEBASE_PATCH\]\]",
@@ -142,6 +167,10 @@ namespace Malx_AI
 
         private static readonly Regex PatchFileHeaderRegex = new(
             @"(?im)^\s*FILE:\s*(?<path>[^\r\n]+)\s*\r?\n\s*ACTION:\s*(?<action>[^\r\n]+)\s*\r?\n",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex PatchEditBlockRegex = new(
+            @"(?ms)^\s*<<<<<<<\s*SEARCH\s*\r?\n(?<search>[\s\S]*?)\r?\n^=======\s*\r?\n(?<replace>[\s\S]*?)\r?\n^>>>>>>>\s*REPLACE\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public WorkspaceIndexResult IndexWorkspace(string rootPath)
@@ -222,7 +251,19 @@ namespace Malx_AI
             sb.AppendLine(state.AutoApplyCodebaseChanges
                 ? "Current capability: read/search context plus host-side auto-apply after a valid patch. Do not claim files were changed until the app reports the patch was applied."
                 : "Current capability: read/search context only. Do not claim files were changed. If code changes are needed, propose them for review.");
-            sb.AppendLine("When proposing codebase changes, output this exact full-file patch envelope:");
+            sb.AppendLine("When proposing codebase changes, output this exact structured patch envelope:");
+            sb.AppendLine("[[AXIOM_CODEBASE_PATCH]]");
+            sb.AppendLine("FILE: relative/path/from/workspace.ext");
+            sb.AppendLine("ACTION: edit");
+            sb.AppendLine("<<<<<<< SEARCH");
+            sb.AppendLine("exact existing text to replace");
+            sb.AppendLine("=======");
+            sb.AppendLine("replacement text");
+            sb.AppendLine(">>>>>>> REPLACE");
+            sb.AppendLine("[[END FILE]]");
+            sb.AppendLine("[[END AXIOM_CODEBASE_PATCH]]");
+            sb.AppendLine("Prefer ACTION: edit for existing files. Each SEARCH block must match exactly once in the current file.");
+            sb.AppendLine("Use ACTION: replace only when a full-file replacement is small and necessary:");
             sb.AppendLine("[[AXIOM_CODEBASE_PATCH]]");
             sb.AppendLine("FILE: relative/path/from/workspace.ext");
             sb.AppendLine("ACTION: replace");
@@ -231,7 +272,7 @@ namespace Malx_AI
             sb.AppendLine("```");
             sb.AppendLine("[[END FILE]]");
             sb.AppendLine("[[END AXIOM_CODEBASE_PATCH]]");
-            sb.AppendLine("Use ACTION: create only for new files. Do not use delete actions. Do not output partial files.");
+            sb.AppendLine("Use ACTION: create only for new files. Do not use delete actions. Do not output partial replacement files.");
             sb.AppendLine("Use the exact connected workspace path for the target file. Do not rename file extensions.");
             sb.AppendLine();
             sb.AppendLine("RELEVANT FILES:");
@@ -271,6 +312,148 @@ namespace Malx_AI
             return new WorkspaceContextResult(sb.ToString().Trim(), readFiles);
         }
 
+        public WorkspaceReadToolResult ReadFileForTool(ConnectedWorkspaceState state, string relativePath, int maxChars = MaxToolReadChars)
+        {
+            if (!TryResolveReadableToolTarget(state, relativePath, out string target, out string error))
+                return new WorkspaceReadToolResult(false, error);
+
+            try
+            {
+                string content = File.ReadAllText(target);
+                string displayPath = GetDisplayPath(state, target);
+                int cappedMax = Math.Clamp(maxChars, 1000, MaxToolReadChars);
+                string visible = content.Length > cappedMax
+                    ? content[..cappedMax] + "\n[...file truncated for tool result]"
+                    : content;
+
+                return new WorkspaceReadToolResult(
+                    true,
+                    $"READ_FILE result: {displayPath} ({content.Length:n0} chars)\n---\n{visible}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return new WorkspaceReadToolResult(false, $"Could not read file: {ex.Message}");
+            }
+        }
+
+        public WorkspaceReadToolResult SearchCodebaseForTool(ConnectedWorkspaceState state, string query, int maxMatches = 40)
+        {
+            if (!TryGetReadableToolFiles(state, out IReadOnlyList<string> files, out string error))
+                return new WorkspaceReadToolResult(false, error);
+
+            string normalizedQuery = (query ?? string.Empty).Trim();
+            if (normalizedQuery.Length == 0)
+                return new WorkspaceReadToolResult(false, "Search query is empty.");
+
+            var terms = ExtractQueryTerms(normalizedQuery);
+            var matches = new List<WorkspaceSearchMatch>();
+            foreach (string file in files)
+            {
+                string display = GetDisplayPath(state, file);
+                bool pathMatch = display.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                    || terms.Any(term => display.Contains(term, StringComparison.OrdinalIgnoreCase));
+                if (pathMatch)
+                {
+                    matches.Add(new WorkspaceSearchMatch(display, 0, "[path match]", 20 + ScoreFile(file, terms)));
+                }
+
+                string[] lines;
+                try
+                {
+                    lines = File.ReadAllLines(file);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i];
+                    int termHits = terms.Count(term => line.Contains(term, StringComparison.OrdinalIgnoreCase));
+                    bool exactHit = normalizedQuery.Length >= 3 && line.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase);
+                    if (!exactHit && termHits == 0)
+                        continue;
+
+                    int score = (exactHit ? 30 : 0) + (termHits * 6) + ScoreFile(file, terms);
+                    matches.Add(new WorkspaceSearchMatch(display, i + 1, TrimToolLine(line), score));
+                }
+            }
+
+            var selected = matches
+                .OrderByDescending(match => match.Score)
+                .ThenBy(match => match.RelativePath)
+                .ThenBy(match => match.LineNumber)
+                .Take(Math.Clamp(maxMatches, 1, 80))
+                .ToList();
+
+            if (selected.Count == 0)
+                return new WorkspaceReadToolResult(false, $"No codebase matches found for: {normalizedQuery}");
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"SEARCH_CODEBASE results for: {normalizedQuery}");
+            foreach (WorkspaceSearchMatch match in selected)
+            {
+                string location = match.LineNumber > 0
+                    ? $"{match.RelativePath}:{match.LineNumber}"
+                    : match.RelativePath;
+                sb.AppendLine($"- {location}: {match.Snippet}");
+                if (sb.Length >= MaxToolSearchOutputChars)
+                {
+                    sb.AppendLine("[...search result truncated]");
+                    break;
+                }
+            }
+
+            return new WorkspaceReadToolResult(true, sb.ToString().Trim());
+        }
+
+        public WorkspaceReadToolResult ListFilesForTool(ConnectedWorkspaceState state, string query, int maxFiles = 200)
+        {
+            if (!TryGetReadableToolFiles(state, out IReadOnlyList<string> files, out string error))
+                return new WorkspaceReadToolResult(false, error);
+
+            string normalizedQuery = (query ?? string.Empty).Trim();
+            var terms = ExtractQueryTerms(normalizedQuery);
+            IEnumerable<string> filtered = files;
+            if (!string.IsNullOrWhiteSpace(normalizedQuery))
+            {
+                filtered = filtered.Where(path =>
+                {
+                    string display = GetDisplayPath(state, path);
+                    return display.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                        || terms.Any(term => display.Contains(term, StringComparison.OrdinalIgnoreCase));
+                });
+            }
+
+            var selected = filtered
+                .Select(path => new FileInfo(path))
+                .OrderBy(info => GetDisplayPath(state, info.FullName))
+                .Take(Math.Clamp(maxFiles, 1, 500))
+                .ToList();
+
+            if (selected.Count == 0)
+                return new WorkspaceReadToolResult(false, string.IsNullOrWhiteSpace(normalizedQuery)
+                    ? "No readable files are connected."
+                    : $"No readable files matched: {normalizedQuery}");
+
+            var sb = new StringBuilder();
+            sb.AppendLine(string.IsNullOrWhiteSpace(normalizedQuery)
+                ? "LIST_FILES result:"
+                : $"LIST_FILES result for: {normalizedQuery}");
+            foreach (FileInfo info in selected)
+            {
+                sb.AppendLine($"- {GetDisplayPath(state, info.FullName)} ({info.Length:n0} bytes)");
+                if (sb.Length >= MaxToolListOutputChars)
+                {
+                    sb.AppendLine("[...file list truncated]");
+                    break;
+                }
+            }
+
+            return new WorkspaceReadToolResult(true, sb.ToString().Trim());
+        }
+
         public bool TryParsePatchProposal(string text, out WorkspacePatchProposal? proposal, out string error)
         {
             proposal = null;
@@ -290,12 +473,11 @@ namespace Malx_AI
 
                 if (relativePath.Length == 0)
                     return RejectPatch("Patch contains an empty file path.", out error);
-                if (action is not ("replace" or "create"))
-                    return RejectPatch($"Unsupported patch action '{action}' for {relativePath}.", out error);
-                if (content.Length > MaxPatchFileChars)
-                    return RejectPatch($"Patch content for {relativePath} is too large.", out error);
+                if (!TryBuildWorkspaceFilePatch(relativePath, action, content, out WorkspaceFilePatch? patch, out string fileError)
+                    || patch == null)
+                    return RejectPatch(fileError, out error);
 
-                files.Add(new WorkspaceFilePatch(relativePath, action, content));
+                files.Add(patch);
             }
 
             string looseError = string.Empty;
@@ -364,27 +546,106 @@ namespace Malx_AI
                     error = "Patch contains an empty file path.";
                     return false;
                 }
-                if (action is not ("replace" or "create"))
+                if (!TryBuildWorkspaceFilePatch(relativePath, action, content, out WorkspaceFilePatch? patch, out string patchError)
+                    || patch == null)
                 {
-                    error = $"Unsupported patch action '{action}' for {relativePath}.";
-                    return false;
-                }
-                if (string.IsNullOrWhiteSpace(content))
-                {
-                    error = $"Patch content for {relativePath} is empty.";
-                    return false;
-                }
-                if (content.Length > MaxPatchFileChars)
-                {
-                    error = $"Patch content for {relativePath} is too large.";
+                    error = patchError;
                     return false;
                 }
 
-                parsed.Add(new WorkspaceFilePatch(relativePath, action, content.Replace("\r\n", "\n", StringComparison.Ordinal)));
+                parsed.Add(patch);
             }
 
             files = parsed;
             return parsed.Count > 0;
+        }
+
+        private static bool TryBuildWorkspaceFilePatch(
+            string relativePath,
+            string action,
+            string content,
+            out WorkspaceFilePatch? patch,
+            out string error)
+        {
+            patch = null;
+            error = string.Empty;
+
+            if (relativePath.Length == 0)
+            {
+                error = "Patch contains an empty file path.";
+                return false;
+            }
+
+            if (action is not ("replace" or "create" or "edit"))
+            {
+                error = $"Unsupported patch action '{action}' for {relativePath}.";
+                return false;
+            }
+
+            string normalizedContent = NormalizePatchFragment(content);
+            if (normalizedContent.Length > MaxPatchFileChars)
+            {
+                error = $"Patch content for {relativePath} is too large.";
+                return false;
+            }
+
+            if (action == "edit")
+            {
+                if (!TryParseEditBlocks(relativePath, normalizedContent, out IReadOnlyList<WorkspacePatchEditBlock> blocks, out error))
+                    return false;
+
+                patch = new WorkspaceFilePatch(relativePath, action, normalizedContent, blocks);
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(normalizedContent))
+            {
+                error = $"Patch content for {relativePath} is empty.";
+                return false;
+            }
+
+            patch = new WorkspaceFilePatch(relativePath, action, normalizedContent);
+            return true;
+        }
+
+        private static bool TryParseEditBlocks(
+            string relativePath,
+            string content,
+            out IReadOnlyList<WorkspacePatchEditBlock> blocks,
+            out string error)
+        {
+            blocks = Array.Empty<WorkspacePatchEditBlock>();
+            error = string.Empty;
+
+            var parsed = new List<WorkspacePatchEditBlock>();
+            foreach (Match match in PatchEditBlockRegex.Matches(content ?? string.Empty))
+            {
+                string search = NormalizePatchFragment(match.Groups["search"].Value);
+                string replace = NormalizePatchFragment(match.Groups["replace"].Value);
+                if (string.IsNullOrEmpty(search))
+                {
+                    error = $"{relativePath}: edit SEARCH block is empty.";
+                    return false;
+                }
+
+                parsed.Add(new WorkspacePatchEditBlock(search, replace));
+            }
+
+            if (parsed.Count == 0)
+            {
+                error = $"{relativePath}: ACTION edit requires at least one <<<<<<< SEARCH / ======= / >>>>>>> REPLACE block.";
+                return false;
+            }
+
+            string leftover = PatchEditBlockRegex.Replace(content ?? string.Empty, string.Empty);
+            if (!string.IsNullOrWhiteSpace(leftover))
+            {
+                error = $"{relativePath}: ACTION edit contains text outside SEARCH/REPLACE blocks.";
+                return false;
+            }
+
+            blocks = parsed;
+            return true;
         }
 
         private static string TrimLoosePatchContent(string relativePath, string content)
@@ -419,7 +680,7 @@ namespace Malx_AI
             foreach (WorkspaceFilePatch patch in proposal.Files)
             {
                 string target = ResolvePatchTargetPath(state, patch);
-                if (patch.Action == "replace" && !File.Exists(target))
+                if ((patch.Action == "replace" || patch.Action == "edit") && !File.Exists(target))
                     throw new FileNotFoundException($"Cannot replace a file that does not exist: {patch.RelativePath}");
                 if (patch.Action == "create" && File.Exists(target))
                     throw new IOException($"Cannot create a file that already exists: {patch.RelativePath}");
@@ -434,7 +695,8 @@ namespace Malx_AI
                 if (!string.IsNullOrWhiteSpace(directory))
                     Directory.CreateDirectory(directory);
 
-                AtomicFileWriter.WriteAllText(targetPath, NormalizeFileContentForWrite(patch.Content));
+                string materializedContent = MaterializePatchContent(state, patch);
+                AtomicFileWriter.WriteAllText(targetPath, NormalizeFileContentForWrite(materializedContent));
                 changed.Add(patch.RelativePath);
             }
 
@@ -442,6 +704,43 @@ namespace Malx_AI
                 ? $"Applied 1 codebase change: {changed[0]}"
                 : $"Applied {changed.Count} codebase changes:\n- " + string.Join("\n- ", changed);
             return new WorkspacePatchApplyResult(changed, summary);
+        }
+
+        public string MaterializePatchContent(ConnectedWorkspaceState state, WorkspaceFilePatch patch)
+        {
+            if (patch.Action != "edit")
+                return patch.Content ?? string.Empty;
+
+            string target = ResolvePatchTargetPath(state, patch);
+            if (!File.Exists(target))
+                throw new FileNotFoundException($"Cannot edit a file that does not exist: {patch.RelativePath}");
+
+            string current = NormalizePatchFragment(File.ReadAllText(target));
+            return ApplySearchReplaceBlocks(patch.RelativePath, current, patch.Blocks);
+        }
+
+        private static string ApplySearchReplaceBlocks(
+            string relativePath,
+            string currentContent,
+            IReadOnlyList<WorkspacePatchEditBlock> blocks)
+        {
+            if (blocks.Count == 0)
+                throw new InvalidOperationException($"{relativePath}: ACTION edit has no SEARCH/REPLACE blocks.");
+
+            string result = currentContent ?? string.Empty;
+            for (int i = 0; i < blocks.Count; i++)
+            {
+                WorkspacePatchEditBlock block = blocks[i];
+                int occurrences = CountOccurrences(result, block.Search);
+                if (occurrences == 0)
+                    throw new InvalidOperationException($"{relativePath}: edit block {i + 1:n0} SEARCH text was not found.");
+                if (occurrences > 1)
+                    throw new InvalidOperationException($"{relativePath}: edit block {i + 1:n0} SEARCH text matched {occurrences:n0} times; make the anchor unique.");
+
+                result = result.Replace(block.Search, block.Replace ?? string.Empty, StringComparison.Ordinal);
+            }
+
+            return result;
         }
 
         public WorkspaceGitStatus GetGitStatus(string rootPath)
@@ -478,6 +777,30 @@ namespace Malx_AI
             {
                 return new WorkspaceGitStatus(false, string.Empty, 0, string.Empty, ex.Message);
             }
+        }
+
+        public WorkspaceGitCheckpointResult CreateGitCheckpointCommit(string rootPath, string message)
+        {
+            if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath))
+                return new WorkspaceGitCheckpointResult(false, false, false, true, "No local Git workspace is connected.");
+
+            WorkspaceGitStatus status = GetGitStatus(rootPath);
+            if (!status.IsRepository)
+                return new WorkspaceGitCheckpointResult(false, false, false, true, "Connected workspace is not a Git repository.");
+
+            if (status.ChangedFileCount == 0)
+                return new WorkspaceGitCheckpointResult(true, false, false, true, "Git worktree is already clean; current HEAD is the checkpoint.");
+
+            string root = NormalizeRoot(rootPath);
+            var add = RunGit(root, "add", "-A");
+            if (!add.Success)
+                return new WorkspaceGitCheckpointResult(true, true, false, false, "Could not stage checkpoint files: " + add.Output.Trim());
+
+            var commit = RunGit(root, "commit", "-m", string.IsNullOrWhiteSpace(message) ? "Axiom auto-apply checkpoint" : message.Trim());
+            if (!commit.Success)
+                return new WorkspaceGitCheckpointResult(true, true, false, false, "Could not create checkpoint commit: " + commit.Output.Trim());
+
+            return new WorkspaceGitCheckpointResult(true, true, true, true, "Created Git checkpoint commit before auto-apply.");
         }
 
         public bool LooksLikeRepositoryUrl(string value)
@@ -615,6 +938,89 @@ namespace Malx_AI
             throw new InvalidOperationException($"Patch path is not inside a connected local workspace: {patch.RelativePath}");
         }
 
+        private bool TryGetReadableToolFiles(ConnectedWorkspaceState state, out IReadOnlyList<string> files, out string error)
+        {
+            files = Array.Empty<string>();
+            error = string.Empty;
+
+            if (state == null || !state.CodebaseEditAccessEnabled)
+            {
+                error = "Codebase access is not enabled.";
+                return false;
+            }
+
+            files = ResolveCandidateFiles(state).Take(MaxIndexedFiles).ToList();
+            if (files.Count == 0)
+            {
+                error = "No readable local code files are connected.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool TryResolveReadableToolTarget(ConnectedWorkspaceState state, string relativePath, out string target, out string error)
+        {
+            target = string.Empty;
+            error = string.Empty;
+
+            if (state == null || !state.CodebaseEditAccessEnabled)
+            {
+                error = "Codebase access is not enabled.";
+                return false;
+            }
+
+            string normalized = NormalizeRelativePatchPath(relativePath);
+            if (normalized.Length == 0)
+            {
+                error = "File path is empty or escapes the connected workspace.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(state.RootPath) && Directory.Exists(state.RootPath))
+            {
+                string root = NormalizeRoot(state.RootPath);
+                string candidate = Path.GetFullPath(Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar)));
+                if (!IsPathInsideWorkspace(root, candidate))
+                {
+                    error = $"File path escapes the connected workspace: {relativePath}";
+                    return false;
+                }
+
+                if (!IsReadableSourceFile(candidate))
+                {
+                    error = $"File is not a readable connected source file: {normalized}";
+                    return false;
+                }
+
+                target = candidate;
+                return true;
+            }
+
+            var matches = state.ConnectedFiles
+                .Where(File.Exists)
+                .Where(IsReadableSourceFile)
+                .Where(path =>
+                {
+                    string fileName = Path.GetFileName(path);
+                    string display = path.Replace('\\', '/');
+                    return string.Equals(fileName, normalized, StringComparison.OrdinalIgnoreCase)
+                        || display.EndsWith("/" + normalized, StringComparison.OrdinalIgnoreCase);
+                })
+                .ToList();
+
+            if (matches.Count == 1)
+            {
+                target = Path.GetFullPath(matches[0]);
+                return true;
+            }
+
+            error = matches.Count == 0
+                ? $"File is not connected or readable: {normalized}"
+                : $"File path is ambiguous across connected files: {normalized}";
+            return false;
+        }
+
         private static IEnumerable<string> EnumerateCandidateFiles(string rootPath)
         {
             var pending = new Stack<string>();
@@ -740,10 +1146,16 @@ namespace Malx_AI
                 || normalizedRelative.EndsWith("/" + reference, StringComparison.OrdinalIgnoreCase));
         }
 
+        // How many lexically top-ranked files get a semantic re-rank pass. Embedding every
+        // candidate (a folder connection can index 5,000 files) is minutes of native
+        // inference on a cold cache; re-ranking a small lexical shortlist keeps the
+        // semantic benefit at a bounded cost.
+        private const int MaxSemanticRerankCandidates = 48;
+
         private static IEnumerable<string> SelectRelevantFiles(IReadOnlyList<string> files, string query, int maxFiles)
         {
             var terms = ExtractQueryTerms(query);
-            return files
+            var lexicalRanked = files
                 .Select(path => new
                 {
                     Path = path,
@@ -751,8 +1163,30 @@ namespace Malx_AI
                 })
                 .OrderByDescending(item => item.Score)
                 .ThenBy(item => item.Path.Length)
+                .ToList();
+
+            if (!LocalSemanticEmbeddingService.Shared.IsAvailable)
+                return lexicalRanked.Take(maxFiles).Select(item => item.Path);
+
+            int rerankCount = Math.Clamp(maxFiles * 6, maxFiles, MaxSemanticRerankCandidates);
+            return lexicalRanked
+                .Take(rerankCount)
+                .Select(item => new
+                {
+                    item.Path,
+                    Score = item.Score + ComputeSemanticFileBoost(query, item.Path)
+                })
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.Path.Length)
                 .Take(maxFiles)
                 .Select(item => item.Path);
+        }
+
+        private static int ComputeSemanticFileBoost(string query, string path)
+        {
+            return LocalSemanticEmbeddingService.Shared.TryGetSimilarity(query, BuildFileSemanticDescriptor(path), out double semanticScore)
+                ? (int)Math.Round(Math.Max(0, semanticScore - 0.20) * 60)
+                : 0;
         }
 
         private static int ScoreFile(string path, IReadOnlyCollection<string> terms)
@@ -778,6 +1212,26 @@ namespace Malx_AI
             return score;
         }
 
+        private static string BuildFileSemanticDescriptor(string path)
+        {
+            string relative = path.Replace('\\', '/');
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            string kind = extension switch
+            {
+                ".cs" => "C# source code class service view model logic",
+                ".xaml" => "WPF XAML user interface layout controls styling",
+                ".csproj" or ".sln" or ".slnx" => "dotnet project solution build dependencies",
+                ".json" or ".jsonc" => "JSON configuration settings data",
+                ".md" => "markdown documentation readme notes",
+                ".html" or ".css" or ".js" or ".ts" or ".tsx" or ".jsx" => "web frontend source",
+                _ => "source file"
+            };
+
+            string spaced = Regex.Replace(relative, @"[_\-/\\.]+", " ");
+            spaced = Regex.Replace(spaced, "([a-z])([A-Z])", "$1 $2");
+            return $"{relative}\n{spaced}\n{kind}";
+        }
+
         private static IReadOnlyList<string> ExtractQueryTerms(string query)
         {
             return System.Text.RegularExpressions.Regex.Matches((query ?? string.Empty).ToLowerInvariant(), @"\b[a-z][a-z0-9_]{2,}\b")
@@ -786,6 +1240,14 @@ namespace Malx_AI
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(24)
                 .ToList();
+        }
+
+        private sealed record WorkspaceSearchMatch(string RelativePath, int LineNumber, string Snippet, int Score);
+
+        private static string TrimToolLine(string line)
+        {
+            string trimmed = (line ?? string.Empty).Trim();
+            return trimmed.Length <= 220 ? trimmed : trimmed[..220] + "...";
         }
 
         private static bool IsReadableSourceFile(string path)
@@ -854,6 +1316,28 @@ namespace Malx_AI
         {
             string normalized = (content ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal);
             return normalized.Replace("\n", Environment.NewLine, StringComparison.Ordinal);
+        }
+
+        private static string NormalizePatchFragment(string content)
+        {
+            string normalized = (content ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal);
+            return normalized.Replace("\r", "\n", StringComparison.Ordinal);
+        }
+
+        private static int CountOccurrences(string value, string needle)
+        {
+            if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(needle))
+                return 0;
+
+            int count = 0;
+            int index = 0;
+            while ((index = value.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                index += needle.Length;
+            }
+
+            return count;
         }
 
         private static void AppendProcessLine(string? line, StringBuilder output, IProgress<string>? progress)

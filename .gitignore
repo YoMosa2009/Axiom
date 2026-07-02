@@ -6,3 +6,7 @@ axiom_data.db-shm
 axiom_data.db-wal 
 bin/ 
 obj/
+
+# Local embedding model weights (bundled into output via csproj Content include,
+# but never committed to git - too large for repo history)
+Malx_AI/EmbeddingModels/*.gguf

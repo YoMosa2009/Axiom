@@ -1065,7 +1065,10 @@
                                                                            HorizontalAlignment="Stretch"
                                                                            Visibility="Collapsed"/>
                                                 <WrapPanel x:Name="ActionButtonPanel" HorizontalAlignment="Right" Margin="0,8,0,0" Visibility="Collapsed">
-                                                    <Button Content="Pin" Click="PinMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="40" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    <Button x:Name="EditResendActionButton" Content="Edit &amp; Resend" Click="EditResendMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="92" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    <Button x:Name="RegenerateActionButton" Content="Regenerate" Click="RegenerateMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="78" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    <Button x:Name="RetryCloudActionButton" Content="Retry Other" Click="RetryOtherCloudModel_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="78" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    <Button x:Name="PinActionButton" Content="Pin" Click="PinMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="40" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
                                                     <Button Content="Branch" Click="BranchMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="56" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
                                                     <Button Content="Copy" Click="CopyMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="46" Margin="0,0,0,4" Style="{StaticResource SubtleButtonStyle}"/>
                                                 </WrapPanel>
@@ -1078,6 +1081,9 @@
                                                 <Setter TargetName="BubbleBorder" Property="Background" Value="{StaticResource NotebookSurfaceBrush}"/>
                                                 <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="{StaticResource NotebookBorderBrush}"/>
                                                 <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="1"/>
+                                                <Setter TargetName="ActionButtonPanel" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="EditResendActionButton" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="PinActionButton" Property="Visibility" Value="Collapsed"/>
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding Role}" Value="assistant">
                                                 <Setter TargetName="BubbleBorder" Property="HorizontalAlignment" Value="Left"/>
@@ -1089,6 +1095,8 @@
                                                 <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="1"/>
                                                 <Setter TargetName="ModelLabelBlock" Property="Visibility" Value="Visible"/>
                                                 <Setter TargetName="ActionButtonPanel" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="RegenerateActionButton" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="RetryCloudActionButton" Property="Visibility" Value="Visible"/>
                                             </DataTrigger>
                                              <MultiDataTrigger>
                                                  <MultiDataTrigger.Conditions>

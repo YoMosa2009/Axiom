@@ -19,6 +19,7 @@ namespace Malx_AI
         public static string Logs { get; }
         public static string DatabaseFile { get; }
         public static string WebView2UserData { get; }
+        public static string EmbeddingModels { get; }
 
         static AppDataPaths()
         {
@@ -26,6 +27,7 @@ namespace Malx_AI
             ChatHistory = Path.Combine(Root, "ChatHistory");
             Logs = Path.Combine(Root, "logs");
             DatabaseFile = Path.Combine(Root, "axiom_data.db");
+            EmbeddingModels = Path.Combine(Root, "EmbeddingModels");
             // WebView2's default user-data folder sits next to the exe — not writable under
             // Program Files, which silently breaks every WebView2 pane in an installed build.
             WebView2UserData = Path.Combine(Root, "WebView2");
@@ -35,6 +37,7 @@ namespace Malx_AI
                 Directory.CreateDirectory(Root);
                 Directory.CreateDirectory(ChatHistory);
                 Directory.CreateDirectory(Logs);
+                Directory.CreateDirectory(EmbeddingModels);
                 Directory.CreateDirectory(WebView2UserData);
                 MigrateLegacyWorkingDirectoryData();
             }

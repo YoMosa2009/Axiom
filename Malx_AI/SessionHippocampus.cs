@@ -135,7 +135,8 @@ namespace Malx_AI
 
             string normalizedQuery = NormalizeInlineWhitespace(query);
             HashSet<string> queryKeywords = ExtractKeywords(normalizedQuery);
-            if (queryKeywords.Count == 0)
+            bool semanticAvailable = LocalSemanticEmbeddingService.Shared.IsAvailable;
+            if (queryKeywords.Count == 0 && !semanticAvailable)
             {
                 return new List<SessionHippocampusEntry>();
             }
@@ -148,20 +149,29 @@ namespace Malx_AI
             {
                 SessionHippocampusEntry entry = _entries[i];
                 HashSet<string> contentKeywords = ExtractKeywords(entry.Content);
-                if (contentKeywords.Count == 0)
+                double semanticBoost = 0;
+                double semanticScore = 0;
+                bool semanticMatch = semanticAvailable
+                    && LocalSemanticEmbeddingService.Shared.TryGetSimilarity(normalizedQuery, entry.Content, out semanticScore)
+                    && semanticScore >= 0.26;
+
+                if (semanticMatch)
+                    semanticBoost = Math.Clamp((semanticScore - 0.20) / 0.55, 0, 1) * 7.0;
+
+                if (contentKeywords.Count == 0 && !semanticMatch)
                 {
                     continue;
                 }
 
                 int overlap = contentKeywords.Count(k => queryKeywords.Contains(k));
-                if (overlap == 0)
+                if (overlap == 0 && !semanticMatch)
                 {
                     continue;
                 }
 
-                double coverage = (double)overlap / queryKeywords.Count;
-                double density = (double)overlap / contentKeywords.Count;
-                double weighted = (coverage * 5.0) + (density * 2.5) + PriorityMultiplier(entry.Priority);
+                double coverage = queryKeywords.Count == 0 ? 0 : (double)overlap / queryKeywords.Count;
+                double density = contentKeywords.Count == 0 ? 0 : (double)overlap / contentKeywords.Count;
+                double weighted = (coverage * 5.0) + (density * 2.5) + semanticBoost + PriorityMultiplier(entry.Priority);
 
                 if (entry.Content.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase))
                 {
@@ -403,6 +413,10 @@ namespace Malx_AI
             {
                 _entries.Add(entry);
             }
+
+            // Embed at write time so Query()'s semantic pass is a cache hit instead of a
+            // blocking native inference per entry on the first lookup.
+            LocalSemanticEmbeddingService.Shared.PrewarmInBackground([(existing ?? entry).Content]);
 
             EnforceCapacity();
 

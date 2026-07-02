@@ -98,10 +98,14 @@ namespace Malx_AI
                     break;
             }
 
-            string finalSystemPrompt = systemPrompt.Replace(
-                AgenticPauseRule,
-                "\n\nTOOL PREFLIGHT COMPLETE:\nDo not emit tool calls, [PAUSE:] markers, or JSON tool envelopes. Generate the requested Builder deliverable normally. Code and prose are unrestricted by the tool-decision grammar.\n",
-                StringComparison.Ordinal);
+            string finalSystemPrompt = systemPrompt
+                .Replace(
+                    AgenticPauseRule,
+                    "\n\nTOOL PREFLIGHT COMPLETE:\nDo not emit tool calls, [PAUSE:] markers, or JSON tool envelopes. Generate the requested Builder deliverable normally. Code and prose are unrestricted by the tool-decision grammar.\n",
+                    StringComparison.Ordinal)
+                // The codebase read-tools addendum rides after the pause rule; strip it too so
+                // the final pass is not told to emit [PAUSE:] lines that nothing intercepts.
+                .Replace(AgenticPauseCodebaseToolsAddendum, string.Empty, StringComparison.Ordinal);
 
             string finalPayload = toolContext.Length == 0
                 ? userPayload
@@ -203,6 +207,11 @@ namespace Malx_AI
         private string BuildBuilderToolDecisionSystemPrompt(bool isRepairAttempt, int toolsUsed)
         {
             string webTool = _isWebSearchEnabled ? ", WEB_SEARCH" : string.Empty;
+            bool codebaseTools = _connectedWorkspace.CodebaseEditAccessEnabled;
+            string codebaseToolList = codebaseTools ? ", READ_FILE, SEARCH_CODEBASE, LIST_FILES" : string.Empty;
+            string codebaseToolGuidance = codebaseTools
+                ? "Use READ_FILE to open a known connected-workspace relative path, SEARCH_CODEBASE to find symbols/text across connected code files, and LIST_FILES to inspect connected workspace paths. "
+                : string.Empty;
             string repair = isRepairAttempt
                 ? "The previous envelope was semantically invalid. Correct it. "
                 : string.Empty;
@@ -213,7 +222,8 @@ namespace Malx_AI
                 "Decide whether one additional tool must run before the Builder generates its deliverable. " +
                 "Tools retrieve evidence or calculate/execute checks; they do not write the final code. " +
                 "Choose final when the supplied context and observations are sufficient. Never repeat an equivalent call. " +
-                "Available tools: SEARCH_HIPPOCAMPUS, CALCULATE, RUN_SANDBOX, PYTHON_MATH" + webTool + ". " +
+                "Available tools: SEARCH_HIPPOCAMPUS, CALCULATE, RUN_SANDBOX, PYTHON_MATH" + codebaseToolList + webTool + ". " +
+                codebaseToolGuidance +
                 "Use RUN_SANDBOX only to check a small supplied snippet, not to generate an application. " +
                 "No tool can edit files, install packages, operate the UI, or modify Project Canvas. " +
                 "Return exactly one JSON object with fields in this order: action, tool, query. " +
@@ -236,7 +246,7 @@ namespace Malx_AI
 
             var payload = new StringBuilder();
             payload.AppendLine(BuildCouncilGoalContractBlock(runContext?.GoalContract));
-            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled));
+            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, codebaseToolsEnabled: _connectedWorkspace.CodebaseEditAccessEnabled));
             if (!string.IsNullOrWhiteSpace(objective))
             {
                 payload.AppendLine("[[USER OBJECTIVE]]");
@@ -271,6 +281,12 @@ namespace Malx_AI
                 "RUN_SANDBOX",
                 "PYTHON_MATH"
             };
+            if (_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                tools.Add("READ_FILE");
+                tools.Add("SEARCH_CODEBASE");
+                tools.Add("LIST_FILES");
+            }
             if (_isWebSearchEnabled)
                 tools.Add("WEB_SEARCH");
 
@@ -325,6 +341,12 @@ namespace Malx_AI
                 {
                     "SEARCH_HIPPOCAMPUS", "CALCULATE", "RUN_SANDBOX", "PYTHON_MATH"
                 };
+                if (_connectedWorkspace.CodebaseEditAccessEnabled)
+                {
+                    allowedTools.Add("READ_FILE");
+                    allowedTools.Add("SEARCH_CODEBASE");
+                    allowedTools.Add("LIST_FILES");
+                }
                 if (_isWebSearchEnabled)
                     allowedTools.Add("WEB_SEARCH");
 

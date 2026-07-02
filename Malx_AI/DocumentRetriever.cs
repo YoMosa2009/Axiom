@@ -58,6 +58,10 @@ namespace Malx_AI
                     _cachedChunkKeywords[key] = ExtractKeywords(chunk.Content).ToHashSet(StringComparer.OrdinalIgnoreCase);
             }
             _cachedDocumentFrequency = null;
+
+            // Embed new chunks in the background now, so query-time semantic ranking is a
+            // cache hit instead of a blocking native inference per chunk on the first turn.
+            LocalSemanticEmbeddingService.Shared.PrewarmInBackground(chunks.Select(chunk => chunk.Content));
             Debug.WriteLine($"DocumentRetriever: Added {chunks.Count} chunks. Total: {_chunks.Count}");
         }
 
@@ -146,26 +150,38 @@ namespace Malx_AI
                 return allowFallback ? _chunks.Take(maxChunks).ToList() : new List<DocumentChunk>();
             }
 
-            // Score each chunk based on keyword overlap, using pre-computed keyword cache
+            bool semanticAvailable = LocalSemanticEmbeddingService.Shared.IsAvailable;
+
+            // Score each chunk based on semantic similarity plus keyword overlap.
             var scoredChunks = _chunks
                 .Select(chunk => new
                 {
                     Chunk = chunk,
                     Score = CalculateRelevanceScore(
                         chunk, query, exactQueryTerms, expandedQueryTerms, queryTrigrams, documentFrequency, _chunks.Count,
-                        _cachedChunkKeywords.TryGetValue(GetChunkKey(chunk), out var kw) ? kw : null)
+                        _cachedChunkKeywords.TryGetValue(GetChunkKey(chunk), out var kw) ? kw : null),
+                    SemanticScore = semanticAvailable && LocalSemanticEmbeddingService.Shared.TryGetSimilarity(query, chunk.Content, out double sim)
+                        ? sim
+                        : 0
                 })
-                .OrderByDescending(x => x.Score)
+                .Select(x => new
+                {
+                    x.Chunk,
+                    CombinedScore = x.Score + (int)Math.Round(Math.Max(0, x.SemanticScore - 0.20) * 90),
+                    x.Score,
+                    x.SemanticScore
+                })
+                .OrderByDescending(x => x.CombinedScore)
                 .ToList();
 
             // Log scoring results
             var topScored = scoredChunks.Take(3).ToList();
             foreach (var scored in topScored)
             {
-                Debug.WriteLine($"  Chunk {scored.Chunk.ChunkId} ({scored.Chunk.FileName}): Score={scored.Score}");
+                Debug.WriteLine($"  Chunk {scored.Chunk.ChunkId} ({scored.Chunk.FileName}): Score={scored.CombinedScore} lexical={scored.Score} semantic={scored.SemanticScore:0.000}");
             }
 
-            int topScore = scoredChunks.FirstOrDefault()?.Score ?? 0;
+            int topScore = scoredChunks.FirstOrDefault()?.CombinedScore ?? 0;
             if (topScore <= 0)
             {
                 Debug.WriteLine(allowFallback
@@ -177,7 +193,7 @@ namespace Malx_AI
             // Keep only meaningfully relevant chunks to reduce context pollution.
             int minScoreThreshold = Math.Max(2, topScore / 4);
             var result = scoredChunks
-                .Where(x => x.Score >= minScoreThreshold)
+                .Where(x => x.CombinedScore >= minScoreThreshold)
                 .Take(maxChunks)
                 .Select(x => x.Chunk)
                 .ToList();
@@ -192,7 +208,7 @@ namespace Malx_AI
 
                 Debug.WriteLine("RetrieveRelevantChunks: Threshold filtered all chunks, using top scored chunk only");
                 result = scoredChunks
-                    .Where(x => x.Score > 0)
+                    .Where(x => x.CombinedScore > 0)
                     .Take(1)
                     .Select(x => x.Chunk)
                     .ToList();

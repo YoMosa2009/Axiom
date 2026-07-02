@@ -106,8 +106,9 @@ namespace Malx_AI
                 double minScore = distinctTopicSignals >= 2 ? 0.16 : 0.08;
                 double highConfidenceThreshold = distinctTopicSignals >= 2 ? 0.22 : 0.12;
 
+                bool semanticAvailable = LocalSemanticEmbeddingService.Shared.IsAvailable;
                 var ranked = sections
-                    .Select(s => new { Text = s, Score = ScoreSection(s, queryTerms) })
+                    .Select(s => new { Text = s, Score = ScoreSection(s, query, queryTerms, semanticAvailable) })
                     .Where(x => x.Score >= minScore)
                     .OrderByDescending(x => x.Score)
                     .Take(4)
@@ -147,14 +148,23 @@ namespace Malx_AI
                 .ToList();
         }
 
-        private static double ScoreSection(string section, HashSet<string> queryTerms)
+        private static double ScoreSection(string section, string query, HashSet<string> queryTerms, bool semanticAvailable)
         {
             var sectionTerms = ExtractTerms(section);
-            if (sectionTerms.Count == 0)
-                return 0;
+            double lexicalScore = 0;
+            if (sectionTerms.Count > 0)
+            {
+                int overlap = sectionTerms.Count(t => queryTerms.Contains(t));
+                lexicalScore = overlap / (double)Math.Max(1, queryTerms.Count);
+            }
 
-            int overlap = sectionTerms.Count(t => queryTerms.Contains(t));
-            return overlap / (double)Math.Max(1, queryTerms.Count);
+            if (semanticAvailable && LocalSemanticEmbeddingService.Shared.TryGetSimilarity(query, section, out double semanticScore))
+            {
+                double mappedSemantic = Math.Clamp((semanticScore - 0.20) / 0.55, 0, 1);
+                return Math.Max(lexicalScore, mappedSemantic);
+            }
+
+            return lexicalScore;
         }
 
         private static string ClampToTokenWindow(string text, int minTokens, int maxTokens)

@@ -285,7 +285,7 @@ namespace Malx_AI
         private const int ContextSelectionThresholdTokens = 1500;
         private const string AttachedDocumentHeaderLine = "ATTACHED DOCUMENT — YOU MUST READ AND USE THIS";
         private const string AttachedDocumentEndLine = "END OF DOCUMENT";
-        private const string AttachedDocumentRequiredReferenceInstruction = "The user has attached one or more files. Their full text is included below between the [[DOCUMENT CONTEXT]] markers — it is ALREADY provided to you here. Never ask the user to attach, upload, paste, or share the file: you can read it right now. Base your answer on this content.";
+        private const string AttachedDocumentRequiredReferenceInstruction = "The user has attached one or more files. The relevant attached-file text is included below between the [[DOCUMENT CONTEXT]] markers — it is ALREADY provided to you here. Never ask the user to attach, upload, paste, or share the file: you can read it right now. Base your answer on this content.";
         private static readonly string[] ExplicitWebSearchMarkers =
         [
             "[web]", "search the web", "search online", "search for ", "look up", "lookup",
@@ -666,17 +666,37 @@ namespace Malx_AI
         private void RebuildChatDocumentIndex()
         {
             _documentRetriever.ClearChunks();
+            AddChatDocumentChunksToRetriever(_documentRetriever, _chatDocuments);
+        }
 
-            foreach (var doc in _chatDocuments)
+        private static int AddChatDocumentChunksToRetriever(DocumentRetriever retriever, IEnumerable<ChatDocumentAttachment>? documents)
+        {
+            if (retriever == null || documents == null)
+                return 0;
+
+            int chunkCount = 0;
+            foreach (var doc in documents)
             {
                 // Images only carry a placeholder summary — indexing it pollutes retrieval.
-                if (!doc.HasTextContent || doc.IsImage)
+                if (doc == null || !doc.HasTextContent || doc.IsImage)
                     continue;
 
                 List<DocumentChunk> chunks = DocumentChunker.ChunkDocument(doc.Name, doc.Content);
                 if (chunks.Count > 0)
-                    _documentRetriever.AddChunks(chunks);
+                {
+                    retriever.AddChunks(chunks);
+                    chunkCount += chunks.Count;
+                }
             }
+
+            return chunkCount;
+        }
+
+        private static DocumentRetriever BuildChatDocumentRetriever(IEnumerable<ChatDocumentAttachment> documents)
+        {
+            var retriever = new DocumentRetriever();
+            AddChatDocumentChunksToRetriever(retriever, documents);
+            return retriever;
         }
 
         private string BuildAttachedDocumentMemoryBlock()
@@ -1308,6 +1328,204 @@ namespace Malx_AI
             }
         }
 
+        private static ChatMessageState CreateChatMessageState(ChatMessage msg)
+        {
+            return new ChatMessageState
+            {
+                Id = msg.Id,
+                Role = msg.Role,
+                Content = msg.Content,
+                ThinkingContent = msg.ThinkingContent,
+                ThinkingHeaderText = msg.ThinkingHeaderText,
+                ModelLabel = msg.ModelLabel,
+                Timestamp = msg.Timestamp,
+                Importance = msg.Importance.ToString(),
+                IsCompactionProtected = msg.IsCompactionProtected
+            };
+        }
+
+        private static ChatMessage CreateChatMessageFromState(ChatMessageState state)
+        {
+            return new ChatMessage(state.Role, state.Content)
+            {
+                Id = state.Id,
+                ThinkingContent = state.ThinkingContent,
+                ThinkingHeaderText = string.IsNullOrWhiteSpace(state.ThinkingHeaderText) ? "Thinking" : state.ThinkingHeaderText,
+                ModelLabel = state.ModelLabel,
+                Timestamp = state.Timestamp,
+                Importance = Enum.TryParse<MessageImportance>(state.Importance, out var importance) ? importance : MessageImportance.Low,
+                IsCompactionProtected = state.IsCompactionProtected
+            };
+        }
+
+        private string BuildBranchActionLabel(string prefix, string content)
+        {
+            string firstLine = (content ?? string.Empty)
+                .Replace("\r\n", "\n")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .FirstOrDefault(line => line.Length > 0) ?? "Branch";
+            string label = string.IsNullOrWhiteSpace(prefix) ? firstLine : $"{prefix}: {firstLine}";
+            return label.Length > 32 ? label[..32] + "..." : label;
+        }
+
+        private async Task<ChatBranch?> ForkActiveConversationForResendAsync(int prefixMessageCount, int forkMessageIndex, string label)
+        {
+            if (_isProcessing)
+            {
+                ShowTransientStatus("Wait for the current response to finish first.");
+                return null;
+            }
+
+            prefixMessageCount = Math.Clamp(prefixMessageCount, 0, _chatMessages.Count);
+            await PersistCurrentChatSessionAsync();
+
+            var branch = new ChatBranch
+            {
+                Name = string.IsNullOrWhiteSpace(label) ? $"Branch {_branches.Count}" : label,
+                ForkMessageIndex = Math.Max(0, forkMessageIndex),
+                Messages = _chatMessages
+                    .Take(prefixMessageCount)
+                    .Where(m => !IsNormalChatNotificationRole(m.Role))
+                    .Select(CreateChatMessageState)
+                    .ToList()
+            };
+
+            _branches.Add(branch);
+            _activeBranchId = branch.Id;
+            LoadMessagesFromBranch(branch);
+            RefreshBranchNavigator();
+            SaveChatAdvancedState();
+            ShowTransientStatus($"Created branch '{branch.Name}'.");
+
+            if (!_cloudModeActive)
+            {
+                await RebuildChatSessionFromMessagesAsync(CancellationToken.None);
+                _ = TrySaveKvStateAsync(GetBranchKvStatePath(branch.Id), CancellationToken.None);
+            }
+
+            return branch;
+        }
+
+        private void LoadMessagesFromBranch(ChatBranch branch)
+        {
+            _chatMessages.Clear();
+            foreach (var m in branch.Messages)
+            {
+                if (IsNormalChatNotificationRole(m.Role))
+                    continue;
+
+                _chatMessages.Add(CreateChatMessageFromState(m));
+            }
+
+            UpdateTokenUsageIndicator();
+            UpdateNormalChatChrome();
+            ScrollChatToEnd();
+        }
+
+        private async void RegenerateMessage_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button b || b.Tag is not ChatMessage msg)
+                return;
+
+            int assistantIndex = _chatMessages.IndexOf(msg);
+            if (assistantIndex < 0 || !string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            int userIndex = FindPreviousUserMessageIndex(assistantIndex);
+            if (userIndex < 0)
+            {
+                ShowTransientStatus("No user message found to regenerate from.");
+                return;
+            }
+
+            string userMessage = _chatMessages[userIndex].Content ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(userMessage))
+                return;
+
+            if (await ForkActiveConversationForResendAsync(userIndex, userIndex, BuildBranchActionLabel("Regenerate", userMessage)) == null)
+                return;
+
+            await SendUserMessageFromInputAsync(userMessage);
+        }
+
+        private async void EditResendMessage_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button b || b.Tag is not ChatMessage msg)
+                return;
+
+            int userIndex = _chatMessages.IndexOf(msg);
+            if (userIndex < 0 || !string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string? edited = PromptForText("Edit & Resend", "Edit the message, then resend it on a new branch.", msg.Content ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(edited))
+                return;
+
+            if (await ForkActiveConversationForResendAsync(userIndex, userIndex, BuildBranchActionLabel("Edit", edited)) == null)
+                return;
+
+            await SendUserMessageFromInputAsync(edited.Trim());
+        }
+
+        private async void RetryOtherCloudModel_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button b || b.Tag is not ChatMessage msg)
+                return;
+
+            if (!_cloudModeActive || !_openRouterChatService.HasValidKey)
+            {
+                ShowTransientStatus("Retry with other model is available in cloud mode.");
+                return;
+            }
+
+            int assistantIndex = _chatMessages.IndexOf(msg);
+            if (assistantIndex < 0 || !string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            int userIndex = FindPreviousUserMessageIndex(assistantIndex);
+            if (userIndex < 0)
+            {
+                ShowTransientStatus("No user message found to retry.");
+                return;
+            }
+
+            string userMessage = _chatMessages[userIndex].Content ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(userMessage))
+                return;
+
+            string alternateModelId = ResolveOtherCloudModelId(msg.ModelLabel);
+            string alternateLabel = _openRouterChatService.ResolveModelLabel(alternateModelId);
+            if (await ForkActiveConversationForResendAsync(userIndex, userIndex, BuildBranchActionLabel($"Retry {alternateLabel}", userMessage)) == null)
+                return;
+
+            await SendUserMessageFromInputAsync(userMessage, alternateModelId);
+        }
+
+        private int FindPreviousUserMessageIndex(int startIndex)
+        {
+            for (int i = Math.Min(startIndex - 1, _chatMessages.Count - 1); i >= 0; i--)
+            {
+                if (string.Equals(_chatMessages[i].Role, "user", StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private string ResolveOtherCloudModelId(string? previousModelLabel)
+        {
+            if (string.Equals(previousModelLabel, OpenRouterChatService.Eidos1ModelLabel, StringComparison.OrdinalIgnoreCase))
+                return OpenRouterChatService.Hepha1ModelId;
+
+            if (string.Equals(previousModelLabel, OpenRouterChatService.Hepha1ModelLabel, StringComparison.OrdinalIgnoreCase))
+                return OpenRouterChatService.Eidos1ModelId;
+
+            return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Eidos1ModelId, StringComparison.OrdinalIgnoreCase)
+                ? OpenRouterChatService.Hepha1ModelId
+                : OpenRouterChatService.Eidos1ModelId;
+        }
+
         private void BranchMessage_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button b || b.Tag is not ChatMessage msg)
@@ -1323,7 +1541,7 @@ namespace Malx_AI
             {
                 Name = string.IsNullOrWhiteSpace(label) ? $"Branch {_branches.Count}" : label,
                 ForkMessageIndex = idx,
-                Messages = _chatMessages.Take(idx + 1).Select(m => new ChatMessageState { Id = m.Id, Role = m.Role, Content = m.Content, ThinkingContent = m.ThinkingContent, ThinkingHeaderText = m.ThinkingHeaderText, ModelLabel = m.ModelLabel, Timestamp = m.Timestamp }).ToList()
+                Messages = _chatMessages.Take(idx + 1).Select(CreateChatMessageState).ToList()
             };
             _branches.Add(branch);
             _activeBranchId = branch.Id;
@@ -1340,21 +1558,7 @@ namespace Malx_AI
 
             await PersistCurrentChatSessionAsync();
             _activeBranchId = branch.Id;
-            _chatMessages.Clear();
-            foreach (var m in branch.Messages)
-            {
-                if (IsNormalChatNotificationRole(m.Role))
-                    continue;
-
-                _chatMessages.Add(new ChatMessage(m.Role, m.Content)
-                {
-                    Id = m.Id,
-                    ThinkingContent = m.ThinkingContent,
-                    ThinkingHeaderText = string.IsNullOrWhiteSpace(m.ThinkingHeaderText) ? "Thinking" : m.ThinkingHeaderText,
-                    ModelLabel = m.ModelLabel,
-                    Timestamp = m.Timestamp
-                });
-            }
+            LoadMessagesFromBranch(branch);
 
             await TryLoadKvStateForBranchAsync(branch.Id, CancellationToken.None);
 
@@ -2799,15 +3003,16 @@ namespace Malx_AI
             }
 
             string query = BuildDocumentRetrievalQuery(currentUserMessage, chatMessages, chatDocuments);
+            DocumentRetriever turnRetriever = BuildChatDocumentRetriever(textDocuments);
             // The char budget above is the hard limit; the chunk cap just bounds retrieval
             // work, so let larger windows pull more chunks instead of clipping at 10.
             int maxChunks = isCloudMode
                 ? 24
-                : Math.Clamp(_documentRetriever.CalculateMaxChunksForContext(contextSize), 2, 16);
+                : Math.Clamp(turnRetriever.CalculateMaxChunksForContext(contextSize), 2, 16);
             // allowFallback: documents are attached and the turn warrants document context, so
             // always provide at least representative chunks — an empty result makes the model
             // claim the file is unreadable.
-            List<DocumentChunk> relevantChunks = _documentRetriever.RetrieveRelevantChunks(query, maxChunks, allowFallback: true)
+            List<DocumentChunk> relevantChunks = turnRetriever.RetrieveRelevantChunks(query, maxChunks, allowFallback: true)
                 .GroupBy(chunk => $"{chunk.FileName}:{chunk.ChunkId}")
                 .Select(group => group.First())
                 .ToList();
