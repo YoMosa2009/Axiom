@@ -248,7 +248,8 @@ namespace Malx_AI
                 EnabledAt = _connectedWorkspace.EnabledAt,
                 IndexedAt = _connectedWorkspace.IndexedAt,
                 StatusMessage = _connectedWorkspace.StatusMessage,
-                ConnectedFiles = _connectedWorkspace.ConnectedFiles.ToList()
+                ConnectedFiles = _connectedWorkspace.ConnectedFiles.ToList(),
+                RecentlyChangedFiles = _connectedWorkspace.RecentlyChangedFiles.ToList()
             };
         }
 
@@ -1249,6 +1250,9 @@ namespace Malx_AI
             public string WorkspaceContext { get; set; } = "";
             public List<string> WorkspaceFilesRead { get; set; } = new();
             public bool WorkspaceAutoApply { get; set; }
+            public bool HasPendingWorkspacePatch { get; set; }
+            public List<string> PendingWorkspacePatchFiles { get; set; } = new();
+            public string PendingWorkspacePatchContext { get; set; } = "";
             public bool ArchitectDriftCorrected { get; set; }
             public bool BuilderDriftCorrected { get; set; }
             public bool BuilderTruncationRecovery { get; set; }
@@ -1401,9 +1405,13 @@ namespace Malx_AI
             if (!_connectedWorkspace.CodebaseEditAccessEnabled)
                 return string.Empty;
 
+            var pendingTargets = GetPendingCodebasePatchTargetReferences().ToList();
             string combined = string.IsNullOrWhiteSpace(objective)
                 ? userQuery
                 : userQuery + "\n" + objective;
+            if (pendingTargets.Count > 0)
+                combined += "\n" + string.Join("\n", pendingTargets);
+
             bool promptNamesFile = Regex.IsMatch(combined, @"(?<![\w.-])[\w./\\-]+\.(?:cs|xaml|csproj|slnx|py|js|ts|tsx|jsx|json|jsonc|css|scss|html|htm|md|txt|xml|yaml|yml|toml)(?![\w.-])", RegexOptions.IgnoreCase);
             // The local budget scales with the Builder model's ACTUAL context window (which itself
             // sizes to the imported model's GGUF trained length) instead of a fixed pessimistic cap.
@@ -1417,17 +1425,95 @@ namespace Malx_AI
                 : Math.Min(builderWindowChars * 3 / 4, 28000);
             int maxChars = runContext.IsCloudExecution ? 60000 : localWorkspaceBudget;
             WorkspaceContextResult context = _workspaceAccessService.BuildContextPacket(_connectedWorkspace, combined, maxChars);
+            string pendingPatchContext = BuildPendingCodebasePatchContext(runContext, maxChars);
+            string packet = string.IsNullOrWhiteSpace(pendingPatchContext)
+                ? context.Packet
+                : string.IsNullOrWhiteSpace(context.Packet)
+                    ? pendingPatchContext
+                    : context.Packet + "\n\n" + pendingPatchContext;
             runContext.IsWorkspaceTask = true;
             runContext.WorkspaceAutoApply = _connectedWorkspace.AutoApplyCodebaseChanges;
-            runContext.WorkspaceContext = context.Packet;
-            runContext.WorkspaceFilesRead = context.FilesRead.ToList();
+            runContext.WorkspaceContext = packet;
+            runContext.WorkspaceFilesRead = context.FilesRead
+                .Concat(pendingTargets)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             if (context.FilesRead.Count > 0)
                 LogActivity($"Connected workspace context attached: {context.FilesRead.Count} file(s).");
             else
                 LogActivity("Connected workspace access is enabled, but no readable local files were attached.");
 
-            return context.Packet;
+            return packet;
+        }
+
+        private IEnumerable<string> GetPendingCodebasePatchTargetReferences()
+        {
+            if (!_hasPendingCodebaseChanges || _pendingCodebasePatch == null)
+                return Array.Empty<string>();
+
+            return _pendingCodebasePatch.Files
+                .Select(patch => (patch.RelativePath ?? string.Empty).Replace('\\', '/'))
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToList();
+        }
+
+        private string BuildPendingCodebasePatchContext(CouncilRunContext runContext, int maxChars)
+        {
+            if (!_hasPendingCodebaseChanges || _pendingCodebasePatch == null)
+                return string.Empty;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("PENDING CODEBASE PATCH DRAFT:");
+            sb.AppendLine("A previous Builder patch is still pending in this chat and has not necessarily been written to disk.");
+            sb.AppendLine("For follow-up requests that refer to what was just made or proposed, treat the materialized draft below as the current editable state.");
+            sb.AppendLine("Return a new patch that supersedes the pending draft. If you edit a pending draft, prefer a complete ACTION: replace section for that target so the host can apply the final result to disk.");
+            sb.AppendLine();
+
+            int remaining = Math.Clamp(maxChars / 2, 6000, 40000);
+            foreach (WorkspaceFilePatch patch in _pendingCodebasePatch.Files.Take(8))
+            {
+                if (remaining <= 0)
+                    break;
+
+                string relative = (patch.RelativePath ?? string.Empty).Replace('\\', '/');
+                if (string.IsNullOrWhiteSpace(relative))
+                    continue;
+
+                string materialized;
+                try
+                {
+                    materialized = _workspaceAccessService.MaterializePatchContent(_connectedWorkspace, patch);
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"--- pending draft unavailable: {relative} ---");
+                    sb.AppendLine(ex.Message);
+                    continue;
+                }
+
+                runContext.HasPendingWorkspacePatch = true;
+                if (!runContext.PendingWorkspacePatchFiles.Contains(relative, StringComparer.OrdinalIgnoreCase))
+                    runContext.PendingWorkspacePatchFiles.Add(relative);
+
+                int contentLimit = Math.Min(remaining, Math.Clamp(maxChars / 3, 4000, 24000));
+                string capped = materialized.Length > contentLimit
+                    ? materialized[..contentLimit] + "\n[...pending patch draft truncated for context budget]"
+                    : materialized;
+                string block = $"--- pending draft: {relative} ({materialized.Length:n0} chars) ---\n{capped}\n";
+                if (block.Length > remaining)
+                    block = block[..remaining] + "\n[...pending patch draft context budget exhausted]\n";
+
+                sb.AppendLine(block);
+                remaining -= block.Length;
+            }
+
+            string result = sb.ToString().Trim();
+            runContext.PendingWorkspacePatchContext = result;
+            return result;
         }
 
         private static bool ShouldUseArtifactCanvasContract(CouncilRunContext context)
@@ -2133,6 +2219,7 @@ namespace Malx_AI
         // nothing (SEARCH == REPLACE / replace identical to current file), so the patch-format
         // retry can tell the Builder what was actually wrong instead of the generic format nag.
         private string _lastWorkspacePatchNoOpDetail = string.Empty;
+        private string _lastPendingWorkspacePatchRebaseFailure = string.Empty;
         private CodebaseUndoSnapshot? _lastCodebaseUndo;
         private string _builderPythonSandboxPreamble = "";
         private string _activePythonSandboxPreamble = "";
@@ -4192,6 +4279,7 @@ namespace Malx_AI
             if (!_connectedWorkspace.CodebaseEditAccessEnabled || string.IsNullOrWhiteSpace(builderOutput))
                 return false;
 
+            _lastPendingWorkspacePatchRebaseFailure = string.Empty;
             bool hasPatchMarker = builderOutput.Contains("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
             if (!_workspaceAccessService.TryParsePatchProposal(builderOutput, out WorkspacePatchProposal? proposal, out string error))
             {
@@ -4222,6 +4310,13 @@ namespace Malx_AI
                 return false;
 
             proposal = PreferPromptNamedPatchTargets(proposal, runContext);
+            proposal = RebaseProposalOverPendingCodebasePatchIfNeeded(proposal, runContext);
+            if (!string.IsNullOrWhiteSpace(_lastPendingWorkspacePatchRebaseFailure))
+            {
+                AppendChat("warning", "Builder patch was based on the wrong pending-draft state. Asking for a complete replacement patch...");
+                LogActivity("Codebase patch rejected for pending-draft rebase failure: " + _lastPendingWorkspacePatchRebaseFailure);
+                return false;
+            }
 
             // A patch that changes nothing is a Builder failure, not a reviewable proposal: the
             // user would see an empty diff (or auto-apply would "apply" nothing). Reject it and
@@ -4938,6 +5033,67 @@ namespace Malx_AI
             }
 
             return changed ? new WorkspacePatchProposal(renamed, proposal.RawText) : proposal;
+        }
+
+        private WorkspacePatchProposal RebaseProposalOverPendingCodebasePatchIfNeeded(WorkspacePatchProposal proposal, CouncilRunContext runContext)
+        {
+            if (proposal.Files.Count == 0
+                || !_hasPendingCodebaseChanges
+                || _pendingCodebasePatch == null
+                || !runContext.HasPendingWorkspacePatch)
+            {
+                return proposal;
+            }
+
+            var pendingByPath = _pendingCodebasePatch.Files
+                .GroupBy(patch => NormalizeWorkspaceRelativePath(patch.RelativePath), StringComparer.OrdinalIgnoreCase)
+                .Where(group => !string.IsNullOrWhiteSpace(group.Key))
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            if (pendingByPath.Count == 0)
+                return proposal;
+
+            var rebased = new List<WorkspaceFilePatch>(proposal.Files.Count);
+            bool changed = false;
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                string normalizedPath = NormalizeWorkspaceRelativePath(patch.RelativePath);
+                if (!pendingByPath.TryGetValue(normalizedPath, out WorkspaceFilePatch? pendingPatch))
+                {
+                    rebased.Add(patch);
+                    continue;
+                }
+
+                try
+                {
+                    string finalContent = string.Equals(patch.Action, "edit", StringComparison.OrdinalIgnoreCase)
+                        ? _workspaceAccessService.MaterializePatchContent(
+                            _connectedWorkspace,
+                            patch,
+                            _workspaceAccessService.MaterializePatchContent(_connectedWorkspace, pendingPatch))
+                        : patch.Content ?? string.Empty;
+                    string targetPath = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+                    string finalAction = File.Exists(targetPath) ? "replace" : "create";
+                    rebased.Add(new WorkspaceFilePatch(patch.RelativePath, finalAction, finalContent));
+                    changed = true;
+                }
+                catch (Exception ex)
+                {
+                    _lastPendingWorkspacePatchRebaseFailure = $"{patch.RelativePath}: {ex.Message}";
+                    LogActivity($"Pending codebase patch rebase failed for {patch.RelativePath}: {ex.Message}");
+                    rebased.Add(patch);
+                }
+            }
+
+            if (!changed)
+                return proposal;
+
+            LogActivity("Codebase follow-up patch rebased over the pending draft before review/apply.");
+            return new WorkspacePatchProposal(rebased, proposal.RawText);
+        }
+
+        private static string NormalizeWorkspaceRelativePath(string relativePath)
+        {
+            return (relativePath ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
         }
 
         private static bool PromptNamesWorkspaceFile(CouncilRunContext runContext, string fileName)
@@ -11410,11 +11566,17 @@ namespace Malx_AI
                             string firstRejectedWorkspaceOutput = builderOutput;
                             bool firstAttemptWasNoOp = !string.IsNullOrWhiteSpace(_lastWorkspacePatchNoOpDetail);
                             string firstNoOpDetail = _lastWorkspacePatchNoOpDetail;
+                            bool firstAttemptWasPendingRebaseFailure = !string.IsNullOrWhiteSpace(_lastPendingWorkspacePatchRebaseFailure);
+                            string firstPendingRebaseFailure = _lastPendingWorkspacePatchRebaseFailure;
                             LogActivity(firstAttemptWasNoOp
                                 ? "Workspace Builder patch was a no-op; running one corrective retry."
+                                : firstAttemptWasPendingRebaseFailure
+                                    ? "Workspace Builder patch was based on stale pending-draft context; running one corrective retry."
                                 : "Workspace Builder output was not a patch envelope; running one patch-format retry.");
                             AppendChat("system", firstAttemptWasNoOp
                                 ? "Builder proposed a patch that changes nothing. Asking for a real change..."
+                                : firstAttemptWasPendingRebaseFailure
+                                    ? "Builder proposed a patch against the wrong draft state. Asking for a complete replacement patch..."
                                 : "Builder returned raw code instead of a reviewable codebase patch. Asking for a patch-format retry...");
 
                             var patchFormatRetryPayload = new StringBuilder();
@@ -11422,6 +11584,11 @@ namespace Malx_AI
                             {
                                 patchFormatRetryPayload.AppendLine($"PATCH REJECTED: your previous [[AXIOM_CODEBASE_PATCH]] made NO changes — after applying it, {firstNoOpDetail} was byte-identical to the current file. A SEARCH block whose REPLACE block is the same text is invalid.");
                                 patchFormatRetryPayload.AppendLine("Re-read the CONNECTED CODEBASE CONTEXT below, find the code that must change to satisfy the request, and return a patch whose REPLACE content actually differs from SEARCH.");
+                            }
+                            else if (firstAttemptWasPendingRebaseFailure)
+                            {
+                                patchFormatRetryPayload.AppendLine($"PATCH REJECTED: your previous [[AXIOM_CODEBASE_PATCH]] could not be safely rebased over the pending draft ({firstPendingRebaseFailure}).");
+                                patchFormatRetryPayload.AppendLine("Use the PENDING CODEBASE PATCH DRAFT inside CONNECTED CODEBASE CONTEXT as the current draft, apply the user's requested follow-up change to that draft, and return a complete ACTION: replace patch for the affected file.");
                             }
                             else
                             {

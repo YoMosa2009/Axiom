@@ -797,14 +797,28 @@ namespace Malx_AI
 
         public string MaterializePatchContent(ConnectedWorkspaceState state, WorkspaceFilePatch patch)
         {
+            return MaterializePatchContent(state, patch, null);
+        }
+
+        public string MaterializePatchContent(ConnectedWorkspaceState state, WorkspaceFilePatch patch, string? baseContentOverride)
+        {
             if (patch.Action != "edit")
                 return patch.Content ?? string.Empty;
 
-            string target = ResolvePatchTargetPath(state, patch);
-            if (!File.Exists(target))
-                throw new FileNotFoundException($"Cannot edit a file that does not exist: {patch.RelativePath}");
+            string current;
+            if (baseContentOverride != null)
+            {
+                current = NormalizePatchFragment(baseContentOverride);
+            }
+            else
+            {
+                string target = ResolvePatchTargetPath(state, patch);
+                if (!File.Exists(target))
+                    throw new FileNotFoundException($"Cannot edit a file that does not exist: {patch.RelativePath}");
 
-            string current = NormalizePatchFragment(File.ReadAllText(target));
+                current = NormalizePatchFragment(File.ReadAllText(target));
+            }
+
             return ApplySearchReplaceBlocks(patch.RelativePath, current, patch.Blocks);
         }
 

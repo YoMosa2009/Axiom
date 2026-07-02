@@ -1,0 +1,3 @@
+# Exclude generated HTML artifacts from GitHub language statistics.
+*.html linguist-vendored
+*.htm linguist-vendored

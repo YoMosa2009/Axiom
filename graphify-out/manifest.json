@@ -355,13 +355,13 @@
     "semantic_hash": ""
   },
   "Malx_AI/WorkplaceView.xaml.cs": {
-    "mtime": 1783021787.29766,
-    "ast_hash": "b8d75819929a70eb7dfce90b60b1bd9e",
+    "mtime": 1783026319.5350945,
+    "ast_hash": "f31193446d7d3b489c5128e9da0153da",
     "semantic_hash": ""
   },
   "Malx_AI/WorkspaceAccessService.cs": {
-    "mtime": 1783020818.8505957,
-    "ast_hash": "44cc9e3227690f6e26db03bea16fe732",
+    "mtime": 1783026057.8923457,
+    "ast_hash": "e8ef8c47f658d9173d927fffd54c0fdd",
     "semantic_hash": ""
   },
   "_repro/Program.cs": {
@@ -430,8 +430,8 @@
     "semantic_hash": ""
   },
   "AGENTS.md": {
-    "mtime": 1783021515.392419,
-    "ast_hash": "21ceb6533048be51308e69e7b74a35cf",
+    "mtime": 1783022485.0693684,
+    "ast_hash": "071eaeeed21d3fd99c662fc0fff45105",
     "semantic_hash": ""
   },
   "CHANGELOG.md": {
@@ -447,6 +447,11 @@
   "Malx_AI/Assets/Malx_Logo2.png": {
     "mtime": 1781983053.0571487,
     "ast_hash": "ee1a4df29a3af5f5e1d1ac85091f4fe1",
+    "semantic_hash": ""
+  },
+  "Malx_AI/.gitattributes.txt": {
+    "mtime": 1781914964.3635125,
+    "ast_hash": "ecaa88f7fa0bf610a5a26cf545dcd3aa",
     "semantic_hash": ""
   }
 }

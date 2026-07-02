@@ -135,5 +135,21 @@
   "133": "WorkplaceViewControl",
   "134": "CanvasArtifactWebView",
   "135": "CodebaseReviewActionGrid",
-  "136": "AssemblyInfo.cs"
+  "136": "AssemblyInfo.cs",
+  "137": ".SendUserMessageFromInputAsync",
+  "138": "AdvancedFeatureState.cs",
+  "139": ".PrepareNormalChatRequestContextAsync",
+  "140": "IReadOnlyList",
+  "141": "IEnumerable",
+  "142": ".PostProcessBuilderOutput",
+  "143": ".SaveCurrentChat",
+  "144": ".AddWorkplaceToHistory",
+  "145": "MainWindow.Inference.cs",
+  "146": ".BuildCappedMemoryContent",
+  "147": ".RankBySimilarity",
+  "148": "InputContainerBorder",
+  "149": ".InferenceSettingsSlider_ValueChanged",
+  "150": "ChatDisplay",
+  "151": "EmptyChatLogoImage",
+  "152": "OpenRouterApiKeyPasswordBox"
 }
