@@ -176,8 +176,10 @@ namespace Malx_AI
             @"(?im)^\s*FILE:\s*(?<path>[^\r\n]+)\s*\r?\n\s*ACTION:\s*(?<action>[^\r\n]+)\s*\r?\n",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+        // Marker runs are tolerant ({4,9}) instead of demanding exactly 7 characters: models
+        // regularly emit 6 or 8 and an off-by-one there must not invalidate a correct edit.
         private static readonly Regex PatchEditBlockRegex = new(
-            @"(?ms)^\s*<<<<<<<\s*SEARCH\s*\r?\n(?<search>[\s\S]*?)\r?\n^=======\s*\r?\n(?<replace>[\s\S]*?)\r?\n^>>>>>>>\s*REPLACE\s*$",
+            @"(?ms)^\s*<{4,9}\s*SEARCH\s*\r?\n(?<search>[\s\S]*?)\r?\n^={4,9}\s*\r?\n(?<replace>[\s\S]*?)\r?\n^>{4,9}\s*REPLACE\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public WorkspaceIndexResult IndexWorkspace(string rootPath)
@@ -479,10 +481,62 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(text))
                 return false;
 
-            if (!TryExtractPatchBody(text, out string body, out bool envelopeMarkerIsLeading))
+            // CLOSED envelopes (both sentinels present) are an explicit output contract even when
+            // narration precedes them — cloud models often lead with a sentence despite the
+            // "first visible line" rule, and rejecting the whole valid patch for that turns every
+            // follow-up edit into a failure. Garbage stays out because the file sections are
+            // strictly structured (FILE/ACTION headers, SEARCH/REPLACE blocks with no leftover
+            // text) and every patch still passes path/materialize/no-op validation before apply.
+            // Envelopes are tried LAST-first: deliberation sometimes quotes the contract's example
+            // envelope before emitting the real one, and the deliverable is the final envelope.
+            MatchCollection envelopes = PatchEnvelopeRegex.Matches(text);
+            if (envelopes.Count > 0)
+            {
+                string firstError = string.Empty;
+                for (int i = envelopes.Count - 1; i >= 0; i--)
+                {
+                    if (TryParsePatchBodyFiles(envelopes[i].Groups["body"].Value, out IReadOnlyList<WorkspaceFilePatch> files, out string bodyError))
+                    {
+                        proposal = new WorkspacePatchProposal(files, text);
+                        return true;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(firstError))
+                        firstError = bodyError;
+                }
+
+                return RejectPatch(string.IsNullOrWhiteSpace(firstError)
+                    ? "Patch envelope did not contain any valid file blocks."
+                    : firstError, out error);
+            }
+
+            // No closing marker anywhere: without the end sentinel this "envelope" is only
+            // trustworthy when the model actually led its response with the marker. A marker
+            // buried mid-prose with no end marker is deliberation quoting its instructions and
+            // must never be mined for file content (fail closed).
+            int marker = text.IndexOf("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0 || !IsPatchEnvelopeMarkerLeading(text))
                 return false;
 
-            var files = new List<WorkspaceFilePatch>();
+            string body = text[(marker + "[[AXIOM_CODEBASE_PATCH]]".Length)..];
+            if (string.IsNullOrWhiteSpace(body))
+                return false;
+
+            if (!TryParsePatchBodyFiles(body, out IReadOnlyList<WorkspaceFilePatch> openFiles, out string openError))
+                return RejectPatch(string.IsNullOrWhiteSpace(openError)
+                    ? "Patch envelope did not contain any valid file blocks."
+                    : openError, out error);
+
+            proposal = new WorkspacePatchProposal(openFiles, text);
+            return true;
+        }
+
+        private static bool TryParsePatchBodyFiles(string body, out IReadOnlyList<WorkspaceFilePatch> files, out string error)
+        {
+            files = Array.Empty<WorkspaceFilePatch>();
+            error = string.Empty;
+
+            var parsed = new List<WorkspaceFilePatch>();
             foreach (Match match in PatchFileRegex.Matches(body))
             {
                 string relativePath = NormalizeRelativePatchPath(match.Groups["path"].Value.Trim());
@@ -490,60 +544,38 @@ namespace Malx_AI
                 string content = match.Groups["content"].Value.Replace("\r\n", "\n", StringComparison.Ordinal);
 
                 if (relativePath.Length == 0)
-                    return RejectPatch("Patch contains an empty file path.", out error);
+                {
+                    error = "Patch contains an empty file path.";
+                    return false;
+                }
                 if (!TryBuildWorkspaceFilePatch(relativePath, action, content, out WorkspaceFilePatch? patch, out string fileError)
                     || patch == null)
-                    return RejectPatch(fileError, out error);
+                {
+                    error = fileError;
+                    return false;
+                }
 
-                files.Add(patch);
+                parsed.Add(patch);
             }
 
             // The loose (unfenced) parser grabs everything between FILE/ACTION headers as content.
-            // That is only safe when the envelope marker actually LEADS the response, as the output
-            // contract demands. A marker quoted deep inside deliberation prose (a reasoning model
-            // re-reading its instructions) must never be treated as a patch attempt — the "content"
-            // it captures would be chain-of-thought, which then gets written into a real file.
-            string looseError = string.Empty;
-            if (files.Count == 0
-                && envelopeMarkerIsLeading
-                && TryParseLoosePatchFiles(body, out IReadOnlyList<WorkspaceFilePatch> looseFiles, out looseError))
-                files.AddRange(looseFiles);
-
-            if (files.Count == 0)
-                return RejectPatch(string.IsNullOrWhiteSpace(looseError)
-                    ? "Patch envelope did not contain any valid file blocks."
-                    : looseError, out error);
-
-            proposal = new WorkspacePatchProposal(files, text);
-            return true;
-        }
-
-        private static bool TryExtractPatchBody(string text, out string body, out bool envelopeMarkerIsLeading)
-        {
-            body = string.Empty;
-            envelopeMarkerIsLeading = IsPatchEnvelopeMarkerLeading(text);
-            Match envelope = PatchEnvelopeRegex.Match(text);
-            if (envelope.Success)
+            // It is the only way ACTION: edit sections (whose SEARCH/REPLACE blocks are not fenced)
+            // get parsed at all.
+            if (parsed.Count == 0)
             {
-                body = envelope.Groups["body"].Value;
-                return true;
+                if (!TryParseLoosePatchFiles(body, out IReadOnlyList<WorkspaceFilePatch> looseFiles, out error))
+                    return false;
+                parsed.AddRange(looseFiles);
             }
 
-            int marker = text.IndexOf("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
-            if (marker < 0)
+            if (parsed.Count == 0)
+            {
+                error = "Patch envelope did not contain any valid file blocks.";
                 return false;
+            }
 
-            // No closing marker anywhere: without the end sentinel this "envelope" is only
-            // trustworthy when the model actually led its response with the marker. A marker
-            // buried mid-prose with no end marker is deliberation quoting its instructions.
-            if (!envelopeMarkerIsLeading)
-                return false;
-
-            body = text[(marker + "[[AXIOM_CODEBASE_PATCH]]".Length)..];
-            int endMarker = body.IndexOf("[[END AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
-            if (endMarker >= 0)
-                body = body[..endMarker];
-            return !string.IsNullOrWhiteSpace(body);
+            files = parsed;
+            return true;
         }
 
         // True when [[AXIOM_CODEBASE_PATCH]] actually LEADS the response as the output contract
@@ -590,7 +622,7 @@ namespace Malx_AI
                 if (i + 1 < headers.Count && headers[i + 1] is Match nextHeader)
                     contentEnd = nextHeader.Index;
                 string content = source[contentStart..contentEnd];
-                content = TrimLoosePatchContent(relativePath, content);
+                content = TrimLoosePatchContent(relativePath, action, content);
 
                 if (relativePath.Length == 0)
                 {
@@ -624,6 +656,15 @@ namespace Malx_AI
             if (relativePath.Length == 0)
             {
                 error = "Patch contains an empty file path.";
+                return false;
+            }
+
+            // The output contract's example envelopes use these placeholder paths. A "patch"
+            // targeting one of them is the model echoing its instructions (deliberation), not a
+            // real proposal — reject it so the retry/rescue pipeline asks for a real patch.
+            if (IsContractPlaceholderPath(relativePath))
+            {
+                error = $"Patch targets the contract example placeholder path '{relativePath}' instead of a real workspace file.";
                 return false;
             }
 
@@ -699,7 +740,7 @@ namespace Malx_AI
             return true;
         }
 
-        private static string TrimLoosePatchContent(string relativePath, string content)
+        private static string TrimLoosePatchContent(string relativePath, string action, string content)
         {
             string trimmed = (content ?? string.Empty).Trim();
             trimmed = Regex.Replace(trimmed, @"(?im)^\s*\[\[END FILE\]\]\s*$[\s\S]*$", string.Empty).Trim();
@@ -709,8 +750,13 @@ namespace Malx_AI
             if (fenced.Success)
                 trimmed = fenced.Groups["content"].Value.TrimEnd();
 
+            // Only full-file content may be truncated at the document's closing tag. ACTION: edit
+            // content is SEARCH/REPLACE markers: a REPLACE block that legitimately ends with
+            // </html> (an edit touching the end of the file) would otherwise lose its trailing
+            // >>>>>>> REPLACE marker and fail to parse.
             string extension = Path.GetExtension(relativePath).ToLowerInvariant();
-            if (extension is ".html" or ".htm")
+            if (extension is ".html" or ".htm"
+                && !string.Equals(action, "edit", StringComparison.OrdinalIgnoreCase))
             {
                 int closingHtml = trimmed.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
                 if (closingHtml >= 0)
@@ -834,16 +880,166 @@ namespace Malx_AI
             for (int i = 0; i < blocks.Count; i++)
             {
                 WorkspacePatchEditBlock block = blocks[i];
-                int occurrences = CountOccurrences(result, block.Search);
-                if (occurrences == 0)
-                    throw new InvalidOperationException($"{relativePath}: edit block {i + 1:n0} SEARCH text was not found.");
+                string search = block.Search ?? string.Empty;
+                string replace = block.Replace ?? string.Empty;
+
+                // Tier 1: exact byte match — the fast, unambiguous path.
+                int occurrences = CountOccurrences(result, search);
+                if (occurrences == 1)
+                {
+                    result = result.Replace(search, replace, StringComparison.Ordinal);
+                    continue;
+                }
                 if (occurrences > 1)
                     throw new InvalidOperationException($"{relativePath}: edit block {i + 1:n0} SEARCH text matched {occurrences:n0} times; make the anchor unique.");
 
-                result = result.Replace(block.Search, block.Replace ?? string.Empty, StringComparison.Ordinal);
+                // Tier 2+: models routinely reproduce a region with slightly wrong indentation or
+                // trailing whitespace. Rather than fail the whole patch, locate the SEARCH span by
+                // progressively looser line-based comparison and splice the (re-indented) REPLACE
+                // over the ACTUAL file span. Each looser tier still requires a UNIQUE match so a
+                // fuzzy anchor can never overwrite the wrong location.
+                if (TryLocateFuzzySearchSpan(result, search, out int spanStart, out int spanLength, out string spanReplace, replace))
+                {
+                    result = result[..spanStart] + spanReplace + result[(spanStart + spanLength)..];
+                    continue;
+                }
+
+                throw new InvalidOperationException($"{relativePath}: edit block {i + 1:n0} SEARCH text was not found.");
             }
 
             return result;
+        }
+
+        // Locate a SEARCH block in the file by line-sequence comparison at increasing whitespace
+        // tolerance. Returns the exact character span in the file plus a REPLACE re-indented to the
+        // file's actual indentation, so a slightly-misindented anchor applies cleanly and correctly.
+        private static bool TryLocateFuzzySearchSpan(
+            string file,
+            string search,
+            out int spanStart,
+            out int spanLength,
+            out string adjustedReplace,
+            string replace)
+        {
+            spanStart = 0;
+            spanLength = 0;
+            adjustedReplace = replace;
+
+            string[] searchLines = search.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+            // Drop leading/trailing blank anchor lines: they carry no positional information and are
+            // the single most common source of a spurious extra/missing line in a model's anchor.
+            int sFirst = 0, sLast = searchLines.Length - 1;
+            while (sFirst <= sLast && searchLines[sFirst].Trim().Length == 0) sFirst++;
+            while (sLast >= sFirst && searchLines[sLast].Trim().Length == 0) sLast--;
+            if (sFirst > sLast)
+                return false;
+
+            var wantedRaw = new List<string>();
+            for (int i = sFirst; i <= sLast; i++)
+                wantedRaw.Add(searchLines[i]);
+
+            var fileLineSpans = SplitLinesWithSpans(file);
+
+            // comparer 0: trailing-whitespace-insensitive (exact indentation).
+            // comparer 1: fully trimmed (indentation-insensitive).
+            for (int tier = 0; tier <= 1; tier++)
+            {
+                Func<string, string> norm = tier == 0
+                    ? (s => s.TrimEnd())
+                    : (s => s.Trim());
+
+                var match = FindUniqueLineBlock(fileLineSpans, wantedRaw, norm);
+                if (match == null)
+                    continue;
+
+                (int startLine, int endLine) = match.Value;
+                spanStart = fileLineSpans[startLine].Start;
+                int spanEnd = fileLineSpans[endLine].Start + fileLineSpans[endLine].Length;
+                spanLength = spanEnd - spanStart;
+
+                // Re-indent REPLACE by the difference between the file's actual indentation and the
+                // anchor's indentation on the first meaningful line, so tier-1 (trim) matches keep
+                // the file's real indentation instead of the model's off-by-N version.
+                string fileIndent = LeadingWhitespace(fileLineSpans[startLine].Text);
+                string anchorIndent = LeadingWhitespace(wantedRaw[0]);
+                adjustedReplace = tier == 1 && !string.Equals(fileIndent, anchorIndent, StringComparison.Ordinal)
+                    ? ReindentBlock(replace, anchorIndent, fileIndent)
+                    : replace;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static (int Start, int Length, string Text)[] SplitLinesWithSpans(string text)
+        {
+            var spans = new List<(int Start, int Length, string Text)>();
+            int lineStart = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '\n')
+                {
+                    spans.Add((lineStart, i - lineStart, text[lineStart..i]));
+                    lineStart = i + 1;
+                }
+            }
+            spans.Add((lineStart, text.Length - lineStart, text[lineStart..]));
+            return spans.ToArray();
+        }
+
+        private static (int StartLine, int EndLine)? FindUniqueLineBlock(
+            (int Start, int Length, string Text)[] fileLines,
+            List<string> wanted,
+            Func<string, string> norm)
+        {
+            var normWanted = wanted.Select(norm).ToArray();
+            int found = -1;
+            int matchCount = 0;
+
+            for (int start = 0; start + normWanted.Length <= fileLines.Length; start++)
+            {
+                bool ok = true;
+                for (int k = 0; k < normWanted.Length; k++)
+                {
+                    if (!string.Equals(norm(fileLines[start + k].Text), normWanted[k], StringComparison.Ordinal))
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+
+                if (ok)
+                {
+                    matchCount++;
+                    if (matchCount > 1)
+                        return null; // ambiguous — refuse rather than risk the wrong location
+                    found = start;
+                }
+            }
+
+            return found >= 0 ? (found, found + normWanted.Length - 1) : null;
+        }
+
+        private static string LeadingWhitespace(string line)
+        {
+            int i = 0;
+            while (i < line.Length && (line[i] == ' ' || line[i] == '\t'))
+                i++;
+            return line[..i];
+        }
+
+        private static string ReindentBlock(string block, string fromIndent, string toIndent)
+        {
+            string[] lines = block.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (lines[i].Length == 0)
+                    continue;
+                lines[i] = fromIndent.Length > 0 && lines[i].StartsWith(fromIndent, StringComparison.Ordinal)
+                    ? toIndent + lines[i][fromIndent.Length..]
+                    : toIndent + lines[i].TrimStart(' ', '\t');
+            }
+            return string.Join("\n", lines);
         }
 
         public WorkspaceGitStatus GetGitStatus(string rootPath)
@@ -1415,6 +1611,14 @@ namespace Malx_AI
         {
             error = message;
             return false;
+        }
+
+        // Placeholder paths used by the patch-format examples in the Builder's instructions.
+        private static bool IsContractPlaceholderPath(string relativePath)
+        {
+            return relativePath.Equals("relative/path/from/workspace.ext", StringComparison.OrdinalIgnoreCase)
+                || relativePath.Equals("path/from/workspace.ext", StringComparison.OrdinalIgnoreCase)
+                || relativePath.Equals("relative/path/of/target/file", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string NormalizeRelativePatchPath(string path)

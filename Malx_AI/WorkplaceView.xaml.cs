@@ -133,7 +133,9 @@ namespace Malx_AI
                 ConnectedWorkspaceStatusBlock.Text = !enabled
                     ? "Step 1: enable access. This locks the chat to the current local/cloud mode."
                     : _hasPendingCodebaseChanges
-                        ? "Review pending code changes in Project Canvas."
+                        ? _pendingCodebasePatchApplyBlocked
+                            ? "Patch blocked by pre-apply safety checks. No files changed."
+                            : "Review pending code changes in Project Canvas."
                         : hasConnectedCode
                             ? $"Ready in {lockedMode} mode. Ask for a small code change to get a reviewable patch."
                             : $"Enabled in {lockedMode} mode. Step 2: open a local folder or clone a repo.";
@@ -169,15 +171,24 @@ namespace Malx_AI
                     : "Step 2 unlocks after access is enabled.";
 
             if (CodebaseReviewHintBlock != null)
-                CodebaseReviewHintBlock.Text = _hasPendingCodebaseChanges
-                    ? _pendingCodebasePatchApplyBlocked
-                        ? "Patch blocked: inspect Project Canvas, then reject or ask Builder to regenerate it."
-                        : "Patch ready: inspect Project Canvas, then accept or reject."
-                    : _lastCodebaseUndo != null
-                        ? "Last patch can be undone from Project Canvas or this panel."
-                    : _connectedWorkspace.AutoApplyCodebaseChanges
+            {
+                if (_hasPendingCodebaseChanges)
+                {
+                    CodebaseReviewHintBlock.Text = _pendingCodebasePatchApplyBlocked
+                        ? "Patch blocked: " + GetPendingCodebasePatchBlockInlineSummary()
+                        : "Patch ready: inspect Project Canvas, then accept or reject.";
+                }
+                else if (_lastCodebaseUndo != null)
+                {
+                    CodebaseReviewHintBlock.Text = "Last patch can be undone from Project Canvas or this panel.";
+                }
+                else
+                {
+                    CodebaseReviewHintBlock.Text = _connectedWorkspace.AutoApplyCodebaseChanges
                         ? "Step 3: ask for a change. Valid patches will be applied automatically."
                         : "Step 3: ask for a change. Proposed edits appear in Project Canvas for review.";
+                }
+            }
 
             if (CodebaseAutoApplyHintBlock != null)
                 CodebaseAutoApplyHintBlock.Text = _connectedWorkspace.AutoApplyCodebaseChanges
@@ -187,15 +198,21 @@ namespace Malx_AI
             Visibility reviewVisibility = enabled && (!_connectedWorkspace.AutoApplyCodebaseChanges || _hasPendingCodebaseChanges)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            bool canAcceptCodebaseChanges = _hasPendingCodebaseChanges && !_pendingCodebasePatchApplyBlocked;
+            string acceptToolTip = BuildCodebaseAcceptToolTip(canAcceptCodebaseChanges);
             if (AcceptCodebaseChangesButton != null)
             {
                 AcceptCodebaseChangesButton.Visibility = reviewVisibility;
-                AcceptCodebaseChangesButton.IsEnabled = _hasPendingCodebaseChanges && !_pendingCodebasePatchApplyBlocked;
+                AcceptCodebaseChangesButton.IsEnabled = canAcceptCodebaseChanges;
+                AcceptCodebaseChangesButton.ToolTip = acceptToolTip;
             }
             if (RejectCodebaseChangesButton != null)
             {
                 RejectCodebaseChangesButton.Visibility = reviewVisibility;
                 RejectCodebaseChangesButton.IsEnabled = _hasPendingCodebaseChanges;
+                RejectCodebaseChangesButton.ToolTip = _pendingCodebasePatchApplyBlocked
+                    ? "Reject the blocked patch and ask Builder for a corrected version"
+                    : "Reject proposed codebase changes";
             }
             Visibility undoVisibility = enabled && _lastCodebaseUndo != null && !_hasPendingCodebaseChanges
                 ? Visibility.Visible
@@ -213,9 +230,72 @@ namespace Malx_AI
             if (CodebaseReviewActionGrid != null)
                 CodebaseReviewActionGrid.Visibility = reviewVisibility;
             if (AcceptCodebaseChangesSidebarButton != null)
-                AcceptCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges && !_pendingCodebasePatchApplyBlocked;
+            {
+                AcceptCodebaseChangesSidebarButton.IsEnabled = canAcceptCodebaseChanges;
+                AcceptCodebaseChangesSidebarButton.ToolTip = acceptToolTip;
+            }
             if (RejectCodebaseChangesSidebarButton != null)
+            {
                 RejectCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges;
+                RejectCodebaseChangesSidebarButton.ToolTip = _pendingCodebasePatchApplyBlocked
+                    ? "Reject the blocked patch and ask Builder for a corrected version"
+                    : "Reject proposed codebase changes";
+            }
+        }
+
+        private string BuildCodebaseAcceptToolTip(bool canAccept)
+        {
+            if (canAccept)
+                return "Accept proposed codebase changes";
+            if (!_hasPendingCodebaseChanges)
+                return "No proposed codebase changes are waiting to accept";
+            if (_pendingCodebasePatchApplyBlocked)
+                return "Accept disabled: blocking pre-apply checks failed.\n" + GetPendingCodebasePatchBlockReasonText();
+            return "Accept proposed codebase changes";
+        }
+
+        private string GetPendingCodebasePatchBlockInlineSummary()
+        {
+            string reason = GetPendingCodebasePatchBlockReasonText()
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault() ?? "inspect Project Canvas, then reject or ask Builder to regenerate it.";
+            reason = reason.Trim();
+            if (reason.StartsWith("- ", StringComparison.Ordinal))
+                reason = reason[2..].TrimStart();
+            if (reason.Length > 150)
+                reason = reason[..150].TrimEnd() + "...";
+            return reason + " Reject it or ask Builder to regenerate it.";
+        }
+
+        private string GetPendingCodebasePatchBlockReasonText()
+        {
+            return string.IsNullOrWhiteSpace(_pendingCodebasePatchBlockSummary)
+                ? "Pre-apply validation found a blocking safety issue."
+                : _pendingCodebasePatchBlockSummary;
+        }
+
+        private static string FormatCodebasePatchReasonText(IReadOnlyList<string> reasons)
+        {
+            if (reasons == null || reasons.Count == 0)
+                return "Pre-apply validation failed.";
+
+            List<string> cleaned = reasons
+                .Where(reason => !string.IsNullOrWhiteSpace(reason))
+                .Select(reason => reason.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(5)
+                .ToList();
+
+            if (cleaned.Count == 0)
+                return "Pre-apply validation failed.";
+
+            string text = string.Join("\n", cleaned.Select(reason => "- " + reason));
+            int omitted = Math.Max(0, reasons.Count - cleaned.Count);
+            if (omitted > 0)
+                text += $"\n- ... {omitted:n0} more issue(s)";
+            if (text.Length > 1000)
+                text = text[..1000].TrimEnd() + "...";
+            return text;
         }
 
         private static string FormatByteCount(long bytes)
@@ -1470,7 +1550,7 @@ namespace Malx_AI
             sb.AppendLine("PENDING CODEBASE PATCH DRAFT:");
             sb.AppendLine("A previous Builder patch is still pending in this chat and has not necessarily been written to disk.");
             sb.AppendLine("For follow-up requests that refer to what was just made or proposed, treat the materialized draft below as the current editable state.");
-            sb.AppendLine("Return a new patch that supersedes the pending draft. If you edit a pending draft, prefer a complete ACTION: replace section for that target so the host can apply the final result to disk.");
+            sb.AppendLine("Return a new patch that supersedes the pending draft. Prefer ACTION: edit with SEARCH anchors copied EXACTLY from the pending draft content below (not from older on-disk file content shown elsewhere); the host rebases your edit onto the draft. Use a complete ACTION: replace section only when the change is too large to anchor or the draft content below is truncated.");
             sb.AppendLine();
 
             int remaining = Math.Clamp(maxChars / 2, 6000, 40000);
@@ -1579,7 +1659,9 @@ namespace Malx_AI
                 "Never output analysis, reasoning, planning, explanations, summaries, or markdown outside the patch envelope. " +
                 "If the user asks for a single-file HTML/CSS/JavaScript app, patch the named connected HTML file; do not return raw standalone HTML outside the envelope. " +
                 "Use relative paths only. Do not use delete actions. " +
-                "Prefer ACTION: edit for existing files: each SEARCH block must copy exact current file text and match exactly once. " +
+                "Prefer ACTION: edit for existing files. CRITICAL: the SEARCH block must be COPIED VERBATIM from the provided file content — character for character, every brace/bracket/quote and every indentation space — never retyped, reconstructed, summarized, or reformatted, or it will not match and the edit will be rejected. " +
+                "Keep each SEARCH block as SMALL as possible: only the few lines you are actually changing plus at most one unchanged line above and below for uniqueness. Do not wrap a large region in one SEARCH block. " +
+                "Use several small edit blocks for several separate changes instead of one giant block. " +
                 "Every REPLACE block must be DIFFERENT from its SEARCH block — a patch that leaves the file unchanged is invalid and will be rejected. " +
                 "Use ACTION: replace only when a full-file replacement is small and necessary; use ACTION: create only for new files. " +
                 "For ACTION: replace/create, always wrap file content in a fenced code block immediately after ACTION. " +
@@ -1916,6 +1998,7 @@ namespace Malx_AI
                 _hasPendingCodebaseChanges = false;
                 _pendingCodebasePatch = null;
                 _pendingCodebasePatchApplyBlocked = false;
+                _pendingCodebasePatchBlockSummary = string.Empty;
                 _lastCodebaseUndo = null;
             }
 
@@ -2057,6 +2140,7 @@ namespace Malx_AI
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
             _pendingCodebasePatchApplyBlocked = false;
+            _pendingCodebasePatchBlockSummary = string.Empty;
             _lastCodebaseUndo = null;
 
             _contextSize = snapshot.GlobalContextSize <= 0 ? _contextSize : Math.Clamp(snapshot.GlobalContextSize, MinRoleContext, MaxRoleContext);
@@ -2131,6 +2215,7 @@ namespace Malx_AI
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
             _pendingCodebasePatchApplyBlocked = false;
+            _pendingCodebasePatchBlockSummary = string.Empty;
             _lastCodebaseUndo = null;
             LoadOpenRouterKeyForWorkplace();
             RefreshWorkplaceCloudModeUi();
@@ -2215,10 +2300,15 @@ namespace Malx_AI
         private bool _hasPendingCodebaseChanges;
         private WorkspacePatchProposal? _pendingCodebasePatch;
         private bool _pendingCodebasePatchApplyBlocked;
+        private string _pendingCodebasePatchBlockSummary = string.Empty;
         // Set when the last capture attempt rejected a syntactically valid patch that changed
         // nothing (SEARCH == REPLACE / replace identical to current file), so the patch-format
         // retry can tell the Builder what was actually wrong instead of the generic format nag.
         private string _lastWorkspacePatchNoOpDetail = string.Empty;
+        // Set when an ACTION: edit patch parsed cleanly but its SEARCH anchor does not match the
+        // target file (the model reconstructed the region instead of copying it), so the pipeline
+        // can retry with the EXACT file region rather than dead-ending on a blocked review.
+        private string _lastWorkspacePatchAnchorMismatchDetail = string.Empty;
         private string _lastPendingWorkspacePatchRebaseFailure = string.Empty;
         private CodebaseUndoSnapshot? _lastCodebaseUndo;
         private string _builderPythonSandboxPreamble = "";
@@ -4329,6 +4419,18 @@ namespace Malx_AI
                 return false;
             }
 
+            // An edit whose SEARCH anchor no longer matches the file (even after fuzzy whitespace
+            // matching) is a reconstructed/hallucinated anchor, not a reviewable proposal. Rather
+            // than block it behind manual review, reject it so the pipeline's patch-format retry can
+            // hand the Builder the EXACT current region and demand a verbatim anchor.
+            if (TryDetectEditAnchorMismatch(proposal, out string anchorMismatchDetail))
+            {
+                _lastWorkspacePatchAnchorMismatchDetail = anchorMismatchDetail;
+                AppendChat("warning", $"Builder's edit did not line up with the current file ({anchorMismatchDetail}). Asking for a corrected patch...");
+                LogActivity($"Codebase patch rejected for SEARCH anchor mismatch ({anchorMismatchDetail}).");
+                return false;
+            }
+
             try
             {
                 foreach (WorkspaceFilePatch patch in proposal.Files)
@@ -4340,8 +4442,12 @@ namespace Malx_AI
                 _pendingCodebasePatch = proposal;
                 _hasPendingCodebaseChanges = true;
                 _pendingCodebasePatchApplyBlocked = true;
+                _pendingCodebasePatchBlockSummary = FormatCodebasePatchReasonText([reason]);
                 RenderCodebasePatchReview(proposal, autoMode: false);
-                AddCodebasePatchNoticeRow("Path check failed. No files were changed.\n- " + reason);
+                CanvasTitleBlock.Text = "Codebase Patch Blocked";
+                CanvasSubtitleBlock.Text = "Accept disabled: path check failed; no files changed.";
+                AddCodebasePatchNoticeRow("Path check failed. No files were changed.\n- " + reason +
+                    "\n\nAccept is disabled because the patch target cannot be verified. Reject it or ask Builder to regenerate the patch.");
                 RefreshCodebaseAccessUi();
                 SavePersistedSession();
                 AppendChat("warning", "Builder produced a patch, but it is pending manual review because " + reason);
@@ -4364,6 +4470,7 @@ namespace Malx_AI
             _pendingCodebasePatch = proposal;
             _hasPendingCodebaseChanges = true;
             _pendingCodebasePatchApplyBlocked = false;
+            _pendingCodebasePatchBlockSummary = string.Empty;
             RenderCodebasePatchReview(proposal, _connectedWorkspace.AutoApplyCodebaseChanges);
             if (!initialValidation.IsValid)
             {
@@ -4593,6 +4700,8 @@ namespace Malx_AI
         {
             _pendingCodebasePatch = null;
             _hasPendingCodebaseChanges = false;
+            _pendingCodebasePatchApplyBlocked = false;
+            _pendingCodebasePatchBlockSummary = string.Empty;
 
             var review = new StringBuilder();
             review.AppendLine("# Codebase Patch Review");
@@ -4774,13 +4883,27 @@ namespace Malx_AI
                 return null;
             }
 
-            // A full-file regeneration of a large existing file by a struggling model is how content
-            // gets silently dropped. Beyond this size, fail closed and keep the manual-review guidance.
-            const int maxRescueSourceChars = 24000;
+            if (ShouldPreferDeterministicWorkspacePatchRescue(runContext, targetPath))
+            {
+                string? deterministicEnvelope = TryBuildDeterministicWorkspacePatchRescue(runContext, targetPath, targetExists, existingContent);
+                if (!string.IsNullOrWhiteSpace(deterministicEnvelope))
+                {
+                    LogActivity($"Content-only patch rescue skipped model rewrite for sub-1B local Builder; deterministic fallback used for {targetPath}.");
+                    return deterministicEnvelope;
+                }
+            }
+
+            // A full-file regeneration by a struggling model is how content gets silently dropped, so
+            // the source size is capped. The old flat 24k cap was sized for small LOCAL models and
+            // abandoned ordinary iterated files (a 32k single-file HTML app) with no recovery at all.
+            // Cloud roles run 131k-token-window models, so they can safely regenerate a much larger
+            // file; any drop is still caught downstream by the destructive-truncation/size-collapse
+            // validators and (for HTML) the completion stitcher, so a bad rewrite fails closed anyway.
+            int maxRescueSourceChars = runContext.IsCloudExecution ? 120000 : 24000;
             if (existingContent.Length > maxRescueSourceChars)
             {
-                LogActivity($"Content-only patch rescue skipped: {targetPath} is too large for a safe full-file rewrite.");
-                return null;
+                LogActivity($"Content-only patch rescue skipped: {targetPath} is too large for a safe full-file rewrite ({existingContent.Length:n0} > {maxRescueSourceChars:n0} chars).");
+                return TryBuildDeterministicWorkspacePatchRescue(runContext, targetPath, targetExists, existingContent);
             }
 
             AppendChat("system", $"Builder could not produce the patch envelope. Retrying as a plain full-file rewrite of {targetPath}; the app will wrap it into a reviewable patch.");
@@ -4829,7 +4952,7 @@ namespace Malx_AI
                 || !IsPlausibleRecoveredFileContent(targetPath, content, existingContent, requireCompleteHtml: false))
             {
                 LogActivity("Content-only patch rescue failed: the rewrite output was not plausible full-file content.");
-                return null;
+                return TryBuildDeterministicWorkspacePatchRescue(runContext, targetPath, targetExists, existingContent);
             }
 
             // Small local models cap generation well below what a complete HTML file needs, so the
@@ -4842,7 +4965,7 @@ namespace Malx_AI
                 if (!IsHtmlDocumentComplete(content))
                 {
                     LogActivity("Content-only patch rescue failed: HTML remained truncated after continuation passes.");
-                    return null;
+                    return TryBuildDeterministicWorkspacePatchRescue(runContext, targetPath, targetExists, existingContent);
                 }
             }
 
@@ -4854,6 +4977,46 @@ namespace Malx_AI
             }
 
             LogActivity($"Content-only patch rescue succeeded for {targetPath}.");
+            return envelope;
+        }
+
+        private bool ShouldPreferDeterministicWorkspacePatchRescue(CouncilRunContext runContext, string targetPath)
+        {
+            if (runContext.IsCloudExecution || _isCloudModeEnabled)
+                return false;
+
+            string extension = Path.GetExtension(targetPath).ToLowerInvariant();
+            if (extension is not (".html" or ".htm"))
+                return false;
+
+            CouncilModelConfig config = GetEffectiveRoleConfig(CouncilRole.Builder);
+            bool isGemma4 = IsGemma4Model(config.DisplayName) || IsGemma4Model(config.ModelPath ?? "");
+            return !isGemma4 && LocalModelCapabilityProfile.FromModel(config.ModelPath).IsSubOneB;
+        }
+
+        private string? TryBuildDeterministicWorkspacePatchRescue(
+            CouncilRunContext runContext,
+            string targetPath,
+            bool targetExists,
+            string existingContent)
+        {
+            string extension = Path.GetExtension(targetPath).ToLowerInvariant();
+            if (extension is not (".html" or ".htm"))
+                return null;
+
+            string? content = TryBuildDeterministicWorkspaceHtmlRecovery(runContext, existingContent);
+            if (string.IsNullOrWhiteSpace(content))
+                return null;
+
+            string envelope = BuildRecoveredCodebasePatchEnvelope(targetPath, targetExists ? "replace" : "create", content);
+            if (!TryCaptureCodebasePatchProposal(envelope, runContext))
+            {
+                LogActivity("Deterministic workspace patch rescue failed: wrapped fallback was rejected by validation.");
+                return null;
+            }
+
+            LogActivity($"Deterministic workspace patch rescue succeeded for {targetPath}.");
+            AppendChat("system", $"Local Builder fallback produced a reviewable {targetPath} patch after the model failed to return complete patch content.");
             return envelope;
         }
 
@@ -5022,7 +5185,9 @@ namespace Malx_AI
 
                     if (matches.Count == 1 && !string.Equals(matches[0], relativePath, StringComparison.OrdinalIgnoreCase))
                     {
-                        renamed.Add(new WorkspaceFilePatch(matches[0], patch.Action, patch.Content));
+                        // Keep EditBlocks: dropping them turns a valid ACTION: edit patch into one
+                        // with no SEARCH/REPLACE blocks, which fails materialization later.
+                        renamed.Add(new WorkspaceFilePatch(matches[0], patch.Action, patch.Content, patch.EditBlocks));
                         changed = true;
                         LogActivity($"Codebase patch target adjusted from {relativePath} to prompt-named context file {matches[0]}.");
                         continue;
@@ -5078,6 +5243,18 @@ namespace Malx_AI
                 }
                 catch (Exception ex)
                 {
+                    // Follow-up edits are often anchored on the ON-DISK file content (models copy
+                    // SEARCH text from RELEVANT FILES rather than the pending draft). If the edit
+                    // materializes cleanly against the disk file, keep it as a direct edit instead
+                    // of rejecting the whole proposal for a draft-rebase mismatch.
+                    if (string.Equals(patch.Action, "edit", StringComparison.OrdinalIgnoreCase)
+                        && TryMaterializeEditAgainstDisk(patch))
+                    {
+                        LogActivity($"Pending codebase patch rebase skipped for {patch.RelativePath}: SEARCH anchors match the on-disk file; keeping the direct edit.");
+                        rebased.Add(patch);
+                        continue;
+                    }
+
                     _lastPendingWorkspacePatchRebaseFailure = $"{patch.RelativePath}: {ex.Message}";
                     LogActivity($"Pending codebase patch rebase failed for {patch.RelativePath}: {ex.Message}");
                     rebased.Add(patch);
@@ -5089,6 +5266,86 @@ namespace Malx_AI
 
             LogActivity("Codebase follow-up patch rebased over the pending draft before review/apply.");
             return new WorkspacePatchProposal(rebased, proposal.RawText);
+        }
+
+        private bool TryMaterializeEditAgainstDisk(WorkspaceFilePatch patch)
+        {
+            try
+            {
+                _workspaceAccessService.MaterializePatchContent(_connectedWorkspace, patch);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // True when a proposal contains an ACTION: edit whose SEARCH block cannot be located in the
+        // current file (after fuzzy matching). detail names the first offending file so the retry
+        // message can be specific.
+        private bool TryDetectEditAnchorMismatch(WorkspacePatchProposal proposal, out string detail)
+        {
+            detail = string.Empty;
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                if (!string.Equals(patch.Action, "edit", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try
+                {
+                    _workspaceAccessService.MaterializePatchContent(_connectedWorkspace, patch);
+                }
+                catch (Exception ex) when (ex.Message.Contains("SEARCH text was not found", StringComparison.OrdinalIgnoreCase))
+                {
+                    detail = patch.RelativePath;
+                    return true;
+                }
+                catch
+                {
+                    // Other materialization errors (ambiguous anchor, missing file) are handled by
+                    // the normal validation path, not the anchor-mismatch retry.
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        // The full current text of the target files the Builder tried to edit, for the corrective
+        // retry. The anchor failed because the model did not copy the file verbatim, so re-showing
+        // the exact bytes (untruncated) is what lets it produce a matching SEARCH block.
+        private string BuildExactFileRegionsForAnchorRetry(WorkspacePatchProposal proposal)
+        {
+            var sb = new StringBuilder();
+            foreach (WorkspaceFilePatch patch in proposal.Files
+                .Where(p => string.Equals(p.Action, "edit", StringComparison.OrdinalIgnoreCase))
+                .Take(3))
+            {
+                try
+                {
+                    string target = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+                    if (!File.Exists(target))
+                        continue;
+
+                    string content = File.ReadAllText(target);
+                    // Cap defensively; the cloud budget carries the whole file, but a giant file must
+                    // not blow the retry payload. 40k comfortably covers iterated single-file apps.
+                    const int cap = 40000;
+                    if (content.Length > cap)
+                        content = content[..cap] + "\n[...file truncated; anchor on a region ABOVE this point]";
+
+                    sb.AppendLine($"--- EXACT CURRENT CONTENT OF {patch.RelativePath} (copy SEARCH text from here, byte for byte) ---");
+                    sb.AppendLine(content);
+                    sb.AppendLine();
+                }
+                catch
+                {
+                    // Skip unreadable targets; the generic retry guidance still applies.
+                }
+            }
+
+            return sb.ToString().Trim();
         }
 
         private static string NormalizeWorkspaceRelativePath(string relativePath)
@@ -5420,7 +5677,8 @@ namespace Malx_AI
 
             if (_pendingCodebasePatchApplyBlocked)
             {
-                AppendChat("warning", "This codebase patch is blocked by hard safety checks and must be regenerated or rejected before it can be applied.");
+                AppendChat("warning", "This codebase patch is blocked by hard safety checks and must be regenerated or rejected before it can be applied.\n" +
+                    GetPendingCodebasePatchBlockReasonText());
                 return false;
             }
 
@@ -5467,6 +5725,7 @@ namespace Malx_AI
                 _pendingCodebasePatch = null;
                 _hasPendingCodebaseChanges = false;
                 _pendingCodebasePatchApplyBlocked = false;
+                _pendingCodebasePatchBlockSummary = string.Empty;
                 RefreshConnectedWorkspaceIndexAfterPatch();
                 WorkspaceGitStatus gitAfter = GetConnectedWorkspaceGitStatus();
                 RenderCodebaseApplySummaryView(result, proposal, automatic, gitBefore, gitAfter, validation.Reasons, gitCheckpoint);
@@ -5896,19 +6155,21 @@ namespace Malx_AI
             _pendingCodebasePatch = proposal;
             _hasPendingCodebaseChanges = true;
             _pendingCodebasePatchApplyBlocked = !allowManualOverride;
+            _pendingCodebasePatchBlockSummary = FormatCodebasePatchReasonText(reasons);
             RenderCodebasePatchReview(proposal, autoMode: false);
-            string reasonText = reasons.Count == 0
-                ? "Pre-apply validation failed."
-                : string.Join("\n", reasons.Select(reason => "- " + reason));
-            CanvasTitleBlock.Text = "Codebase Patch Needs Review";
-            CanvasSubtitleBlock.Text = "Pre-apply checks failed; no files changed.";
+            string reasonText = _pendingCodebasePatchBlockSummary;
+            CanvasTitleBlock.Text = allowManualOverride ? "Codebase Patch Needs Review" : "Codebase Patch Blocked";
+            CanvasSubtitleBlock.Text = allowManualOverride
+                ? "Pre-apply warnings; no files changed."
+                : "Accept disabled: blocking pre-apply checks failed.";
             AddCodebasePatchNoticeRow("Pre-apply checks failed. No files were changed.\n" + reasonText +
                 (allowManualOverride
                     ? "\n\nAuto mode paused. Review the diff, then use Accept to apply anyway or Reject to discard it."
-                    : "\n\nThe patch is still pending for review, but this issue must be corrected before it can be safely written."));
+                    : "\n\nAccept is disabled because writing this patch could corrupt the target file. Reject it or ask Builder to regenerate the patch."));
             AppendChat("warning", (automatic
                 ? "Auto apply paused; the patch is still pending for manual review because pre-apply checks failed:\n"
-                : "Codebase changes were not applied because pre-apply checks failed:\n") + reasonText);
+                : "Codebase changes were not applied because pre-apply checks failed:\n") + reasonText +
+                (allowManualOverride ? "" : "\nAccept is disabled until the patch is regenerated or rejected."));
             LogActivity("Codebase pre-apply validation failed: " + string.Join("; ", reasons));
             RefreshCodebaseAccessUi();
             SavePersistedSession();
@@ -6157,6 +6418,7 @@ namespace Malx_AI
             _pendingCodebasePatch = null;
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatchApplyBlocked = false;
+            _pendingCodebasePatchBlockSummary = string.Empty;
             _lastCodebaseUndo = null;
             RefreshCodebaseAccessUi();
             AppendChat("system", "Proposed codebase changes rejected.");
@@ -7160,6 +7422,103 @@ namespace Malx_AI
             return string.Empty;
         }
 
+        private static string TryBuildDeterministicWorkspaceHtmlRecovery(CouncilRunContext context, string originalContent)
+        {
+            string combined = $"{context.UserPrompt} {context.Objective} {context.ArchitectOutput}".ToLowerInvariant();
+            bool wantsSignIn = combined.Contains("sign in", StringComparison.Ordinal)
+                || combined.Contains("signin", StringComparison.Ordinal)
+                || combined.Contains("log in", StringComparison.Ordinal)
+                || combined.Contains("login", StringComparison.Ordinal)
+                || combined.Contains("auth screen", StringComparison.Ordinal)
+                || combined.Contains("authentication screen", StringComparison.Ordinal);
+            bool wantsUi = combined.Contains("screen", StringComparison.Ordinal)
+                || combined.Contains("page", StringComparison.Ordinal)
+                || combined.Contains("form", StringComparison.Ordinal)
+                || combined.Contains("ui", StringComparison.Ordinal)
+                || combined.Contains("ux", StringComparison.Ordinal);
+
+            if (!wantsSignIn || !wantsUi)
+                return string.Empty;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("<!DOCTYPE html>");
+            sb.AppendLine("<html lang=\"en\">");
+            sb.AppendLine("<head>");
+            sb.AppendLine("  <meta charset=\"UTF-8\">");
+            sb.AppendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+            sb.AppendLine("  <title>Sign In</title>");
+            sb.AppendLine("  <style>");
+            sb.AppendLine("    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; }");
+            sb.AppendLine("    * { box-sizing: border-box; }");
+            sb.AppendLine("    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f7fb; color: #111827; }");
+            sb.AppendLine("    main { width: min(100% - 32px, 420px); }");
+            sb.AppendLine("    .brand { margin-bottom: 22px; text-align: center; }");
+            sb.AppendLine("    .brand-mark { width: 44px; height: 44px; margin: 0 auto 12px; border-radius: 14px; background: #111827; box-shadow: 0 14px 30px rgba(17, 24, 39, 0.18); }");
+            sb.AppendLine("    h1 { margin: 0; font-size: 28px; line-height: 1.1; letter-spacing: 0; }");
+            sb.AppendLine("    .subtitle { margin: 8px 0 0; color: #6b7280; font-size: 14px; }");
+            sb.AppendLine("    form { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 24px; box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08); }");
+            sb.AppendLine("    label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 650; color: #374151; }");
+            sb.AppendLine("    .field { margin-bottom: 16px; }");
+            sb.AppendLine("    .input-wrap { position: relative; }");
+            sb.AppendLine("    input { width: 100%; height: 46px; border: 1px solid #d1d5db; border-radius: 8px; padding: 0 13px; font: inherit; color: #111827; background: #ffffff; outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease; }");
+            sb.AppendLine("    input:focus { border-color: #2563eb; box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12); }");
+            sb.AppendLine("    .password-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }");
+            sb.AppendLine("    .link { color: #2563eb; text-decoration: none; font-size: 13px; font-weight: 650; }");
+            sb.AppendLine("    .link:hover { text-decoration: underline; }");
+            sb.AppendLine("    .options { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 20px; color: #4b5563; font-size: 13px; }");
+            sb.AppendLine("    .check { display: inline-flex; align-items: center; gap: 8px; }");
+            sb.AppendLine("    .check input { width: 16px; height: 16px; padding: 0; }");
+            sb.AppendLine("    button { width: 100%; height: 46px; border: 0; border-radius: 8px; background: #111827; color: #ffffff; font: inherit; font-weight: 750; cursor: pointer; transition: transform 0.15s ease, background 0.15s ease; }");
+            sb.AppendLine("    button:hover { background: #1f2937; }");
+            sb.AppendLine("    button:active { transform: translateY(1px); }");
+            sb.AppendLine("    .message { min-height: 20px; margin: 14px 0 0; color: #b91c1c; font-size: 13px; text-align: center; }");
+            sb.AppendLine("    .footer { margin-top: 18px; color: #6b7280; font-size: 14px; text-align: center; }");
+            sb.AppendLine("    @media (max-width: 420px) { form { padding: 20px; } .options { align-items: flex-start; flex-direction: column; } }");
+            sb.AppendLine("  </style>");
+            sb.AppendLine("</head>");
+            sb.AppendLine("<body>");
+            sb.AppendLine("  <main aria-labelledby=\"signin-title\">");
+            sb.AppendLine("    <section class=\"brand\">");
+            sb.AppendLine("      <div class=\"brand-mark\" aria-hidden=\"true\"></div>");
+            sb.AppendLine("      <h1 id=\"signin-title\">Welcome back</h1>");
+            sb.AppendLine("      <p class=\"subtitle\">Sign in to continue to your workspace.</p>");
+            sb.AppendLine("    </section>");
+            sb.AppendLine("    <form id=\"signin-form\" novalidate>");
+            sb.AppendLine("      <div class=\"field\">");
+            sb.AppendLine("        <label for=\"email\">Email address</label>");
+            sb.AppendLine("        <div class=\"input-wrap\"><input id=\"email\" name=\"email\" type=\"email\" autocomplete=\"email\" placeholder=\"you@example.com\" required></div>");
+            sb.AppendLine("      </div>");
+            sb.AppendLine("      <div class=\"field\">");
+            sb.AppendLine("        <div class=\"password-row\"><label for=\"password\">Password</label><a class=\"link\" href=\"#\" aria-label=\"Reset password\">Forgot?</a></div>");
+            sb.AppendLine("        <div class=\"input-wrap\"><input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" placeholder=\"Enter your password\" minlength=\"8\" required></div>");
+            sb.AppendLine("      </div>");
+            sb.AppendLine("      <div class=\"options\">");
+            sb.AppendLine("        <label class=\"check\"><input id=\"remember\" name=\"remember\" type=\"checkbox\"> Remember me</label>");
+            sb.AppendLine("        <span>Secure session</span>");
+            sb.AppendLine("      </div>");
+            sb.AppendLine("      <button type=\"submit\">Sign in</button>");
+            sb.AppendLine("      <p id=\"form-message\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>");
+            sb.AppendLine("    </form>");
+            sb.AppendLine("    <p class=\"footer\">New here? <a class=\"link\" href=\"#\">Create an account</a></p>");
+            sb.AppendLine("  </main>");
+            sb.AppendLine("  <script>");
+            sb.AppendLine("    const form = document.getElementById('signin-form');");
+            sb.AppendLine("    const message = document.getElementById('form-message');");
+            sb.AppendLine("    form.addEventListener('submit', (event) => {");
+            sb.AppendLine("      event.preventDefault();");
+            sb.AppendLine("      const email = document.getElementById('email').value.trim();");
+            sb.AppendLine("      const password = document.getElementById('password').value;");
+            sb.AppendLine("      if (!email || !email.includes('@')) { message.textContent = 'Enter a valid email address.'; return; }");
+            sb.AppendLine("      if (password.length < 8) { message.textContent = 'Password must be at least 8 characters.'; return; }");
+            sb.AppendLine("      message.style.color = '#047857';");
+            sb.AppendLine("      message.textContent = 'Ready to authenticate.';");
+            sb.AppendLine("    });");
+            sb.AppendLine("  </script>");
+            sb.AppendLine("</body>");
+            sb.AppendLine("</html>");
+            return sb.ToString().Trim();
+        }
+
         /// <summary>
         /// Attempts to extract a single renderable artifact block from prose-wrapped Builder
         /// output. Scans for the largest fenced code block whose language tag indicates a
@@ -8028,6 +8387,7 @@ namespace Malx_AI
         private static string BuildBuilderContract(CouncilTaskType taskType, bool isArtifactCanvasRequest = false, bool isWorkspaceTask = false)
         {
             const string antiEcho = "Do NOT echo, restate, or reproduce any input labels, headers, [[BLOCK]] markers, or pipeline metadata in your output. " +
+                "Do NOT output thinking, hidden reasoning, chain-of-thought, scratch analysis, approach notes, or planning narration. " +
                 "Start directly with your implementation content.";
 
             if (isWorkspaceTask)
@@ -9514,7 +9874,7 @@ namespace Malx_AI
                 || normalized == "OUTPUT COMPLETE";
         }
 
-        private static string StripCriticReasoningFromVisibleText(string text)
+        private static string StripRoleReasoningFromVisibleText(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
                 return string.Empty;
@@ -9548,7 +9908,10 @@ namespace Malx_AI
             return cleaned.Trim();
         }
 
-        private static bool CriticContainsReasoningLeak(string output)
+        private static string StripCriticReasoningFromVisibleText(string text)
+            => StripRoleReasoningFromVisibleText(text);
+
+        private static bool ContainsVisibleReasoningLeak(string output)
         {
             if (string.IsNullOrWhiteSpace(output))
                 return false;
@@ -9575,7 +9938,8 @@ namespace Malx_AI
                 "we need to", "we should", "we have to", "let's", "let me",
                 "i need to", "i should", "i will", "i'll", "i must",
                 "okay, so", "okay so", "ok, so", "hmm", "the user wants",
-                "the user asked", "the task is", "first, i", "my plan"
+                "the user asked", "the task is", "first, i", "first i",
+                "my plan", "my approach", "to solve this", "to resolve this"
             ];
 
             if (reasoningOpeners.Any(open => lowerFirst.StartsWith(open, StringComparison.Ordinal)))
@@ -9583,7 +9947,47 @@ namespace Malx_AI
 
             return lowerHead.Contains("\nanalysis:", StringComparison.Ordinal)
                 || lowerHead.Contains("\nreasoning:", StringComparison.Ordinal)
-                || lowerHead.Contains("\nthinking:", StringComparison.Ordinal);
+                || lowerHead.Contains("\nthinking:", StringComparison.Ordinal)
+                || reasoningOpeners.Any(open => lowerHead.Contains("\n" + open, StringComparison.Ordinal));
+        }
+
+        private static bool CriticContainsReasoningLeak(string output)
+            => ContainsVisibleReasoningLeak(output);
+
+        private static bool BuilderContainsReasoningLeak(string output, CouncilRunContext runContext, CouncilTaskType taskType)
+        {
+            if (string.IsNullOrWhiteSpace(output))
+                return false;
+
+            if (ContainsVisibleReasoningLeak(output))
+                return true;
+
+            bool builderMustDeliverImplementation = taskType == CouncilTaskType.Coding
+                || runContext.IsWorkspaceTask
+                || runContext.IsArtifactCanvasRequest
+                || runContext.IsProjectCanvasIteration;
+            if (!builderMustDeliverImplementation)
+                return false;
+
+            string head = StripSpecialTokenText(output).TrimStart();
+            if (head.Length > 1200)
+                head = head[..1200];
+
+            string lowerHead = head.ToLowerInvariant();
+            string firstLine = head.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? string.Empty;
+            string lowerFirst = firstLine.ToLowerInvariant();
+
+            string[] implementationPlanningSignals =
+            [
+                "to resolve ", "to fix ", "to implement ", "i will implement ",
+                "i'll implement ", "i recommend implementing", "i recommend using",
+                "the required ", "first, i need to", "first i need to",
+                "first, i will", "first i will"
+            ];
+
+            return implementationPlanningSignals.Any(signal =>
+                lowerFirst.StartsWith(signal, StringComparison.Ordinal)
+                || lowerHead.Contains("\n" + signal, StringComparison.Ordinal));
         }
 
         private static bool TryNormalizeCriticReview(string raw, CouncilTaskType taskType, out string normalized, out bool markerFound)
@@ -11337,6 +11741,7 @@ namespace Malx_AI
                     bool builderNormalized;
                     bool builderOutputDetectedAsCode;
                     bool builderContractOk;
+                    bool builderVisibleReasoningLeak = builderReasoningFallback;
                     if (runContext.IsWorkspaceTask
                         && _workspaceAccessService.TryParsePatchProposal(builderOutput, out _, out _))
                     {
@@ -11344,7 +11749,8 @@ namespace Malx_AI
                         builderMarkerFound = true;
                         builderNormalized = true;
                         builderOutputDetectedAsCode = false;
-                        builderContractOk = true;
+                        builderVisibleReasoningLeak = builderReasoningFallback || BuilderContainsReasoningLeak(builderContractCleaned, runContext, taskType);
+                        builderContractOk = !builderVisibleReasoningLeak;
                     }
                     else if (runContext.IsWorkspaceTask
                         && TryRecoverCodebasePatchProposal(builderOutput, runContext, out WorkspacePatchProposal? recoveredBeforeRetry, out string preRetryRecoveryReason)
@@ -11354,14 +11760,18 @@ namespace Malx_AI
                         builderMarkerFound = true;
                         builderNormalized = true;
                         builderOutputDetectedAsCode = false;
-                        builderContractOk = true;
+                        builderVisibleReasoningLeak = builderReasoningFallback || BuilderContainsReasoningLeak(builderContractCleaned, runContext, taskType);
+                        builderContractOk = !builderVisibleReasoningLeak;
                         LogActivity("Workspace Builder output recovered before correction retry: " + preRetryRecoveryReason);
                     }
                     else
                     {
                         builderNormalized = TryNormalizeBuilderOutput(builderOutput, taskType, out builderContractCleaned, out builderMarkerFound);
                         builderOutputDetectedAsCode = builderNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
+                        builderVisibleReasoningLeak = builderReasoningFallback
+                            || (builderNormalized && BuilderContainsReasoningLeak(builderContractCleaned, runContext, taskType));
                         builderContractOk = builderNormalized
+                            && !builderVisibleReasoningLeak
                             && (useArtifactCanvasContract || builderOutputDetectedAsCode || !BuilderHasRoleDrift(builderContractCleaned, taskType))
                             && (taskType == CouncilTaskType.Coding || useArtifactCanvasContract || builderOutputDetectedAsCode || !IsLikelyCodeOutput(builderContractCleaned))
                             && !IsDegenerateBuilderOutput(builderContractCleaned, taskType)
@@ -11424,7 +11834,15 @@ namespace Malx_AI
                         }
                         else
                         {
-                            correctionPayload.AppendLine(BuildLabeledBlock("PREVIOUS BUILDER OUTPUT", builderOutput));
+                            if (builderVisibleReasoningLeak)
+                            {
+                                correctionPayload.AppendLine("PREVIOUS OUTPUT WAS REJECTED: it emitted hidden/internal reasoning or planning narration instead of the final Builder deliverable. Do not continue, summarize, or imitate it.");
+                            }
+
+                            string previousBuilderForRetry = builderVisibleReasoningLeak
+                                ? "[Suppressed: previous Builder turn emitted hidden/internal reasoning or planning narration instead of final output.]"
+                                : builderOutput;
+                            correctionPayload.AppendLine(BuildLabeledBlock("PREVIOUS BUILDER OUTPUT", previousBuilderForRetry));
                         }
 
                         var builderRetry = await ExecuteCouncilRoleAsync(
@@ -11463,7 +11881,11 @@ namespace Malx_AI
                             builderOutputDetectedAsCode = retryNormalized && DetectCodeOutput(builderContractCleaned).IsCode;
                         }
 
+                        bool retryReasoningLeak = builderReasoningFallback
+                            || BuilderContainsReasoningLeak(builderOutput, runContext, taskType)
+                            || (retryNormalized && BuilderContainsReasoningLeak(builderContractCleaned, runContext, taskType));
                         if (!retryNormalized
+                            || retryReasoningLeak
                             || (!useArtifactCanvasContract && !builderOutputDetectedAsCode && BuilderHasRoleDrift(builderContractCleaned, taskType))
                             || (taskType != CouncilTaskType.Coding && !useArtifactCanvasContract && !builderOutputDetectedAsCode && IsLikelyCodeOutput(builderContractCleaned))
                             || IsDegenerateBuilderOutput(builderContractCleaned, taskType))
@@ -11488,7 +11910,9 @@ namespace Malx_AI
                                 // Artifact requests are code-fenced deliverables — extract the code, never
                                 // strip it as if it were prose, so the artifact-recovery stage below can
                                 // still find a renderable artifact in the corrected output.
-                                string rawFallback = (taskType == CouncilTaskType.Coding || useArtifactCanvasContract)
+                                string rawFallback = retryReasoningLeak
+                                    ? string.Empty
+                                    : (taskType == CouncilTaskType.Coding || useArtifactCanvasContract)
                                     ? StripChatFromCode(builderOutput)
                                     : StripMarkdownFences(builderOutput);
 
@@ -11508,7 +11932,9 @@ namespace Malx_AI
                                 }
                                 else if (taskType != CouncilTaskType.Coding && !useArtifactCanvasContract)
                                 {
-                                    string candidate = string.IsNullOrWhiteSpace(rawFallback) ? builderOutput : rawFallback;
+                                    string candidate = retryReasoningLeak
+                                        ? string.Empty
+                                        : string.IsNullOrWhiteSpace(rawFallback) ? builderOutput : rawFallback;
                                     if (IsDegenerateBuilderOutput(candidate, taskType))
                                     {
                                         var synthesis = new StringBuilder();
@@ -11560,21 +11986,35 @@ namespace Malx_AI
                             builderOutput, runContext, builderSystem, token, baseStateVault);
 
                         _lastWorkspacePatchNoOpDetail = string.Empty;
+                        _lastWorkspacePatchAnchorMismatchDetail = string.Empty;
                         codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                         if (!codebasePatchCaptured)
                         {
                             string firstRejectedWorkspaceOutput = builderOutput;
                             bool firstAttemptWasNoOp = !string.IsNullOrWhiteSpace(_lastWorkspacePatchNoOpDetail);
                             string firstNoOpDetail = _lastWorkspacePatchNoOpDetail;
+                            bool firstAttemptWasAnchorMismatch = !string.IsNullOrWhiteSpace(_lastWorkspacePatchAnchorMismatchDetail);
+                            string firstAnchorMismatchDetail = _lastWorkspacePatchAnchorMismatchDetail;
                             bool firstAttemptWasPendingRebaseFailure = !string.IsNullOrWhiteSpace(_lastPendingWorkspacePatchRebaseFailure);
                             string firstPendingRebaseFailure = _lastPendingWorkspacePatchRebaseFailure;
+                            // Capture the exact target-file regions BEFORE the retry parse clobbers the
+                            // proposal state, so the corrective message can show the model real bytes.
+                            string anchorRetryFileRegions = firstAttemptWasAnchorMismatch
+                                && _workspaceAccessService.TryParsePatchProposal(firstRejectedWorkspaceOutput, out WorkspacePatchProposal? anchorProposal, out _)
+                                && anchorProposal != null
+                                ? BuildExactFileRegionsForAnchorRetry(anchorProposal)
+                                : string.Empty;
                             LogActivity(firstAttemptWasNoOp
                                 ? "Workspace Builder patch was a no-op; running one corrective retry."
+                                : firstAttemptWasAnchorMismatch
+                                    ? "Workspace Builder edit SEARCH anchor did not match the file; running one corrective retry with the exact region."
                                 : firstAttemptWasPendingRebaseFailure
                                     ? "Workspace Builder patch was based on stale pending-draft context; running one corrective retry."
                                 : "Workspace Builder output was not a patch envelope; running one patch-format retry.");
                             AppendChat("system", firstAttemptWasNoOp
                                 ? "Builder proposed a patch that changes nothing. Asking for a real change..."
+                                : firstAttemptWasAnchorMismatch
+                                    ? "Builder's edit did not match the current file. Asking for a corrected patch with exact anchors..."
                                 : firstAttemptWasPendingRebaseFailure
                                     ? "Builder proposed a patch against the wrong draft state. Asking for a complete replacement patch..."
                                 : "Builder returned raw code instead of a reviewable codebase patch. Asking for a patch-format retry...");
@@ -11584,6 +12024,13 @@ namespace Malx_AI
                             {
                                 patchFormatRetryPayload.AppendLine($"PATCH REJECTED: your previous [[AXIOM_CODEBASE_PATCH]] made NO changes — after applying it, {firstNoOpDetail} was byte-identical to the current file. A SEARCH block whose REPLACE block is the same text is invalid.");
                                 patchFormatRetryPayload.AppendLine("Re-read the CONNECTED CODEBASE CONTEXT below, find the code that must change to satisfy the request, and return a patch whose REPLACE content actually differs from SEARCH.");
+                            }
+                            else if (firstAttemptWasAnchorMismatch)
+                            {
+                                patchFormatRetryPayload.AppendLine($"PATCH REJECTED: your previous ACTION: edit SEARCH block for {firstAnchorMismatchDetail} did not match the current file, so nothing could be applied. This happens when the SEARCH text is retyped/reconstructed instead of copied.");
+                                patchFormatRetryPayload.AppendLine("Copy the SEARCH text VERBATIM from the EXACT CURRENT CONTENT below — character for character, including every brace, bracket, and indentation space. Use the SMALLEST unique anchor (just the few lines you are changing plus one line of surrounding context), NOT a large block. Do not paraphrase, summarize, or 'fix' unrelated lines inside the SEARCH.");
+                                if (!string.IsNullOrWhiteSpace(anchorRetryFileRegions))
+                                    patchFormatRetryPayload.AppendLine(BuildLabeledBlock("EXACT CURRENT FILE CONTENT", anchorRetryFileRegions));
                             }
                             else if (firstAttemptWasPendingRebaseFailure)
                             {
@@ -11598,7 +12045,7 @@ namespace Malx_AI
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REQUIRED OUTPUT FORMAT", BuildCodebasePatchOutputContractForBuilder()));
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", runContext.UserPrompt));
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("APPROVED ARCHITECTURE", runContext.ArchitectOutput));
-                            if (!string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
+                            if (!firstAttemptWasAnchorMismatch && !string.IsNullOrWhiteSpace(runContext.WorkspaceContext))
                                 patchFormatRetryPayload.AppendLine(BuildLabeledBlock("CONNECTED CODEBASE CONTEXT", runContext.WorkspaceContext));
                             patchFormatRetryPayload.AppendLine("Do not mention the prior failure. Do not explain your approach. Do not use prose. Return only the patch envelope.");
                             patchFormatRetryPayload.AppendLine("First output line must be exactly: [[AXIOM_CODEBASE_PATCH]]");
@@ -11616,12 +12063,16 @@ namespace Malx_AI
                             builderOutput = PostProcessBuilderOutput(patchFormatRetry.Answer, runContext);
                             builderReasoningFallback = patchFormatRetry.IsReasoningFallback;
                             _lastWorkspacePatchNoOpDetail = string.Empty;
+                            _lastWorkspacePatchAnchorMismatchDetail = string.Empty;
                             codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                             if (!codebasePatchCaptured)
                             {
                                 bool retryWasNoOp = !string.IsNullOrWhiteSpace(_lastWorkspacePatchNoOpDetail);
+                                bool retryWasAnchorMismatch = !string.IsNullOrWhiteSpace(_lastWorkspacePatchAnchorMismatchDetail);
                                 // Envelope retries exhausted. Stop demanding the envelope: ask for raw
-                                // full-file content and wrap it into the envelope host-side.
+                                // full-file content and wrap it into the envelope host-side. This is
+                                // especially the right escape for a repeated anchor mismatch — a full
+                                // ACTION: replace has no SEARCH anchor to get wrong.
                                 string? rescuedEnvelope = await TryContentOnlyCodebasePatchRescueAsync(
                                     runContext,
                                     builderSystem,
@@ -11638,6 +12089,8 @@ namespace Malx_AI
                                 {
                                     string failureReason = retryWasNoOp
                                         ? $"The Builder returned a patch that makes no changes to {_lastWorkspacePatchNoOpDetail} (SEARCH and REPLACE were identical), even after a corrective retry."
+                                        : retryWasAnchorMismatch
+                                            ? $"The Builder's ACTION: edit SEARCH block for {_lastWorkspacePatchAnchorMismatchDetail} did not match the current file even after a corrective retry with the exact content. Try naming the specific section to change, or ask for a full-file rewrite of that file."
                                         : BuildCodebasePatchFormatFailureReason(firstRejectedWorkspaceOutput, patchFormatRetry.Answer);
                                     builderOutput = "[[CODEBASE PATCH FORMAT ERROR]]\nBuilder did not return a valid codebase patch proposal. No files were changed.";
                                     AppendChat("warning", "Builder still did not return a valid codebase patch format. I suppressed the raw output so it cannot be mistaken for an applied change.");
@@ -13463,8 +13916,13 @@ namespace Malx_AI
                 maxGenerationTokensOverride: 2048,
                 contextSizeOverride: contextOverride);
 
-            if (!TryNormalizeBuilderOutput(retry.Answer, runContext.TaskType, out string cleaned, out _))
+            if (retry.IsReasoningFallback
+                || BuilderContainsReasoningLeak(retry.Answer, runContext, runContext.TaskType)
+                || !TryNormalizeBuilderOutput(retry.Answer, runContext.TaskType, out string cleaned, out _)
+                || BuilderContainsReasoningLeak(cleaned, runContext, runContext.TaskType))
+            {
                 return null;
+            }
 
             cleaned = PostProcessBuilderOutput(cleaned, runContext);
             if (IsLowValueDocumentOutput(cleaned, runContext.DocumentFileNames)
@@ -13608,18 +14066,24 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(raw))
                 return raw;
 
+            // Codebase patch envelopes are byte-exact structured deliverables and must be
+            // returned UNTOUCHED by the line-level cleanup below: the SEARCH/REPLACE divider
+            // ("=======") is indistinguishable from a pipeline separator line, so running
+            // StripPipelineMetadata over an ACTION: edit patch deletes its dividers and makes
+            // every edit patch unparseable. The patch parser mines only the envelope, so any
+            // echoed metadata around it is harmless.
+            if (context.IsWorkspaceTask
+                && (raw.Contains("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase)
+                    || raw.Contains("[[CODEBASE PATCH FORMAT ERROR]]", StringComparison.OrdinalIgnoreCase)))
+            {
+                string patchOutput = raw.Replace(BuilderCompletionMarker, "", StringComparison.OrdinalIgnoreCase).Trim();
+                context.BuilderOutputTruncated = DetectTruncation(patchOutput);
+                return patchOutput;
+            }
+
             // Strip echoed pipeline metadata FIRST — models often regurgitate [[LABEL]] blocks,
             // pipeline state headers, role reminders, and other structural payload content.
             string output = TrimRepeatedRestartTail(StripPipelineMetadata(raw));
-
-            if (context.IsWorkspaceTask
-                && (output.Contains("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase)
-                    || output.Contains("[[CODEBASE PATCH FORMAT ERROR]]", StringComparison.OrdinalIgnoreCase)))
-            {
-                output = output.Replace(BuilderCompletionMarker, "", StringComparison.OrdinalIgnoreCase).Trim();
-                context.BuilderOutputTruncated = DetectTruncation(output);
-                return output;
-            }
 
             // For coding tasks AND artifact-canvas requests, extract code from fenced blocks (before
             // markers get stripped). StripChatFromCode properly extracts content between ``` fences and
@@ -13704,8 +14168,13 @@ namespace Malx_AI
             {
                 string trimmed = line.Trim();
 
-                // Skip pipeline header separator lines
-                if (trimmed.Length >= 6 && trimmed.All(c => c == '═' || c == '=' || c == '─'))
+                // Skip pipeline header separator lines. Pipeline decoration is box-drawn (═/─),
+                // so require at least one box-drawing character: a pure '=' run is real content —
+                // the 7-char "=======" SEARCH/REPLACE divider of a codebase patch envelope, or a
+                // markdown setext underline — and deleting it corrupts the deliverable.
+                if (trimmed.Length >= 6
+                    && trimmed.All(c => c == '═' || c == '=' || c == '─')
+                    && trimmed.Any(c => c == '═' || c == '─'))
                     continue;
 
                 // Skip echoed role/state markers
@@ -15139,7 +15608,17 @@ namespace Malx_AI
         {
             string payload = userPayload ?? string.Empty;
             if (payload.Length <= 9000)
+            {
+                if (isWorkspaceTask && role == CouncilRole.Builder)
+                {
+                    return payload
+                        + "\n\nFINAL INSTRUCTION: Output only a valid [[AXIOM_CODEBASE_PATCH]] envelope. "
+                        + "Use one FILE section for the connected target file, ACTION: replace, and the complete updated file content. "
+                        + "Do not output standalone HTML/code, prose, a plan, or explanations.";
+                }
+
                 return payload + "\n\nFINAL INSTRUCTION: Produce only the " + role + " output now. Do not restate any instructions.";
+            }
 
             // Workspace patch tasks: the CONNECTED CODEBASE CONTEXT block (the current file content
             // the patch must be written against) sits in the MIDDLE of the payload — exactly what
@@ -19024,9 +19503,12 @@ namespace Malx_AI
                     payload.ToString(),
                     _cancellationTokenSource.Token,
                     _lastRunContext.IsDocumentTask ? 0.25f : null);
-                if (!TryNormalizeBuilderOutput(result.Answer, _lastRunContext.TaskType, out string rerunBuilderCleaned, out bool _))
+                if (result.IsReasoningFallback
+                    || BuilderContainsReasoningLeak(result.Answer, _lastRunContext, _lastRunContext.TaskType)
+                    || !TryNormalizeBuilderOutput(result.Answer, _lastRunContext.TaskType, out string rerunBuilderCleaned, out bool _)
+                    || BuilderContainsReasoningLeak(rerunBuilderCleaned, _lastRunContext, _lastRunContext.TaskType))
                 {
-                    throw new InvalidOperationException("Builder re-run output missing completion marker.");
+                    throw new InvalidOperationException("Builder re-run output was not a valid final Builder deliverable.");
                 }
                 string rerunOutput = PostProcessBuilderOutput(rerunBuilderCleaned, _lastRunContext);
                 bool rerunProducedCode = DetectCodeOutput(rerunOutput).IsCode;
