@@ -122,6 +122,12 @@ namespace Malx_AI
         {
             ResetBudget();
 
+            // Safety-truncation ceiling for one role turn. Scales with the caller's real token
+            // budget: reasoning-tuned models legitimately stream a thinking phase PLUS a full
+            // deliverable, and the old flat 30k-char cut truncated valid long outputs mid-file.
+            int maxTokens = inferenceParams?.MaxTokens ?? 0;
+            int streamCharGuard = Math.Max(30_000, maxTokens * 6);
+
             string currentPayload = initialUserPayload;
             var fullOutput = new StringBuilder();
             LLamaContext.State? rollbackCheckpoint = null;
@@ -146,7 +152,8 @@ namespace Malx_AI
                             onTokenCounted(delta);
                         },
                         outerToken,
-                        onTextProgress);
+                        onTextProgress,
+                        streamCharGuard);
 
                     if (pauseCommand == null)
                     {
@@ -268,7 +275,8 @@ namespace Malx_AI
             StringBuilder output,
             Action<int> onTokenCounted,
             CancellationToken token,
-            Action<string>? onTextProgress = null)
+            Action<string>? onTextProgress = null,
+            int streamCharGuard = 30_000)
         {
             var tokenBuffer = new StringBuilder();   // speculative hold-back buffer
             bool inSpeculative = false;              // are we buffering a potential [PAUSE:?
@@ -311,7 +319,7 @@ namespace Malx_AI
                     }
                 }
 
-                if (output.Length + tokenBuffer.Length > 30_000)
+                if (output.Length + tokenBuffer.Length > streamCharGuard)
                 {
                     // Safety truncation
                     if (tokenBuffer.Length > 0)

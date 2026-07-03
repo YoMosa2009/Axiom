@@ -160,7 +160,22 @@ namespace Malx_AI
             if (string.IsNullOrEmpty(content))
                 return string.Empty;
 
-            string cleaned = QwenThinkBlockStripRegex.Replace(content, string.Empty);
+            // Normalize reasoning-tag dialects (<thinking>, [THINK], <seed:think>, ...) to the
+            // canonical <think> form first so one strip pass covers every local model family.
+            string cleaned = QwenThinkBlockStripRegex.Replace(ReasoningParser.NormalizeReasoningMarkers(content), string.Empty);
+
+            // Closing-only </think>: R1-style chat templates open the think block inside the
+            // prompt, so the output stream carries only the closer — everything before it is
+            // chain-of-thought, not answer. An unclosed <think> is deliberately left intact:
+            // StripThinkArtifactsForStreaming uses that marker to hide in-progress reasoning.
+            int closeIdx = cleaned.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+            if (closeIdx >= 0)
+            {
+                int openIdx = cleaned.IndexOf("<think>", StringComparison.OrdinalIgnoreCase);
+                if (openIdx < 0 || openIdx > closeIdx)
+                    cleaned = cleaned[(closeIdx + "</think>".Length)..];
+            }
+
             return LeadingBlankLinesRegex.Replace(cleaned, string.Empty);
         }
 
@@ -2080,7 +2095,8 @@ namespace Malx_AI
                     var displayedContentBuilder = new StringBuilder();
                     int localBatchTokenCount = 0;
                     int localTokenCount = 0;
-                    bool suppressThinkLeak = !thinkingModeEnabled && IsQwen3Model(_modelName);
+                    bool suppressThinkLeak = !thinkingModeEnabled
+                        && (IsQwen3Model(_modelName) || LocalModelCapabilityProfile.IsLikelyReasoningModel(_modelName));
                     long lastUiFlushAt = Environment.TickCount64;
 
                     await foreach (var tokenPiece in streamFactory().WithCancellation(token))

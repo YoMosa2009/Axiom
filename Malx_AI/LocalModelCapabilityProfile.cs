@@ -15,6 +15,36 @@ namespace Malx_AI
     {
         private const long OneBillionParameters = 1_000_000_000L;
 
+        // Families that emit a chain-of-thought phase before the deliverable (R1 distills, QwQ,
+        // *-Thinking variants, GPT-OSS harmony, Magistral, EXAONE Deep, Nemotron hybrids,
+        // SmolLM3, reasoning fine-tunes). "r1" is boundary-guarded so it never matches inside
+        // version strings like "3.1-8b". Base Qwen3 hybrids are deliberately NOT matched: the
+        // app disables their thinking with /no_think, so they need no reasoning headroom.
+        private static readonly Regex ReasoningModelNameRegex = new(
+            @"(?<![a-z0-9])r1(?![0-9])|qwq|think|reason|gpt[-_ ]?oss|magistral|exaone[-_ ]?deep|nemotron|smollm3",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// True when the model name/path indicates a reasoning-tuned local model whose output
+        /// begins with a thinking phase. Used to grant generation-budget headroom so the
+        /// chain-of-thought cannot consume the entire deliverable budget, and to route
+        /// think-aware retry guidance.
+        /// </summary>
+        public static bool IsLikelyReasoningModel(string? modelPathOrName, string? displayName = null)
+        {
+            static bool Matches(string? text)
+            {
+                if (string.IsNullOrWhiteSpace(text))
+                    return false;
+                string name = Path.GetFileNameWithoutExtension(text);
+                if (string.IsNullOrWhiteSpace(name))
+                    name = text;
+                return ReasoningModelNameRegex.IsMatch(name);
+            }
+
+            return Matches(modelPathOrName) || Matches(displayName);
+        }
+
         public LocalModelSizeClass SizeClass { get; init; } = LocalModelSizeClass.Unknown;
         public long? ParameterCount { get; init; }
         public string Evidence { get; init; } = string.Empty;

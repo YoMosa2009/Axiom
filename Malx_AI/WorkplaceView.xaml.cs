@@ -2566,7 +2566,11 @@ namespace Malx_AI
             bool useSubOneBProfile = false)
         {
             return IsQwen3Model(modelPath)
-                ? ModelInferenceProfiles.CreateQwen3InferenceParams(false, maxTokens, antiPrompts, grammar)
+                // Thinking-only Qwen3 variants (…-Thinking-…) ignore /no_think and always reason;
+                // they need Qwen's recommended thinking sampling (0.6/0.95) — the non-thinking
+                // profile (0.7/0.8) degrades their reasoning phase. Hybrids keep non-thinking.
+                ? ModelInferenceProfiles.CreateQwen3InferenceParams(
+                    LocalModelCapabilityProfile.IsLikelyReasoningModel(modelPath), maxTokens, antiPrompts, grammar)
                 : new InferenceParams
                 {
                     MaxTokens = maxTokens,
@@ -4756,6 +4760,15 @@ namespace Malx_AI
 
             return "The Builder response did not contain a valid `[[AXIOM_CODEBASE_PATCH]]` envelope after a retry.";
         }
+
+        // Injected into workspace retries when the previous Builder pass produced only
+        // chain-of-thought (reasoning fallback). Reasoning-tuned local models cannot always be
+        // stopped from thinking, but they CAN be told to bound it — without this, the retry burns
+        // its budget inside the thinking phase exactly like the first attempt did.
+        private const string ReasoningBudgetCorrectionNote =
+            "Your previous response was internal reasoning that consumed the entire token budget before any deliverable appeared. " +
+            "Do not think out loud. If your model requires a reasoning phase, keep it under three short sentences, close it immediately, " +
+            "and then output the deliverable.";
 
         private static bool LooksLikeWorkspacePatchReasoning(string output)
         {
@@ -11830,6 +11843,8 @@ namespace Malx_AI
                         if (runContext.IsWorkspaceTask)
                         {
                             correctionPayload.AppendLine("PREVIOUS OUTPUT WAS REJECTED: it was not a valid [[AXIOM_CODEBASE_PATCH]] envelope. Do not continue or summarize it.");
+                            if (builderVisibleReasoningLeak)
+                                correctionPayload.AppendLine(ReasoningBudgetCorrectionNote);
                             correctionPayload.AppendLine("Your next response must begin with [[AXIOM_CODEBASE_PATCH]].");
                         }
                         else
@@ -12040,6 +12055,8 @@ namespace Malx_AI
                             else
                             {
                                 patchFormatRetryPayload.AppendLine("FORMAT VIOLATION: the previous Builder response was prose/analysis instead of a connected-codebase patch envelope.");
+                                if (builderReasoningFallback)
+                                    patchFormatRetryPayload.AppendLine(ReasoningBudgetCorrectionNote);
                             }
                             patchFormatRetryPayload.AppendLine("Your response must start on the next line with [[AXIOM_CODEBASE_PATCH]].");
                             patchFormatRetryPayload.AppendLine(BuildLabeledBlock("REQUIRED OUTPUT FORMAT", BuildCodebasePatchOutputContractForBuilder()));
@@ -15837,6 +15854,7 @@ namespace Malx_AI
             bool isGemma4 = IsGemma4Model(config.DisplayName) || IsGemma4Model(config.ModelPath ?? "");
             LocalModelCapabilityProfile localCapability = LocalModelCapabilityProfile.FromModel(config.ModelPath);
             bool useSubOneBMode = localCapability.IsSubOneB && !isGemma4;
+            bool reasoningLocalModel = LocalModelCapabilityProfile.IsLikelyReasoningModel(config.ModelPath, config.DisplayName);
             if (useSubOneBMode)
             {
                 systemPrompt = BuildSubOneBCouncilSystemPrompt(role, systemPrompt, outputGrammar != null, allowAgenticPauses);
@@ -16264,8 +16282,29 @@ namespace Malx_AI
                 int subOneBBuilderCap = builderDeliverableTask ? 2560 : 1536;
                 roleGenerationCap = Math.Min(roleGenerationCap, role == CouncilRole.Builder ? subOneBBuilderCap : 768);
             }
-            int maxGenTokens = Math.Clamp(availableForGeneration, minGenTokens, roleGenerationCap);
-            LogActivity($"{roleName}: Context budget — prompt ~{promptTokenEstimate + templateOverhead}t, gen {maxGenTokens}t, ctx {contextBudget}t");
+
+            // Reasoning-tuned local models (R1 distills, QwQ, *-Thinking, GPT-OSS, ...) spend a
+            // large share of the budget inside their thinking phase BEFORE any deliverable text
+            // appears. Without headroom the whole cap is consumed by chain-of-thought, the parsed
+            // answer is empty (reasoning fallback), and workspace runs die with "Builder did not
+            // return a valid codebase patch". The allowance stays bounded by
+            // availableForGeneration, so it only takes effect when the window has real room, and
+            // grammar-constrained decisions never think so they get none.
+            int reasoningHeadroom = 0;
+            if (reasoningLocalModel && outputGrammar == null)
+            {
+                reasoningHeadroom = useSubOneBMode
+                    ? 1024
+                    : role == CouncilRole.Builder ? 3072 : 1536;
+            }
+            int maxGenTokens = Math.Clamp(availableForGeneration, minGenTokens, roleGenerationCap + reasoningHeadroom);
+            // The stream runaway guard must scale with the budget: a reasoning model legitimately
+            // streams thinking + a full deliverable, and a flat 30k-char cut truncated valid
+            // envelopes mid-file.
+            int streamCharGuard = Math.Max(30_000, maxGenTokens * 6);
+            LogActivity($"{roleName}: Context budget — prompt ~{promptTokenEstimate + templateOverhead}t, gen {maxGenTokens}t"
+                + (reasoningHeadroom > 0 ? $" (incl. {reasoningHeadroom}t reasoning headroom)" : string.Empty)
+                + $", ctx {contextBudget}t");
 
             PromptFormat activeFormat = config.Format;
             IReadOnlyList<PromptInjectionBlockInfo> priorInjectionInfos = CollectPromptInjectionInfos(_chatHistory);
@@ -16321,7 +16360,7 @@ namespace Malx_AI
                         lastProgressLength = nativeOutput.Length;
                         onLiveTextProgress(nativeOutput.ToString());
                     }
-                    if (nativeOutput.Length > 30_000)
+                    if (nativeOutput.Length > streamCharGuard)
                         break;
                 }
                 NoteGeneratedTokens();
@@ -16483,7 +16522,17 @@ namespace Malx_AI
 
             rawOutput = rawOutput.Replace(HandoffEndToken, "", StringComparison.Ordinal);
             string cleaned = CleanModelOutput(rawOutput);
-            return ReasoningParser.Parse(cleaned, isGemma4);
+            var parsedOutput = ReasoningParser.Parse(cleaned, isGemma4);
+            if (parsedOutput.TruncatedInsideThinking)
+            {
+                LogActivity($"{roleName}: generation ended inside an unclosed reasoning block "
+                    + $"({tokenCount} tokens generated, cap {maxGenTokens}); the thinking phase consumed the budget.");
+            }
+            else if (parsedOutput.IsReasoningFallback)
+            {
+                LogActivity($"{roleName}: response contained only chain-of-thought with no final content; flagged as reasoning fallback.");
+            }
+            return parsedOutput;
         }
 
         private static bool IsStrictChatMlModel(string displayName)
@@ -17424,6 +17473,23 @@ namespace Malx_AI
 
         private static string CleanModelOutput(string raw)
         {
+            if (string.IsNullOrEmpty(raw))
+                return string.Empty;
+
+            // Envelope guard (fail-closed): a codebase patch envelope is a byte-exact deliverable.
+            // Patched file content can legitimately contain chat-template token text or long
+            // repeated blocks, so the special-token strip and restart-tail trim below must never
+            // run at or after the envelope marker. Clean only the narration before it.
+            int envelopeIdx = raw.IndexOf("[[AXIOM_CODEBASE_PATCH]]", StringComparison.OrdinalIgnoreCase);
+            if (envelopeIdx == 0)
+                return raw.Trim();
+            if (envelopeIdx > 0)
+            {
+                string cleanedHead = CleanModelOutput(raw[..envelopeIdx]);
+                string envelopeTail = raw[envelopeIdx..].Trim();
+                return string.IsNullOrWhiteSpace(cleanedHead) ? envelopeTail : cleanedHead + "\n" + envelopeTail;
+            }
+
             string cleaned = StripSpecialTokenText(raw).Trim();
 
             // Strip stray role headers the model may echo
