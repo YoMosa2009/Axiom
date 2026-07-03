@@ -7,8 +7,10 @@ namespace Malx_AI
     internal enum LocalModelSizeClass
     {
         Unknown,
-        SubOneB,
-        OneBOrLarger
+        SubOneB,      // < 1B — micro models: deterministic tool routing only, minimal prompts
+        OneToFourB,   // 1B–4B — compact models: capable but easily distracted by long context
+        FourToTenB,   // 4B–10B — mid-size models: full pipeline with standard budgets
+        TenBPlus      // >= 10B — large models: full pipeline, no small-model constraints
     }
 
     internal sealed class LocalModelCapabilityProfile
@@ -51,6 +53,27 @@ namespace Malx_AI
 
         public bool IsSubOneB => SizeClass == LocalModelSizeClass.SubOneB;
 
+        /// <summary>
+        /// True for 1B–4B models: strong enough for the full pipeline, but they lose the thread
+        /// on very long histories, so they get a milder version of the sub-1B context trims.
+        /// Unknown sizes stay false — never constrain a model we could not measure.
+        /// </summary>
+        public bool IsCompactClass => SizeClass == LocalModelSizeClass.OneToFourB;
+
+        /// <summary>
+        /// How many preflight tools the model itself may choose per Builder run (on top of the
+        /// deterministic router, which is size-independent). Sub-1B models pick arbitrary tools
+        /// when forced through a decision grammar — the tool line becomes their answer — so they
+        /// get none. Compact models route usably but drift on the second decision. Unknown sizes
+        /// keep full routing so an unmeasured large model is never handicapped.
+        /// </summary>
+        public int MaxModelChosenPreflightTools => SizeClass switch
+        {
+            LocalModelSizeClass.SubOneB => 0,
+            LocalModelSizeClass.OneToFourB => 1,
+            _ => 2
+        };
+
         public static LocalModelCapabilityProfile FromModel(string? modelPathOrName)
         {
             if (string.IsNullOrWhiteSpace(modelPathOrName))
@@ -90,9 +113,13 @@ namespace Malx_AI
             {
                 ParameterCount = count,
                 Evidence = evidence,
-                SizeClass = count < OneBillionParameters
-                    ? LocalModelSizeClass.SubOneB
-                    : LocalModelSizeClass.OneBOrLarger
+                SizeClass = count switch
+                {
+                    < OneBillionParameters => LocalModelSizeClass.SubOneB,
+                    < 4 * OneBillionParameters => LocalModelSizeClass.OneToFourB,
+                    < 10 * OneBillionParameters => LocalModelSizeClass.FourToTenB,
+                    _ => LocalModelSizeClass.TenBPlus
+                }
             };
         }
 

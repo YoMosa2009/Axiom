@@ -18,11 +18,17 @@ namespace Malx_AI
     internal sealed class AgenticPauseEngine
     {
         // ── Pause syntax constants ────────────────────────────────────────────
-        private const string PauseOpen   = "[PAUSE:";
         private const string PauseClose  = "]";
-        private const int    MaxPausesPerTurn = 3;
+        private const int    DefaultMaxPausesPerTurn = 3;
         private const string BudgetExceededMsg =
             "[SYSTEM OVERRIDE: Tool budget exceeded. Complete your response natively.]";
+
+        /// <summary>
+        /// Per-turn pause budget. The council caller scales this with the model's size class
+        /// (sub-1B: 1, compact 1-4B: 2, larger: 3) — small models that pause repeatedly burn
+        /// their whole generation budget on tool round-trips and never finish the deliverable.
+        /// </summary>
+        public int MaxPausesPerTurn { get; set; } = DefaultMaxPausesPerTurn;
 
         // ── Tool names ────────────────────────────────────────────────────────
         private const string ToolHippocampus = "SEARCH_HIPPOCAMPUS";
@@ -81,7 +87,7 @@ namespace Malx_AI
             string query,
             CancellationToken token)
         {
-            string normalizedTool = (tool ?? string.Empty).Trim().ToUpperInvariant();
+            string normalizedTool = LocalToolIntentRouter.NormalizeToolName(tool);
             string normalizedQuery = (query ?? string.Empty).Trim();
             if (normalizedQuery.Length == 0)
                 return StructuredToolResult.Fail("Tool query is empty.");
@@ -357,57 +363,55 @@ namespace Malx_AI
 
                     string buffered = tokenBuffer.ToString();
 
-                    // Check if we definitely have enough chars to know
-                    if (buffered.Length >= PauseOpen.Length)
+                    // Tolerant marker classification: models mangle the pause syntax constantly
+                    // ("[pause :", "[ PAUSE|"). Case and space drift are accepted; anything that
+                    // provably is not a pause marker flushes as plain text.
+                    var classification = LocalToolIntentRouter.ClassifyPauseCandidate(buffered, out int innerStartIndex);
+                    if (classification == LocalToolIntentRouter.PauseMarkerClassification.NotPause)
                     {
-                        if (buffered.StartsWith(PauseOpen, StringComparison.Ordinal))
+                        output.Append(buffered);
+                        tokenBuffer.Clear();
+                        inSpeculative = false;
+                        PushProgress();
+                    }
+                    else if (classification == LocalToolIntentRouter.PauseMarkerClassification.Confirmed)
+                    {
+                        // Bracket-aware close search: a query like "print(a[0])" contains nested
+                        // brackets — taking the FIRST ']' used to sever the query mid-expression.
+                        int closeIdx = FindPauseCloseIndex(buffered, innerStartIndex);
+                        if (closeIdx >= 0)
                         {
-                            // It IS a pause sequence — wait for the closing ]
-                            if (buffered.Contains(PauseClose, StringComparison.Ordinal))
+                            // Full [PAUSE: TOOL | query] captured
+                            string inner = buffered[innerStartIndex..closeIdx];
+
+                            var cmd = ParsePauseCommand(inner);
+                            if (cmd != null)
                             {
-                                // Full [PAUSE: TOOL | query] captured
-                                int closeIdx = buffered.LastIndexOf(PauseClose, StringComparison.Ordinal);
-                                string inner = buffered.Substring(PauseOpen.Length, closeIdx - PauseOpen.Length);
-
-                                var cmd = ParsePauseCommand(inner);
-                                if (cmd != null)
+                                // A council role frequently ECHOES its own system prompt, whose
+                                // AGENTIC PAUSE RULE lists literal [PAUSE: ...] examples. Running
+                                // those echoed examples as real tool calls and resuming generation
+                                // is a primary amplifier of the Builder "loops forever" bug, so a
+                                // pause that merely repeats a rule example is treated as plain text.
+                                if (IsEchoedRuleExample(cmd))
                                 {
-                                    // A council role frequently ECHOES its own system prompt, whose
-                                    // AGENTIC PAUSE RULE lists literal [PAUSE: ...] examples. Running
-                                    // those echoed examples as real tool calls and resuming generation
-                                    // is a primary amplifier of the Builder "loops forever" bug, so a
-                                    // pause that merely repeats a rule example is treated as plain text.
-                                    if (IsEchoedRuleExample(cmd))
-                                    {
-                                        output.Append(buffered);
-                                        tokenBuffer.Clear();
-                                        inSpeculative = false;
-                                        PushProgress();
-                                        continue;
-                                    }
-
-                                    // Discard trigger tokens from output (token masking).
-                                    // Status is updated in RunAsync after budget check.
-                                    return (string.Empty, cmd);
+                                    output.Append(buffered);
+                                    tokenBuffer.Clear();
+                                    inSpeculative = false;
+                                    PushProgress();
+                                    continue;
                                 }
 
-                                // Malformed pause command. Do not leak raw tool code into visible output.
-                                return (string.Empty, new PauseCommand("INVALID_PAUSE", "Malformed pause command."));
-
-                                // Unparseable syntax — flush as normal text
+                                // Discard trigger tokens from output (token masking).
+                                // Status is updated in RunAsync after budget check.
+                                return (string.Empty, cmd);
                             }
-                            // else: still waiting for ] — keep buffering
+
+                            // Malformed pause command. Do not leak raw tool code into visible output.
+                            return (string.Empty, new PauseCommand("INVALID_PAUSE", "Malformed pause command."));
                         }
-                        else
-                        {
-                            // Not a [PAUSE: — flush buffer as normal text
-                            output.Append(buffered);
-                            tokenBuffer.Clear();
-                            inSpeculative = false;
-                            PushProgress();
-                        }
+                        // else: still waiting for the balancing ] — keep buffering
                     }
-                    // else: buffer too short to decide — keep accumulating
+                    // else Possible: buffer too short to decide — keep accumulating
                 }
             }
 
@@ -425,6 +429,21 @@ namespace Malx_AI
         // ── Tool router ───────────────────────────────────────────────────────
         private async Task<ToolDispatchResult> DispatchToolAsync(PauseCommand cmd, CancellationToken token)
         {
+            // Structural validation only: a mid-generation pause legitimately computes with
+            // values the model derived itself, so no request-grounding is enforced here —
+            // just shape sanity (length caps, READ_FILE path hygiene).
+            if (cmd.Tool != "INVALID_PAUSE"
+                && !LocalToolIntentRouter.TryValidateToolQuery(
+                    cmd.Tool,
+                    cmd.Query,
+                    string.Empty,
+                    LocalToolIntentRouter.ValidationStrictness.Structural,
+                    null,
+                    out string structuralError))
+            {
+                return ToolDispatchResult.Fail(structuralError);
+            }
+
             try
             {
                 if (cmd.Tool == ToolHippocampus)
@@ -752,19 +771,37 @@ namespace Malx_AI
         }
 
         // ── Pause command parser ──────────────────────────────────────────────
+        // Tolerant parsing lives in LocalToolIntentRouter: alias tool names ("calc",
+        // "search_web") normalize to canonical tools, and a missing pipe is accepted when the
+        // first word is recognizably a tool name.
         private static PauseCommand? ParsePauseCommand(string inner)
         {
-            // inner = " TOOL_NAME | query text "
-            int pipeIdx = inner.IndexOf('|');
-            if (pipeIdx < 0) return null;
+            return LocalToolIntentRouter.TryParsePauseCommandText(inner, out string tool, out string query)
+                ? new PauseCommand(tool, query)
+                : null;
+        }
 
-            string tool  = inner[..pipeIdx].Trim().ToUpperInvariant();
-            string query = inner[(pipeIdx + 1)..].Trim();
+        // Finds the ']' that closes the pause marker, skipping bracket pairs nested inside the
+        // query itself. Returns -1 while the balancing bracket has not streamed in yet.
+        private static int FindPauseCloseIndex(string buffered, int innerStartIndex)
+        {
+            int depth = 0;
+            for (int i = innerStartIndex; i < buffered.Length; i++)
+            {
+                char c = buffered[i];
+                if (c == '[')
+                {
+                    depth++;
+                }
+                else if (c == ']')
+                {
+                    if (depth == 0)
+                        return i;
+                    depth--;
+                }
+            }
 
-            if (string.IsNullOrWhiteSpace(tool) || string.IsNullOrWhiteSpace(query))
-                return null;
-
-            return new PauseCommand(tool, query);
+            return -1;
         }
 
         private sealed record PauseCommand(string Tool, string Query);

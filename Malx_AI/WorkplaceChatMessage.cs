@@ -20,10 +20,33 @@ namespace Malx_AI
                 _content = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(FormattedContent));
+                OnPropertyChanged(nameof(IsGeneratingStatus));
+                OnPropertyChanged(nameof(ShowGeneratingStatusInCard));
+                OnPropertyChanged(nameof(GenerationStatusText));
             }
         }
 
         public string FormattedContent => MarkdownParser.ToDisplayText(Content);
+        public bool IsGeneratingStatus
+        {
+            get
+            {
+                string normalized = (Content ?? string.Empty).Trim();
+                return string.IsNullOrWhiteSpace(normalized)
+                    || (normalized.Contains("Generating", StringComparison.OrdinalIgnoreCase) && normalized.Length <= 48);
+            }
+        }
+
+        public string GenerationStatusText => Role switch
+        {
+            "builder" => "Builder generating",
+            "architect" => "Architect generating",
+            "critic" or "critic-final" => "Critic generating",
+            _ => "Generating"
+        };
+
+        public bool ShowGeneratingStatusInCard => IsGeneratingStatus && !string.Equals(Role, "builder", StringComparison.OrdinalIgnoreCase);
+
         public DateTime Timestamp { get; init; } = DateTime.Now;
 
         public event PropertyChangedEventHandler? PropertyChanged;

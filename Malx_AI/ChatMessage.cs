@@ -52,6 +52,8 @@ namespace Malx_AI
                 {
                     _isStreaming = value;
                     OnPropertyChanged();
+                    OnPropertyChanged(nameof(ShouldShowGenerationStatus));
+                    OnPropertyChanged(nameof(GenerationStatusText));
                 }
             }
         }
@@ -126,12 +128,15 @@ namespace Malx_AI
                     _isThinkingInProgress = value;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(ShouldShowThinkingHeader));
+                    OnPropertyChanged(nameof(GenerationStatusText));
                 }
             }
         }
 
         public bool HasThinkingContent => !string.IsNullOrWhiteSpace(_thinkingContent);
-        public bool ShouldShowThinkingHeader => HasThinkingContent || _isThinkingInProgress;
+        public bool ShouldShowThinkingHeader => HasThinkingContent;
+        public bool ShouldShowGenerationStatus => string.Equals(Role, "assistant", StringComparison.OrdinalIgnoreCase) && IsStreaming;
+        public string GenerationStatusText => IsThinkingInProgress || !HasDisplayContent ? "Thinking" : "Generating";
 
         public string ThinkingHeaderText
         {
@@ -179,6 +184,7 @@ namespace Malx_AI
                     _displayFormattedContent = value;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HasDisplayContent));
+                    OnPropertyChanged(nameof(GenerationStatusText));
                 }
             }
         }

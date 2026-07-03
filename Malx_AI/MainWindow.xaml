@@ -1036,6 +1036,16 @@
                                                         </StackPanel>
                                                     </Border>
                                                 </StackPanel>
+                                                <local:ShimmerTextBlock x:Name="AssistantGenerationStatusText"
+                                                                        Text="{Binding GenerationStatusText}"
+                                                                        Margin="0,0,0,8"
+                                                                        FontSize="13"
+                                                                        FontWeight="SemiBold"
+                                                                        BaseColor="#71717A"
+                                                                        HighlightColor="#EDE8E3"
+                                                                        ShimmerDurationSeconds="2"
+                                                                        TextTrimming="CharacterEllipsis"
+                                                                        Visibility="Collapsed"/>
                                                 <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="13" FontFamily="Segoe UI"
                                                          Foreground="{StaticResource NotebookTextBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                                          IsReadOnly="True" IsReadOnlyCaretVisible="False" Cursor="Arrow"
@@ -1097,6 +1107,9 @@
                                                 <Setter TargetName="ActionButtonPanel" Property="Visibility" Value="Visible"/>
                                                 <Setter TargetName="RegenerateActionButton" Property="Visibility" Value="Visible"/>
                                                 <Setter TargetName="RetryCloudActionButton" Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding ShouldShowGenerationStatus}" Value="True">
+                                                <Setter TargetName="AssistantGenerationStatusText" Property="Visibility" Value="Visible"/>
                                             </DataTrigger>
                                              <MultiDataTrigger>
                                                  <MultiDataTrigger.Conditions>

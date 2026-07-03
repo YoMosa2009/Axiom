@@ -364,7 +364,21 @@
                                         <TextBlock x:Name="ArchitectStageText" Text="Architect · Idle" FontSize="10" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
                                     </Border>
                                     <Border x:Name="BuilderStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="7,2" Margin="0,0,5,0">
-                                        <TextBlock x:Name="BuilderStageText" Text="Builder · Idle" FontSize="10" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                        <Grid>
+                                            <TextBlock x:Name="BuilderStageText" Text="Builder · Idle" FontSize="10" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                            <local:ShimmerTextBlock x:Name="BuilderGenerationStatusText"
+                                                                    Text="Builder generating"
+                                                                    Width="104"
+                                                                    FontSize="10"
+                                                                    FontWeight="SemiBold"
+                                                                    BaseColor="#71717A"
+                                                                    HighlightColor="#7DDFA2"
+                                                                    ShimmerDurationSeconds="2"
+                                                                    TextTrimming="CharacterEllipsis"
+                                                                    HorizontalAlignment="Center"
+                                                                    VerticalAlignment="Center"
+                                                                    Visibility="Collapsed"/>
+                                        </Grid>
                                     </Border>
                                     <Border x:Name="CriticStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="7,2">
                                         <TextBlock x:Name="CriticStageText" Text="Critic · Idle" FontSize="10" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
@@ -560,7 +574,17 @@
                                     <!-- Full message shown (no inner scrollbar). Slightly smaller font
                                          and tightened line spacing keep each response compact so it
                                          takes less vertical space in the chat column. -->
-                                    <TextBlock Text="{Binding FormattedContent}" TextWrapping="Wrap" FontSize="12"
+                                    <local:ShimmerTextBlock x:Name="WorkplaceCardGenerationStatusText"
+                                                            Text="{Binding GenerationStatusText}"
+                                                            FontSize="12"
+                                                            FontWeight="SemiBold"
+                                                            BaseColor="#A1A1AA"
+                                                            HighlightColor="#FFFFFF"
+                                                            ShimmerDurationSeconds="2"
+                                                            TextTrimming="CharacterEllipsis"
+                                                            Visibility="Collapsed"/>
+                                    <TextBlock x:Name="WorkplaceCardContentText"
+                                               Text="{Binding FormattedContent}" TextWrapping="Wrap" FontSize="12"
                                                LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                                FontFamily="Segoe UI" Foreground="{StaticResource NotebookTextBrush}"/>
                                 </StackPanel>
@@ -568,6 +592,13 @@
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding Role}" Value="user">
                                     <Setter TargetName="CopyWorkplaceMessageButton" Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding ShowGeneratingStatusInCard}" Value="True">
+                                    <Setter TargetName="WorkplaceCardGenerationStatusText" Property="Visibility" Value="Visible"/>
+                                    <Setter TargetName="WorkplaceCardContentText" Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsGeneratingStatus}" Value="True">
+                                    <Setter TargetName="WorkplaceCardContentText" Property="Visibility" Value="Collapsed"/>
                                 </DataTrigger>
                             </DataTemplate.Triggers>
                         </DataTemplate>

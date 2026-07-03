@@ -2040,6 +2040,45 @@ namespace Malx_AI
             return reduced;
         }
 
+        // Milder counterpart of ReduceHistoryForSubOneB for compact (1-4B) local models: they hold
+        // a conversation well but lose instruction-following precision when many long turns are
+        // replayed, and every replayed token is decode latency. Recent turns stay whole enough to
+        // preserve continuity; only genuinely long messages get middle-clipped.
+        private static List<ChatMessage> ReduceHistoryForCompactLocalModel(IReadOnlyList<ChatMessage> selectedMessages)
+        {
+            if (selectedMessages == null || selectedMessages.Count == 0)
+                return new List<ChatMessage>();
+
+            var reduced = selectedMessages
+                .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                .TakeLast(12)
+                .Select(CloneMessageForInferenceContext)
+                .ToList();
+
+            const int maxCharsPerMessage = 2600;
+            for (int i = 0; i < reduced.Count; i++)
+            {
+                string content = reduced[i].Content ?? string.Empty;
+                if (content.Length <= maxCharsPerMessage)
+                    continue;
+
+                reduced[i] = new ChatMessage(
+                    reduced[i].Role,
+                    content[..1000].TrimEnd()
+                    + "\n[...older content shortened for compact local model...]\n"
+                    + content[^1400..].TrimStart())
+                {
+                    Id = reduced[i].Id,
+                    Timestamp = reduced[i].Timestamp,
+                    ModelLabel = reduced[i].ModelLabel,
+                    Importance = reduced[i].Importance
+                };
+            }
+
+            return reduced;
+        }
+
         private async Task RebuildChatSessionFromSelectedMessagesAsync(IEnumerable<ChatMessage> selectedMessages, string systemPrompt, CancellationToken token)
         {
             if (_executor == null || _useGemma4LocalCliMode)
@@ -2153,6 +2192,9 @@ namespace Malx_AI
             {
                 if (_currentStreamingMessage != null)
                 {
+                    if (!string.IsNullOrWhiteSpace(content))
+                        _currentStreamingMessage.IsThinkingInProgress = false;
+
                     _currentStreamingMessage.SetStreamingContent(content);
                     ScrollChatToEnd();
                 }
@@ -3037,6 +3079,17 @@ namespace Malx_AI
                 if (useSubOneBMode)
                     thinkingModeEnabled = false;
 
+                if (useSubOneBMode && hasWebContext)
+                {
+                    // Raw web snippets are copy-bait for a sub-1B model and get middle-clipped by
+                    // its compact system prompt anyway. Digested FACT lines carry the same
+                    // information in a form a tiny model uses instead of echoing.
+                    string digestedWeb = LocalToolIntentRouter.DigestObservation(
+                        LocalToolIntentRouter.ToolWebSearch, userMsg, webContext, maxFacts: 4);
+                    if (!string.IsNullOrWhiteSpace(digestedWeb))
+                        webContext = digestedWeb;
+                }
+
                 string effectiveSystemPrompt = string.IsNullOrWhiteSpace(personaContext)
                     ? uiSnapshot.SystemPromptText
                     : (uiSnapshot.SystemPromptText + "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]");
@@ -3073,7 +3126,16 @@ namespace Malx_AI
 
                 List<ChatMessage> selectedHistoryMessages = SelectRelevantChatHistory(userMsg, uiSnapshot.ChatMessages, uiSnapshot.ContextSize, uiSnapshot.ChatDocuments);
                 if (useSubOneBMode)
+                {
                     selectedHistoryMessages = ReduceHistoryForSubOneB(selectedHistoryMessages);
+                }
+                else if (localCapability.IsCompactClass)
+                {
+                    selectedHistoryMessages = ReduceHistoryForCompactLocalModel(selectedHistoryMessages);
+                    _ = BackendLogService.LogEventAsync(
+                        "CompactLocalMode",
+                        $"Surface:NormalChat\nModel:{uiSnapshot.ModelName}\nEvidence:{localCapability.Evidence}\nParams:{localCapability.ParameterCount}");
+                }
 
                 List<PromptInjectionBlockInfo> historyInjectionInfos = CollectPromptInjectionInfos(selectedHistoryMessages);
                 bool useIsolatedWebTurn = hasWebContext;
@@ -3122,12 +3184,32 @@ namespace Malx_AI
                         : CreateGenericInferenceParams(maxGenerationTokens, antiPrompts, uiSnapshot.Temperature, uiSnapshot.MinP);
 
                 string calculatorContext = sandboxPreparation.CalculatorContext;
+                // Router-triggered calculator fallback: the sandbox eligibility score can miss a
+                // plain conversion/arithmetic request ("convert 40 gallons to liters") that the
+                // deterministic intent router recognizes. A verified calculator result removes
+                // the temptation for a small model to do prose arithmetic.
+                if (string.IsNullOrWhiteSpace(calculatorContext)
+                    && LocalToolIntentRouter.TryRouteIntent(userMsg, webSearchEnabled: false, codebaseToolsEnabled: false, out LocalToolIntentRouter.ToolIntent? calcIntent)
+                    && calcIntent?.Tool == LocalToolIntentRouter.ToolCalculate
+                    && CalculatorToolAgent.TryBuildContext(userMsg, out string routedCalcContext, out _))
+                {
+                    calculatorContext = routedCalcContext;
+                    _ = BackendLogService.LogEventAsync("NormalChatRouterCalc", $"Prompt:{userMsg}");
+                }
+
                 string modelUserMsg = userMsg + calculatorContext;
                 if (!string.IsNullOrWhiteSpace(sandboxPreparation.PreInferencePythonContext))
                     modelUserMsg += "\n\n" + sandboxPreparation.PreInferencePythonContext;
 
                 if (hasWebContext)
-                    modelUserMsg += "\n\n" + BuildWebGroundedUserTurnInstruction();
+                {
+                    // The full grounding instruction references [[WEB SEARCH DATA]] envelopes a
+                    // sub-1B model no longer receives (its web context is digested FACT lines) —
+                    // and is itself longer than a tiny model can follow.
+                    modelUserMsg += "\n\n" + (useSubOneBMode
+                        ? "Answer using the FACT lines provided in context. If a needed fact is missing there, say so briefly. Do not invent sources or current facts."
+                        : BuildWebGroundedUserTurnInstruction());
+                }
 
                 // Document content goes in the user turn so it survives every chat template.
                 // It is placed BEFORE the question (better recall) and clearly delimited.
@@ -3842,6 +3924,7 @@ namespace Malx_AI
             {
                 _inlineSpinnerRotate.BeginAnimation(RotateTransform.AngleProperty, null);
             }
+
         }
 
         private void AnimateInputContainer(double targetScale, double targetOpacity)
@@ -4025,7 +4108,7 @@ namespace Malx_AI
                 _tokenCount = 0;
                 _inferenceTimer.Restart();
 
-                _currentStreamingMessage = new ChatMessage("assistant", thinkingModeEnabled ? "Thinking..." : "");
+                _currentStreamingMessage = new ChatMessage("assistant", string.Empty);
                 _currentStreamingMessage.ModelLabel = string.IsNullOrWhiteSpace(_nextMessageModelOverride) || _nextMessageModelOverride == "Default"
                     ? _modelName
                     : _nextMessageModelOverride;

@@ -198,6 +198,41 @@ namespace Malx_AI
             Http.Timeout = TimeSpan.FromSeconds(90);
         }
 
+        // HttpClient.Timeout stops covering the connection the moment SendAsync returns with
+        // ResponseHeadersRead — reading the body afterwards has NO deadline. A free-tier provider
+        // that accepts the request (200 + SSE headers) and then stalls used to hold the read loop
+        // — and the whole chat turn — open forever: the "endless loading" hang. These deadlines
+        // cover the body phase so a stall becomes a model-fallback instead of a frozen turn.
+        //
+        // Line-level idle: OpenRouter emits keep-alive comment lines every few seconds while a
+        // provider queues, so a healthy stream is never silent for long — a long line gap means
+        // the connection is dead.
+        private static readonly TimeSpan StreamFirstLineIdleTimeout = TimeSpan.FromSeconds(90);
+        private static readonly TimeSpan StreamLineIdleTimeout = TimeSpan.FromSeconds(60);
+        // Wall-clock deadline for the first meaningful delta (content/reasoning/tool call).
+        // Keep-alive comments reset the line-idle timer, so a zombie provider queue that never
+        // starts generating needs its own bound.
+        private static readonly TimeSpan StreamFirstContentTimeout = TimeSpan.FromSeconds(150);
+        // Absolute ceiling for one streamed response. Generous: a slow free-tier provider
+        // streaming a long deliverable stays well under this; only a runaway/zombie stream hits it.
+        private static readonly TimeSpan StreamTotalDurationLimit = TimeSpan.FromMinutes(10);
+        // Non-streamed body reads after ResponseHeadersRead have the same unbounded-read exposure.
+        private static readonly TimeSpan NonStreamBodyReadTimeout = TimeSpan.FromSeconds(100);
+
+        private static async Task<string> ReadBodyWithTimeoutAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+        {
+            using var bodyCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bodyCts.CancelAfter(NonStreamBodyReadTimeout);
+            try
+            {
+                return await response.Content.ReadAsStringAsync(bodyCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException("OpenRouter stopped sending the response body. Try again shortly or switch models.");
+            }
+        }
+
         public const string Eidos1ModelId = "eidos-1";
         public const string Eidos1ModelLabel = "Eidos 1";
         public const string Hepha1ModelId = "hepha-1";
@@ -361,7 +396,7 @@ namespace Malx_AI
                 ApplyHeaders(request);
 
                 using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                string responseBody = await ReadBodyWithTimeoutAsync(response, cancellationToken);
 
                 switch (response.StatusCode)
                 {
@@ -419,7 +454,7 @@ namespace Malx_AI
                 ApplyHeaders(request);
 
                 using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                string responseBody = await ReadBodyWithTimeoutAsync(response, cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -650,7 +685,7 @@ namespace Malx_AI
 
                 using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 finalStatusCode = response.StatusCode;
-                responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                responseBody = await ReadBodyWithTimeoutAsync(response, cancellationToken);
 
                 if (finalStatusCode == HttpStatusCode.OK)
                     break;
@@ -791,7 +826,7 @@ namespace Malx_AI
                 if (response.StatusCode == HttpStatusCode.OK)
                     break;
 
-                string retryBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                string retryBody = await ReadBodyWithTimeoutAsync(response, cancellationToken);
 
                 // Only do a short in-place retry for genuine server transients (502/503/504).
                 // 429 rate-limits are NOT retried in place — we fall straight through to fallback,
@@ -842,6 +877,8 @@ namespace Malx_AI
             var toolCallAccumulators = new Dictionary<int, StreamingToolCallAccumulator>();
             int consecutivePadDeltas = 0;
             bool padDegenerationDetected = false;
+            bool streamStalled = false;
+            string providerStreamError = string.Empty;
 
             try
             {
@@ -849,13 +886,38 @@ namespace Malx_AI
                 {
                 await using var responseStream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var reader = new StreamReader(responseStream);
+                using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                DateTime streamStartUtc = DateTime.UtcNow;
+                bool firstLineReceived = false;
+                bool anyDeltaReceived = false;
 
                 while (true)
                 {
-                    string? line = await reader.ReadLineAsync(cancellationToken);
+                    TimeSpan streamElapsed = DateTime.UtcNow - streamStartUtc;
+                    if (streamElapsed > StreamTotalDurationLimit
+                        || (!anyDeltaReceived && streamElapsed > StreamFirstContentTimeout))
+                    {
+                        streamStalled = true;
+                        break;
+                    }
+
+                    string? line;
+                    try
+                    {
+                        idleCts.CancelAfter(firstLineReceived ? StreamLineIdleTimeout : StreamFirstLineIdleTimeout);
+                        line = await reader.ReadLineAsync(idleCts.Token);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        // Idle deadline fired, not the caller's token — the provider stalled.
+                        streamStalled = true;
+                        break;
+                    }
+
                     if (line == null)
                         break;
 
+                    firstLineReceived = true;
                     if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                         continue;
 
@@ -868,6 +930,16 @@ namespace Malx_AI
 
                     using JsonDocument chunkDocument = JsonDocument.Parse(payload);
                     JsonElement root = chunkDocument.RootElement;
+
+                    // Provider failures that happen AFTER the 200/OK headers arrive as an SSE error
+                    // payload with no "choices". Skipping it silently ended the turn with an empty
+                    // message; capture it so the fallback chain can react.
+                    if (root.TryGetProperty("error", out JsonElement streamErrorElement))
+                    {
+                        providerStreamError = ExtractStreamErrorMessage(streamErrorElement);
+                        break;
+                    }
+
                     if (!root.TryGetProperty("choices", out JsonElement choices)
                         || choices.ValueKind != JsonValueKind.Array
                         || choices.GetArrayLength() == 0)
@@ -876,6 +948,14 @@ namespace Malx_AI
                     }
 
                     JsonElement firstChoice = choices[0];
+                    if (firstChoice.TryGetProperty("finish_reason", out JsonElement finishReasonElement)
+                        && finishReasonElement.ValueKind == JsonValueKind.String
+                        && string.Equals(finishReasonElement.GetString(), "error", StringComparison.OrdinalIgnoreCase))
+                    {
+                        providerStreamError = "Provider reported a mid-stream generation error.";
+                        break;
+                    }
+
                     if (!firstChoice.TryGetProperty("delta", out JsonElement delta)
                         || delta.ValueKind != JsonValueKind.Object)
                     {
@@ -936,18 +1016,51 @@ namespace Malx_AI
                         reasoningBuilder.Append(reasoningDetailsDelta);
 
                     AppendStreamingToolCalls(delta, toolCallAccumulators);
+
+                    if (!anyDeltaReceived
+                        && (textBuilder.Length > 0 || reasoningBuilder.Length > 0 || toolCallAccumulators.Count > 0))
+                    {
+                        anyDeltaReceived = true;
+                    }
                 }
                 }
 
-                // Provider degenerated into pure padding with no usable answer — switch models.
-                if (padDegenerationDetected && textBuilder.Length < 40 && toolCallAccumulators.Count == 0)
+                // Recoverable stream degenerations: pure padding, a stalled/timed-out stream, a
+                // mid-stream provider error, or a stream that completed with nothing at all. While
+                // no usable answer has been shown to the user, switch to the next model in the
+                // fallback chain instead of surfacing an empty message or a frozen turn.
+                bool noUsableContent = textBuilder.Length < 40 && toolCallAccumulators.Count == 0;
+                bool emptyCompletion = textBuilder.Length == 0
+                    && toolCallAccumulators.Count == 0
+                    && reasoningBuilder.Length == 0
+                    && (stopSequences == null || stopSequences.Count == 0);
+                if (noUsableContent && (padDegenerationDetected || streamStalled || providerStreamError.Length > 0 || emptyCompletion))
                 {
+                    string failureKind = padDegenerationDetected ? "PadDegeneration"
+                        : streamStalled ? "StreamStalled"
+                        : providerStreamError.Length > 0 ? "MidStreamError"
+                        : "EmptyCompletion";
                     string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
                     await BackendLogService.LogEventAsync(
-                        "OpenRouterPadDegeneration",
-                        $"Model:{requestedModelProfile.AliasLabel}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}");
+                        "OpenRouterStreamDegeneration",
+                        $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}");
                     if (!string.IsNullOrWhiteSpace(fallbackModelId))
                         return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+
+                    if (streamStalled)
+                        throw new InvalidOperationException($"{displayModelLabel} stopped responding mid-stream and no fallback model is available. Try again shortly or switch models.");
+                    if (providerStreamError.Length > 0)
+                        throw new InvalidOperationException($"OpenRouter provider for {displayModelLabel} failed mid-stream: {Truncate(providerStreamError, 200)}");
+                    // Pad/empty completions keep the previous behavior of returning what
+                    // accumulated rather than failing the whole turn.
+                }
+                else if ((streamStalled || providerStreamError.Length > 0) && !noUsableContent)
+                {
+                    // A partial answer survived the stall/error — deliver it instead of
+                    // discarding the turn.
+                    await BackendLogService.LogEventAsync(
+                        "OpenRouterStreamPartial",
+                        $"Model:{requestedModelProfile.AliasLabel}\nStalled:{streamStalled}\nError:{Truncate(providerStreamError, 300)}\nChars:{textBuilder.Length}");
                 }
 
                 SetDetectedModel(requestedModelProfile.AliasId, requestedModelProfile.AliasLabel);
@@ -971,7 +1084,7 @@ namespace Malx_AI
                 ApplyHeaders(request);
 
                 using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                string responseBody = await ReadBodyWithTimeoutAsync(response, cancellationToken);
                 if (response.StatusCode != HttpStatusCode.OK)
                 {
                     await BackendLogService.LogEventAsync("OpenRouterModelsFailed", $"Status: {(int)response.StatusCode} ({response.StatusCode})\n{responseBody}");
@@ -1344,6 +1457,23 @@ namespace Malx_AI
             }
 
             return repaired;
+        }
+
+        private static string ExtractStreamErrorMessage(JsonElement errorElement)
+        {
+            if (errorElement.ValueKind == JsonValueKind.Object
+                && errorElement.TryGetProperty("message", out JsonElement messageElement)
+                && messageElement.ValueKind == JsonValueKind.String)
+            {
+                string message = messageElement.GetString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(message))
+                    return message.Trim();
+            }
+
+            string raw = errorElement.ToString();
+            return string.IsNullOrWhiteSpace(raw)
+                ? "Provider returned an unspecified mid-stream error."
+                : Truncate(raw, 300);
         }
 
         // Strips meaningless padding/sentinel tokens (e.g. Gemma's literal "<pad>") that a degenerate
@@ -1944,7 +2074,7 @@ namespace Malx_AI
                     null);
 
                 using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                string responseBody = await ReadBodyWithTimeoutAsync(response, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
                     return (response.StatusCode, responseBody);
 

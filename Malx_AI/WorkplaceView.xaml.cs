@@ -8267,6 +8267,7 @@ namespace Malx_AI
             ArchitectStageText.Text = $"Architect · {architectLabel}";
             BuilderStageText.Text = $"Builder · {builderLabel}";
             CriticStageText.Text = $"Critic · {criticLabel}";
+            SetBuilderGenerationStatusVisible(activeRole == CouncilRole.Builder);
 
             if (activeRole == CouncilRole.Architect)
                 PublishCouncilPetStatus("Architect", "Planning the handoff.");
@@ -8276,6 +8277,15 @@ namespace Malx_AI
                 PublishCouncilPetStatus("Critic", "Checking the result.");
             else if (architectDone && builderDone && criticDone)
                 PublishCouncilPetStatus("Council", "Run complete.");
+        }
+
+        private void SetBuilderGenerationStatusVisible(bool isVisible)
+        {
+            if (BuilderGenerationStatusText == null || BuilderStageText == null)
+                return;
+
+            BuilderGenerationStatusText.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+            BuilderStageText.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private static string FormatStageDuration(double seconds)
@@ -10166,6 +10176,34 @@ namespace Malx_AI
         private static string BuildLabeledBlock(string label, string content)
         {
             return $"[[{label}]]\n{content.Trim()}\n[[END {label}]]\n";
+        }
+
+        /// <summary>
+        /// Removes every [[label]]...[[END label]] block (as produced by BuildLabeledBlock) from
+        /// the text. Missing or unterminated blocks leave the text unchanged — never truncate
+        /// payload content on a malformed marker.
+        /// </summary>
+        private static string RemoveLabeledBlock(string text, string label)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrWhiteSpace(label))
+                return text ?? string.Empty;
+
+            string start = $"[[{label}]]";
+            string end = $"[[END {label}]]";
+            int searchFrom = 0;
+            while (true)
+            {
+                int startIndex = text.IndexOf(start, searchFrom, StringComparison.Ordinal);
+                if (startIndex < 0)
+                    return text;
+
+                int endIndex = text.IndexOf(end, startIndex + start.Length, StringComparison.Ordinal);
+                if (endIndex < 0)
+                    return text;
+
+                text = text.Remove(startIndex, endIndex + end.Length - startIndex);
+                searchFrom = startIndex;
+            }
         }
 
         private static string BuildRoleIsolatedPayload(CouncilRole role, ContextStateObject state)
@@ -15623,7 +15661,11 @@ namespace Malx_AI
 
         private static string BuildSubOneBCouncilPayload(CouncilRole role, string userPayload, bool isWorkspaceTask = false)
         {
-            string payload = userPayload ?? string.Empty;
+            // The tool capability card only helps a model that routes tools — which a sub-1B
+            // model never does (its preflight is deterministic-only). Left in the payload, the
+            // card is copy-bait: the screenshot-classic failure is a tiny Builder answering
+            // "PYTHON_MATH ... execution output: ..." verbatim from the card. Remove it.
+            string payload = RemoveLabeledBlock(userPayload ?? string.Empty, "CAPABILITY MAP");
             if (payload.Length <= 9000)
             {
                 if (isWorkspaceTask && role == CouncilRole.Builder)
@@ -15885,7 +15927,7 @@ namespace Malx_AI
                     showLiveCard,
                     maxGenerationTokensOverride,
                     contextSizeOverride,
-                    useSubOneBMode);
+                    localCapability);
             }
 
             if (role == CouncilRole.Builder && useBuilderToolDecision && isGemma4)
@@ -16378,6 +16420,11 @@ namespace Malx_AI
             {
                 if (_agenticPauseEngine == null)
                     throw new InvalidOperationException("AgenticPauseEngine not initialized.");
+
+                // Size-scaled pause budget: each pause is a full tool round-trip plus a
+                // regeneration — small models that pause repeatedly burn their whole token
+                // budget on tool plumbing and never finish the deliverable.
+                _agenticPauseEngine.MaxPausesPerTurn = useSubOneBMode ? 1 : localCapability.IsCompactClass ? 2 : 3;
 
                 if (strictChatMl)
                 {
@@ -19503,6 +19550,7 @@ namespace Malx_AI
             try
             {
                 BuilderStageText.Text = "Builder · Re-run";
+                SetBuilderGenerationStatusVisible(true);
                 RelayStatusBlock.Text = "Relay: Builder re-run...";
 
                 string objectiveClause = string.IsNullOrWhiteSpace(_lastRunContext.Objective)
@@ -19642,6 +19690,7 @@ namespace Malx_AI
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
                 RelayStatusBlock.Text = "Relay: Idle";
+                SetBuilderGenerationStatusVisible(false);
             }
         }
 

@@ -29,73 +29,152 @@ namespace Malx_AI
             bool showLiveCard,
             int? maxGenerationTokensOverride,
             int? contextSizeOverride,
-            bool preferDeterministicPreflight = false)
+            LocalModelCapabilityProfile? builderCapability = null)
         {
             var toolContext = new StringBuilder();
             var usedToolCalls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            Grammar grammar = CreateBuilderToolDecisionGrammar();
-            if (preferDeterministicPreflight
+            var observations = new List<BuilderToolObservation>();
+
+            // Tool-routing trust scales with model size AND recorded behavior. A sub-1B model
+            // forced through the decision grammar emits VALID JSON for an arbitrary tool with an
+            // invented query, then echoes the observation as its deliverable ("PYTHON_MATH /
+            // execution output: ..."), so it never routes tools itself — the deterministic
+            // router (regex over the actual request, hallucination-free) is its only preflight
+            // source. Compact 1-4B models start with one model-chosen call and can EARN a second
+            // when the first validates and succeeds; the reliability ledger further adjusts the
+            // budget from this model's actual routing history.
+            bool deterministicOnly = builderCapability?.IsSubOneB == true;
+            int modelChosenToolBudget = builderCapability?.MaxModelChosenPreflightTools ?? MaxBuilderPreflightTools;
+            string builderModelPath = GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty;
+
+            if ((deterministicOnly || builderCapability?.IsCompactClass == true)
                 && TryBuildDeterministicBuilderToolDecision(userPayload, out BuilderToolDecision? forcedDecision)
                 && forcedDecision != null)
             {
-                await RunBuilderPreflightToolAsync(forcedDecision, usedToolCalls, toolContext, token);
+                await RunBuilderPreflightToolAsync(forcedDecision, usedToolCalls, toolContext, observations, token);
             }
 
-            for (int round = 0; round <= MaxBuilderPreflightTools; round++)
+            if (deterministicOnly)
             {
-                if (usedToolCalls.Count >= MaxBuilderPreflightTools)
-                    break;
-
-                BuilderToolDecision? decision = null;
-                string lastInvalidDecision = string.Empty;
-                try
+                LogActivity(usedToolCalls.Count > 0
+                    ? "Builder tool routing: deterministic preflight only (sub-1B local model)."
+                    : "Builder tool routing: no deterministic match; sub-1B model goes straight to the deliverable.");
+            }
+            else if (modelChosenToolBudget > 0)
+            {
+                int ledgerBudget = ToolReliabilityLedger.GetTrustAdjustedToolBudget(builderModelPath, modelChosenToolBudget);
+                if (ledgerBudget != modelChosenToolBudget)
                 {
-                    for (int attempt = 0; attempt < 2 && decision == null; attempt++)
-                    {
-                        string decisionSystem = BuildBuilderToolDecisionSystemPrompt(attempt > 0, usedToolCalls.Count);
-                        string decisionPayload = BuildBuilderToolDecisionPayload(
-                            userPayload,
-                            lastInvalidDecision,
-                            toolContext.ToString(),
-                            usedToolCalls);
-                        ReasoningParser.ParsedResponse decisionResponse = await ExecuteCouncilRoleAsync(
-                            CouncilRole.Builder,
-                            decisionSystem,
-                            decisionPayload,
-                            token,
-                            temperatureOverride: 0.0f,
-                            baseStateVault: null,
-                            loadBaseState: false,
-                            allowBatchRecovery: allowBatchRecovery,
-                            showLiveCard: false,
-                            maxGenerationTokensOverride: 192,
-                            contextSizeOverride: contextSizeOverride,
-                            useBuilderToolDecision: false,
-                            outputGrammar: grammar,
-                            allowAgenticPauses: false,
-                            internalInferenceStep: true);
+                    LogActivity(ledgerBudget == 0
+                        ? $"Builder tool routing: ledger stepped this model down to deterministic-only ({ToolReliabilityLedger.DescribeModel(builderModelPath)})."
+                        : $"Builder tool routing: ledger granted an extended budget of {ledgerBudget} ({ToolReliabilityLedger.DescribeModel(builderModelPath)}).");
+                }
+                modelChosenToolBudget = ledgerBudget;
 
-                        lastInvalidDecision = decisionResponse.Answer.Trim();
-                        if (!TryParseBuilderToolDecision(lastInvalidDecision, out decision, out string parseError))
-                            LogActivity($"Builder tool decision rejected (attempt {attempt + 1}/2): {parseError}");
+                string groundingContext = BuildToolDecisionGroundingContext(userPayload);
+                IReadOnlyCollection<string>? knownWorkspaceFiles = _connectedWorkspace.CodebaseEditAccessEnabled
+                    ? _connectedWorkspace.ConnectedFiles
+                    : null;
+
+                Grammar grammar = CreateBuilderToolDecisionGrammar();
+                int modelChosenCalls = 0;
+                for (int round = 0; round <= MaxBuilderPreflightTools; round++)
+                {
+                    if (usedToolCalls.Count >= MaxBuilderPreflightTools || modelChosenCalls >= modelChosenToolBudget)
+                        break;
+
+                    BuilderToolDecision? decision = null;
+                    string lastInvalidDecision = string.Empty;
+                    try
+                    {
+                        for (int attempt = 0; attempt < 2 && decision == null; attempt++)
+                        {
+                            string decisionSystem = BuildBuilderToolDecisionSystemPrompt(attempt > 0, usedToolCalls.Count);
+                            string decisionPayload = BuildBuilderToolDecisionPayload(
+                                userPayload,
+                                lastInvalidDecision,
+                                toolContext.ToString(),
+                                usedToolCalls);
+                            ReasoningParser.ParsedResponse decisionResponse = await ExecuteCouncilRoleAsync(
+                                CouncilRole.Builder,
+                                decisionSystem,
+                                decisionPayload,
+                                token,
+                                temperatureOverride: 0.0f,
+                                baseStateVault: null,
+                                loadBaseState: false,
+                                allowBatchRecovery: allowBatchRecovery,
+                                showLiveCard: false,
+                                maxGenerationTokensOverride: 192,
+                                contextSizeOverride: contextSizeOverride,
+                                useBuilderToolDecision: false,
+                                outputGrammar: grammar,
+                                allowAgenticPauses: false,
+                                internalInferenceStep: true);
+
+                            lastInvalidDecision = decisionResponse.Answer.Trim();
+                            if (!TryParseBuilderToolDecision(lastInvalidDecision, out decision, out string parseError))
+                            {
+                                LogActivity($"Builder tool decision rejected (attempt {attempt + 1}/2): {parseError}");
+                                lastInvalidDecision += "\nRejected because: " + parseError;
+                                continue;
+                            }
+
+                            // The grammar guarantees valid JSON, not a sensible call. Semantic
+                            // validation catches invented queries (numbers/terms from nowhere,
+                            // paths that match no workspace file) and turns them into a SPECIFIC
+                            // repair instruction instead of a hallucinated tool run.
+                            if (decision != null && decision.Action == "tool"
+                                && !LocalToolIntentRouter.TryValidateToolQuery(
+                                    decision.Tool,
+                                    decision.Query,
+                                    groundingContext,
+                                    LocalToolIntentRouter.ValidationStrictness.Grounded,
+                                    knownWorkspaceFiles,
+                                    out string validationError))
+                            {
+                                ToolReliabilityLedger.RecordDecision(builderModelPath, decision.Tool, valid: false);
+                                LogActivity($"Builder tool decision failed semantic validation (attempt {attempt + 1}/2): {validationError}");
+                                lastInvalidDecision += "\nRejected because: " + validationError;
+                                decision = null;
+                                continue;
+                            }
+
+                            if (decision != null)
+                                ToolReliabilityLedger.RecordDecision(builderModelPath, decision.Action == "tool" ? decision.Tool : "NONE", valid: true);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Tool routing is an enhancement, not a reason to lose the deliverable.
+                        LogActivity($"Builder constrained tool decision unavailable; continuing without another tool: {ex.Message}");
+                        break;
+                    }
+
+                    if (decision == null || decision.Action == "final" || usedToolCalls.Count >= MaxBuilderPreflightTools)
+                        break;
+
+                    BuilderToolObservation? observation = await RunBuilderPreflightToolAsync(decision, usedToolCalls, toolContext, observations, token);
+                    if (observation == null)
+                        break;
+
+                    ToolReliabilityLedger.RecordExecution(builderModelPath, decision.Tool, observation.Success);
+                    modelChosenCalls++;
+
+                    // Earned trust: a compact model whose first chosen call validated AND returned
+                    // a successful observation may take the second call a larger model would get.
+                    if (modelChosenCalls == modelChosenToolBudget
+                        && modelChosenToolBudget < MaxBuilderPreflightTools
+                        && observation.Success)
+                    {
+                        modelChosenToolBudget++;
+                        LogActivity("Builder earned one additional tool call (first call validated and succeeded).");
                     }
                 }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    // Tool routing is an enhancement, not a reason to lose the deliverable.
-                    LogActivity($"Builder constrained tool decision unavailable; continuing without another tool: {ex.Message}");
-                    break;
-                }
-
-                if (decision == null || decision.Action == "final" || usedToolCalls.Count >= MaxBuilderPreflightTools)
-                    break;
-
-                if (!await RunBuilderPreflightToolAsync(decision, usedToolCalls, toolContext, token))
-                    break;
             }
 
             string finalSystemPrompt = systemPrompt
@@ -107,14 +186,36 @@ namespace Malx_AI
                 // the final pass is not told to emit [PAUSE:] lines that nothing intercepts.
                 .Replace(AgenticPauseCodebaseToolsAddendum, string.Empty, StringComparison.Ordinal);
 
-            string finalPayload = toolContext.Length == 0
+            // Small models copy raw observation envelopes back out as their "answer"; the same
+            // information as bare FACT lines gets USED instead of echoed. Failed observations are
+            // dropped entirely for small models — they cannot reason about a failure report and
+            // will parrot it. Larger models keep the full envelopes (they cite them correctly and
+            // benefit from the query/status detail).
+            bool digestForSmallModel = builderCapability != null
+                && (builderCapability.IsSubOneB || builderCapability.IsCompactClass);
+            string observationBlock;
+            if (digestForSmallModel)
+            {
+                observationBlock = string.Join("\n\n", observations
+                    .Where(o => o.Success)
+                    .Select(o => LocalToolIntentRouter.DigestObservation(o.Tool, o.Query, o.Result))
+                    .Where(digest => digest.Length > 0));
+                if (observations.Any(o => !o.Success))
+                    LogActivity("Builder preflight: failed tool observations omitted from the small-model payload.");
+            }
+            else
+            {
+                observationBlock = toolContext.ToString().TrimEnd();
+            }
+
+            string finalPayload = observationBlock.Length == 0
                 ? userPayload
                 // Keep the role's "produce the deliverable now" closing anchor as the final text
                 // the model reads. Appending observations after it encourages small models to echo
                 // tool output instead of implementing the request.
-                : toolContext + "\n\n" + userPayload;
+                : observationBlock + "\n\n" + userPayload;
 
-            return await ExecuteCouncilRoleAsync(
+            ReasoningParser.ParsedResponse finalResponse = await ExecuteCouncilRoleAsync(
                 CouncilRole.Builder,
                 finalSystemPrompt,
                 finalPayload,
@@ -130,19 +231,67 @@ namespace Malx_AI
                 outputGrammar: null,
                 allowAgenticPauses: false,
                 internalInferenceStep: false);
+
+            // Echo recovery: a small model sometimes copies the injected tool observations (or the
+            // tool catalog itself) back out as its "deliverable" instead of answering. When the
+            // answer is recognizably an observation echo, regenerate once with the observations
+            // removed; if the clean pass fails too, keep the original rather than lose the turn.
+            string echoReference = toolContext + "\n" + observationBlock;
+            if (observationBlock.Length > 0 && LocalToolIntentRouter.IsToolObservationEcho(finalResponse.Answer, echoReference))
+            {
+                ToolReliabilityLedger.RecordEcho(builderModelPath);
+                LogActivity("Builder deliverable echoed the tool observations; regenerating once without tool context.");
+                try
+                {
+                    ReasoningParser.ParsedResponse cleanRetry = await ExecuteCouncilRoleAsync(
+                        CouncilRole.Builder,
+                        finalSystemPrompt,
+                        userPayload,
+                        token,
+                        temperatureOverride,
+                        baseStateVault,
+                        loadBaseState,
+                        allowBatchRecovery,
+                        showLiveCard,
+                        maxGenerationTokensOverride,
+                        contextSizeOverride,
+                        useBuilderToolDecision: false,
+                        outputGrammar: null,
+                        allowAgenticPauses: false,
+                        internalInferenceStep: false);
+                    if (!string.IsNullOrWhiteSpace(cleanRetry.Answer)
+                        && !LocalToolIntentRouter.IsToolObservationEcho(cleanRetry.Answer, echoReference))
+                    {
+                        return cleanRetry;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    LogActivity($"Echo-recovery regeneration failed; keeping the original Builder output: {ex.Message}");
+                }
+            }
+
+            return finalResponse;
         }
 
-        private async Task<bool> RunBuilderPreflightToolAsync(
+        private sealed record BuilderToolObservation(string Tool, string Query, bool Success, string Result);
+
+        private async Task<BuilderToolObservation?> RunBuilderPreflightToolAsync(
             BuilderToolDecision decision,
             HashSet<string> usedToolCalls,
             StringBuilder toolContext,
+            List<BuilderToolObservation> observations,
             CancellationToken token)
         {
             string callKey = decision.Tool + "\n" + decision.Query.Trim();
             if (!usedToolCalls.Add(callKey))
             {
                 LogActivity("Builder attempted a duplicate preflight tool call; stopping tool loop.");
-                return false;
+                return null;
             }
 
             LogActivity($"Builder constrained tool decision {usedToolCalls.Count}/{MaxBuilderPreflightTools}: {decision.Tool}.");
@@ -160,7 +309,25 @@ namespace Malx_AI
             toolContext.AppendLine($"Status: {(toolResult.IsSuccess ? "success" : "failed")}");
             toolContext.AppendLine(resultText);
             toolContext.AppendLine($"[[END TOOL OBSERVATION {usedToolCalls.Count}]]");
-            return true;
+
+            var observation = new BuilderToolObservation(decision.Tool, decision.Query, toolResult.IsSuccess, resultText);
+            observations.Add(observation);
+            return observation;
+        }
+
+        private string BuildToolDecisionGroundingContext(string userPayload)
+        {
+            // Grounding evidence for semantic validation: the user's actual objective plus the
+            // tail of the Builder payload (where document context, prior knowledge, and the plan
+            // live). Generous on purpose — numbers a tool query legitimately uses may come from
+            // any of these, and a false rejection costs a useful tool call.
+            CouncilRunContext? runContext = _activeCouncilRunContext ?? _lastRunContext;
+            string objective = runContext?.UserPrompt ?? string.Empty;
+            string payloadExcerpt = userPayload ?? string.Empty;
+            const int maxExcerptChars = 6000;
+            if (payloadExcerpt.Length > maxExcerptChars)
+                payloadExcerpt = payloadExcerpt[^maxExcerptChars..];
+            return objective + "\n" + payloadExcerpt;
         }
 
         private bool TryBuildDeterministicBuilderToolDecision(string userPayload, out BuilderToolDecision? decision)
@@ -172,24 +339,18 @@ namespace Malx_AI
             if (objective.Length > BuilderToolDecisionMaxQueryChars)
                 objective = objective[..BuilderToolDecisionMaxQueryChars];
 
-            string lower = objective.ToLowerInvariant();
-            bool wantsCurrentFact = _isWebSearchEnabled
-                && Regex.IsMatch(lower, @"\b(latest|current|today|yesterday|recent|newest|release notes|version|price|news|202[5-9])\b");
-            if (wantsCurrentFact)
+            if (!LocalToolIntentRouter.TryRouteIntent(
+                    objective,
+                    _isWebSearchEnabled,
+                    _connectedWorkspace.CodebaseEditAccessEnabled,
+                    out LocalToolIntentRouter.ToolIntent? intent) || intent == null)
             {
-                decision = new BuilderToolDecision("tool", "WEB_SEARCH", objective);
-                return true;
+                return false;
             }
 
-            bool looksNumeric = Regex.IsMatch(objective, @"\d\s*(?:[+\-*/^=]|%|percent|mph|km/h|usd|dollars|kg|lbs|cm|mm|m2|m\^2|hours?|minutes?)", RegexOptions.IgnoreCase)
-                && Regex.IsMatch(lower, @"\b(calculate|compute|solve|convert|how many|how much|total|average|sum|rate|formula)\b");
-            if (looksNumeric)
-            {
-                decision = new BuilderToolDecision("tool", "CALCULATE", objective);
-                return true;
-            }
-
-            return false;
+            decision = new BuilderToolDecision("tool", intent.Tool, intent.Query);
+            LogActivity($"Deterministic tool router matched {intent.Tool} ({intent.Reason}).");
+            return true;
         }
 
         private static string ExtractOriginalRequestForToolRouting(string userPayload)
@@ -228,7 +389,9 @@ namespace Malx_AI
                 "No tool can edit files, install packages, operate the UI, or modify Project Canvas. " +
                 "Return exactly one JSON object with fields in this order: action, tool, query. " +
                 "For no tool use {\"action\":\"final\",\"tool\":\"NONE\",\"query\":\"\"}. " +
-                "For a tool use action=tool, an available tool name, and a standalone non-empty query.";
+                "For a tool use action=tool, an available tool name, and a standalone non-empty query. " +
+                "Tool queries must be grounded in the actual request: never invent numbers, entities, or paths that the request does not contain. " +
+                LocalToolIntentRouter.BuildToolDecisionFewShotExamples(_isWebSearchEnabled, codebaseTools);
         }
 
         private string BuildBuilderToolDecisionPayload(
