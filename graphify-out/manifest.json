@@ -15,8 +15,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/AgenticPauseEngine.cs": {
-    "mtime": 1783065330.013878,
-    "ast_hash": "bece085da4d7096d94b6c625e723a338",
+    "mtime": 1783107594.112196,
+    "ast_hash": "c089f2b2fb3f397ff37a0c58cf52679d",
     "semantic_hash": ""
   },
   "Malx_AI/App.xaml": {
@@ -70,8 +70,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/ChatMessage.cs": {
-    "mtime": 1783104383.205803,
-    "ast_hash": "af51a1f5b3d6adac15f2e3b4d53929ba",
+    "mtime": 1783124540.0457363,
+    "ast_hash": "d7e8b08aa7f714affde9324f304141a9",
     "semantic_hash": ""
   },
   "Malx_AI/ChatWorkspaceStatePersistence.cs": {
@@ -170,8 +170,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/LocalModelCapabilityProfile.cs": {
-    "mtime": 1783065151.738618,
-    "ast_hash": "bd1ce0802fac5b809562246d95eabc33",
+    "mtime": 1783105524.0035088,
+    "ast_hash": "1e515bdaf24003be541a6c5c16219acc",
     "semantic_hash": ""
   },
   "Malx_AI/LocalSemanticEmbeddingService.cs": {
@@ -185,8 +185,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/MainWindow.Inference.cs": {
-    "mtime": 1783104431.1439145,
-    "ast_hash": "d57bf9e7e34c2679c93fc2a1cb142e8f",
+    "mtime": 1783107638.3628728,
+    "ast_hash": "f1e7b00bc620ab6d396a517d7554e387",
     "semantic_hash": ""
   },
   "Malx_AI/MainWindow.ResponsiveLayout.cs": {
@@ -245,8 +245,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/OpenRouterChatService.cs": {
-    "mtime": 1783019558.8122537,
-    "ast_hash": "9548792a8371ad3a6fbceb69f8e8483c",
+    "mtime": 1783105457.0238917,
+    "ast_hash": "f24035b30a076228c93e265dcf7f138c",
     "semantic_hash": ""
   },
   "Malx_AI/PdfExtractor.cs": {
@@ -330,8 +330,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/WorkplaceView.ArtifactValidation.cs": {
-    "mtime": 1782951493.2151206,
-    "ast_hash": "d30eed2c70cd4bb102215e92e7079e3a",
+    "mtime": 1783127129.4802854,
+    "ast_hash": "81a6a5724fbbf52d2ee16c5f9c9412c1",
     "semantic_hash": ""
   },
   "Malx_AI/WorkplaceView.CloudIntelligence.cs": {
@@ -345,8 +345,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/WorkplaceView.ToolDecision.cs": {
-    "mtime": 1782971660.706375,
-    "ast_hash": "ff1d6c44fd380778bb79f76f5edd20c2",
+    "mtime": 1783107504.6580667,
+    "ast_hash": "65867d373ffc95b889b3e93972125686",
     "semantic_hash": ""
   },
   "Malx_AI/WorkplaceView.xaml": {
@@ -355,8 +355,8 @@
     "semantic_hash": ""
   },
   "Malx_AI/WorkplaceView.xaml.cs": {
-    "mtime": 1783102670.4149296,
-    "ast_hash": "efce20f40a2182c336a84c6ce6c1d3d5",
+    "mtime": 1783127146.0707283,
+    "ast_hash": "851837727036ca97c849707430fb713e",
     "semantic_hash": ""
   },
   "Malx_AI/WorkspaceAccessService.cs": {
@@ -467,6 +467,16 @@
   "Malx_AI/ShimmerTextBlock.cs": {
     "mtime": 1783102533.7893825,
     "ast_hash": "915385cd8319e4c597effdc40489b4e9",
+    "semantic_hash": ""
+  },
+  "Malx_AI/LocalToolIntentRouter.cs": {
+    "mtime": 1783107795.378077,
+    "ast_hash": "4bda15ad3bc6735c8d277ee772b00daf",
+    "semantic_hash": ""
+  },
+  "Malx_AI/ToolReliabilityLedger.cs": {
+    "mtime": 1783107329.9181688,
+    "ast_hash": "e2109c47b3fc8aa63bc657fbd273b819",
     "semantic_hash": ""
   }
 }

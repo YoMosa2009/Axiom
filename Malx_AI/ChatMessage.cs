@@ -13,6 +13,7 @@ namespace Malx_AI
         private static readonly Regex FencedCodeBlockRegex = new(@"```(?<language>[^\r\n`]*)\r?\n?(?<code>[\s\S]*?)```", RegexOptions.Compiled);
         private static readonly Regex ExcessiveBlankLinesRegex = new(@"(?:\r?\n){3,}", RegexOptions.Compiled);
         private static readonly string[] MathFenceLanguages = ["latex", "tex", "math", "katex"];
+        private const int StreamingRevealIntervalMs = 18;
 
         public Guid Id { get; set; } = Guid.NewGuid();
         private string _content;
@@ -26,6 +27,8 @@ namespace Malx_AI
         private bool _isStreaming;
         private bool _preferPlainTextRendering;
         private bool _isCodeBlockCollapsed;
+        private string _streamingDisplayTarget = string.Empty;
+        private System.Windows.Threading.DispatcherTimer? _streamingRevealTimer;
 
         public ObservableCollection<ChatMessageCodeBlock> CodeBlocks { get; } = new();
 
@@ -36,6 +39,7 @@ namespace Malx_AI
             get => _content;
             set
             {
+                StopStreamingReveal();
                 SetContentCore(value, preserveFormatting: false, notifyRichRendering: true);
             }
         }
@@ -258,21 +262,23 @@ namespace Malx_AI
 
         public void SetStreamingContent(string? content)
         {
-            SetContentCore(content, preserveFormatting: true, notifyRichRendering: false);
+            SetContentCore(content, preserveFormatting: true, notifyRichRendering: false, smoothStreaming: true);
         }
 
         public void FinalizeStreamingContent(string? content)
         {
+            StopStreamingReveal();
             SetContentCore(content, preserveFormatting: false, notifyRichRendering: true);
         }
 
-        private void SetContentCore(string? value, bool preserveFormatting, bool notifyRichRendering)
+        private void SetContentCore(string? value, bool preserveFormatting, bool notifyRichRendering, bool smoothStreaming = false)
         {
-            if (InvokeOnUiThreadIfRequired(() => SetContentCore(value, preserveFormatting, notifyRichRendering)))
+            if (InvokeOnUiThreadIfRequired(() => SetContentCore(value, preserveFormatting, notifyRichRendering, smoothStreaming)))
                 return;
 
             string normalized = value ?? string.Empty;
-            if (_content == normalized)
+            bool contentChanged = _content != normalized;
+            if (!contentChanged && !smoothStreaming && preserveFormatting)
                 return;
 
             _content = normalized;
@@ -281,19 +287,96 @@ namespace Malx_AI
                 : MarkdownParser.ToDisplayText(normalized);
             if (preserveFormatting)
             {
-                DisplayFormattedContent = normalized;
                 ReplaceCodeBlocks([]);
+                if (smoothStreaming)
+                    SetStreamingDisplayTarget(normalized);
+                else
+                    DisplayFormattedContent = normalized;
             }
             else
             {
                 UpdateCodeBlockPresentation(normalized);
             }
 
-            OnPropertyChanged(nameof(Content));
-            OnPropertyChanged(nameof(FormattedContent));
-            OnPropertyChanged(nameof(RichRenderContent));
-            if (notifyRichRendering)
-                OnPropertyChanged(nameof(SupportsRichRendering));
+            if (contentChanged)
+            {
+                OnPropertyChanged(nameof(Content));
+                OnPropertyChanged(nameof(FormattedContent));
+                OnPropertyChanged(nameof(RichRenderContent));
+                if (notifyRichRendering)
+                    OnPropertyChanged(nameof(SupportsRichRendering));
+            }
+        }
+
+        private void SetStreamingDisplayTarget(string target)
+        {
+            _streamingDisplayTarget = target ?? string.Empty;
+
+            if (string.IsNullOrEmpty(_streamingDisplayTarget))
+            {
+                StopStreamingReveal();
+                DisplayFormattedContent = string.Empty;
+                return;
+            }
+
+            if (!_streamingDisplayTarget.StartsWith(_displayFormattedContent ?? string.Empty, StringComparison.Ordinal))
+                DisplayFormattedContent = string.Empty;
+
+            EnsureStreamingRevealTimer();
+            RevealStreamingTextStep();
+        }
+
+        private void EnsureStreamingRevealTimer()
+        {
+            if (_streamingRevealTimer == null)
+            {
+                _streamingRevealTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(StreamingRevealIntervalMs)
+                };
+                _streamingRevealTimer.Tick += (_, _) => RevealStreamingTextStep();
+            }
+
+            if (!_streamingRevealTimer.IsEnabled)
+                _streamingRevealTimer.Start();
+        }
+
+        private void RevealStreamingTextStep()
+        {
+            int currentLength = _displayFormattedContent?.Length ?? 0;
+            int targetLength = _streamingDisplayTarget.Length;
+
+            if (currentLength >= targetLength)
+            {
+                _streamingRevealTimer?.Stop();
+                return;
+            }
+
+            int remaining = targetLength - currentLength;
+            int chunkSize = CalculateStreamingRevealChunkSize(remaining);
+            int nextLength = Math.Min(targetLength, currentLength + chunkSize);
+            DisplayFormattedContent = _streamingDisplayTarget.Substring(0, nextLength);
+
+            if (nextLength >= targetLength)
+                _streamingRevealTimer?.Stop();
+        }
+
+        private static int CalculateStreamingRevealChunkSize(int remaining)
+        {
+            if (remaining > 600) return 96;
+            if (remaining > 240) return 56;
+            if (remaining > 80) return 28;
+            if (remaining > 24) return 12;
+            return 4;
+        }
+
+        private void StopStreamingReveal()
+        {
+            if (InvokeOnUiThreadIfRequired(StopStreamingReveal))
+                return;
+
+            _streamingRevealTimer?.Stop();
+            _streamingDisplayTarget = string.Empty;
         }
 
         private void UpdateCodeBlockPresentation(string content)

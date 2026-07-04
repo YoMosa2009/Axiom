@@ -16985,15 +16985,9 @@ namespace Malx_AI
 
         private static async Task<IReadOnlyList<string>> ProbeHtmlBehaviorWithWebView2Async(CoreWebView2 coreWebView, CouncilRunContext? context)
         {
-            string request = BuildHtmlBehaviorValidationRequest(context).ToLowerInvariant();
-            bool expectsPrimaryAction = request.Contains("generate fold", StringComparison.Ordinal)
-                || (request.Contains("generate", StringComparison.Ordinal)
-                    && RequestMentionsAny(request, "button", "control", "fold", "simulate", "simulation", "visualization", "protein"));
-            bool expectsCanvas = request.Contains("canvas", StringComparison.Ordinal);
-            bool expectsVisualization = expectsCanvas
-                || RequestMentionsAny(request, "visual", "visualization", "simulator", "simulation", "folding", "draw");
+            HtmlBehaviorExpectations expectations = InferHtmlBehaviorExpectations(context);
 
-            if (!expectsPrimaryAction && !expectsCanvas && !expectsVisualization)
+            if (!expectations.ExpectsPrimaryAction && !expectations.ExpectsCanvas && !expectations.ExpectsVisualization)
                 return Array.Empty<string>();
 
             const string smokeScript = """
@@ -17030,7 +17024,7 @@ namespace Malx_AI
         control.className || '',
         control.getAttribute('aria-label') || ''
       ].join(' ');
-      return /generate|fold|simulate|start|run/i.test(label);
+      return /generate|fold|simulate|start|run|play|pause/i.test(label);
     }) || (controls.length === 1 ? controls[0] : null);
 
     if (primary) {
@@ -17091,11 +17085,11 @@ namespace Malx_AI
             bool canvasChanged = node?["canvasChanged"]?.GetValue<bool>() == true;
             bool canvasHasInk = node?["canvasHasInk"]?.GetValue<bool>() == true;
 
-            if (expectsPrimaryAction && !buttonFound)
-                errors.Add("WEBVIEW2 BEHAVIOR ERROR: requested primary Generate/Fold action was not clickable in the rendered HTML.");
-            if (expectsCanvas && canvasCount == 0)
-                errors.Add("WEBVIEW2 BEHAVIOR ERROR: requested canvas visualization was not present in the rendered HTML.");
-            if ((expectsCanvas || expectsVisualization) && canvasCount > 0 && !canvasHasInk && !canvasChanged)
+            if (expectations.ExpectsPrimaryAction && !buttonFound)
+                errors.Add("WEBVIEW2 BEHAVIOR ERROR: requested primary action was not clickable in the rendered HTML.");
+            if (expectations.ExpectsCanvas && canvasCount == 0)
+                errors.Add("WEBVIEW2 BEHAVIOR ERROR: requested HTML canvas element was not present in the rendered HTML.");
+            if ((expectations.ExpectsCanvas || expectations.ExpectsVisualization) && canvasCount > 0 && !canvasHasInk && !canvasChanged)
                 errors.Add("WEBVIEW2 BEHAVIOR ERROR: canvas stayed blank after seeding input and clicking the primary control.");
 
             return errors;

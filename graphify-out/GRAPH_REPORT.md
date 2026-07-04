@@ -1,16 +1,16 @@
 # Graph Report - Axiom  (2026-07-03)
 
 ## Corpus Check
-- 91 files · ~269,081 words
+- 93 files · ~275,067 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3176 nodes · 7629 edges · 157 communities (128 shown, 29 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 202 edges (avg confidence: 0.79)
+- 3245 nodes · 7752 edges · 164 communities (133 shown, 31 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 203 edges (avg confidence: 0.79)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `13f7b04e`
+- Built from commit: `cab0c7e6`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -147,40 +147,48 @@
 - [[_COMMUNITY_ContentSite|ContentSite]]
 - [[_COMMUNITY_ShimmerTextBlock|ShimmerTextBlock]]
 - [[_COMMUNITY_.RankBySimilarity|.RankBySimilarity]]
-- [[_COMMUNITY_AppDataPaths|AppDataPaths]]
+- [[_COMMUNITY_.SaveCurrentChat|.SaveCurrentChat]]
 - [[_COMMUNITY_CanvasArtifactWebView|CanvasArtifactWebView]]
 - [[_COMMUNITY_CodebaseReviewActionGrid|CodebaseReviewActionGrid]]
 - [[_COMMUNITY_.SendUserMessageFromInputAsync|.SendUserMessageFromInputAsync]]
 - [[_COMMUNITY_AdvancedFeatureState.cs|AdvancedFeatureState.cs]]
 - [[_COMMUNITY_.PrepareNormalChatRequestContextAsync|.PrepareNormalChatRequestContextAsync]]
 - [[_COMMUNITY_DockPanel|DockPanel]]
+- [[_COMMUNITY_WorkspaceAccessService.cs|WorkspaceAccessService.cs]]
 - [[_COMMUNITY_ActionButtonPanel|ActionButtonPanel]]
 - [[_COMMUNITY_BranchNavigatorCombo|BranchNavigatorCombo]]
 - [[_COMMUNITY_CompactionThresholdBar|CompactionThresholdBar]]
 - [[_COMMUNITY_AssistantGenerationStatusText|AssistantGenerationStatusText]]
-- [[_COMMUNITY_.BuildCappedMemoryContent|.BuildCappedMemoryContent]]
+- [[_COMMUNITY_.FindUniqueLineBlock|.FindUniqueLineBlock]]
 - [[_COMMUNITY_ContentContainer|ContentContainer]]
 - [[_COMMUNITY_DropDownArrow|DropDownArrow]]
 - [[_COMMUNITY_ContentSite|ContentSite]]
 - [[_COMMUNITY_ChatDisplay|ChatDisplay]]
+- [[_COMMUNITY_.AddWorkplaceToHistory|.AddWorkplaceToHistory]]
+- [[_COMMUNITY_SessionHippocampusEntry|SessionHippocampusEntry]]
 - [[_COMMUNITY_NormalGenerationStatusText|NormalGenerationStatusText]]
-- [[_COMMUNITY_PART_ContentHost|PART_ContentHost]]
+- [[_COMMUNITY_.SaveAdvancedState|.SaveAdvancedState]]
 - [[_COMMUNITY_SidebarColumn|SidebarColumn]]
 - [[_COMMUNITY_SmartCompactionToggle|SmartCompactionToggle]]
 - [[_COMMUNITY_WorkplaceViewControl|WorkplaceViewControl]]
 - [[_COMMUNITY_BuilderGenerationStatusText|BuilderGenerationStatusText]]
+- [[_COMMUNITY_.FinalizeAssistantResponseAsync|.FinalizeAssistantResponseAsync]]
+- [[_COMMUNITY_MainWindow.Inference.cs|MainWindow.Inference.cs]]
+- [[_COMMUNITY_PromptFormat|PromptFormat]]
+- [[_COMMUNITY_.RankBySimilarity|.RankBySimilarity]]
+- [[_COMMUNITY_AppDataPaths|AppDataPaths]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `WorkplaceView` - 585 edges
+1. `WorkplaceView` - 586 edges
 2. `MainWindow` - 192 edges
 3. `UserControl` - 177 edges
 4. `Window` - 156 edges
 5. `WebSearchService` - 123 edges
-6. `MainWindow` - 120 edges
-7. `OpenRouterChatService` - 88 edges
-8. `WorkspaceAccessService` - 64 edges
-9. `Malx_AI` - 62 edges
-10. `MainWindow` - 50 edges
+6. `MainWindow` - 121 edges
+7. `OpenRouterChatService` - 90 edges
+8. `Malx_AI` - 64 edges
+9. `WorkspaceAccessService` - 64 edges
+10. `ChatMessage` - 56 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `WorkplaceSessionSnapshot` --references--> `CouncilTaskHistoryEntry`  [EXTRACTED]
@@ -197,7 +205,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (157 total, 29 thin omitted)
+## Communities (164 total, 31 thin omitted)
 
 ### Community 0 - "WebSearchService"
 Cohesion: 0.06
@@ -205,39 +213,43 @@ Nodes (23): DateTimeOffset, HtmlNode, HttpContent, CancellationToken, Concurrent
 
 ### Community 1 - "MainWindow"
 Cohesion: 0.04
-Nodes (30): BitmapSource, CoordinatedChatPersistenceSnapshot, ImageSource, SidebarCollapseButton, bool, CancellationTokenSource, ChatSession, Color (+22 more)
+Nodes (29): BitmapSource, CoordinatedChatPersistenceSnapshot, ImageSource, RoutedPropertyChangedEventArgs, bool, CancellationTokenSource, ChatSession, Color (+21 more)
 
 ### Community 2 - "WorkplaceView"
-Cohesion: 0.03
-Nodes (24): CodebasePatchValidationResult, CodebaseUndoSnapshot, CriticSensitivityLevel, bool, Border, Button, CancellationTokenSource, DispatcherTimer (+16 more)
+Cohesion: 0.02
+Nodes (23): CodebasePatchValidationResult, CodebaseUndoSnapshot, CriticSensitivityLevel, bool, Border, Button, CancellationTokenSource, DispatcherTimer (+15 more)
 
 ### Community 3 - ".SendQueryAsync"
 Cohesion: 0.03
-Nodes (18): ContextStateObject, CouncilGoalContract, CouncilTaskType, Height, CouncilRunContext, IReadOnlyList, List, PreFlightDecomposition (+10 more)
+Nodes (7): CodeOutputDetection, CouncilTaskType, Height, IReadOnlyCollection, KeyEventArgs, SandboxExecutionDisplay, Width
 
 ### Community 4 - "OpenRouterChatService"
 Cohesion: 0.05
-Nodes (40): Exception, HttpRequestMessage, HttpResponseMessage, HttpStatusCode, ISet, JsonArray, Label, Action (+32 more)
+Nodes (39): Exception, HttpRequestMessage, HttpResponseMessage, HttpStatusCode, ISet, JsonArray, Label, Action (+31 more)
 
 ### Community 5 - "MainWindow"
-Cohesion: 0.15
-Nodes (8): ChatSessionPromptPlan, Content, InferenceParams, int, Role, string, ChatSessionPromptPlan, Gemma4Formatter
+Cohesion: 0.17
+Nodes (6): ChatSessionPromptPlan, Content, IEnumerable, InferenceParams, Role, StringBuilder
 
 ### Community 6 - ".ExecuteCouncilRoleAsync"
 Cohesion: 0.06
-Nodes (10): ComboBox, ComboBoxItem, CouncilModelConfig, CouncilRole, Grammar, LLamaContext, CouncilModelConfig, MinP (+2 more)
+Nodes (18): ContextStateObject, CouncilBaseStateVault, CouncilModelConfig, CouncilRole, CouncilRunContext, WorkplaceView, IReadOnlyCollection, CancellationToken (+10 more)
 
 ### Community 7 - "WorkspaceAccessService"
-Cohesion: 0.15
-Nodes (7): CancellationToken, IProgress, StringBuilder, Task, Output, Process, Success
+Cohesion: 0.09
+Nodes (15): Dictionary, HashSet, IEnumerable, int, IReadOnlyCollection, List, Regex, string (+7 more)
+
+### Community 8 - "RoutedEventArgs"
+Cohesion: 0.14
+Nodes (7): CoreWebView2, CouncilGoalContract, CouncilRunContext, IReadOnlyList, PreFlightDecomposition, StringBuilder, WorkplaceView
 
 ### Community 9 - "List"
-Cohesion: 0.06
-Nodes (18): AcceptanceCheckExecutionResult, AcceptanceProbe, CoreWebView2, FileNames, FormulaChecklistItem, High, Low, Content (+10 more)
+Cohesion: 0.05
+Nodes (16): AcceptanceCheckExecutionResult, AcceptanceProbe, FileNames, FormulaChecklistItem, High, Low, Content, Dictionary (+8 more)
 
 ### Community 10 - "WorkplaceSessionSnapshot"
-Cohesion: 0.08
-Nodes (5): CouncilRunContext, WorkplaceView, CancellationToken, IReadOnlyList, ParsedResponse
+Cohesion: 0.15
+Nodes (9): Action, Dictionary, double, int, object, string, ToolReliabilityLedger, ToolStats (+1 more)
 
 ### Community 11 - "HardwareProfiler"
 Cohesion: 0.06
@@ -248,12 +260,12 @@ Cohesion: 0.06
 Nodes (63): AccentBrush, CardBackground, DisplayLabel, FormattedContent, Info, IsGeneratingStatus, Name, RoleLabel (+55 more)
 
 ### Community 13 - "CouncilRunContext"
-Cohesion: 0.06
-Nodes (6): CouncilBaseStateVault, CouncilRunContext, WebSearchToggleButton, Context, KeyEventArgs, Mode
+Cohesion: 0.08
+Nodes (4): CouncilRunContext, IEnumerable, InferenceParams, WorkspacePatchProposal
 
 ### Community 14 - ".RestoreSnapshot"
-Cohesion: 0.18
-Nodes (5): DateTime, IEnumerable, ConnectedWorkspaceState, WorkspaceContextResult, WorkspaceReadToolResult
+Cohesion: 0.17
+Nodes (7): DateTime, IEnumerable, IReadOnlyCollection, IReadOnlyList, ConnectedWorkspaceState, WorkspaceContextResult, WorkspaceReadToolResult
 
 ### Community 15 - ".SendUserMessageFromInputAsync"
 Cohesion: 0.07
@@ -272,16 +284,16 @@ Cohesion: 0.06
 Nodes (16): _, Cr, ct(), $e(), It(), j, je(), kt() (+8 more)
 
 ### Community 19 - "AgenticPauseEngine"
-Cohesion: 0.11
+Cohesion: 0.10
 Nodes (22): command, fragment, Action, CancellationToken, ChatSession, Func, HashSet, IAsyncEnumerable (+14 more)
 
 ### Community 20 - "SessionHippocampus"
-Cohesion: 0.12
-Nodes (13): bool, DateTime, Dictionary, double, HashSet, IEnumerable, int, List (+5 more)
+Cohesion: 0.14
+Nodes (6): bool, double, HashSet, int, List, SessionHippocampus
 
 ### Community 21 - "Window"
-Cohesion: 0.06
-Nodes (11): Dictionary, List, WorkplaceSessionSnapshot, AutoOptimizeContextToggle, CodebaseAutoApplyToggle, CodebaseEditAccessButton, WorkplaceCloudModeButton, InteractiveExecutor (+3 more)
+Cohesion: 0.04
+Nodes (6): ComboBox, CodeOutputToggleButton, ConnectWorkspaceRepositoryButton, Exception, InteractiveExecutor, RoutedEventArgs
 
 ### Community 22 - "ChatDocumentAttachment"
 Cohesion: 0.13
@@ -300,11 +312,11 @@ Cohesion: 0.10
 Nodes (18): Action, bool, CancellationToken, DateTime, HashSet, int, List, Match (+10 more)
 
 ### Community 26 - "Button"
-Cohesion: 0.05
-Nodes (31): AcceptCodebaseChangesButton, AcceptCodebaseChangesSidebarButton, CanvasCodeViewButton, CanvasMoreActionsButton, CanvasMoreDiffItem, CanvasPreviewViewButton, CloneWorkspaceRepositoryButton, ConnectWorkspaceFilesButton (+23 more)
+Cohesion: 0.06
+Nodes (33): AcceptCodebaseChangesButton, AcceptCodebaseChangesSidebarButton, CanvasCodeViewButton, CanvasMoreActionsButton, CanvasPreviewViewButton, CloneWorkspaceRepositoryButton, CodebaseEditAccessButton, ConnectWorkspaceFilesButton (+25 more)
 
 ### Community 27 - "MainWindow"
-Cohesion: 0.08
+Cohesion: 0.10
 Nodes (7): List, RoutedEventArgs, MainWindow, PythonCodeExecutionOutcome, SandboxPreparation, SandboxVariableSeed, SandboxVariableSeed
 
 ### Community 28 - "ArtifactRenderService"
@@ -316,24 +328,20 @@ Cohesion: 0.11
 Nodes (6): htmlBuilder(), mathmlBuilder(), O, p, r, sn()
 
 ### Community 30 - "WorkplaceView"
-Cohesion: 0.11
-Nodes (9): Dictionary, HtmlDocument, IEnumerable, IReadOnlyList, List, Regex, ProjectCanvasArtifactValidation, WorkplaceView (+1 more)
+Cohesion: 0.10
+Nodes (11): HtmlBehaviorExpectations, Dictionary, HtmlDocument, IEnumerable, IReadOnlyList, List, Regex, HtmlBehaviorExpectations (+3 more)
 
 ### Community 31 - "ChatMessage"
-Cohesion: 0.15
-Nodes (12): Action, bool, DateTime, Guid, IEnumerable, List, ObservableCollection, Regex (+4 more)
+Cohesion: 0.13
+Nodes (14): Action, bool, DateTime, DispatcherTimer, Guid, IEnumerable, int, List (+6 more)
 
 ### Community 32 - "TextBlock"
-Cohesion: 0.14
-Nodes (9): INotifyPropertyChanged, ICommand, string, Task, PersonaMemoryViewModel, DateTime, SolidColorBrush, string (+1 more)
+Cohesion: 0.09
+Nodes (18): INotifyPropertyChanged, CancellationToken, DateTime, HashSet, List, SemaphoreSlim, string, Task (+10 more)
 
 ### Community 33 - "LocalSemanticEmbeddingService"
-Cohesion: 0.11
-Nodes (14): Item, LLamaEmbedder, bool, Dictionary, Func, IEnumerable, int, IReadOnlyList (+6 more)
-
-### Community 34 - "Border"
-Cohesion: 0.11
-Nodes (18): ChatTabButton, ClearOpenRouterKeyButton, CloudModeButton, DeleteChatSidebarButton, EidosModelButton, HephaModelButton, ImportModelSidebarButton, LocalModeButton (+10 more)
+Cohesion: 0.13
+Nodes (9): LLamaEmbedder, bool, Dictionary, int, LLamaWeights, object, string, LocalSemanticEmbeddingService (+1 more)
 
 ### Community 35 - "Vn"
 Cohesion: 0.23
@@ -344,20 +352,20 @@ Cohesion: 0.10
 Nodes (15): char, Dictionary, Func, IDictionary, IReadOnlyDictionary, Lazy, MarkdownPipeline, Match (+7 more)
 
 ### Community 37 - "MainWindow"
-Cohesion: 0.08
-Nodes (7): EditResendActionButton, HistorySectionToggle, RegenerateActionButton, RetryCloudActionButton, UpdateBannerCloseButton, WorkplaceHistorySectionToggle, RoutedEventArgs
+Cohesion: 0.15
+Nodes (10): DateTime, Dictionary, JsonSerializerOptions, List, string, WorkplaceChatMessageDto, WorkplaceCouncilModelDto, WorkplaceDocumentDto (+2 more)
 
 ### Community 38 - "What You Must Do When Invoked"
 Cohesion: 0.08
 Nodes (24): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Interpreter guard for subcommands, Part A - Structural extraction for code files (+16 more)
 
 ### Community 39 - "Task"
-Cohesion: 0.23
-Nodes (3): CancellationToken, Guid, Task
+Cohesion: 0.16
+Nodes (4): CancellationToken, Guid, SelectionChangedEventArgs, Task
 
 ### Community 40 - "WorkplaceView.xaml.cs"
 Cohesion: 0.09
-Nodes (21): AcceptanceCheckExecutionResult, AcceptanceProbe, CodebasePatchValidationResult, CodebaseUndoFileSnapshot, CodebaseUndoSnapshot, CodeOutputDetection, ConceptTagViewModel, ContextStateObject (+13 more)
+Nodes (22): AcceptanceCheckExecutionResult, AcceptanceProbe, CodebasePatchValidationResult, CodebaseUndoFileSnapshot, CodebaseUndoSnapshot, CodeOutputDetection, ConceptTagViewModel, ContextStateObject (+14 more)
 
 ### Community 41 - ".PrepareCloudChatRequestContextAsync"
 Cohesion: 0.33
@@ -368,11 +376,11 @@ Cohesion: 0.10
 Nodes (18): DispatcherUnhandledExceptionEventArgs, ExitEventArgs, Application, border, DropDownArrow, DropDownToggle, ItemBorder, PART_Popup (+10 more)
 
 ### Community 44 - "Border"
-Cohesion: 0.08
-Nodes (25): AgenticPauseBanner, AgenticPulseDot, ArchitectStageIndicator, BuilderStageIndicator, CodebaseAccessModeBadge, CodeOutputPanel, CouncilConfidenceBanner, CriticStageIndicator (+17 more)
+Cohesion: 0.09
+Nodes (23): AgenticPauseBanner, AgenticPulseDot, ArchitectStageIndicator, BuilderStageIndicator, CodebaseAccessModeBadge, CodeOutputPanel, CouncilConfidenceBanner, CriticStageIndicator (+15 more)
 
 ### Community 45 - "ConversationSearchContext"
-Cohesion: 0.16
+Cohesion: 0.18
 Nodes (7): HashSet, IEnumerable, IReadOnlyList, Regex, string, ConversationSearchContext, ConversationSearchTurn
 
 ### Community 46 - "ut"
@@ -380,31 +388,31 @@ Cohesion: 0.10
 Nodes (5): A, dt, K, toText(), ut
 
 ### Community 47 - ".ExecuteLocalBuilderWithToolDecisionAsync"
-Cohesion: 0.15
-Nodes (11): BuilderToolDecision, CancellationToken, Grammar, HashSet, int, IReadOnlyCollection, ParsedResponse, StringBuilder (+3 more)
+Cohesion: 0.09
+Nodes (17): BuilderToolDecision, BuilderToolObservation, long, Regex, LocalModelCapabilityProfile, LocalModelSizeClass, CancellationToken, Grammar (+9 more)
 
 ### Community 48 - ".RefreshCloudModeToggleUi"
 Cohesion: 0.06
-Nodes (52): Code, CodeBlockHeaderText, CodeBlockToggleText, BooleanToVisibilityConverter, Foreground, HasCodeBlocks, HasDisplayContent, HasLanguage (+44 more)
+Nodes (46): Code, CodeBlockHeaderText, CodeBlockToggleText, BooleanToVisibilityConverter, Foreground, HasCodeBlocks, HasDisplayContent, HasLanguage (+38 more)
 
 ### Community 49 - "MainWindow"
 Cohesion: 0.15
 Nodes (12): DllImport, IntPtr, double, int, uint, MainWindow, MonitorInfo, NativeRect (+4 more)
 
 ### Community 50 - "JsonChatPersistence"
-Cohesion: 0.20
+Cohesion: 0.19
 Nodes (8): DateTime, JsonSerializerOptions, List, object, string, Task, ChatIndexEntry, JsonChatPersistence
 
 ### Community 51 - "UpdateCheckService"
-Cohesion: 0.18
-Nodes (11): CancellationToken, HttpClient, IProgress, JsonElement, Name, Regex, string, Task (+3 more)
+Cohesion: 0.16
+Nodes (12): CancellationToken, HttpClient, IProgress, JsonElement, Name, Regex, string, Task (+4 more)
 
 ### Community 52 - "Malx_AI"
-Cohesion: 0.11
-Nodes (10): CoreWebView2EnvironmentOptions, Malx_AI, string, AppDataPaths, DateTime, PersonaMemoryDto, PageEvidence, SearchIntent (+2 more)
+Cohesion: 0.09
+Nodes (12): CoreWebView2EnvironmentOptions, Malx_AI, ICommand, Action, Func, RelayCommand, PageEvidence, SearchIntent (+4 more)
 
 ### Community 53 - ".SwitchToNeuron_Click"
-Cohesion: 0.20
+Cohesion: 0.21
 Nodes (5): CancellationToken, EventArgs, IReadOnlyList, Task, PythonCodeExecutionOutcome
 
 ### Community 54 - "ChatWorkspaceSnapshot"
@@ -430,6 +438,10 @@ Nodes (5): Entry, Dictionary, object, Entry, NativeCrashLedger
 ### Community 59 - "Malx_AI.csproj"
 Cohesion: 0.13
 Nodes (13): net10.0-windows, LLamaSharp (0.26.0), LLamaSharp.Backend.Cuda12 (0.26.0), Microsoft.NET.Sdk, AvalonEdit (6.3.1), HtmlAgilityPack (1.12.4), Markdig (0.37.0), Microsoft.CodeAnalysis.CSharp (5.0.0) (+5 more)
+
+### Community 60 - "PersonaMemoryViewModel"
+Cohesion: 0.11
+Nodes (5): CloudChatRequestContext, List, CloudChatRequestContext, CloudToolCallLoopResult, CloudToolExecutionResult
 
 ### Community 61 - "Program"
 Cohesion: 0.19
@@ -472,12 +484,8 @@ Cohesion: 0.44
 Nodes (4): IReadOnlyList, LineDiff, LineDiffEntry, LineDiffKind
 
 ### Community 73 - ".BuildFinalVerificationFailures"
-Cohesion: 0.15
-Nodes (3): ChatBranch, Button, SelectionChangedEventArgs
-
-### Community 74 - ".CaptureCoordinatedChatPersistenceSnapshot"
-Cohesion: 0.20
-Nodes (9): WorkspaceAgentMode, WorkspaceCloneResult, WorkspaceConnectionKind, WorkspaceFileEntry, WorkspaceGitCheckpointResult, WorkspaceGitStatus, WorkspacePatchApplyResult, WorkspacePatchProposal (+1 more)
+Cohesion: 0.08
+Nodes (8): EditResendActionButton, HistorySectionToggle, RegenerateActionButton, RetryCloudActionButton, SidebarCollapseButton, UpdateBannerCloseButton, WorkplaceHistorySectionToggle, RoutedEventArgs
 
 ### Community 75 - ".CreateContext"
 Cohesion: 0.32
@@ -504,19 +512,19 @@ Cohesion: 0.36
 Nodes (3): Task, PdfExtractor, Page
 
 ### Community 82 - "LocalModelCapabilityProfile"
-Cohesion: 0.31
-Nodes (4): long, Regex, LocalModelCapabilityProfile, LocalModelSizeClass
+Cohesion: 0.13
+Nodes (9): HashSet, IReadOnlyCollection, IReadOnlyList, List, NormalChatRequestContext, NormalChatRequestContext, PromptInjectionBlockInfo, SandboxPreparation (+1 more)
 
 ### Community 83 - "BackendLogService"
 Cohesion: 0.33
 Nodes (4): Exception, SemaphoreSlim, Task, BackendLogService
 
 ### Community 84 - "StackPanel"
-Cohesion: 0.13
-Nodes (11): CloudChatRequestContext, CloudToolCallLoopResult, CloudToolExecutionResult, Action, CancellationToken, IReadOnlyList, List, Task (+3 more)
+Cohesion: 0.29
+Nodes (6): CloudToolCallLoopResult, CloudToolExecutionResult, Action, CancellationToken, IReadOnlyList, Task
 
 ### Community 85 - ".RoleContextSlider_ValueChanged"
-Cohesion: 0.36
+Cohesion: 0.38
 Nodes (6): ArchitectContextSlider, BuilderContextSlider, CriticContextSlider, GlobalContextSlider, RoutedPropertyChangedEventArgs, Slider
 
 ### Community 86 - "ChatScrollViewer"
@@ -528,8 +536,8 @@ Cohesion: 0.33
 Nodes (5): For /graphify explain, For /graphify path, graphify reference: query, path, explain, Step 0 — Constrained query expansion (REQUIRED before traversal), Step 1 — Traversal
 
 ### Community 88 - "AppDataPaths"
-Cohesion: 0.27
-Nodes (7): CancellationToken, HashSet, List, SemaphoreSlim, string, Task, PersonaMemoryService
+Cohesion: 0.14
+Nodes (9): CancellationToken, HashSet, int, IProgress, Regex, StringBuilder, Task, WorkspaceAccessService (+1 more)
 
 ### Community 89 - "AtomicFileWriter"
 Cohesion: 0.33
@@ -560,8 +568,8 @@ Cohesion: 0.50
 Nodes (3): Changelog, [v0.01] — 2026-05-06 (Pre-release), [V1.2] — 2026-06-05
 
 ### Community 97 - ".GetAllChats"
-Cohesion: 0.11
-Nodes (11): EmptyAfterStrip, Answer, CancellationToken, Context, InteractiveExecutor, LLamaContext, Mode, SelectionChangedEventArgs (+3 more)
+Cohesion: 0.12
+Nodes (5): Context, Mode, SelectionChangedEventArgs, Exception, TextChangedEventArgs
 
 ### Community 98 - "graphify reference: add a URL and watch a folder"
 Cohesion: 0.50
@@ -588,31 +596,27 @@ Cohesion: 0.29
 Nodes (7): ChatHistoryStack, CompactionHealthGrid, EmptyChatGreetingPanel, OpenRouterUsagePanel, ThinkingPanel, WorkplaceHistoryStack, StackPanel
 
 ### Community 106 - "CanvasMoreCopyItem"
-Cohesion: 0.20
-Nodes (5): CanvasMoreCopyItem, CanvasMoreOutputItem, CodeOutputToggleButton, CopyCanvasButton, MenuItem
+Cohesion: 0.50
+Nodes (4): CanvasMoreCopyItem, CanvasMoreDiffItem, CanvasMoreOutputItem, MenuItem
 
 ### Community 108 - "AdvancedFeatureState.cs"
-Cohesion: 0.13
-Nodes (17): DateTime, Guid, IEnumerable, JsonSerializerOptions, List, string, ChatAdvancedStatePersistence, ChatAdvancedStateSnapshot (+9 more)
+Cohesion: 0.12
+Nodes (18): DateTime, Guid, IEnumerable, JsonSerializerOptions, List, string, ChatAdvancedStatePersistence, ChatAdvancedStateSnapshot (+10 more)
 
 ### Community 113 - "CodeBlockItemsControl"
 Cohesion: 0.67
 Nodes (3): CodeBlocks, CodeBlockItemsControl, ItemsControl
 
-### Community 114 - "ActionButtonPanel"
-Cohesion: 0.11
-Nodes (13): Guid, HashSet, IReadOnlyCollection, IReadOnlyList, List, ChatTurnContextCandidate, NormalChatRequestContext, NormalChatUiSnapshot (+5 more)
-
 ### Community 115 - ".SwitchToNeuron_Click"
-Cohesion: 0.15
-Nodes (7): DeleteWorkplaceButton, NeuronTabButton, NewWorkplaceButton, PersonaTabButton, WorkplaceTabButton, SolidColorBrush, UIElement
+Cohesion: 0.19
+Nodes (6): CancellationToken, Func, IAsyncEnumerable, InteractiveExecutor, LLamaContext, Task
 
 ### Community 116 - "CompactionThresholdBar"
-Cohesion: 0.32
-Nodes (3): IReadOnlyList, WorkspaceFilePatch, WorkspacePatchEditBlock
+Cohesion: 0.67
+Nodes (3): ContentContainer, TemplateRoot, Grid
 
 ### Community 117 - "AutoOptimizeContextToggle"
-Cohesion: 0.19
+Cohesion: 0.16
 Nodes (3): Button, RoutedEventArgs, NotifyCollectionChangedEventArgs
 
 ### Community 118 - "CanvasArtifactPreviewHost"
@@ -636,88 +640,116 @@ Cohesion: 0.67
 Nodes (3): Answer, StudyChunkResult, Question
 
 ### Community 128 - ".StreamInferenceAsync"
-Cohesion: 0.17
-Nodes (4): Func, IAsyncEnumerable, StringBuilder, NormalChatRequestContext
-
-### Community 130 - "ContentSite"
-Cohesion: 0.28
-Nodes (7): EndLine, Length, Func, List, Text, Start, StartLine
+Cohesion: 0.67
+Nodes (3): AutoOptimizeContextToggle, CodebaseAutoApplyToggle, CheckBox
 
 ### Community 131 - "ShimmerTextBlock"
 Cohesion: 0.20
 Nodes (7): Color, DependencyObject, DependencyProperty, DependencyPropertyChangedEventArgs, ShimmerTextBlock, TextBlock, TranslateTransform
 
-### Community 132 - ".RankBySimilarity"
-Cohesion: 0.25
-Nodes (4): ICommand, Action, Func, RelayCommand
+### Community 133 - ".SaveCurrentChat"
+Cohesion: 0.24
+Nodes (3): Content, Source, UIElement
 
 ### Community 137 - ".SendUserMessageFromInputAsync"
-Cohesion: 0.15
+Cohesion: 0.22
 Nodes (4): Brush, int, SizeChangedEventArgs, MainWindow
 
 ### Community 138 - "AdvancedFeatureState.cs"
-Cohesion: 0.11
-Nodes (13): List, Regex, string, CriticContractParser, CriticIssue, CriticReport, DateTime, JsonSerializerOptions (+5 more)
+Cohesion: 0.23
+Nodes (6): List, Regex, string, CriticContractParser, CriticIssue, CriticReport
 
 ### Community 139 - ".PrepareNormalChatRequestContextAsync"
 Cohesion: 0.09
-Nodes (6): bool, KeyEventArgs, Regex, RoutedEventArgs, MainWindow, TextChangedEventArgs
+Nodes (5): bool, KeyEventArgs, Regex, RoutedEventArgs, MainWindow
 
 ### Community 140 - "DockPanel"
 Cohesion: 0.50
 Nodes (4): ChatView, NeuronView, PersonaMemoryView, DockPanel
+
+### Community 141 - "WorkspaceAccessService.cs"
+Cohesion: 0.26
+Nodes (8): WorkspaceAgentMode, WorkspaceCloneResult, WorkspaceConnectionKind, WorkspaceFileEntry, WorkspaceGitCheckpointResult, WorkspaceGitStatus, WorkspacePatchApplyResult, WorkspaceSearchMatch
 
 ### Community 142 - "ActionButtonPanel"
 Cohesion: 0.67
 Nodes (3): ActionButtonPanel, AttachmentTrayPanel, WrapPanel
 
 ### Community 143 - "BranchNavigatorCombo"
-Cohesion: 0.13
-Nodes (10): BranchNavigatorCombo, ContentContainer, EmptyChatLogoImage, OpenRouterApiKeyPasswordBox, ProcessingModeCombo, TemplateRoot, ComboBox, Grid (+2 more)
+Cohesion: 0.67
+Nodes (3): BranchNavigatorCombo, ProcessingModeCombo, ComboBox
 
 ### Community 144 - "CompactionThresholdBar"
-Cohesion: 0.67
-Nodes (3): CompactionThresholdBar, TokenUsageProgressBar, ProgressBar
+Cohesion: 0.18
+Nodes (8): CompactionThresholdBar, InlineLoadingSpinnerCanvas, NeuronCanvas, SidebarColumn, TokenUsageProgressBar, Canvas, ColumnDefinition, ProgressBar
 
 ### Community 145 - "AssistantGenerationStatusText"
 Cohesion: 0.67
 Nodes (3): AssistantGenerationStatusText, GenerationStatusText, ShimmerTextBlock
 
-### Community 146 - ".BuildCappedMemoryContent"
-Cohesion: 0.67
-Nodes (3): InlineLoadingSpinnerCanvas, NeuronCanvas, Canvas
+### Community 146 - ".FindUniqueLineBlock"
+Cohesion: 0.21
+Nodes (7): EndLine, Length, Func, List, Text, Start, StartLine
+
+### Community 147 - "ContentContainer"
+Cohesion: 0.07
+Nodes (28): accentRail, border, BranchNavigatorBorder, BubbleBorder, ChatHeaderBorder, ChatHistorySectionContainer, CloudContextNoticeBorder, CloudModelSelectorBorder (+20 more)
+
+### Community 151 - ".AddWorkplaceToHistory"
+Cohesion: 0.29
+Nodes (3): DeleteWorkplaceButton, NewWorkplaceButton, SolidColorBrush
+
+### Community 152 - "SessionHippocampusEntry"
+Cohesion: 0.31
+Nodes (7): DateTime, Dictionary, IEnumerable, SessionHippocampusEntry, SessionHippocampusMetadata, SessionHippocampusSource, SessionHippocampusTag
 
 ### Community 153 - "NormalGenerationStatusText"
 Cohesion: 0.50
 Nodes (4): CtxSlider, TemperatureSlider, TopPSlider, Slider
 
-### Community 154 - "PART_ContentHost"
-Cohesion: 0.15
-Nodes (6): HashSet, int, IReadOnlyCollection, Regex, WorkspaceAccessService, WorkspaceIndexResult
+### Community 155 - "SidebarColumn"
+Cohesion: 0.24
+Nodes (3): WorkspaceIndexResult, Output, Success
 
 ### Community 158 - "BuilderGenerationStatusText"
 Cohesion: 0.50
 Nodes (4): BuilderGenerationStatusText, WorkplaceCardGenerationStatusText, GenerationStatusText, ShimmerTextBlock
 
+### Community 159 - ".FinalizeAssistantResponseAsync"
+Cohesion: 0.29
+Nodes (3): EmptyAfterStrip, Answer, Parsed
+
+### Community 160 - "MainWindow.Inference.cs"
+Cohesion: 0.22
+Nodes (9): Guid, int, string, ChatSessionPromptPlan, ChatTurnContextCandidate, Gemma4Formatter, NormalChatUiSnapshot, PromptInjectionBlockInfo (+1 more)
+
+### Community 161 - "PromptFormat"
+Cohesion: 0.29
+Nodes (3): ComboBoxItem, CouncilModelConfig, PromptFormat
+
+### Community 162 - ".RankBySimilarity"
+Cohesion: 0.33
+Nodes (5): Item, Func, IEnumerable, IReadOnlyList, Similarity
+
 ## Knowledge Gaps
-- **189 isolated node(s):** `PauseCommand`, `ToggleButton`, `Path`, `Popup`, `Track` (+184 more)
+- **195 isolated node(s):** `PauseCommand`, `ToggleButton`, `Path`, `Popup`, `Track` (+190 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **29 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **31 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `WorkplaceView` connect `WorkplaceView` to `WebSearchService`, `.SendQueryAsync`, `OpenRouterChatService`, `.ExecuteCouncilRoleAsync`, `RoutedEventArgs`, `List`, `AdvancedFeatureState.cs`, `WorkplaceSessionSnapshot`, `UserControl`, `CouncilRunContext`, `.RestoreSnapshot`, `RenderedMessageView`, `DocumentRetriever`, `AgenticPauseEngine`, `SessionHippocampus`, `Window`, `PythonExecutionService`, `Button`, `MainWindow`, `ArtifactRenderService`, `PART_ContentHost`, `WorkplaceView.xaml.cs`, `Border`, `ConversationSearchContext`, `.CriticSensitivityCombo_SelectionChanged`, `PersonaMemoryService`, `.CaptureCoordinatedChatPersistenceSnapshot`, `.RoleContextSlider_ValueChanged`, `ChatScrollViewer`, `AppDataPaths`, `CachedModelEntry`, `CanvasMoreCopyItem`, `AdvancedFeatureState.cs`, `EventArgs`, `Gemma4Formatter`?**
-  _High betweenness centrality (0.467) - this node is a cross-community bridge._
-- **Why does `MainWindow` connect `MainWindow` to `WebSearchService`, `OpenRouterChatService`, `MainWindow`, `AppDataPaths`, `HardwareProfiler`, `DocumentRetriever`, `ContentContainer`, `ChatDocumentAttachment`, `SmartContextCompactionEngine`, `PythonExecutionService`, `ChatMessage`, `TextBlock`, `MainWindow`, `Task`, `.RefreshCloudModeToggleUi`, `JsonChatPersistence`, `ChatWorkspaceSnapshot`, `DatabaseService`, `CouncilPetWindow`, `PersonaMemoryViewModel`, `.BuildFinalVerificationFailures`, `StackPanel`, `AppDataPaths`, `.GetAllChats`, `InputContainerBorder`, `AdvancedFeatureState.cs`, `ActionButtonPanel`, `.SwitchToNeuron_Click`, `AutoOptimizeContextToggle`?**
+- **Why does `WorkplaceView` connect `WorkplaceView` to `WebSearchService`, `.SendQueryAsync`, `OpenRouterChatService`, `.ExecuteCouncilRoleAsync`, `RoutedEventArgs`, `List`, `AdvancedFeatureState.cs`, `UserControl`, `CouncilRunContext`, `WorkspaceAccessService.cs`, `.RestoreSnapshot`, `RenderedMessageView`, `DocumentRetriever`, `AgenticPauseEngine`, `SessionHippocampus`, `Window`, `PythonExecutionService`, `Button`, `.SaveAdvancedState`, `ArtifactRenderService`, `TextBlock`, `PromptFormat`, `MainWindow`, `WorkplaceView.xaml.cs`, `.CriticSensitivityCombo_SelectionChanged`, `PersonaMemoryService`, `.CaptureCoordinatedChatPersistenceSnapshot`, `.RoleContextSlider_ValueChanged`, `ChatScrollViewer`, `AppDataPaths`, `CachedModelEntry`, `AdvancedFeatureState.cs`, `EventArgs`, `ActionButtonPanel`, `Gemma4Formatter`?**
+  _High betweenness centrality (0.465) - this node is a cross-community bridge._
+- **Why does `MainWindow` connect `MainWindow` to `WebSearchService`, `OpenRouterChatService`, `.SaveCurrentChat`, `MainWindow`, `HardwareProfiler`, `DocumentRetriever`, `ContentContainer`, `ChatDocumentAttachment`, `.AddWorkplaceToHistory`, `SmartContextCompactionEngine`, `PythonExecutionService`, `ChatMessage`, `TextBlock`, `Border`, `Task`, `.RefreshCloudModeToggleUi`, `JsonChatPersistence`, `UpdateCheckService`, `ChatWorkspaceSnapshot`, `DatabaseService`, `CouncilPetWindow`, `PersonaMemoryViewModel`, `.BuildFinalVerificationFailures`, `.GetAllChats`, `InputContainerBorder`, `AdvancedFeatureState.cs`, `.SwitchToNeuron_Click`, `AutoOptimizeContextToggle`?**
   _High betweenness centrality (0.279) - this node is a cross-community bridge._
-- **Why does `Malx_AI` connect `Malx_AI` to `MainWindow`, `ShimmerTextBlock`, `OpenRouterChatService`, `.RankBySimilarity`, `.SendQueryAsync`, `AdvancedFeatureState.cs`, `HardwareProfiler`, `WorkplaceSessionSnapshot`, `RenderedMessageView`, `DocumentRetriever`, `AgenticPauseEngine`, `SessionHippocampus`, `SmartContextCompactionEngine`, `ChatAttachmentImportService`, `PythonExecutionService`, `MainWindow`, `ArtifactRenderService`, `WorkplaceView`, `ChatMessage`, `TextBlock`, `LocalSemanticEmbeddingService`, `MessageHtmlRenderer`, `WorkplaceView.xaml.cs`, `Application`, `ConversationSearchContext`, `.ExecuteLocalBuilderWithToolDecisionAsync`, `MainWindow`, `JsonChatPersistence`, `ChatWorkspaceSnapshot`, `DatabaseService`, `CouncilPetWindow`, `NativeCrashLedger`, `NativeLlamaLogCapture`, `.ExecuteAsync`, `NativeDecodeForensics`, `ReasoningParser`, `LineDiffEntry`, `.CaptureCoordinatedChatPersistenceSnapshot`, `.CreateContext`, `.Load`, `.InferAsync`, `MarkdownParser`, `NativeBackendInit`, `PdfExtractor`, `LocalModelCapabilityProfile`, `BackendLogService`, `StackPanel`, `AtomicFileWriter`, `AdvancedFeatureState.cs`, `ActionButtonPanel`?**
-  _High betweenness centrality (0.251) - this node is a cross-community bridge._
+- **Why does `Malx_AI` connect `Malx_AI` to `ShimmerTextBlock`, `OpenRouterChatService`, `WorkspaceAccessService`, `AdvancedFeatureState.cs`, `HardwareProfiler`, `WorkplaceSessionSnapshot`, `WorkspaceAccessService.cs`, `RenderedMessageView`, `DocumentRetriever`, `AgenticPauseEngine`, `SmartContextCompactionEngine`, `ChatAttachmentImportService`, `PythonExecutionService`, `SessionHippocampusEntry`, `MainWindow`, `ArtifactRenderService`, `WorkplaceView`, `ChatMessage`, `MainWindow.Inference.cs`, `LocalSemanticEmbeddingService`, `TextBlock`, `AppDataPaths`, `MessageHtmlRenderer`, `MainWindow`, `WorkplaceView.xaml.cs`, `Application`, `ConversationSearchContext`, `.ExecuteLocalBuilderWithToolDecisionAsync`, `MainWindow`, `JsonChatPersistence`, `UpdateCheckService`, `ChatWorkspaceSnapshot`, `DatabaseService`, `CouncilPetWindow`, `NativeCrashLedger`, `PersonaMemoryViewModel`, `NativeLlamaLogCapture`, `.ExecuteAsync`, `NativeDecodeForensics`, `ReasoningParser`, `LineDiffEntry`, `.CreateContext`, `.Load`, `.InferAsync`, `MarkdownParser`, `NativeBackendInit`, `PdfExtractor`, `BackendLogService`, `AtomicFileWriter`, `AdvancedFeatureState.cs`?**
+  _High betweenness centrality (0.262) - this node is a cross-community bridge._
 - **What connects `PauseCommand`, `ToggleButton`, `Path` to the rest of the system?**
-  _189 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _195 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `WebSearchService` be split into smaller, more focused modules?**
   _Cohesion score 0.05577342047930283 - nodes in this community are weakly interconnected._
 - **Should `MainWindow` be split into smaller, more focused modules?**
-  _Cohesion score 0.03934871099050204 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.04293785310734463 - nodes in this community are weakly interconnected._
 - **Should `WorkplaceView` be split into smaller, more focused modules?**
-  _Cohesion score 0.025959645669291338 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.023504273504273504 - nodes in this community are weakly interconnected._

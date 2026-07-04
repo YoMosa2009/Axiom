@@ -342,11 +342,11 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(request))
                 return Array.Empty<string>();
 
-            string lowerRequest = request.ToLowerInvariant();
             string lowerSource = source.ToLowerInvariant();
             string script = ExtractInlineScriptSource(source);
             string lowerScript = script.ToLowerInvariant();
             string evidence = lowerSource + "\n" + lowerScript;
+            HtmlBehaviorExpectations expectations = InferHtmlBehaviorExpectations(context);
             var failures = new List<string>();
 
             void Add(string message)
@@ -358,26 +358,10 @@ namespace Malx_AI
                     failures.Add(full);
             }
 
-            bool expectsInput = RequestMentionsAny(lowerRequest, "input", "paste", "type", "sequence", "amino acid");
-            bool expectsPrimaryAction = lowerRequest.Contains("generate fold", StringComparison.Ordinal)
-                || (lowerRequest.Contains("generate", StringComparison.Ordinal)
-                    && RequestMentionsAny(lowerRequest, "button", "control", "fold", "simulate", "simulation", "visualization", "protein"));
-            bool expectsCanvas = lowerRequest.Contains("canvas", StringComparison.Ordinal);
-            bool expectsVisualization = expectsCanvas
-                || RequestMentionsAny(lowerRequest, "visual", "visualization", "simulator", "simulation", "folding", "fold over time", "draw", "graph", "plot");
-            bool expectsAnimation = RequestMentionsAny(lowerRequest, "animation", "animated", "animate", "over time", "folding over time", "smooth");
-            bool expectsRandom = lowerRequest.Contains("random", StringComparison.Ordinal);
-            bool expectsReset = lowerRequest.Contains("reset", StringComparison.Ordinal);
-            bool expectsHover = RequestMentionsAny(lowerRequest, "hover", "tooltip", "inspect", "details");
-            bool expectsStats = RequestMentionsAny(lowerRequest, "statistic", "statistics", "stats", "score", "readout");
-            bool expectsProteinRules = lowerRequest.Contains("protein", StringComparison.Ordinal)
-                || lowerRequest.Contains("amino acid", StringComparison.Ordinal)
-                || lowerRequest.Contains("hydrophobic", StringComparison.Ordinal);
-
             if (ContainsMarkdownCodeFenceMarker(source))
                 Add("HTML result contains markdown code fence markers; this would render visible ```html text instead of a clean page.");
 
-            if (expectsInput)
+            if (expectations.ExpectsInput)
             {
                 if (!Regex.IsMatch(lowerSource, @"<(input|textarea)\b", RegexOptions.IgnoreCase))
                     Add("requested input is missing an <input> or <textarea> element.");
@@ -385,15 +369,15 @@ namespace Malx_AI
                     Add("requested input appears unused; inline JavaScript does not read an input value.");
             }
 
-            if (expectsPrimaryAction && !HasNamedEventHandler(lowerSource, lowerScript, ["generate", "fold", "simulate", "start"]))
-                Add("primary Generate/Fold action appears unwired; no matching click/submit handler was found in JavaScript.");
+            if (expectations.ExpectsPrimaryAction && !HasNamedEventHandler(lowerSource, lowerScript, ["generate", "fold", "simulate", "start", "run", "play", "pause"]))
+                Add("requested primary action appears unwired; no matching click/submit handler was found in JavaScript.");
 
-            if (expectsVisualization)
+            if (expectations.ExpectsVisualization)
             {
                 bool hasCanvas = lowerSource.Contains("<canvas", StringComparison.Ordinal);
                 bool hasSvg = lowerSource.Contains("<svg", StringComparison.Ordinal);
-                if (expectsCanvas && !hasCanvas)
-                    Add("request called for an HTML canvas visualization, but no <canvas> element was found.");
+                if (expectations.ExpectsCanvas && !hasCanvas)
+                    Add("request called for an HTML <canvas> element, but no <canvas> element was found.");
                 else if (!hasCanvas && !hasSvg)
                     Add("requested visualization surface is missing; no canvas or SVG evidence was found.");
 
@@ -406,26 +390,26 @@ namespace Malx_AI
                 }
             }
 
-            if (expectsAnimation && !HasAnimationEvidence(evidence))
+            if (expectations.ExpectsAnimation && !HasAnimationEvidence(evidence))
                 Add("requested animation/folding-over-time behavior is missing requestAnimationFrame, timer, or keyframe evidence.");
 
-            if (expectsRandom && !lowerScript.Contains("math.random", StringComparison.Ordinal))
+            if (expectations.ExpectsRandom && !lowerScript.Contains("math.random", StringComparison.Ordinal))
                 Add("Random control was requested, but JavaScript does not generate random values.");
 
-            if (expectsReset && !HasNamedEventHandler(lowerSource, lowerScript, ["reset", "clear"]))
+            if (expectations.ExpectsReset && !HasNamedEventHandler(lowerSource, lowerScript, ["reset", "clear"]))
                 Add("Reset control was requested, but no matching reset handler was found.");
 
-            if (expectsHover && !Regex.IsMatch(evidence, @"mousemove|mouseover|mouseenter|pointermove|pointerenter|title\s*=|tooltip", RegexOptions.IgnoreCase))
+            if (expectations.ExpectsHover && !Regex.IsMatch(evidence, @"mousemove|mouseover|mouseenter|pointermove|pointerenter|title\s*=|tooltip", RegexOptions.IgnoreCase))
                 Add("hover/inspection details were requested, but no pointer or tooltip handling was found.");
 
-            if (expectsStats && !Regex.IsMatch(lowerScript, @"textcontent|innertext|innerhtml|setattribute\s*\(", RegexOptions.IgnoreCase))
+            if (expectations.ExpectsStats && !Regex.IsMatch(lowerScript, @"textcontent|innertext|innerhtml|setattribute\s*\(", RegexOptions.IgnoreCase))
                 Add("stats/readouts were requested, but JavaScript does not appear to update visible text.");
 
-            if (expectsProteinRules)
+            if (expectations.ExpectsProteinRules)
             {
                 if (!RequestMentionsAny(lowerScript, "hydrophobic", "polar", "charged", "positive", "negative"))
                     Add("protein/amino-acid behavior was requested, but JavaScript lacks amino-acid property classification.");
-                if (RequestMentionsAny(lowerRequest, "spring", "physics", "force", "repel", "attract", "cluster", "fold")
+                if (RequestMentionsAny(expectations.RequestText, "spring", "physics", "force", "repel", "attract", "cluster", "fold")
                     && !Regex.IsMatch(lowerScript, @"force|velocity|vx|vy|spring|distance|dx|dy|attract|repel|cluster|energy", RegexOptions.IgnoreCase))
                 {
                     Add("folding behavior was requested, but JavaScript lacks force/position update logic.");
@@ -433,6 +417,103 @@ namespace Malx_AI
             }
 
             return failures.Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+        }
+
+        private readonly struct HtmlBehaviorExpectations
+        {
+            public HtmlBehaviorExpectations(
+                string requestText,
+                bool expectsInput,
+                bool expectsPrimaryAction,
+                bool expectsCanvas,
+                bool expectsVisualization,
+                bool expectsAnimation,
+                bool expectsRandom,
+                bool expectsReset,
+                bool expectsHover,
+                bool expectsStats,
+                bool expectsProteinRules)
+            {
+                RequestText = requestText;
+                ExpectsInput = expectsInput;
+                ExpectsPrimaryAction = expectsPrimaryAction;
+                ExpectsCanvas = expectsCanvas;
+                ExpectsVisualization = expectsVisualization;
+                ExpectsAnimation = expectsAnimation;
+                ExpectsRandom = expectsRandom;
+                ExpectsReset = expectsReset;
+                ExpectsHover = expectsHover;
+                ExpectsStats = expectsStats;
+                ExpectsProteinRules = expectsProteinRules;
+            }
+
+            public string RequestText { get; }
+            public bool ExpectsInput { get; }
+            public bool ExpectsPrimaryAction { get; }
+            public bool ExpectsCanvas { get; }
+            public bool ExpectsVisualization { get; }
+            public bool ExpectsAnimation { get; }
+            public bool ExpectsRandom { get; }
+            public bool ExpectsReset { get; }
+            public bool ExpectsHover { get; }
+            public bool ExpectsStats { get; }
+            public bool ExpectsProteinRules { get; }
+        }
+
+        private static HtmlBehaviorExpectations InferHtmlBehaviorExpectations(CouncilRunContext? context)
+        {
+            string request = NormalizeHtmlBehaviorValidationRequest(BuildHtmlBehaviorValidationRequest(context));
+            bool expectsCanvas = Regex.IsMatch(request, @"<\s*canvas\b|\b(?:html\s+)?canvas\b", RegexOptions.IgnoreCase);
+            bool expectsVisualization = expectsCanvas
+                || RequestMentionsAny(request, "visual", "visualization", "simulator", "simulation", "folding", "fold over time", "draw", "graph", "plot", "wavefront");
+            bool expectsProteinRules = RequestMentionsAny(request, "protein", "amino acid", "hydrophobic");
+
+            return new HtmlBehaviorExpectations(
+                request,
+                RequestMentionsAny(request, "input", "paste", "type", "sequence", "amino acid"),
+                RequestMentionsExplicitPrimaryAction(request) || expectsProteinRules,
+                expectsCanvas,
+                expectsVisualization,
+                RequestMentionsAny(request, "animation", "animated", "animate", "over time", "folding over time", "smooth", "play/pause"),
+                request.Contains("random", StringComparison.Ordinal),
+                request.Contains("reset", StringComparison.Ordinal),
+                RequestMentionsAny(request, "hover", "tooltip", "inspect", "details"),
+                RequestMentionsAny(request, "statistic", "statistics", "stats", "score", "readout"),
+                expectsProteinRules);
+        }
+
+        private static string NormalizeHtmlBehaviorValidationRequest(string request)
+        {
+            if (string.IsNullOrWhiteSpace(request))
+                return string.Empty;
+
+            string normalized = request.ToLowerInvariant();
+            normalized = Regex.Replace(normalized, @"\bproject\s*canvas\b", "project artifact surface", RegexOptions.IgnoreCase);
+            normalized = Regex.Replace(normalized, @"\bprojectcanvas\b", "project artifact surface", RegexOptions.IgnoreCase);
+            return normalized;
+        }
+
+        private static bool RequestMentionsExplicitPrimaryAction(string request)
+        {
+            if (string.IsNullOrWhiteSpace(request))
+                return false;
+
+            if (Regex.IsMatch(request, @"\bgenerate\s*/\s*fold\b|\bgenerate[-\s]+fold\b", RegexOptions.IgnoreCase))
+                return true;
+
+            foreach (string rawLine in request.Split('\n'))
+            {
+                string line = rawLine.Trim();
+                if (line.Length == 0)
+                    continue;
+
+                bool mentionsAction = RequestMentionsAny(line, "generate", "fold", "simulate", "start", "run", "play", "pause", "play/pause");
+                bool mentionsControl = RequestMentionsAny(line, "button", "control", "action", "click", "tap", "submit");
+                if (mentionsAction && mentionsControl)
+                    return true;
+            }
+
+            return false;
         }
 
         private static string BuildHtmlBehaviorValidationRequest(CouncilRunContext? context)
