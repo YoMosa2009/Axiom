@@ -2310,6 +2310,10 @@ namespace Malx_AI
         // can retry with the EXACT file region rather than dead-ending on a blocked review.
         private string _lastWorkspacePatchAnchorMismatchDetail = string.Empty;
         private string _lastPendingWorkspacePatchRebaseFailure = string.Empty;
+        private string _lastWorkspacePatchIrrelevantDetail = string.Empty;
+        // Set by the rescue paths: host-recovered patches are the last resort, so an
+        // irrelevance verdict there downgrades to a review warning instead of a rejection.
+        private bool _waiveWorkspacePatchRelevanceCheck;
         private CodebaseUndoSnapshot? _lastCodebaseUndo;
         private string _builderPythonSandboxPreamble = "";
         private string _activePythonSandboxPreamble = "";
@@ -4435,6 +4439,28 @@ namespace Malx_AI
                 return false;
             }
 
+            // A patch that parses cleanly, matches its anchors, and changes real bytes can still be
+            // the WRONG WORK entirely: a rate-limited fallback model once returned the existing page
+            // with a cosmetic refactor and zero trace of the requested sign-in/signup screen — and
+            // every pre-apply check passed. Judge the CHANGED content (not the whole file, which a
+            // full-file replace mostly repeats) against the run's requirements; when no requirement
+            // leaves any trace in the changes, this is a Builder failure, not reviewable work.
+            if (TryDetectIrrelevantWorkspacePatch(proposal, runContext, out string irrelevantDetail))
+            {
+                if (_waiveWorkspacePatchRelevanceCheck)
+                {
+                    AppendChat("warning", "Heads up: the proposed changes may not address the request — review the diff carefully before accepting.");
+                    LogActivity($"Codebase patch relevance warning (waived on rescue path): {irrelevantDetail}.");
+                }
+                else
+                {
+                    _lastWorkspacePatchIrrelevantDetail = irrelevantDetail;
+                    AppendChat("warning", "Builder's patch does not implement the requested change. Asking for a patch that addresses the request...");
+                    LogActivity($"Codebase patch rejected as unrelated to the request ({irrelevantDetail}).");
+                    return false;
+                }
+            }
+
             try
             {
                 foreach (WorkspaceFilePatch patch in proposal.Files)
@@ -4497,6 +4523,130 @@ namespace Malx_AI
             if (_connectedWorkspace.AutoApplyCodebaseChanges)
                 TryApplyPendingCodebaseChanges(automatic: true);
             return true;
+        }
+
+        /// <summary>
+        /// True when a structurally valid patch implements NONE of the run's requirements —
+        /// the "wrong work" failure. Judged on the patch's CHANGED content only; biased hard
+        /// toward fail-open (one content-word hit from any requirement marks it relevant, and
+        /// tokens that merely name the target file don't count as evidence either way).
+        /// </summary>
+        private bool TryDetectIrrelevantWorkspacePatch(WorkspacePatchProposal proposal, CouncilRunContext? runContext, out string detail)
+        {
+            detail = string.Empty;
+            try
+            {
+                var requirements = new List<string>();
+                if (runContext?.GoalContract?.Requirements is { Count: > 0 } contractRequirements)
+                    requirements.AddRange(contractRequirements.Where(item => !string.IsNullOrWhiteSpace(item)));
+                if (requirements.Count == 0 && !string.IsNullOrWhiteSpace(runContext?.UserPrompt))
+                    requirements.Add(runContext.UserPrompt);
+                if (requirements.Count == 0)
+                    return false;
+
+                string changedContent = BuildProposalChangedContent(proposal);
+                if (string.IsNullOrWhiteSpace(changedContent))
+                    return false; // the no-op detector owns empty-change proposals
+
+                // Tokens that appear in the patch's own target paths ("index", "html") are satisfied
+                // by merely targeting the file — they cannot discriminate right work from wrong work.
+                var pathTokens = new HashSet<string>(
+                    proposal.Files.SelectMany(file => Regex.Matches(file.RelativePath ?? string.Empty, @"[A-Za-z_][A-Za-z0-9_-]{3,}").Select(m => m.Value)),
+                    StringComparer.OrdinalIgnoreCase);
+
+                if (requirements.Any(requirement => RequirementLeavesSignalInChanges(requirement, changedContent, pathTokens)))
+                    return false;
+
+                detail = "no requirement term appears in the changed content (requirements: "
+                    + string.Join(" | ", requirements.Take(3).Select(item => NormalizeContractText(item, 90))) + ")";
+                return true;
+            }
+            catch
+            {
+                // Relevance checking is a guard, never a reason to lose a reviewable patch.
+                return false;
+            }
+        }
+
+        private static bool RequirementLeavesSignalInChanges(string requirement, string changedContent, HashSet<string> excludedTokens)
+        {
+            var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "about", "after", "also", "application", "before", "build", "code", "complete",
+                "create", "deliverable", "ensure", "feature", "file", "final", "from", "function",
+                "implement", "include", "inside", "make", "must", "need", "output", "page",
+                "project", "provide", "request", "should", "system", "that", "their", "then",
+                "this", "user", "using", "want", "with", "write"
+            };
+
+            List<string> signals = Regex.Matches(requirement ?? string.Empty, @"\b[A-Za-z_][A-Za-z0-9_-]{3,}\b")
+                .Select(match => match.Value)
+                .Where(token => !stopWords.Contains(token) && !excludedTokens.Contains(token))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(12)
+                .ToList();
+
+            // A requirement with no usable content words cannot be judged — count it satisfied.
+            if (signals.Count == 0)
+                return true;
+
+            return signals.Any(signal => changedContent.Contains(signal, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Extracts what a proposal actually CHANGES: for edits, the REPLACE lines that are not in
+        /// their SEARCH block; for replace/create, the new-file lines not present in the current
+        /// on-disk file. A full-file replace that repeats the old file with a small tweak therefore
+        /// reduces to just the tweak — which is precisely what must be judged against the request.
+        /// </summary>
+        private string BuildProposalChangedContent(WorkspacePatchProposal proposal)
+        {
+            var changed = new StringBuilder();
+            foreach (WorkspaceFilePatch patch in proposal.Files)
+            {
+                if (string.Equals(patch.Action, "edit", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (WorkspacePatchEditBlock block in patch.Blocks)
+                    {
+                        var searchLines = new HashSet<string>(
+                            (block.Search ?? string.Empty).Replace("\r\n", "\n").Split('\n').Select(line => line.Trim()),
+                            StringComparer.Ordinal);
+                        foreach (string line in (block.Replace ?? string.Empty).Replace("\r\n", "\n").Split('\n'))
+                        {
+                            string trimmed = line.Trim();
+                            if (trimmed.Length > 0 && !searchLines.Contains(trimmed))
+                                changed.AppendLine(trimmed);
+                        }
+                    }
+
+                    continue;
+                }
+
+                HashSet<string>? currentLines = null;
+                try
+                {
+                    string targetPath = _workspaceAccessService.ResolvePatchTargetPath(_connectedWorkspace, patch);
+                    if (File.Exists(targetPath))
+                    {
+                        currentLines = new HashSet<string>(
+                            File.ReadAllLines(targetPath).Select(line => line.Trim()),
+                            StringComparer.Ordinal);
+                    }
+                }
+                catch
+                {
+                    // Unresolvable target: treat the full content as changed (fails open to relevant).
+                }
+
+                foreach (string line in (patch.Content ?? string.Empty).Replace("\r\n", "\n").Split('\n'))
+                {
+                    string trimmed = line.Trim();
+                    if (trimmed.Length > 0 && (currentLines == null || !currentLines.Contains(trimmed)))
+                        changed.AppendLine(trimmed);
+                }
+            }
+
+            return changed.ToString();
         }
 
         private void RenderCodebasePatchReview(WorkspacePatchProposal proposal, bool autoMode)
@@ -4983,10 +5133,20 @@ namespace Malx_AI
             }
 
             string envelope = BuildRecoveredCodebasePatchEnvelope(targetPath, targetExists ? "replace" : "create", content);
-            if (!TryCaptureCodebasePatchProposal(envelope, runContext))
+            // Rescue is the last resort: an irrelevance verdict here becomes a review warning
+            // instead of a rejection, so the run still ends with something reviewable.
+            _waiveWorkspacePatchRelevanceCheck = true;
+            try
             {
-                LogActivity("Content-only patch rescue failed: the wrapped patch was rejected by parse/validation.");
-                return null;
+                if (!TryCaptureCodebasePatchProposal(envelope, runContext))
+                {
+                    LogActivity("Content-only patch rescue failed: the wrapped patch was rejected by parse/validation.");
+                    return null;
+                }
+            }
+            finally
+            {
+                _waiveWorkspacePatchRelevanceCheck = false;
             }
 
             LogActivity($"Content-only patch rescue succeeded for {targetPath}.");
@@ -5022,10 +5182,18 @@ namespace Malx_AI
                 return null;
 
             string envelope = BuildRecoveredCodebasePatchEnvelope(targetPath, targetExists ? "replace" : "create", content);
-            if (!TryCaptureCodebasePatchProposal(envelope, runContext))
+            _waiveWorkspacePatchRelevanceCheck = true;
+            try
             {
-                LogActivity("Deterministic workspace patch rescue failed: wrapped fallback was rejected by validation.");
-                return null;
+                if (!TryCaptureCodebasePatchProposal(envelope, runContext))
+                {
+                    LogActivity("Deterministic workspace patch rescue failed: wrapped fallback was rejected by validation.");
+                    return null;
+                }
+            }
+            finally
+            {
+                _waiveWorkspacePatchRelevanceCheck = false;
             }
 
             LogActivity($"Deterministic workspace patch rescue succeeded for {targetPath}.");
@@ -6321,7 +6489,12 @@ namespace Malx_AI
             string beforeCount = before.IsRepository ? before.ChangedFileCount.ToString("n0") : "unknown";
             string afterCount = after.IsRepository ? after.ChangedFileCount.ToString("n0") : "unknown";
             string suffix = string.IsNullOrWhiteSpace(after.Error) ? string.Empty : $" ({after.Error})";
-            return $"Git checkpoint: branch {branch}, changed files {beforeCount} -> {afterCount}{suffix}.";
+            // Pre-existing working-tree dirt (deleted/modified files from before this run) shows
+            // up in the raw status dump and reads as if THIS patch caused it. Say so explicitly.
+            string preExistingNote = before.IsRepository && before.ChangedFileCount > 0
+                ? $"\nNote: {before.ChangedFileCount:n0} change(s) below already existed in this working tree before the patch (not made by this run)."
+                : string.Empty;
+            return $"Git checkpoint: branch {branch}, changed files {beforeCount} -> {afterCount}{suffix}.{preExistingNote}";
         }
 
         private static string BuildGitStatusPreview(WorkspaceGitStatus status)
@@ -6369,7 +6542,7 @@ namespace Malx_AI
                         string? directory = Path.GetDirectoryName(target);
                         if (!string.IsNullOrWhiteSpace(directory))
                             Directory.CreateDirectory(directory);
-                        AtomicFileWriter.WriteAllText(target, file.PreviousContent ?? string.Empty);
+                        AtomicFileWriter.WriteAllText(target, file.PreviousContent ?? string.Empty, keepBackup: false);
                     }
                     else if (File.Exists(target))
                     {
@@ -12040,6 +12213,7 @@ namespace Malx_AI
 
                         _lastWorkspacePatchNoOpDetail = string.Empty;
                         _lastWorkspacePatchAnchorMismatchDetail = string.Empty;
+                        _lastWorkspacePatchIrrelevantDetail = string.Empty;
                         codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                         if (!codebasePatchCaptured)
                         {
@@ -12050,6 +12224,8 @@ namespace Malx_AI
                             string firstAnchorMismatchDetail = _lastWorkspacePatchAnchorMismatchDetail;
                             bool firstAttemptWasPendingRebaseFailure = !string.IsNullOrWhiteSpace(_lastPendingWorkspacePatchRebaseFailure);
                             string firstPendingRebaseFailure = _lastPendingWorkspacePatchRebaseFailure;
+                            bool firstAttemptWasIrrelevant = !string.IsNullOrWhiteSpace(_lastWorkspacePatchIrrelevantDetail);
+                            string firstIrrelevantDetail = _lastWorkspacePatchIrrelevantDetail;
                             // Capture the exact target-file regions BEFORE the retry parse clobbers the
                             // proposal state, so the corrective message can show the model real bytes.
                             string anchorRetryFileRegions = firstAttemptWasAnchorMismatch
@@ -12063,6 +12239,8 @@ namespace Malx_AI
                                     ? "Workspace Builder edit SEARCH anchor did not match the file; running one corrective retry with the exact region."
                                 : firstAttemptWasPendingRebaseFailure
                                     ? "Workspace Builder patch was based on stale pending-draft context; running one corrective retry."
+                                : firstAttemptWasIrrelevant
+                                    ? "Workspace Builder patch did not implement the request; running one corrective retry."
                                 : "Workspace Builder output was not a patch envelope; running one patch-format retry.");
                             AppendChat("system", firstAttemptWasNoOp
                                 ? "Builder proposed a patch that changes nothing. Asking for a real change..."
@@ -12070,6 +12248,8 @@ namespace Malx_AI
                                     ? "Builder's edit did not match the current file. Asking for a corrected patch with exact anchors..."
                                 : firstAttemptWasPendingRebaseFailure
                                     ? "Builder proposed a patch against the wrong draft state. Asking for a complete replacement patch..."
+                                : firstAttemptWasIrrelevant
+                                    ? "Builder's patch did not implement the request. Asking for a patch that builds what was asked..."
                                 : "Builder returned raw code instead of a reviewable codebase patch. Asking for a patch-format retry...");
 
                             var patchFormatRetryPayload = new StringBuilder();
@@ -12089,6 +12269,11 @@ namespace Malx_AI
                             {
                                 patchFormatRetryPayload.AppendLine($"PATCH REJECTED: your previous [[AXIOM_CODEBASE_PATCH]] could not be safely rebased over the pending draft ({firstPendingRebaseFailure}).");
                                 patchFormatRetryPayload.AppendLine("Use the PENDING CODEBASE PATCH DRAFT inside CONNECTED CODEBASE CONTEXT as the current draft, apply the user's requested follow-up change to that draft, and return a complete ACTION: replace patch for the affected file.");
+                            }
+                            else if (firstAttemptWasIrrelevant)
+                            {
+                                patchFormatRetryPayload.AppendLine($"PATCH REJECTED: your previous [[AXIOM_CODEBASE_PATCH]] parsed and applied cleanly, but it does NOT implement the request — {firstIrrelevantDetail}. You modified unrelated existing code instead of building what was asked.");
+                                patchFormatRetryPayload.AppendLine("Re-read the ORIGINAL REQUEST below. Your patch's changed content must visibly implement the requested feature/behavior — the requested UI, markup, logic, and text must actually appear in what you add. Do not return another cosmetic refactor of the existing code.");
                             }
                             else
                             {
@@ -12119,6 +12304,7 @@ namespace Malx_AI
                             builderReasoningFallback = patchFormatRetry.IsReasoningFallback;
                             _lastWorkspacePatchNoOpDetail = string.Empty;
                             _lastWorkspacePatchAnchorMismatchDetail = string.Empty;
+                            _lastWorkspacePatchIrrelevantDetail = string.Empty;
                             codebasePatchCaptured = TryCaptureCodebasePatchProposal(builderOutput, runContext);
                             if (!codebasePatchCaptured)
                             {

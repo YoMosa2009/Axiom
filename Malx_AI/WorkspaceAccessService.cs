@@ -793,7 +793,20 @@ namespace Malx_AI
                     Directory.CreateDirectory(directory);
 
                 string materializedContent = MaterializePatchContent(state, patch);
-                AtomicFileWriter.WriteAllText(targetPath, NormalizeFileContentForWrite(materializedContent));
+                AtomicFileWriter.WriteAllText(targetPath, NormalizeFileContentForWrite(materializedContent), keepBackup: false);
+                // Earlier versions left a ".bak" sidecar beside every patched file; clean any
+                // leftover so it stops polluting the user's git status.
+                try
+                {
+                    string staleBackupPath = targetPath + ".bak";
+                    if (File.Exists(staleBackupPath))
+                        File.Delete(staleBackupPath);
+                }
+                catch
+                {
+                    // Cleanup is cosmetic — never fail an apply over it.
+                }
+
                 changed.Add(patch.RelativePath);
             }
 
