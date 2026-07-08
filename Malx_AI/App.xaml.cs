@@ -54,11 +54,51 @@ namespace Malx_AI
 
                 AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
                 DispatcherUnhandledException += App_DispatcherUnhandledException;
+
+                // The app fires many deliberate fire-and-forget tasks (logging, persistence,
+                // usage refresh). A faulted one must be observed and recorded, never allowed
+                // to vanish silently or (on older runtimes/policies) escalate.
+                TaskScheduler.UnobservedTaskException += (_, args) =>
+                {
+                    args.SetObserved();
+                    _ = BackendLogService.LogErrorAsync("App.UnobservedTaskException", args.Exception);
+                };
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"App initialization error: {ex}");
             }
+        }
+
+        // A second Axiom instance shares the same SQLite database and JSON session files as the
+        // first; whichever saves last silently clobbers the other's chats and workplace state.
+        // A named mutex makes the app single-instance, with a clear message instead of quiet
+        // state corruption.
+        private Mutex? _singleInstanceMutex;
+
+        protected override void OnStartup(StartupEventArgs e)
+        {
+            try
+            {
+                _singleInstanceMutex = new Mutex(initiallyOwned: true, @"Local\Axiom_SingleInstance", out bool isFirstInstance);
+                if (!isFirstInstance)
+                {
+                    MessageBox.Show(
+                        "Axiom is already running.\n\nUse the existing window — running two copies at once would overwrite each other's chats and settings.",
+                        "Axiom",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    Shutdown();
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                // A mutex problem must never block startup — worst case we run without the guard.
+                Debug.WriteLine($"Single-instance guard error: {ex.Message}");
+            }
+
+            base.OnStartup(e);
         }
 
         protected override void OnExit(ExitEventArgs e)
@@ -69,14 +109,36 @@ namespace Malx_AI
             // as a GPU crash on the next launch (that false strike would pin the model to CPU even
             // though the GPU is healthy — see NativeDecodeForensics.MarkCleanShutdown).
             NativeDecodeForensics.MarkCleanShutdown();
+            try
+            {
+                _singleInstanceMutex?.ReleaseMutex();
+                _singleInstanceMutex?.Dispose();
+            }
+            catch
+            {
+                // Never fail shutdown over mutex cleanup.
+            }
             base.OnExit(e);
+        }
+
+        private static string BuildUserFacingErrorText(Exception ex, bool critical)
+        {
+            // End users get a readable summary and the log location; the full stack trace goes
+            // to backend-errors.log, not the dialog.
+            string headline = critical
+                ? "Axiom hit a critical error and may need to restart."
+                : "Axiom hit an unexpected error. The app will keep running.";
+            return headline
+                + $"\n\nDetails: {ex.Message}"
+                + $"\n\nA full technical report was saved to:\n{AppDataPaths.Logs}\\backend-errors.log"
+                + "\n\nIf this keeps happening, please attach that file to a GitHub issue.";
         }
 
         private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
         {
             Debug.WriteLine($"Unhandled dispatcher exception: {e.Exception}");
             _ = BackendLogService.LogErrorAsync("App.DispatcherUnhandledException", e.Exception);
-            MessageBox.Show($"Application error:\n\n{e.Exception.Message}\n\n{e.Exception.StackTrace}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(BuildUserFacingErrorText(e.Exception, critical: false), "Axiom — Error", MessageBoxButton.OK, MessageBoxImage.Error);
             e.Handled = true;
         }
 
@@ -85,7 +147,7 @@ namespace Malx_AI
             Exception ex = (Exception)e.ExceptionObject;
             Debug.WriteLine($"Unhandled domain exception: {ex}");
             _ = BackendLogService.LogErrorAsync("App.CurrentDomainUnhandledException", ex);
-            MessageBox.Show($"Critical application error:\n\n{ex.Message}\n\n{ex.StackTrace}", "Critical Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(BuildUserFacingErrorText(ex, critical: true), "Axiom — Critical Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
     }
