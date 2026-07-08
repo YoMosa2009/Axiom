@@ -77,9 +77,6 @@ namespace Malx_AI
         private readonly WebSearchService _webSearchService = new();
         private PersonaMemoryViewModel _personaMemoryViewModel;
         private readonly ChatWorkspaceStatePersistence _chatWorkspaceStatePersistence = new();
-        private readonly SemaphoreSlim _stateSaveGate = new(1, 1);
-        private readonly SemaphoreSlim _chatSessionSaveGate = new(1, 1);
-        private readonly SemaphoreSlim _advancedStateSaveGate = new(1, 1);
         private readonly SemaphoreSlim _coordinatedPersistenceGate = new(1, 1);
         private readonly SemaphoreSlim _notificationGate = new(1, 1);
         private readonly ChatAdvancedStatePersistence _chatAdvancedStatePersistence = new();
@@ -268,9 +265,6 @@ namespace Malx_AI
         private readonly PythonExecutionService _pythonExecutionService = new();
         private readonly OpenRouterChatService _openRouterChatService = new();
         private ScrollViewer? _chatDisplayScrollViewer;
-        private int _workspaceStateSaveVersion;
-        private int _chatSessionSaveVersion;
-        private int _advancedStateSaveVersion;
         private int _coordinatedPersistenceVersion;
         private bool _cloudModeActive;
         private string _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
@@ -3540,71 +3534,11 @@ namespace Malx_AI
         private async Task QueueWorkspaceStateSaveAsync()
         {
             await QueueCoordinatedChatPersistenceAsync(includeChatSession: false, includeWorkspaceState: true, includeAdvancedState: false, includeKvState: false).ConfigureAwait(false);
-            return;
-
-            int requestedVersion = Interlocked.Increment(ref _workspaceStateSaveVersion);
-            await Task.Yield();
-
-            if (!await _stateSaveGate.WaitAsync(0).ConfigureAwait(false))
-                return;
-
-            try
-            {
-                while (true)
-                {
-                    ChatWorkspaceSnapshot snapshot = await Dispatcher.InvokeAsync(CaptureChatWorkspaceSnapshot, System.Windows.Threading.DispatcherPriority.Background);
-                    await Task.Run(() => _chatWorkspaceStatePersistence.Save(snapshot)).ConfigureAwait(false);
-
-                    int latestVersion = Volatile.Read(ref _workspaceStateSaveVersion);
-                    if (requestedVersion >= latestVersion)
-                        break;
-
-                    requestedVersion = latestVersion;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Workspace state save error: {ex.Message}");
-            }
-            finally
-            {
-                _stateSaveGate.Release();
-            }
         }
 
         private async Task QueueAdvancedStateSaveAsync()
         {
             await QueueCoordinatedChatPersistenceAsync(includeChatSession: false, includeWorkspaceState: false, includeAdvancedState: true, includeKvState: false).ConfigureAwait(false);
-            return;
-
-            int requestedVersion = Interlocked.Increment(ref _advancedStateSaveVersion);
-            await Task.Yield();
-
-            if (!await _advancedStateSaveGate.WaitAsync(0).ConfigureAwait(false))
-                return;
-
-            try
-            {
-                while (true)
-                {
-                    ChatAdvancedStateSnapshot snapshot = await Dispatcher.InvokeAsync(CaptureChatAdvancedStateSnapshot, System.Windows.Threading.DispatcherPriority.Background);
-                    await Task.Run(() => _chatAdvancedStatePersistence.Save(snapshot)).ConfigureAwait(false);
-
-                    int latestVersion = Volatile.Read(ref _advancedStateSaveVersion);
-                    if (requestedVersion >= latestVersion)
-                        break;
-
-                    requestedVersion = latestVersion;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Advanced chat state save error: {ex.Message}");
-            }
-            finally
-            {
-                _advancedStateSaveGate.Release();
-            }
         }
 
         private async Task LoadWorkspaceStateAsync()
