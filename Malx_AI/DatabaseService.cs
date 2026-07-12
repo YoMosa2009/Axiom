@@ -307,10 +307,21 @@ namespace Malx_AI
                 if (string.IsNullOrWhiteSpace(stored))
                     return null;
 
-                byte[] protectedBytes = Convert.FromBase64String(stored);
-                byte[] plainBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
-                string key = System.Text.Encoding.UTF8.GetString(plainBytes).Trim();
-                return string.IsNullOrWhiteSpace(key) ? null : key;
+                try
+                {
+                    byte[] protectedBytes = Convert.FromBase64String(stored);
+                    byte[] plainBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
+                    string decryptedKey = System.Text.Encoding.UTF8.GetString(plainBytes).Trim();
+                    return string.IsNullOrWhiteSpace(decryptedKey) ? null : decryptedKey;
+                }
+                catch (FormatException)
+                {
+                    return MigrateLegacyOpenRouterApiKey(stored);
+                }
+                catch (CryptographicException)
+                {
+                    return MigrateLegacyOpenRouterApiKey(stored);
+                }
             }
             catch (Exception ex)
             {
@@ -318,6 +329,16 @@ namespace Malx_AI
                 _ = BackendLogService.LogErrorAsync("DatabaseService.LoadOpenRouterApiKey", ex);
                 return null;
             }
+        }
+
+        private string? MigrateLegacyOpenRouterApiKey(string stored)
+        {
+            string legacyKey = stored.Trim();
+            if (string.IsNullOrWhiteSpace(legacyKey))
+                return null;
+
+            SaveOpenRouterApiKey(legacyKey);
+            return legacyKey;
         }
 
         public void Dispose()
