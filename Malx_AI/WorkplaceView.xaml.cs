@@ -2441,6 +2441,8 @@ namespace Malx_AI
         private ArtifactRenderInfo _canvasArtifact = ArtifactRenderInfo.None(string.Empty);
         private bool _isCanvasPreviewMode;
         private bool _suppressCanvasNativePreviewForOverlay;
+        private const string CanvasArtifactVirtualHostName = "canvas.local";
+        private static readonly string CanvasArtifactVirtualRoot = Path.Combine(Path.GetTempPath(), "Axiom", "Canvas");
         private bool _canvasArtifactWebViewReady;
         private string _canvasArtifactNavSource = string.Empty;
         private bool _canvasArtifactNavRetried;
@@ -17048,10 +17050,12 @@ namespace Malx_AI
                     userDataFolder: AppDataPaths.WebView2UserData,
                     options: WebView2GpuPolicy.CreateEnvironmentOptions());
                 await webView.EnsureCoreWebView2Async(webViewEnvironment);
-                webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+                Directory.CreateDirectory(CanvasArtifactVirtualRoot);
+                webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    CanvasArtifactVirtualHostName,
+                    CanvasArtifactVirtualRoot,
+                    CoreWebView2HostResourceAccessKind.Allow);
+                await WebView2OfflinePolicy.ConfigureAsync(webView.CoreWebView2, CanvasArtifactVirtualHostName);
 
                 // Solid backdrop matching the canvas pane (NotebookBackgroundBrush #171615).
                 // A fully transparent default background renders as a black void on some GPU
@@ -17133,9 +17137,9 @@ namespace Malx_AI
             {
                 if (Encoding.UTF8.GetByteCount(html) > 1_400_000)
                 {
-                    string tempPath = Path.Combine(Path.GetTempPath(), "axiom_canvas_artifact_probe.html");
+                    string tempPath = Path.Combine(CanvasArtifactVirtualRoot, "artifact_probe.html");
                     await File.WriteAllTextAsync(tempPath, html, Encoding.UTF8);
-                    webView.CoreWebView2.Navigate(new Uri(tempPath).AbsoluteUri);
+                    webView.CoreWebView2.Navigate($"https://{CanvasArtifactVirtualHostName}/artifact_probe.html");
                 }
                 else
                 {
@@ -17359,9 +17363,9 @@ namespace Malx_AI
                 // to it instead so the design still renders rather than showing a blank pane.
                 if (System.Text.Encoding.UTF8.GetByteCount(html) > 1_400_000)
                 {
-                    string tempPath = Path.Combine(Path.GetTempPath(), "axiom_canvas_artifact.html");
+                    string tempPath = Path.Combine(CanvasArtifactVirtualRoot, "artifact.html");
                     await File.WriteAllTextAsync(tempPath, html, System.Text.Encoding.UTF8);
-                    webView.CoreWebView2.Navigate(new Uri(tempPath).AbsoluteUri);
+                    webView.CoreWebView2.Navigate($"https://{CanvasArtifactVirtualHostName}/artifact.html");
                 }
                 else
                 {

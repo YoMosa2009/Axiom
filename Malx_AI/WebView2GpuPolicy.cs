@@ -27,7 +27,9 @@ namespace Malx_AI
                 // --disable-gpu-compositing: composite on the CPU (no shared D3D surfaces).
                 // --disable-software-rasterizer is intentionally NOT set so Chromium still
                 //   rasterizes (on the CPU) rather than failing to draw.
-                AdditionalBrowserArguments = "--disable-gpu --disable-gpu-compositing"
+                AdditionalBrowserArguments =
+                    "--disable-gpu --disable-gpu-compositing " +
+                    "--disable-background-networking --disable-dns-prefetch --disable-domain-reliability"
             };
         }
     }

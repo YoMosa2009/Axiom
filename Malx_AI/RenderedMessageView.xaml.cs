@@ -250,11 +250,8 @@ namespace Malx_AI
                     options: WebView2GpuPolicy.CreateEnvironmentOptions());
                 await Browser.EnsureCoreWebView2Async(webViewEnvironment);
                 ConfigureKatexVirtualHostMapping();
+                await WebView2OfflinePolicy.ConfigureAsync(Browser.CoreWebView2, KatexVirtualHostName);
                 await InjectKatexScriptsAsync();
-                Browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                Browser.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                Browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                Browser.CoreWebView2.Settings.IsZoomControlEnabled = false;
                 Browser.NavigationCompleted -= Browser_NavigationCompleted;
                 Browser.NavigationCompleted += Browser_NavigationCompleted;
                 Browser.CoreWebView2.WebMessageReceived -= CoreWebView2_WebMessageReceived;
