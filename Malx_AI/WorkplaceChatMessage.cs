@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows.Documents;
 using System.Windows.Media;
 
 namespace Malx_AI
@@ -8,6 +9,7 @@ namespace Malx_AI
     public sealed class WorkplaceChatMessage : INotifyPropertyChanged
     {
         private string _content = "";
+        private FlowDocument _formattedDocument = WorkplaceMarkdownDocumentFactory.Create(string.Empty);
 
         public string Role { get; init; } = "system";
 
@@ -18,8 +20,10 @@ namespace Malx_AI
             {
                 if (_content == value) return;
                 _content = value;
+                _formattedDocument = WorkplaceMarkdownDocumentFactory.Create(value);
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(FormattedContent));
+                OnPropertyChanged(nameof(FormattedDocument));
                 OnPropertyChanged(nameof(IsGeneratingStatus));
                 OnPropertyChanged(nameof(ShowGeneratingStatusInCard));
                 OnPropertyChanged(nameof(GenerationStatusText));
@@ -27,6 +31,7 @@ namespace Malx_AI
         }
 
         public string FormattedContent => MarkdownParser.ToDisplayText(Content);
+        public FlowDocument FormattedDocument => _formattedDocument;
         public bool IsGeneratingStatus
         {
             get

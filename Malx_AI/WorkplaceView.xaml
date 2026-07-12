@@ -583,10 +583,15 @@
                                                             ShimmerDurationSeconds="2"
                                                             TextTrimming="CharacterEllipsis"
                                                             Visibility="Collapsed"/>
-                                    <TextBlock x:Name="WorkplaceCardContentText"
-                                               Text="{Binding FormattedContent}" TextWrapping="Wrap" FontSize="12"
-                                               LineHeight="16" LineStackingStrategy="BlockLineHeight"
-                                               FontFamily="Segoe UI" Foreground="{StaticResource NotebookTextBrush}"/>
+                                    <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText"
+                                                              Document="{Binding FormattedDocument}"
+                                                              Background="Transparent"
+                                                              BorderThickness="0"
+                                                              Padding="0"
+                                                              IsToolBarVisible="False"
+                                                              VerticalScrollBarVisibility="Disabled"
+                                                              HorizontalScrollBarVisibility="Disabled"
+                                                              IsTabStop="False"/>
                                 </StackPanel>
                             </Border>
                             <DataTemplate.Triggers>
