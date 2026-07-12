@@ -264,6 +264,7 @@ namespace Malx_AI
         private double _openRouterUsagePercent;
         private readonly PythonExecutionService _pythonExecutionService = new();
         private readonly OpenRouterChatService _openRouterChatService = new();
+        private readonly OpenRouterUsageRefreshThrottle _openRouterUsageRefreshThrottle = new(TimeSpan.FromSeconds(60));
         private ScrollViewer? _chatDisplayScrollViewer;
         private int _coordinatedPersistenceVersion;
         private bool _cloudModeActive;
@@ -437,6 +438,7 @@ namespace Malx_AI
                 WorkplaceViewControl.CouncilPetToggleRequested += WorkplaceCouncilPetToggleRequested;
                 WorkplaceViewControl.CouncilPetStatusChanged += WorkplaceCouncilPetStatusChanged;
                 WorkplaceViewControl.CouncilRunFinished += WorkplaceCouncilRunFinished;
+                _openRouterChatService.TokenUsageRecorded += OpenRouterChatService_TokenUsageRecorded;
                 LoadEmptyChatLogo();
                 TemperatureSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
                 TopPSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
@@ -4519,6 +4521,7 @@ namespace Malx_AI
 
         protected override void OnClosed(EventArgs e)
         {
+            _openRouterChatService.TokenUsageRecorded -= OpenRouterChatService_TokenUsageRecorded;
             if (_councilPetWindow != null)
             {
                 _councilPetWindow.DisableRequested -= CouncilPetWindow_DisableRequested;

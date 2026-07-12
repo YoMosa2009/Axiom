@@ -436,6 +436,40 @@ namespace Malx_AI
             }
         }
 
+        private void OpenRouterChatService_TokenUsageRecorded(OpenRouterTokenUsage usage)
+        {
+            if (!_openRouterUsageRefreshThrottle.TryBegin(DateTime.UtcNow, _openRouterChatService.HasValidKey))
+                return;
+
+            _ = RefreshOpenRouterUsageAfterResponseAsync();
+        }
+
+        private async Task RefreshOpenRouterUsageAfterResponseAsync()
+        {
+            try
+            {
+                if (!_openRouterChatService.HasValidKey)
+                    return;
+
+                if (Dispatcher.CheckAccess())
+                {
+                    await LoadOpenRouterUsageAsync();
+                }
+                else
+                {
+                    await Dispatcher.InvokeAsync(LoadOpenRouterUsageAsync).Task.Unwrap();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"OpenRouter usage auto-refresh error: {ex.Message}");
+            }
+            finally
+            {
+                _openRouterUsageRefreshThrottle.Complete();
+            }
+        }
+
         private void ResetOpenRouterUsageUi()
         {
             TextBlock? usageTextBlock = FindName("OpenRouterUsageText") as TextBlock;

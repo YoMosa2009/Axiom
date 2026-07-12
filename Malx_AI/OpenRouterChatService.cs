@@ -101,6 +101,8 @@ namespace Malx_AI
 
     public sealed class OpenRouterChatService
     {
+        public event Action<OpenRouterTokenUsage>? TokenUsageRecorded;
+
         private static readonly HttpClient Http = new();
         private static readonly string[] CodingRequestSignals =
         [
@@ -1476,14 +1478,23 @@ namespace Malx_AI
             lock (_tokenUsageGate)
             {
                 _lastTokenUsage = usage;
-                if (usage.PromptTokens <= 0 || estimatedPromptTokens <= 0)
-                    return;
+                if (usage.PromptTokens > 0 && estimatedPromptTokens > 0)
+                {
+                    double observedRatio = Math.Clamp(usage.PromptTokens / (double)estimatedPromptTokens, 0.5d, 3d);
+                    _promptTokenEstimateCorrectionFactor = Math.Clamp(
+                        (_promptTokenEstimateCorrectionFactor * 0.7d) + (observedRatio * 0.3d),
+                        0.5d,
+                        3d);
+                }
+            }
 
-                double observedRatio = Math.Clamp(usage.PromptTokens / (double)estimatedPromptTokens, 0.5d, 3d);
-                _promptTokenEstimateCorrectionFactor = Math.Clamp(
-                    (_promptTokenEstimateCorrectionFactor * 0.7d) + (observedRatio * 0.3d),
-                    0.5d,
-                    3d);
+            try
+            {
+                TokenUsageRecorded?.Invoke(usage);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"OpenRouter usage observer error: {ex.Message}");
             }
         }
 
