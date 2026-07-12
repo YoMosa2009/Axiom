@@ -5,6 +5,11 @@ namespace Malx_AI
 {
     public class MarkdownParser
     {
+        // ToDisplayText runs on every workplace card render (including live streaming updates),
+        // so its regexes are compiled once instead of re-parsed per call.
+        private static readonly Regex BoldAsteriskRegex = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
+        private static readonly Regex BoldUnderscoreRegex = new(@"__(.+?)__", RegexOptions.Compiled);
+
         public class ParsedMarkdown
         {
             public string Html { get; set; }
@@ -61,8 +66,8 @@ namespace Malx_AI
                 return text ?? string.Empty;
 
             string output = text;
-            output = Regex.Replace(output, @"\*\*(.+?)\*\*", "$1");
-            output = Regex.Replace(output, @"__(.+?)__", "$1");
+            output = BoldAsteriskRegex.Replace(output, "$1");
+            output = BoldUnderscoreRegex.Replace(output, "$1");
             return output;
         }
     }

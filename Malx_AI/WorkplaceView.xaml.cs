@@ -601,6 +601,8 @@ namespace Malx_AI
                     || executedToolCount >= CloudCouncilToolExecutionLimit
                     ? null
                     : tools;
+                var streamThrottle = Stopwatch.StartNew();
+                long lastStreamUiUpdateMs = -CouncilStreamUiUpdateIntervalMs;
                 OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
                     adaptedSystemPrompt,
@@ -612,6 +614,15 @@ namespace Malx_AI
                         // Padding sentinels ("<pad>" spam) are already suppressed at the stream source,
                         // so the accumulated text is safe to show live without per-token cleanup.
                         textBuilder.Append(t);
+
+                        // Throttle live-preview work: token estimation + preview building both scan
+                        // the ENTIRE accumulated text, so doing it per-delta made streaming O(n²)
+                        // and saturated the dispatcher on long deliverables.
+                        long elapsedMs = streamThrottle.ElapsedMilliseconds;
+                        if (elapsedMs - lastStreamUiUpdateMs < CouncilStreamUiUpdateIntervalMs)
+                            return;
+                        lastStreamUiUpdateMs = elapsedMs;
+
                         string current = textBuilder.ToString();
                         int generatedTokens = EstimateTokenCount(current);
                         _pipelineTokenCount = Math.Max(_pipelineTokenCount, generatedTokens);
@@ -625,7 +636,11 @@ namespace Malx_AI
                     },
                     token,
                     maxTokens,
-                    stopSequences);
+                    stopSequences,
+                    // Council roles build on each other's output mid-task. A silent model swap
+                    // leaves the next role unable to continue what the first model started, so
+                    // the cloud council always stays on its selected model.
+                    allowModelFallback: false);
 
                 if (!string.IsNullOrWhiteSpace(response.Reasoning))
                     reasoningParts.Add(response.Reasoning.Trim());
@@ -734,6 +749,8 @@ namespace Malx_AI
                         "Your previous Critic turn produced no visible structured review. Produce the final Critic review now. Do not call tools. Do not output thinking, hidden reasoning, analysis notes, or deliberation. Output only either 'No issues found.' or a numbered actionable findings list with Location/Reference, Severity, Problem, and Fix."));
                 }
                 var forcedTextBuilder = new StringBuilder();
+                var forcedStreamThrottle = Stopwatch.StartNew();
+                long lastForcedUiUpdateMs = -CouncilStreamUiUpdateIntervalMs;
                 OpenRouterChatResponse forcedFinal = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
                     adaptedSystemPrompt,
@@ -743,6 +760,12 @@ namespace Malx_AI
                     onToken: t =>
                     {
                         forcedTextBuilder.Append(t);
+
+                        long elapsedMs = forcedStreamThrottle.ElapsedMilliseconds;
+                        if (elapsedMs - lastForcedUiUpdateMs < CouncilStreamUiUpdateIntervalMs)
+                            return;
+                        lastForcedUiUpdateMs = elapsedMs;
+
                         string current = forcedTextBuilder.ToString();
                         int generatedTokens = EstimateTokenCount(current);
                         _pipelineTokenCount = Math.Max(_pipelineTokenCount, generatedTokens);
@@ -756,7 +779,8 @@ namespace Malx_AI
                     },
                     token,
                     maxTokens,
-                    stopSequences);
+                    stopSequences,
+                    allowModelFallback: false);
 
                 if (!string.IsNullOrWhiteSpace(forcedFinal.Reasoning))
                     reasoningParts.Add(forcedFinal.Reasoning.Trim());
@@ -1117,10 +1141,12 @@ namespace Malx_AI
                     var memoryEntries = _sessionHippocampus.Query(memoryQuery, 4);
                     if (memoryEntries.Count == 0)
                         return "No relevant entries were found in session memory.";
-                    var memoryText = new StringBuilder();
-                    foreach (var entry in memoryEntries)
-                        memoryText.AppendLine(entry.Content.Trim());
-                    return memoryText.ToString().Trim();
+                    // Labeled context (source/tag/priority) instead of bare content lines, so the
+                    // model can weigh studied references against prior role outputs.
+                    string labeled = SessionHippocampus.BuildPromptContext(memoryEntries, maxTokens: 480);
+                    return string.IsNullOrWhiteSpace(labeled)
+                        ? "No relevant entries were found in session memory."
+                        : labeled;
                 }
 
                 if (string.Equals(name, "run_python", StringComparison.OrdinalIgnoreCase))
@@ -2366,6 +2392,9 @@ namespace Malx_AI
         private const int CloudCouncilRateLimitRetryLimit = 2;
         private const int DefaultCloudCouncilRateLimitWaitSeconds = 6;
         private const int MaxCloudCouncilRateLimitWaitSeconds = 22;
+        // Minimum gap between live streaming-card refreshes. Preview building and token estimation
+        // rescan the whole accumulated text, so refreshing per-delta is quadratic on long outputs.
+        private const int CouncilStreamUiUpdateIntervalMs = 90;
         private static readonly Regex ModelParamBillionsRegex = new(@"(\d+(?:\.\d+)?)\s*[bB]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const string ProjectCanvasManualTrigger = "@ProjectCanvas";
         private static readonly Regex ProjectCanvasManualTriggerRegex = new(@"(?<![A-Za-z0-9_])@ProjectCanvas(?![A-Za-z0-9_])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -13750,6 +13779,18 @@ namespace Malx_AI
                 LogActivity("Council relay stopped by user.");
                 AppendChat("system", "Relay stopped by user.");
             }
+            catch (OpenRouterKeyExhaustedException keyExhausted)
+            {
+                RelayStatusBlock.Text = "Relay: API key out of usage";
+                PublishCouncilPetStatus("Council", "API key out of usage.");
+                UpdateStageIndicator(null, false, false, false);
+                LogActivity($"Relay stopped: {keyExhausted.Message}");
+                await BackendLogService.LogErrorAsync("Workplace.Relay.KeyExhausted", keyExhausted);
+                AppendChat("error", "⚠ " + keyExhausted.Message);
+                _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsDailyLimit
+                    ? "OpenRouter API key: daily free usage exhausted — cloud council paused."
+                    : "OpenRouter API key: out of credits — cloud council paused.");
+            }
             catch (Exception ex)
             {
                 RelayStatusBlock.Text = "Relay: Error";
@@ -13758,7 +13799,7 @@ namespace Malx_AI
                 LogActivity($"Relay error: {ex.Message}");
                 await BackendLogService.LogErrorAsync("Workplace.Relay", ex);
                 AppendChat("error", ex is OpenRouterRateLimitedException
-                    ? ex.Message + " (All free models are currently rate-limited. Add an OpenRouter key/credits or retry shortly.)"
+                    ? ex.Message + " (The council stays on its selected model. Retry shortly or check your OpenRouter usage.)"
                     : ex.Message);
                 if (ex is OutOfMemoryException || ex is IOException)
                 {
@@ -16167,6 +16208,11 @@ namespace Malx_AI
             if (isQwen3)
                 systemPrompt = BuildQwen3SystemPrompt(systemPrompt, false);
 
+            // Apply the hidden foundation before the context-budget math below so the token
+            // count reflects the prompt that is actually sent (AddSystemMessage re-applying it
+            // later is a no-op — Apply is idempotent).
+            systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
+
             string roleName = role.ToString();
             LogActivity($"{roleName}: Loading model '{config.DisplayName}'...");
 
@@ -16408,7 +16454,7 @@ namespace Malx_AI
             // are tokenized as single special tokens — not split into characters.
             var session = new LLama.ChatSession(executor);
             session.WithHistoryTransform(new PromptTemplateTransformer(model, withAssistant: true));
-            session.AddSystemMessage(systemPrompt);
+            session.AddSystemMessage(FoundationSystemPrompt.Apply(systemPrompt));
 
             LogActivity($"{roleName}: Session ready with native template. Starting inference...");
 
@@ -16832,6 +16878,7 @@ namespace Malx_AI
 
         private string BuildPrompt(PromptFormat format, string systemPrompt, string userPayload)
         {
+            systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
             return format switch
             {
                 PromptFormat.Gemma4 => Gemma4Formatter.BuildPrompt(systemPrompt, userPayload),
@@ -18955,10 +19002,40 @@ namespace Malx_AI
                     Message = $"Processing {chunks.Count} chunk(s)..."
                 });
 
+                int failedChunks = 0;
                 for (int i = 0; i < chunks.Count; i++)
                 {
                     StudyChunk chunk = chunks[i];
-                    StudyChunkResult parsed = await RunStudyChunkInferenceAsync(studyRole.Value, chunk, _studySessionCts.Token);
+                    StudyChunkResult parsed;
+                    try
+                    {
+                        parsed = await RunStudyChunkInferenceAsync(studyRole.Value, chunk, _studySessionCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception chunkEx)
+                    {
+                        // One bad chunk (provider hiccup, malformed segment) must not abort the
+                        // whole study run — skip it and keep the knowledge from the others.
+                        failedChunks++;
+                        LogActivity($"Study Session: chunk {i + 1}/{chunks.Count} failed and was skipped ({chunkEx.Message}).");
+                        await BackendLogService.LogEventAsync("Workplace.StudyChunkFailed", $"Chunk:{i + 1}/{chunks.Count}\nDoc:{chunk.DocumentName}\nError:{chunkEx.Message}");
+                        StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
+                        {
+                            PhaseName = "Phase 2 · Core Study Loop",
+                            Current = i + 1,
+                            Total = chunks.Count,
+                            EntriesWritten = totalEntriesWritten,
+                            Message = $"Chunk {i + 1}/{chunks.Count} skipped after an error; continuing."
+                        });
+
+                        if (_studySessionCancelRequested || failedChunks >= Math.Max(3, chunks.Count / 2))
+                            break;
+
+                        continue;
+                    }
 
                     string combined = BuildStudyMemoryContent(chunk, parsed);
                     _sessionHippocampus.Write(new SessionHippocampusEntry
@@ -19539,7 +19616,8 @@ namespace Malx_AI
                         false,
                         OpenRouterChatService.WorkplaceCouncilDefaultModelId,
                         null,
-                        token);
+                        token,
+                        allowModelFallback: false);
                     summary = string.IsNullOrWhiteSpace(cloudSummary.Text)
                         ? BuildFallbackSummary(oldMessages)
                         : cloudSummary.Text.Trim();

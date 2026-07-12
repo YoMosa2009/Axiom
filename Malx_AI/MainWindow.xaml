@@ -1580,35 +1580,48 @@
                                             <TextBlock x:Name="OpenRouterKeyStatusText" Text="" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                                         </StackPanel>
                                          <StackPanel x:Name="OpenRouterUsagePanel" Margin="0,12,0,0" Visibility="Collapsed">
-                                             <TextBlock Text="Daily requests" FontSize="12" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI"/>
-                                             <Border x:Name="OpenRouterUsageTrack" Height="8" Margin="0,6,0,0" Background="{StaticResource NotebookSurfaceBrush}" CornerRadius="4" HorizontalAlignment="Stretch" SizeChanged="OpenRouterUsageTrack_SizeChanged">
-                                                 <Grid HorizontalAlignment="Left">
-                                                     <Border x:Name="OpenRouterUsageFillBar" Height="8" Width="0" Background="#22C55E" CornerRadius="4" HorizontalAlignment="Left"/>
-                                                 </Grid>
-                                             </Border>
-                                             <Grid Margin="0,6,0,0">
+                                             <Grid Margin="0,0,0,6">
                                                  <Grid.ColumnDefinitions>
                                                      <ColumnDefinition Width="*"/>
                                                      <ColumnDefinition Width="Auto"/>
                                                  </Grid.ColumnDefinitions>
-                                                 <TextBlock x:Name="OpenRouterUsageText"
-                                                            Text="0 / 0 requests"
-                                                            FontSize="11"
-                                                            Foreground="{StaticResource DarkSecondaryBrush}"
-                                                            FontFamily="Segoe UI"
-                                                            VerticalAlignment="Center"
-                                                            TextWrapping="Wrap"/>
+                                                 <TextBlock Text="API key usage" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" VerticalAlignment="Center"/>
                                                  <Button x:Name="RefreshOpenRouterUsageButton"
                                                          Grid.Column="1"
-                                                         Width="24"
-                                                         Height="24"
+                                                         Width="22"
+                                                         Height="22"
                                                          Margin="8,0,0,0"
                                                          Click="RefreshOpenRouterUsageButton_Click"
                                                          Style="{StaticResource ChatInputIconButtonStyle}"
-                                                         ToolTip="Refresh daily request usage">
+                                                         ToolTip="Refresh usage">
                                                      <TextBlock Text="↻" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                  </Button>
                                              </Grid>
+                                             <!-- Pill-shaped usage meter: color-coded fill behind a centered
+                                                  "used / limit · remaining" label. Fill is deliberately translucent
+                                                  so the label stays readable at any fill level. -->
+                                             <Border x:Name="OpenRouterUsageTrack" Height="24" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" HorizontalAlignment="Stretch" SizeChanged="OpenRouterUsageTrack_SizeChanged">
+                                                 <Grid>
+                                                     <Border x:Name="OpenRouterUsageFillBar" Width="0" Background="#22C55E" Opacity="0.38" CornerRadius="11" HorizontalAlignment="Left" Margin="1"/>
+                                                     <TextBlock x:Name="OpenRouterUsageText"
+                                                                Text="0 / 0 requests"
+                                                                FontSize="11"
+                                                                FontWeight="SemiBold"
+                                                                Foreground="{StaticResource NotebookTextBrush}"
+                                                                FontFamily="Segoe UI"
+                                                                HorizontalAlignment="Center"
+                                                                VerticalAlignment="Center"
+                                                                TextTrimming="CharacterEllipsis"/>
+                                                 </Grid>
+                                             </Border>
+                                             <TextBlock x:Name="OpenRouterUsageHintText"
+                                                        Text=""
+                                                        FontSize="10"
+                                                        Foreground="{StaticResource DarkSecondaryBrush}"
+                                                        FontFamily="Segoe UI"
+                                                        Margin="0,5,0,0"
+                                                        TextWrapping="Wrap"
+                                                        Visibility="Collapsed"/>
                                          </StackPanel>
                                          <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,14,0,8"/>
                                          <TextBlock x:Name="OpenRouterDetectedModelText" Text="Eidos 1" FontSize="11" Foreground="{StaticResource NotebookTextBrush}" TextWrapping="Wrap"/>

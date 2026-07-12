@@ -26,6 +26,9 @@ namespace Malx_AI
 
     public sealed class SessionHippocampusEntry
     {
+        private HashSet<string>? _keywordCache;
+        private string? _keywordCacheContent;
+
         public string Content { get; set; } = "";
         public SessionHippocampusSource Source { get; set; }
         public SessionHippocampusTag Tag { get; set; }
@@ -34,6 +37,19 @@ namespace Malx_AI
         public int SessionRunIndex { get; set; }
         public int AccessCount { get; set; }
         public DateTime? LastAccessedTimestamp { get; set; }
+
+        // Keyword extraction is regex work proportional to content size, and the store's query,
+        // consolidation, and dedup paths all need the same set repeatedly. Cache it per content
+        // value (Content mutates on merge, so the cache is keyed to the exact string instance/value).
+        internal HashSet<string> GetKeywordSet(Func<string, HashSet<string>> extractor)
+        {
+            if (_keywordCache != null && string.Equals(_keywordCacheContent, Content, StringComparison.Ordinal))
+                return _keywordCache;
+
+            _keywordCache = extractor(Content);
+            _keywordCacheContent = Content;
+            return _keywordCache;
+        }
     }
 
     public sealed class SessionHippocampusMetadata
@@ -148,7 +164,7 @@ namespace Malx_AI
             for (int i = 0; i < _entries.Count; i++)
             {
                 SessionHippocampusEntry entry = _entries[i];
-                HashSet<string> contentKeywords = ExtractKeywords(entry.Content);
+                HashSet<string> contentKeywords = entry.GetKeywordSet(ExtractKeywords);
                 double semanticBoost = 0;
                 double semanticScore = 0;
                 bool semanticMatch = semanticAvailable
@@ -259,7 +275,7 @@ namespace Malx_AI
                 {
                     for (int j = i + 1; j < _entries.Count; j++)
                     {
-                        double overlap = KeywordOverlap(_entries[i].Content, _entries[j].Content);
+                        double overlap = KeywordOverlap(_entries[i], _entries[j]);
                         if (overlap <= 0.70)
                         {
                             continue;
@@ -535,7 +551,7 @@ namespace Malx_AI
                     return entry;
                 }
 
-                if (KeywordOverlap(entry.Content, candidate.Content) >= 0.92)
+                if (KeywordOverlap(entry, candidate) >= 0.92)
                 {
                     return entry;
                 }
@@ -589,10 +605,10 @@ namespace Malx_AI
             return weight;
         }
 
-        private static double KeywordOverlap(string left, string right)
+        private static double KeywordOverlap(SessionHippocampusEntry left, SessionHippocampusEntry right)
         {
-            HashSet<string> a = ExtractKeywords(left);
-            HashSet<string> b = ExtractKeywords(right);
+            HashSet<string> a = left.GetKeywordSet(ExtractKeywords);
+            HashSet<string> b = right.GetKeywordSet(ExtractKeywords);
             if (a.Count == 0 || b.Count == 0)
             {
                 return 0;

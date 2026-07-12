@@ -76,14 +76,20 @@ namespace Malx_AI
             if (words.Count == 0)
                 return page.Text;
 
+            // Words are processed top-to-bottom, so a word either continues the most recent
+            // line or starts a new one. Scanning every line per word (the previous behavior)
+            // was O(n²) on dense pages and could attach a word to a visually distant line
+            // whose first word happened to sit within tolerance.
             var lines = new List<List<Word>>();
             foreach (Word word in words.OrderByDescending(w => w.BoundingBox.Bottom))
             {
                 double wordBaseline = word.BoundingBox.Bottom;
                 double tolerance = Math.Max(2.0, word.BoundingBox.Height * 0.6);
 
-                List<Word>? line = lines.LastOrDefault(l =>
-                    Math.Abs(l[0].BoundingBox.Bottom - wordBaseline) <= tolerance);
+                List<Word>? line = lines.Count > 0
+                    && Math.Abs(lines[^1][0].BoundingBox.Bottom - wordBaseline) <= tolerance
+                    ? lines[^1]
+                    : null;
 
                 if (line == null)
                 {
