@@ -1,0 +1,29 @@
+<Window x:Class="Malx_AI.ChatRenameDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Rename chat" Width="430" Height="210"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        WindowStyle="ToolWindow" ShowInTaskbar="False"
+        Background="#171615" Foreground="#EDE8E3">
+    <Border Margin="18" Padding="20" Background="#211F1D" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="12">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Text="Rename chat" FontSize="18" FontWeight="SemiBold"/>
+            <TextBlock Grid.Row="1" Text="Use a short name that will be easy to search later." Margin="0,5,0,12" FontSize="11" Foreground="#B0A89F"/>
+            <TextBox x:Name="ChatNameBox" Grid.Row="2" Height="34" MaxLength="80" Padding="9,6"
+                     Background="#171615" Foreground="#EDE8E3" BorderBrush="#302D2A" BorderThickness="1"
+                     KeyDown="ChatNameBox_KeyDown"/>
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button Content="Cancel" Click="Cancel_Click" MinWidth="82" Padding="12,7" Margin="0,0,8,0"
+                        Background="#211F1D" Foreground="#B0A89F" BorderBrush="#302D2A"/>
+                <Button Content="Rename" Click="Rename_Click" MinWidth="88" Padding="12,7"
+                        Background="#B8924A" Foreground="#171615" BorderBrush="#B8924A" FontWeight="SemiBold"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

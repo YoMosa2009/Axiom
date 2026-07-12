@@ -57,6 +57,8 @@ namespace Malx_AI
         private int _currentChatId = -1;
         private Button _activeChatButton = null;
         private readonly Dictionary<int, string> _chatNames = new();
+        private readonly HashSet<int> _pinnedChatIds = new();
+        private CancellationTokenSource? _chatSearchCancellation;
         private bool _isDarkMode = true;
         private HardwareProfile _detectedHardware = new HardwareProfile();
         private bool _isSettingsAnimating = false;
@@ -790,6 +792,8 @@ namespace Malx_AI
 
             int deleteId = _currentChatId;
             _chatContent.Remove(deleteId);
+            _chatNames.Remove(deleteId);
+            _pinnedChatIds.Remove(deleteId);
             _database?.DeleteChat(deleteId);
             if (_jsonPersistence != null)
             {
@@ -2071,19 +2075,39 @@ namespace Malx_AI
         {
             Button chatButton = new Button
             {
-                Content = chatName,
+                Content = FormatChatHistoryLabel(chatName, _pinnedChatIds.Contains(chatId)),
                 Style = (Style)this.Resources["ChatHistoryItemButtonStyle"],
                 Height = 38,
                 Margin = new Thickness(0, 2, 0, 2),
+                Tag = chatId,
+                ToolTip = "Right-click to rename or pin"
+            };
+
+            var renameItem = new MenuItem { Header = "Rename", Tag = chatId };
+            renameItem.Click += RenameChatMenuItem_Click;
+            var pinItem = new MenuItem
+            {
+                Header = _pinnedChatIds.Contains(chatId) ? "Unpin" : "Pin to top",
                 Tag = chatId
+            };
+            pinItem.Click += PinChatMenuItem_Click;
+            chatButton.ContextMenu = new ContextMenu
+            {
+                Background = BrushFromHex("#211F1D"),
+                Foreground = BrushFromHex("#EDE8E3"),
+                Items = { renameItem, pinItem }
             };
 
             _chatNames[chatId] = chatName;
             
             chatButton.Click += ChatHistoryButton_Click;
             ChatHistoryStack.Children.Add(chatButton);
-            SetActiveChatButton(chatButton);
+            if (chatId == _currentChatId)
+                SetActiveChatButton(chatButton);
         }
+
+        private static string FormatChatHistoryLabel(string chatName, bool isPinned)
+            => isPinned ? "\u2605 " + chatName : chatName;
 
         private void SetActiveChatButton(Button button)
         {
@@ -2229,7 +2253,7 @@ namespace Malx_AI
 
             if (chatButton != null)
             {
-                chatButton.Content = title;
+                chatButton.Content = FormatChatHistoryLabel(title, _pinnedChatIds.Contains(_currentChatId));
                 chatButton.Click -= ChatHistoryButton_Click;
                 chatButton.Click += ChatHistoryButton_Click;
             }
@@ -2240,8 +2264,181 @@ namespace Malx_AI
             if (sender is not Button button || button.Tag is not int chatId)
                 return;
 
-            string chatName = button.Content?.ToString() ?? (_chatNames.TryGetValue(chatId, out string savedName) ? savedName : $"Chat{chatId}");
+            string chatName = _chatNames.TryGetValue(chatId, out string savedName) ? savedName : $"Chat{chatId}";
             await LoadChatAsync(chatId, chatName);
+        }
+
+        private async void RenameChatMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem { Tag: int chatId })
+                return;
+
+            string currentName = _chatNames.TryGetValue(chatId, out string savedName) ? savedName : $"Chat{chatId}";
+            var dialog = new ChatRenameDialog(currentName) { Owner = this };
+            if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.ChatName))
+                return;
+
+            string newName = dialog.ChatName;
+            _chatNames[chatId] = newName;
+            if (_jsonPersistence != null)
+                await Task.Run(() => _jsonPersistence.UpdateChatMetadata(chatId, name: newName));
+            if (chatId == _currentChatId)
+                await PersistCurrentChatSessionAsync();
+            RebuildNormalChatHistoryUi();
+        }
+
+        private async void PinChatMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem { Tag: int chatId })
+                return;
+
+            bool pin = !_pinnedChatIds.Contains(chatId);
+            if (pin)
+                _pinnedChatIds.Add(chatId);
+            else
+                _pinnedChatIds.Remove(chatId);
+
+            if (_jsonPersistence != null)
+            {
+                string name = _chatNames.TryGetValue(chatId, out string savedName) ? savedName : $"Chat{chatId}";
+                await Task.Run(() => _jsonPersistence.UpdateChatMetadata(chatId, name, pin));
+            }
+            RebuildNormalChatHistoryUi();
+        }
+
+        private void RebuildNormalChatHistoryUi()
+        {
+            List<ChatIndexEntry> index = _jsonPersistence?.GetChatIndex() ?? [];
+            if (_currentChatId >= 0 && !index.Any(item => item.Id == _currentChatId))
+            {
+                index.Add(new ChatIndexEntry
+                {
+                    Id = _currentChatId,
+                    Name = _chatNames.TryGetValue(_currentChatId, out string currentName) ? currentName : $"Chat{_currentChatId}",
+                    UpdatedAt = DateTime.Now,
+                    IsPinned = _pinnedChatIds.Contains(_currentChatId)
+                });
+            }
+            _pinnedChatIds.Clear();
+            foreach (ChatIndexEntry entry in index.Where(item => item.IsPinned))
+                _pinnedChatIds.Add(entry.Id);
+
+            ChatHistoryStack.Children.Clear();
+            _activeChatButton = null;
+            foreach (ChatIndexEntry entry in index
+                .OrderByDescending(item => item.IsPinned)
+                .ThenByDescending(item => item.UpdatedAt))
+            {
+                string name = string.IsNullOrWhiteSpace(entry.Name) ? $"Chat{entry.Id}" : entry.Name;
+                _chatNames[entry.Id] = name;
+                AddChatToHistory(name, entry.Id);
+            }
+        }
+
+        private async void ChatHistorySearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (ChatHistorySearchBox is null || ChatHistorySearchStatusText is null)
+                return;
+
+            _chatSearchCancellation?.Cancel();
+            _chatSearchCancellation?.Dispose();
+            _chatSearchCancellation = new CancellationTokenSource();
+            CancellationToken token = _chatSearchCancellation.Token;
+            string query = ChatHistorySearchBox?.Text?.Trim() ?? string.Empty;
+
+            if (query.Length == 0)
+            {
+                ChatHistorySearchStatusText.Visibility = Visibility.Collapsed;
+                if (_jsonPersistence != null)
+                    RebuildNormalChatHistoryUi();
+                return;
+            }
+
+            if (_jsonPersistence is null)
+                return;
+
+            ChatHistorySearchStatusText.Text = "Searching...";
+            ChatHistorySearchStatusText.Visibility = Visibility.Visible;
+            try
+            {
+                await Task.Delay(180, token);
+                List<ChatSearchResult> results = await _jsonPersistence.SearchChatsAsync(query, 50, token);
+                if (!token.IsCancellationRequested && string.Equals(query, ChatHistorySearchBox.Text.Trim(), StringComparison.Ordinal))
+                    RenderChatSearchResults(results);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        private void RenderChatSearchResults(IReadOnlyList<ChatSearchResult> results)
+        {
+            ChatHistoryStack.Children.Clear();
+            _activeChatButton = null;
+            ChatHistorySearchStatusText.Text = results.Count == 0
+                ? "No matching chats."
+                : $"{results.Count} result{(results.Count == 1 ? string.Empty : "s")}";
+            ChatHistorySearchStatusText.Visibility = Visibility.Visible;
+
+            foreach (ChatSearchResult result in results)
+            {
+                var title = new TextBlock
+                {
+                    Text = FormatChatHistoryLabel(result.ChatName, result.IsPinned),
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = BrushFromHex("#EDE8E3"),
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                };
+                var snippet = new TextBlock
+                {
+                    Text = result.Snippet,
+                    FontSize = 10,
+                    Foreground = BrushFromHex("#B0A89F"),
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxHeight = 34
+                };
+                var content = new StackPanel();
+                content.Children.Add(title);
+                content.Children.Add(snippet);
+                var button = new Button
+                {
+                    Content = content,
+                    Style = (Style)Resources["ChatHistoryItemButtonStyle"],
+                    Height = double.NaN,
+                    MinHeight = 56,
+                    Margin = new Thickness(0, 2, 0, 4),
+                    Padding = new Thickness(10, 7, 8, 7),
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Tag = result
+                };
+                button.Click += ChatSearchResult_Click;
+                ChatHistoryStack.Children.Add(button);
+            }
+        }
+
+        private async void ChatSearchResult_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: ChatSearchResult result })
+                return;
+
+            ChatHistorySearchBox.Text = string.Empty;
+            await LoadChatAsync(result.ChatId, result.ChatName);
+            if (!result.MessageId.HasValue)
+                return;
+
+            ChatMessage? matched = _chatMessages.FirstOrDefault(message => message.Id == result.MessageId.Value);
+            if (matched is null)
+                return;
+            foreach (ChatMessage message in _chatMessages)
+                message.IsSearchMatch = ReferenceEquals(message, matched);
+            await Dispatcher.InvokeAsync(() => ChatDisplay.ScrollIntoView(matched), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private void ClearChatHistorySearch_Click(object sender, RoutedEventArgs e)
+        {
+            ChatHistorySearchBox.Text = string.Empty;
+            ChatHistorySearchBox.Focus();
         }
 
         private string GetActiveModelDisplayName()
@@ -2320,11 +2517,16 @@ namespace Malx_AI
                 ChatHistoryStack.Children.Clear();
                 _activeChatButton = null;
                 _chatContent.Clear();
+                _pinnedChatIds.Clear();
 
-                foreach (var entry in index.OrderBy(e => e.Id))
+                foreach (var entry in index
+                    .OrderByDescending(item => item.IsPinned)
+                    .ThenByDescending(item => item.UpdatedAt))
                 {
                     _chatCounter = Math.Max(_chatCounter, entry.Id);
                     _chatContent[entry.Id] = string.Empty;
+                    if (entry.IsPinned)
+                        _pinnedChatIds.Add(entry.Id);
                     AddChatToHistory(string.IsNullOrWhiteSpace(entry.Name) ? $"Chat{entry.Id}" : entry.Name, entry.Id);
                 }
 
@@ -3865,6 +4067,7 @@ namespace Malx_AI
         {
             Visibility visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             NewChatButton.Visibility = visibility;
+            ChatHistorySearchPanel.Visibility = visibility;
             ImportModelSidebarButton.Visibility = visibility;
             DeleteChatSidebarButton.Visibility = visibility;
         }

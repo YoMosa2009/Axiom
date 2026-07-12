@@ -695,6 +695,25 @@
                     <TextBlock Text="Axiom" FontSize="26" FontWeight="Bold" Foreground="#EDE8E3" FontFamily="Georgia"/>
                     <Button x:Name="NewChatButton" DockPanel.Dock="Top" Content="+ New chat" Click="NewChat_Click" Height="40" Margin="0,20,0,0"
                             Style="{StaticResource SidebarFlatButtonStyle}" FontSize="16" Padding="14,10"/>
+                    <Grid x:Name="ChatHistorySearchPanel" Margin="0,12,0,0">
+                        <TextBox x:Name="ChatHistorySearchBox" Height="34" Padding="10,6,30,6"
+                                 Background="#211F1D" Foreground="#EDE8E3" BorderBrush="#302D2A" BorderThickness="1"
+                                 FontSize="12" TextChanged="ChatHistorySearchBox_TextChanged" ToolTip="Search chat titles and messages"/>
+                        <TextBlock Text="Search chats" Foreground="#8A8279" FontSize="11" Margin="11,0,32,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ElementName=ChatHistorySearchBox, Path=Text}" Value="">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button Content="x" Click="ClearChatHistorySearch_Click" Width="24" Height="24" HorizontalAlignment="Right" Margin="0,0,5,0"
+                                Style="{StaticResource SidebarFlatButtonStyle}" Foreground="#8A8279" ToolTip="Clear search"/>
+                    </Grid>
                     <Button x:Name="HistorySectionToggle" DockPanel.Dock="Top" Content="▾ Recents" Click="SidebarHistoryToggle_Click" Height="32"
                             Margin="0,20,0,0" Style="{StaticResource SidebarFlatButtonStyle}" FontSize="12" Foreground="#8A8279" Padding="0,6"/>
                 </StackPanel>
@@ -704,7 +723,10 @@
 
                 <Border x:Name="ChatHistorySectionContainer" DockPanel.Dock="Top" Opacity="1" MaxHeight="500">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
-                        <StackPanel x:Name="ChatHistoryStack" Margin="14,0,14,0"/>
+                        <StackPanel Margin="14,0,14,0">
+                            <TextBlock x:Name="ChatHistorySearchStatusText" Visibility="Collapsed" FontSize="10" Foreground="#8A8279" Margin="2,0,2,6" TextWrapping="Wrap"/>
+                            <StackPanel x:Name="ChatHistoryStack"/>
+                        </StackPanel>
                     </ScrollViewer>
                 </Border>
 
@@ -1112,6 +1134,10 @@
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding ShouldShowGenerationStatus}" Value="True">
                                                 <Setter TargetName="AssistantGenerationStatusText" Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
+                                                <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="{StaticResource PrimaryAccentBrush}"/>
+                                                <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="2"/>
                                             </DataTrigger>
                                              <MultiDataTrigger>
                                                  <MultiDataTrigger.Conditions>

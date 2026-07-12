@@ -30,6 +30,7 @@ namespace Malx_AI
         private bool _isStreaming;
         private bool _preferPlainTextRendering;
         private bool _isCodeBlockCollapsed;
+        private bool _isSearchMatch;
         private string _streamingDisplayTarget = string.Empty;
         private System.Windows.Threading.DispatcherTimer? _streamingRevealTimer;
 
@@ -137,6 +138,18 @@ namespace Malx_AI
                     OnPropertyChanged(nameof(ShouldShowThinkingHeader));
                     OnPropertyChanged(nameof(GenerationStatusText));
                 }
+            }
+        }
+
+        public bool IsSearchMatch
+        {
+            get => _isSearchMatch;
+            set
+            {
+                if (_isSearchMatch == value)
+                    return;
+                _isSearchMatch = value;
+                OnPropertyChanged();
             }
         }
 
