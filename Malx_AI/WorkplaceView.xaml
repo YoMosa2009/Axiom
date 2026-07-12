@@ -559,6 +559,17 @@
 
             <!-- Chat display (fills remaining space — shows only user/architect/builder/critic/sandbox) -->
             <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{StaticResource NotebookBackgroundBrush}" Padding="12,12" PreviewMouseWheel="ChatScrollViewer_PreviewMouseWheel">
+                <StackPanel>
+                <Button x:Name="ShowEarlierWorkplaceMessagesButton"
+                        Content="Show earlier messages"
+                        Click="ShowEarlierWorkplaceMessages_Click"
+                        Visibility="Collapsed"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,8"
+                        Padding="12,5"
+                        FontSize="10"
+                        Foreground="{StaticResource DarkSecondaryBrush}"
+                        Style="{StaticResource SubtleButtonStyle}"/>
                 <ItemsControl x:Name="ChatCardsList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
@@ -609,6 +620,7 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                </StackPanel>
             </ScrollViewer>
         </DockPanel>
 

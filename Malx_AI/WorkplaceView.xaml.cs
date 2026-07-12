@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -1980,6 +1981,7 @@ namespace Malx_AI
 
             if (clearSessionCollections)
             {
+                _renderedWorkplaceMessageLimit = WorkplaceRenderedHistoryWindow.PageSize;
                 _chatCards.Clear();
                 _systemNotifications.Clear();
                 _chatHistory.Clear();
@@ -2050,6 +2052,7 @@ namespace Malx_AI
 
         private void RestoreWorkspaceCollections(WorkplaceSessionSnapshot snapshot)
         {
+            _renderedWorkplaceMessageLimit = WorkplaceRenderedHistoryWindow.PageSize;
             _chatCards.Clear();
             _systemNotifications.Clear();
             foreach (var msg in (snapshot.ChatCards ?? []).TakeLast(120))
@@ -2422,6 +2425,8 @@ namespace Malx_AI
         ];
 
         private readonly ObservableCollection<WorkplaceChatMessage> _chatCards = new();
+        private readonly ObservableCollection<WorkplaceChatMessage> _renderedChatCards = new();
+        private int _renderedWorkplaceMessageLimit = WorkplaceRenderedHistoryWindow.PageSize;
         private readonly Dictionary<string, WorkplaceChatMessage> _streamingCouncilCards = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, CachedModelEntry> _modelCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly string CouncilKvStateFolder = Path.Combine(AppDataPaths.ChatHistory, "CouncilKvStates");
@@ -2642,7 +2647,8 @@ namespace Malx_AI
 
             DocumentListBox.ItemsSource = _documents;
             ConceptCloudItemsControl.ItemsSource = _conceptTags;
-            ChatCardsList.ItemsSource = _chatCards;
+            ChatCardsList.ItemsSource = _renderedChatCards;
+            _chatCards.CollectionChanged += ChatCards_CollectionChanged;
             TaskHistoryListBox.ItemsSource = _taskHistory;
             PerformanceLogListBox.ItemsSource = _performanceLog;
             WorkspaceTemplateListBox.ItemsSource = _workspaceTemplates;
@@ -2965,6 +2971,75 @@ namespace Malx_AI
             double viewportWidth = ActualWidth > 0 ? ActualWidth : 1600;
             double candidate = viewportWidth * ProjectCanvasExpandedWidthRatio;
             return Math.Max(ProjectCanvasPane.MinWidth, Math.Min(candidate, ProjectCanvasPane.MaxWidth));
+        }
+
+        private void RefreshRenderedWorkplaceCards()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(RefreshRenderedWorkplaceCards, DispatcherPriority.Background);
+                return;
+            }
+
+            int startIndex = WorkplaceRenderedHistoryWindow.CalculateStartIndex(
+                _chatCards.Count,
+                _renderedWorkplaceMessageLimit);
+            _renderedChatCards.Clear();
+            for (int index = startIndex; index < _chatCards.Count; index++)
+                _renderedChatCards.Add(_chatCards[index]);
+
+            UpdateShowEarlierWorkplaceMessagesButton(startIndex);
+        }
+
+        private void ChatCards_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(RefreshRenderedWorkplaceCards, DispatcherPriority.Background);
+                return;
+            }
+
+            if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
+            {
+                foreach (WorkplaceChatMessage message in e.NewItems.OfType<WorkplaceChatMessage>())
+                    _renderedChatCards.Add(message);
+                while (_renderedChatCards.Count > Math.Min(_renderedWorkplaceMessageLimit, _chatCards.Count))
+                    _renderedChatCards.RemoveAt(0);
+                UpdateShowEarlierWorkplaceMessagesButton(
+                    WorkplaceRenderedHistoryWindow.CalculateStartIndex(_chatCards.Count, _renderedWorkplaceMessageLimit));
+                return;
+            }
+
+            RefreshRenderedWorkplaceCards();
+        }
+
+        private void UpdateShowEarlierWorkplaceMessagesButton(int hiddenCount)
+        {
+            ShowEarlierWorkplaceMessagesButton.Visibility = hiddenCount > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            if (hiddenCount > 0)
+            {
+                int nextPageCount = Math.Min(WorkplaceRenderedHistoryWindow.PageSize, hiddenCount);
+                ShowEarlierWorkplaceMessagesButton.Content = $"Show {nextPageCount} earlier messages ({hiddenCount} hidden)";
+            }
+        }
+
+        private void ShowEarlierWorkplaceMessages_Click(object sender, RoutedEventArgs e)
+        {
+            double priorOffset = ChatScrollViewer.VerticalOffset;
+            double priorExtent = ChatScrollViewer.ExtentHeight;
+            _renderedWorkplaceMessageLimit = WorkplaceRenderedHistoryWindow.IncreaseLimit(
+                _renderedWorkplaceMessageLimit,
+                _chatCards.Count);
+            RefreshRenderedWorkplaceCards();
+
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                ChatScrollViewer.UpdateLayout();
+                double addedHeight = Math.Max(0, ChatScrollViewer.ExtentHeight - priorExtent);
+                ChatScrollViewer.ScrollToVerticalOffset(priorOffset + addedHeight);
+            }, DispatcherPriority.Loaded);
         }
 
         private void ChatScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
