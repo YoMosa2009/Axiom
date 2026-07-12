@@ -10,23 +10,44 @@ namespace Malx_AI
     {
         private static readonly SemaphoreSlim LogGate = new SemaphoreSlim(1, 1);
 
-        public static async Task LogEventAsync(string area, string message)
+        // Diagnostic logs must never become a disk-space problem on a user's machine: the
+        // event log alone grows by hundreds of KB per active day and previously grew forever.
+        // When a log passes the cap it is rotated to a single ".1" generation (previous
+        // generation replaced), so worst case is ~2x cap per log file.
+        private const long MaxLogFileBytes = 4 * 1024 * 1024;
+
+        public static Task LogEventAsync(string area, string message)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{area}]");
+            sb.AppendLine(message ?? string.Empty);
+            sb.AppendLine(new string('-', 80));
+            return AppendWithRotationAsync("backend-events.log", sb.ToString());
+        }
+
+        public static Task LogErrorAsync(string area, Exception ex)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{area}]");
+            sb.AppendLine(ex.Message);
+            sb.AppendLine(ex.ToString());
+            sb.AppendLine(new string('-', 80));
+            return AppendWithRotationAsync("backend-errors.log", sb.ToString());
+        }
+
+        private static async Task AppendWithRotationAsync(string fileName, string text)
         {
             try
             {
                 string logDir = AppDataPaths.Logs;
                 Directory.CreateDirectory(logDir);
-                string logPath = Path.Combine(logDir, "backend-events.log");
-
-                var sb = new StringBuilder();
-                sb.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{area}]");
-                sb.AppendLine(message ?? string.Empty);
-                sb.AppendLine(new string('-', 80));
+                string logPath = Path.Combine(logDir, fileName);
 
                 await LogGate.WaitAsync();
                 try
                 {
-                    await File.AppendAllTextAsync(logPath, sb.ToString());
+                    RotateIfNeeded(logPath);
+                    await File.AppendAllTextAsync(logPath, text);
                 }
                 finally
                 {
@@ -35,35 +56,27 @@ namespace Malx_AI
             }
             catch
             {
+                // Logging must never take the app down.
             }
         }
 
-        public static async Task LogErrorAsync(string area, Exception ex)
+        private static void RotateIfNeeded(string logPath)
         {
             try
             {
-                string logDir = AppDataPaths.Logs;
-                Directory.CreateDirectory(logDir);
-                string logPath = Path.Combine(logDir, "backend-errors.log");
+                var info = new FileInfo(logPath);
+                if (!info.Exists || info.Length < MaxLogFileBytes)
+                    return;
 
-                var sb = new StringBuilder();
-                sb.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{area}]");
-                sb.AppendLine(ex.Message);
-                sb.AppendLine(ex.ToString());
-                sb.AppendLine(new string('-', 80));
-
-                await LogGate.WaitAsync();
-                try
-                {
-                    await File.AppendAllTextAsync(logPath, sb.ToString());
-                }
-                finally
-                {
-                    LogGate.Release();
-                }
+                string rotatedPath = logPath + ".1";
+                if (File.Exists(rotatedPath))
+                    File.Delete(rotatedPath);
+                File.Move(logPath, rotatedPath);
             }
             catch
             {
+                // If rotation fails (file lock, permissions), keep appending — better a large
+                // log than a lost one.
             }
         }
     }

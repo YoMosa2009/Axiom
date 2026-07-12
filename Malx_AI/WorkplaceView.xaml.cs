@@ -2317,7 +2317,6 @@ namespace Malx_AI
         private CodebaseUndoSnapshot? _lastCodebaseUndo;
         private string _builderPythonSandboxPreamble = "";
         private string _activePythonSandboxPreamble = "";
-        private bool _activePythonSessionForTurn;
         private string _submittedRunPrompt = string.Empty;
         private string _lastCancelledRunPrompt = string.Empty;
 
@@ -2467,9 +2466,6 @@ namespace Malx_AI
         private readonly ObservableCollection<ModelPerformanceLogEntry> _performanceLog = new();
         private readonly ObservableCollection<WorkspaceTemplateEntry> _workspaceTemplates = new();
         private CriticSensitivityLevel _criticSensitivity = CriticSensitivityLevel.Standard;
-        private bool _criticSensitivityAutoSet;
-        private bool _criticSensitivityManuallyChangedThisSession;
-        private bool _suppressCriticSensitivitySelectionChanged;
         private bool _isRefinementMode;
         private CouncilTaskHistoryEntry? _activeHistorySelection;
         private string _lastConfidenceLabel = "Moderate Confidence";

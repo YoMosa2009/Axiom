@@ -10,3 +10,9 @@ obj/
 # Local embedding model weights (bundled into output via csproj Content include,
 # but never committed to git - too large for repo history)
 Malx_AI/EmbeddingModels/*.gguf
+
+# Development-tool artifacts — internal workflow data that must not ship in the public repo
+_repro/
+graphify-out/
+.codex/
+.serena/

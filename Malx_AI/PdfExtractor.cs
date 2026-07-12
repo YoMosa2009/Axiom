@@ -117,8 +117,9 @@ namespace Malx_AI
 
                     using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read);
                     byte[] header = new byte[5];
-                    fs.Read(header, 0, 5);
-                    return Encoding.ASCII.GetString(header).StartsWith("%PDF", StringComparison.Ordinal);
+                    int headerBytesRead = fs.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
+                    return headerBytesRead >= 4
+                        && Encoding.ASCII.GetString(header, 0, headerBytesRead).StartsWith("%PDF", StringComparison.Ordinal);
                 }
                 catch
                 {

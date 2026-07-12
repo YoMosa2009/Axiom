@@ -745,8 +745,12 @@ namespace Malx_AI
             modelParams.SeqMax = 1;
 
             // Compact the KV cache when fragmentation passes 10% — prevents spurious
-            // NoKvSlot failures in long interactive sessions.
+            // NoKvSlot failures in long interactive sessions. LLamaSharp 0.26 marks the
+            // property obsolete (upstream llama.cpp is deprecating manual defrag), but it is
+            // still honored in this version; keep the behavior until the library removes it.
+#pragma warning disable CS0612
             modelParams.DefragThreshold = 0.1f;
+#pragma warning restore CS0612
             modelParams.UseMemorymap = true;
         }
 
