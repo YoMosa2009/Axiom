@@ -683,6 +683,8 @@
                     <Rectangle Height="1" Fill="#302D2A" Margin="0,0,0,14"/>
                     <Button x:Name="ImportModelSidebarButton" Content="+ Import AI Model" Click="ImportModel_Click" Height="40"
                             Margin="0,0,0,8" Style="{StaticResource PremiumButtonStyle}" FontSize="12" Background="#B8924A" BorderBrush="#B8924A" Foreground="#EDE8E3"/>
+                    <Button x:Name="DownloadDefaultModelSidebarButton" Content="↓ Download default model" Click="DownloadDefaultModel_Click" Height="36"
+                            Margin="0,0,0,8" Style="{StaticResource SidebarOutlineButtonStyle}" FontSize="12"/>
                     <Button Content="⚙ Settings" Click="Settings_Click" Height="36" Margin="0,0,0,8"
                             Style="{StaticResource SidebarOutlineButtonStyle}" FontSize="12"/>
                     <Button x:Name="DeleteChatSidebarButton" Content="Delete chat" Click="DeleteChat_Click" Height="34"

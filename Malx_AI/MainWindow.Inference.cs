@@ -380,8 +380,18 @@ namespace Malx_AI
             if (!string.IsNullOrWhiteSpace(lastModel) || string.Equals(promptShown, "true", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            AddChatMessage("system", $"First run: download and import {ModelInferenceProfiles.DefaultQwen3FileName} from Hugging Face to use the default {ModelInferenceProfiles.DefaultQwen3DisplayName} model. Approximate download size: 2.5 GB.");
+            AddChatMessage(
+                "system",
+                $"First run: download and import {ModelInferenceProfiles.DefaultQwen3FileName} with the built-in downloader, or use Import AI Model to choose a GGUF manually. Approximate download size: 2.5 GB.");
             _database.SaveSetting("qwen3_first_run_prompt_shown", "true");
+
+            RoutedEventHandler? openDownloadHandler = null;
+            openDownloadHandler = async (_, _) =>
+            {
+                Loaded -= openDownloadHandler;
+                await OpenDefaultModelDownloadDialogAsync();
+            };
+            Loaded += openDownloadHandler;
         }
 
         private static string BuildDefaultAssistantSystemPrompt()
@@ -413,126 +423,153 @@ namespace Malx_AI
 
         private async void ImportModel_Click(object sender, RoutedEventArgs e)
         {
+            var openFileDialog = new OpenFileDialog { Filter = "GGUF files (*.gguf)|*.gguf" };
+            if (openFileDialog.ShowDialog() != true)
+                return;
+
             try
             {
-                OpenFileDialog openFileDialog = new OpenFileDialog { Filter = "GGUF files (*.gguf)|*.gguf" };
-                if (openFileDialog.ShowDialog() != true)
-                    return;
-
-                if (IsMmprojFile(openFileDialog.FileName))
-                {
-                    // Don't dispose the loaded model here — importing a projector on top of a
-                    // loaded text model enables vision for it.
-                    if (_model != null && !_useGemma4LocalCliMode)
-                    {
-                        await LoadExplicitMmprojAsync(openFileDialog.FileName);
-                    }
-                    else
-                    {
-                        AppendSystemMessage("Selected file is an mmproj projector, not a text model. Load the main .gguf model first, then import this projector to enable vision.");
-                    }
-                    return;
-                }
-
-                _modelName = System.IO.Path.GetFileNameWithoutExtension(openFileDialog.FileName);
-
-                DisposeInferenceResources(clearModel: true);
-
-                if (IsGemma4Model(openFileDialog.FileName))
-                {
-                    if (!LocalGemmaCliRunner.TryResolveExecutable(out _))
-                    {
-                        AppendSystemMessage("ERROR: Gemma 4 local runtime not found. Install llama.cpp llama-cli and add it to PATH, or set AXIOM_LLAMA_CLI_PATH.");
-                        return;
-                    }
-
-                    _useGemma4LocalCliMode = true;
-                    _gemma4ModelPath = openFileDialog.FileName;
-                    ShowTransientStatus("Gemma 4 local CLI mode active.");
-                    UpdateHeaderDisplay();
-                    PopulateNextMessageModelSelector();
-                    _database?.SaveUserFact("last_model", _modelName);
-                    _database?.SaveUserFact("last_model_path", openFileDialog.FileName);
-                    ShowTransientStatus($"Model ready: {_modelName}");
-                    ShowTransientStatus("System ready for chat.");
-                    UpdateUIState(true);
-                    return;
-                }
-
-                _useGemma4LocalCliMode = false;
-                _gemma4ModelPath = "";
-
-                if (IsQwen3Model(openFileDialog.FileName))
-                {
-                    _modelName = ModelInferenceProfiles.DefaultQwen3DisplayName;
-                }
-
-                if (_model != null)
-                {
-                    try
-                    {
-                        _executor = null;
-                        _chatSession = null;
-                        _model.Dispose();
-                        _model = null;
-                    }
-                    catch { }
-                }
-
-                ShowTransientStatus($"Loading: {openFileDialog.SafeFileName}...");
-
-                // Free any VRAM held by cached council models before planning, otherwise
-                // the planner sees that memory as gone and resolves to few/zero GPU layers.
-                WorkplaceViewControl?.ReleaseCachedCouncilModels();
-
-                // CreatePlan probes hardware via external processes (powershell/nvidia-smi)
-                // — run it off the dispatcher so the import click doesn't freeze the UI.
-                uint requestedContext = GetDefaultContextForModel(openFileDialog.FileName);
-                var recovery = ResolveCrashRecoveryPlan(openFileDialog.FileName, InferenceBackendService.CurrentMode, requestedContext);
-                var plan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, recovery.Context, recovery.Mode));
-                ShowTransientStatus($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
-
-                try
-                {
-                    await InitializeModelSessionAsync(plan);
-                }
-                catch (Exception ex) when (plan.UsingGpu)
-                {
-                    await BackendLogService.LogErrorAsync("MainWindow.GPUInit", ex);
-                    ShowTransientStatus($"GPU init failed ({ex.Message}). Retrying with CPU fallback...");
-                    var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly));
-                    await InitializeModelSessionAsync(cpuPlan);
-                    ShowTransientStatus("Fallback mode active: CPU");
-                }
-                catch (Exception ex)
-                {
-                    await BackendLogService.LogErrorAsync("MainWindow.ModelInit", ex);
-                    ShowTransientStatus($"Model initialization failed ({GetMostRelevantError(ex)}). Retrying in CPU safe mode...");
-
-                    var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(openFileDialog.FileName, requestedContext, InferenceComputeMode.CpuOnly));
-                    await InitializeModelSessionAsync(cpuPlan);
-                    ShowTransientStatus("Fallback mode active: CPU");
-                }
-
-                UpdateHeaderDisplay();
-                ApplyModelDefaultsForCurrentSelection();
-                PopulateNextMessageModelSelector();
-                _database?.SaveUserFact("last_model", _modelName);
-                _database?.SaveUserFact("last_model_path", openFileDialog.FileName);
-
-                ShowTransientStatus($"Model ready: {_modelName}");
-                ShowTransientStatus("System ready for chat.");
-                UpdateUIState(true);
+                await ImportModelFromPathAsync(openFileDialog.FileName);
             }
             catch (Exception ex)
             {
-                AppendSystemMessage($"ERROR: {ex.Message}");
-                if (ex is OutOfMemoryException || ex is IOException)
+                HandleModelImportFailure(ex);
+            }
+        }
+
+        private async Task ImportModelFromPathAsync(string modelPath)
+        {
+            if (IsMmprojFile(modelPath))
+            {
+                if (_model != null && !_useGemma4LocalCliMode)
                 {
-                    _ = ShowNonIntrusiveErrorAsync($"Model load error: {GetMostRelevantError(ex)}");
+                    await LoadExplicitMmprojAsync(modelPath);
                 }
-                Debug.WriteLine($"Model load error: {ex}");
-                UpdateUIState(false);
+                else
+                {
+                    AppendSystemMessage("Selected file is an mmproj projector, not a text model. Load the main .gguf model first, then import this projector to enable vision.");
+                }
+                return;
+            }
+
+            _modelName = Path.GetFileNameWithoutExtension(modelPath);
+            DisposeInferenceResources(clearModel: true);
+
+            if (IsGemma4Model(modelPath))
+            {
+                if (!LocalGemmaCliRunner.TryResolveExecutable(out _))
+                {
+                    AppendSystemMessage("ERROR: Gemma 4 local runtime not found. Install llama.cpp llama-cli and add it to PATH, or set AXIOM_LLAMA_CLI_PATH.");
+                    return;
+                }
+
+                _useGemma4LocalCliMode = true;
+                _gemma4ModelPath = modelPath;
+                ShowTransientStatus("Gemma 4 local CLI mode active.");
+                UpdateHeaderDisplay();
+                PopulateNextMessageModelSelector();
+                _database?.SaveUserFact("last_model", _modelName);
+                _database?.SaveUserFact("last_model_path", modelPath);
+                ShowTransientStatus($"Model ready: {_modelName}");
+                ShowTransientStatus("System ready for chat.");
+                UpdateUIState(true);
+                return;
+            }
+
+            _useGemma4LocalCliMode = false;
+            _gemma4ModelPath = "";
+
+            if (IsQwen3Model(modelPath))
+                _modelName = ModelInferenceProfiles.DefaultQwen3DisplayName;
+
+            if (_model != null)
+            {
+                try
+                {
+                    _executor = null;
+                    _chatSession = null;
+                    _model.Dispose();
+                    _model = null;
+                }
+                catch
+                {
+                }
+            }
+
+            ShowTransientStatus($"Loading: {Path.GetFileName(modelPath)}...");
+            WorkplaceViewControl?.ReleaseCachedCouncilModels();
+
+            uint requestedContext = GetDefaultContextForModel(modelPath);
+            var recovery = ResolveCrashRecoveryPlan(modelPath, InferenceBackendService.CurrentMode, requestedContext);
+            var plan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, recovery.Context, recovery.Mode));
+            ShowTransientStatus($"Context: {plan.Parameters.ContextSize} tokens | Backend: {plan.BackendName} | GPU Layers: {plan.Parameters.GpuLayerCount} | {plan.Reason}");
+
+            try
+            {
+                await InitializeModelSessionAsync(plan);
+            }
+            catch (Exception ex) when (plan.UsingGpu)
+            {
+                await BackendLogService.LogErrorAsync("MainWindow.GPUInit", ex);
+                ShowTransientStatus($"GPU init failed ({ex.Message}). Retrying with CPU fallback...");
+                var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceComputeMode.CpuOnly));
+                await InitializeModelSessionAsync(cpuPlan);
+                ShowTransientStatus("Fallback mode active: CPU");
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("MainWindow.ModelInit", ex);
+                ShowTransientStatus($"Model initialization failed ({GetMostRelevantError(ex)}). Retrying in CPU safe mode...");
+
+                var cpuPlan = await Task.Run(() => InferenceBackendService.CreatePlan(modelPath, requestedContext, InferenceComputeMode.CpuOnly));
+                await InitializeModelSessionAsync(cpuPlan);
+                ShowTransientStatus("Fallback mode active: CPU");
+            }
+
+            UpdateHeaderDisplay();
+            ApplyModelDefaultsForCurrentSelection();
+            PopulateNextMessageModelSelector();
+            _database?.SaveUserFact("last_model", _modelName);
+            _database?.SaveUserFact("last_model_path", modelPath);
+
+            ShowTransientStatus($"Model ready: {_modelName}");
+            ShowTransientStatus("System ready for chat.");
+            UpdateUIState(true);
+        }
+
+        private void HandleModelImportFailure(Exception ex)
+        {
+            AppendSystemMessage($"ERROR: {ex.Message}");
+            if (ex is OutOfMemoryException || ex is IOException)
+                _ = ShowNonIntrusiveErrorAsync($"Model load error: {GetMostRelevantError(ex)}");
+            Debug.WriteLine($"Model load error: {ex}");
+            UpdateUIState(false);
+        }
+
+        private async void DownloadDefaultModel_Click(object sender, RoutedEventArgs e)
+        {
+            await OpenDefaultModelDownloadDialogAsync();
+        }
+
+        private async Task OpenDefaultModelDownloadDialogAsync()
+        {
+            if (_isProcessing)
+            {
+                await ShowNonIntrusiveErrorAsync("Wait for the current chat turn to finish before loading a model.");
+                return;
+            }
+
+            var dialog = new DefaultModelDownloadDialog { Owner = this };
+            if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.DownloadedModelPath))
+                return;
+
+            try
+            {
+                await ImportModelFromPathAsync(dialog.DownloadedModelPath);
+            }
+            catch (Exception ex)
+            {
+                HandleModelImportFailure(ex);
             }
         }
 

@@ -15,6 +15,9 @@ namespace Malx_AI
     {
         public const string DefaultQwen3DisplayName = "Axiom Qwen3-4B";
         public const string DefaultQwen3FileName = "Qwen3-4B-Q4_K_M.gguf";
+        public const string DefaultQwen3DownloadUrl = "https://huggingface.co/ggml-org/Qwen3-4B-GGUF/resolve/2f3b082b1356a6123f7ed71e65aea340da25d53c/Qwen3-4B-Q4_K_M.gguf?download=true";
+        public const string DefaultQwen3Sha256 = "ab27b9bfa375a178d6cba48f3ad892b94b7739659dcc7aae8058ce0ffed6b328";
+        public const long DefaultQwen3FileSizeBytes = 2497280640;
 
         public static readonly InferenceParams Qwen3NonThinkingParams = new InferenceParams
         {
