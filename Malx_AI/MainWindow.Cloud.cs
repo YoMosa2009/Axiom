@@ -41,6 +41,7 @@ namespace Malx_AI
             public string ResponseText { get; init; } = string.Empty;
             public string ReasoningText { get; init; } = string.Empty;
             public int ToolCallCount { get; init; }
+            public OpenRouterTokenUsage? Usage { get; init; }
         }
 
         private sealed class CloudChatRequestContext
@@ -555,7 +556,7 @@ namespace Malx_AI
                 if (message == null || string.IsNullOrWhiteSpace(message.Content))
                     continue;
 
-                int messageTokens = _openRouterChatService.EstimateTokenCount(message.Content);
+                int messageTokens = _openRouterChatService.EstimateTokenCountForBudget(message.Content);
                 if (history.Count > 0 && tokenBudget - messageTokens < 0)
                     continue;
 
@@ -570,7 +571,7 @@ namespace Malx_AI
                     if (!string.IsNullOrWhiteSpace(cleanedAssistant))
                     {
                         history.Add(new OpenRouterMessage("assistant", cleanedAssistant));
-                        tokenBudget -= _openRouterChatService.EstimateTokenCount(cleanedAssistant);
+                        tokenBudget -= _openRouterChatService.EstimateTokenCountForBudget(cleanedAssistant);
                     }
                 }
             }
@@ -744,7 +745,8 @@ namespace Malx_AI
                         {
                             ResponseText = response.Text,
                             ReasoningText = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal)),
-                            ToolCallCount = toolCallCount
+                            ToolCallCount = toolCallCount,
+                            Usage = response.Usage
                         };
                     }
 
@@ -788,7 +790,8 @@ namespace Malx_AI
                 {
                     ResponseText = finalResponse.Text,
                     ReasoningText = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal)),
-                    ToolCallCount = toolCallCount
+                    ToolCallCount = toolCallCount,
+                    Usage = finalResponse.Usage
                 };
             }
             finally
@@ -993,9 +996,15 @@ namespace Malx_AI
                     "OpenRouterLatency",
                     $"Model:{_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)}\nThinking:{requestContext.ThinkingEnabled}\nHistoryMessages:{requestContext.ConversationHistory.Count}\nPromptChars:{requestContext.FinalUserMessage.Length}\nToolCalls:{toolLoopResult.ToolCallCount}\nElapsedMs:{(DateTime.UtcNow - requestStartUtc).TotalMilliseconds:F0}");
 
-                _tokenCount = Math.Max(1, (toolLoopResult.ResponseText?.Length ?? 0) / 4);
+                _tokenCount = toolLoopResult.Usage?.CompletionTokens > 0
+                    ? toolLoopResult.Usage.CompletionTokens
+                    : Math.Max(1, (toolLoopResult.ResponseText?.Length ?? 0) / 4);
 
-                await FinalizeCloudStreamingMessageAsync(toolLoopResult.ResponseText, toolLoopResult.ReasoningText, generationStopped: false);
+                await FinalizeCloudStreamingMessageAsync(
+                    toolLoopResult.ResponseText,
+                    toolLoopResult.ReasoningText,
+                    generationStopped: false,
+                    toolLoopResult.Usage);
 
                 ShowTransientStatus($"Tokens: {_tokenCount}  •  Mode: Cloud ({_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)})");
                 _currentStreamingMessage = null;
@@ -1064,7 +1073,11 @@ namespace Malx_AI
             }
         }
 
-        private async Task FinalizeCloudStreamingMessageAsync(string responseText, string reasoningText, bool generationStopped)
+        private async Task FinalizeCloudStreamingMessageAsync(
+            string responseText,
+            string reasoningText,
+            bool generationStopped,
+            OpenRouterTokenUsage? usage = null)
         {
             await Dispatcher.InvokeAsync(() =>
             {
@@ -1088,6 +1101,9 @@ namespace Malx_AI
                 _currentStreamingMessage.IsStreaming = false;
                 _currentStreamingMessage.PreferPlainTextRendering = false;
                 _currentStreamingMessage.ModelLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+                _currentStreamingMessage.CloudPromptTokens = usage?.PromptTokens ?? 0;
+                _currentStreamingMessage.CloudCompletionTokens = usage?.CompletionTokens ?? 0;
+                _currentStreamingMessage.CloudTotalTokens = usage?.TotalTokens ?? 0;
 
                 var activeBranch = _branches.FirstOrDefault(b => b.Id == _activeBranchId);
                 if (activeBranch != null)
@@ -1100,6 +1116,9 @@ namespace Malx_AI
                         ThinkingContent = _currentStreamingMessage.ThinkingContent,
                         ThinkingHeaderText = _currentStreamingMessage.ThinkingHeaderText,
                         ModelLabel = _currentStreamingMessage.ModelLabel,
+                        CloudPromptTokens = _currentStreamingMessage.CloudPromptTokens,
+                        CloudCompletionTokens = _currentStreamingMessage.CloudCompletionTokens,
+                        CloudTotalTokens = _currentStreamingMessage.CloudTotalTokens,
                         Timestamp = _currentStreamingMessage.Timestamp
                     });
                 }

@@ -16,6 +16,9 @@ namespace Malx_AI
         private const int StreamingRevealIntervalMs = 18;
 
         public Guid Id { get; set; } = Guid.NewGuid();
+        public int CloudPromptTokens { get; set; }
+        public int CloudCompletionTokens { get; set; }
+        public int CloudTotalTokens { get; set; }
         private string _content;
         private string _formattedContent;
         private string _displayFormattedContent;

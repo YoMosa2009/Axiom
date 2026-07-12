@@ -1334,7 +1334,10 @@ namespace Malx_AI
                 ModelLabel = msg.ModelLabel,
                 Timestamp = msg.Timestamp,
                 Importance = msg.Importance.ToString(),
-                IsCompactionProtected = msg.IsCompactionProtected
+                IsCompactionProtected = msg.IsCompactionProtected,
+                CloudPromptTokens = msg.CloudPromptTokens,
+                CloudCompletionTokens = msg.CloudCompletionTokens,
+                CloudTotalTokens = msg.CloudTotalTokens
             };
         }
 
@@ -1348,7 +1351,10 @@ namespace Malx_AI
                 ModelLabel = state.ModelLabel,
                 Timestamp = state.Timestamp,
                 Importance = Enum.TryParse<MessageImportance>(state.Importance, out var importance) ? importance : MessageImportance.Low,
-                IsCompactionProtected = state.IsCompactionProtected
+                IsCompactionProtected = state.IsCompactionProtected,
+                CloudPromptTokens = state.CloudPromptTokens,
+                CloudCompletionTokens = state.CloudCompletionTokens,
+                CloudTotalTokens = state.CloudTotalTokens
             };
         }
 
@@ -2107,7 +2113,10 @@ namespace Malx_AI
                         IsCompactionProtected = m.IsCompactionProtected,
                         Importance = m.Importance,
                         IsCompactionMarker = m.IsCompactionMarker,
-                        CompactionSummaries = m.CompactionSummaries
+                        CompactionSummaries = m.CompactionSummaries,
+                        CloudPromptTokens = m.CloudPromptTokens,
+                        CloudCompletionTokens = m.CloudCompletionTokens,
+                        CloudTotalTokens = m.CloudTotalTokens
                     });
                 }
 
@@ -2378,14 +2387,41 @@ namespace Malx_AI
             _nextMessageModelOverride = "Default";
         }
 
+        private (int Tokens, bool HasProviderBaseline) GetCloudContextTokenCount()
+        {
+            List<ChatMessage> conversationMessages = _chatMessages
+                .Where(message => string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase)
+                               || string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            int lastExactIndex = conversationMessages.FindLastIndex(message => message.CloudTotalTokens > 0);
+            if (lastExactIndex < 0)
+            {
+                int estimate = _openRouterChatService.EstimateConversationTokensForBudget(
+                    conversationMessages.Select(message => new OpenRouterMessage(
+                        message.Role,
+                        CleanAssistantContentForOpenRouterHistory(message.Content))));
+                return (estimate, false);
+            }
+
+            int providerCountedTokens = conversationMessages[lastExactIndex].CloudTotalTokens;
+            int appendedEstimate = _openRouterChatService.EstimateConversationTokensForBudget(
+                conversationMessages
+                    .Skip(lastExactIndex + 1)
+                    .Select(message => new OpenRouterMessage(
+                        message.Role,
+                        CleanAssistantContentForOpenRouterHistory(message.Content))));
+
+            return (Math.Max(0, providerCountedTokens + appendedEstimate), true);
+        }
+
         private void UpdateTokenUsageIndicator()
         {
+            (int cloudTokens, bool hasProviderBaseline) = _cloudModeActive
+                ? GetCloudContextTokenCount()
+                : (0, false);
             int used = _cloudModeActive
-                ? _openRouterChatService.EstimateConversationTokens(
-                    _chatMessages
-                        .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
-                                 || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
-                        .Select(m => new OpenRouterMessage(m.Role, CleanAssistantContentForOpenRouterHistory(m.Content))))
+                ? cloudTokens
                 : _chatMessages.Sum(m => Math.Max(0, m.Content?.Length ?? 0)) / 4;
             Border? cloudContextNoticeBorder = FindName("CloudContextNoticeBorder") as Border;
             TextBlock? cloudContextNoticeText = FindName("CloudContextNoticeText") as TextBlock;
@@ -2398,7 +2434,9 @@ namespace Malx_AI
             TokenUsageProgressBar.Value = pct;
             TokenUsageLabel.Text = $"{used:N0} / {context:N0} tok ({pct:F0}%)";
             TokenUsagePanel.ToolTip = _cloudModeActive
-                ? $"Approximately {used:N0} of {context:N0} cloud context tokens used."
+                ? hasProviderBaseline
+                    ? $"{used:N0} of {context:N0} cloud context tokens used, based on the provider's last exact count plus any newer local estimate."
+                    : $"Estimated {used:N0} of {context:N0} cloud context tokens used; this will correct after the next response."
                 : $"Approximately {used:N0} of {context:N0} context tokens used.";
 
             if (pct >= 90)
@@ -2685,7 +2723,10 @@ namespace Malx_AI
                 ModelLabel = message.ModelLabel,
                 Timestamp = message.Timestamp,
                 Importance = message.Importance,
-                IsCompactionProtected = message.IsCompactionProtected
+                IsCompactionProtected = message.IsCompactionProtected,
+                CloudPromptTokens = message.CloudPromptTokens,
+                CloudCompletionTokens = message.CloudCompletionTokens,
+                CloudTotalTokens = message.CloudTotalTokens
             };
         }
 
@@ -2832,7 +2873,10 @@ namespace Malx_AI
                     Importance = msg.Importance,
                     IsCompactionProtected = msg.IsCompactionProtected,
                     IsCompactionMarker = msg.IsCompactionMarker,
-                    CompactionSummaries = CloneCompactionSummaries(msg.CompactionSummaries)
+                    CompactionSummaries = CloneCompactionSummaries(msg.CompactionSummaries),
+                    CloudPromptTokens = msg.CloudPromptTokens,
+                    CloudCompletionTokens = msg.CloudCompletionTokens,
+                    CloudTotalTokens = msg.CloudTotalTokens
                 });
             }
 
@@ -2873,7 +2917,10 @@ namespace Malx_AI
                     ModelLabel = msg.ModelLabel,
                     Timestamp = msg.Timestamp,
                     Importance = msg.Importance.ToString(),
-                    IsCompactionProtected = msg.IsCompactionProtected
+                    IsCompactionProtected = msg.IsCompactionProtected,
+                    CloudPromptTokens = msg.CloudPromptTokens,
+                    CloudCompletionTokens = msg.CloudCompletionTokens,
+                    CloudTotalTokens = msg.CloudTotalTokens
                 });
             }
 
@@ -3454,7 +3501,10 @@ namespace Malx_AI
                     ModelLabel = msg.ModelLabel,
                     Timestamp = msg.Timestamp,
                     Importance = msg.Importance.ToString(),
-                    IsCompactionProtected = msg.IsCompactionProtected
+                    IsCompactionProtected = msg.IsCompactionProtected,
+                    CloudPromptTokens = msg.CloudPromptTokens,
+                    CloudCompletionTokens = msg.CloudCompletionTokens,
+                    CloudTotalTokens = msg.CloudTotalTokens
                 });
             }
 
@@ -3567,7 +3617,10 @@ namespace Malx_AI
                             Id = msg.Id,
                             ThinkingContent = msg.ThinkingContent,
                             ModelLabel = msg.ModelLabel,
-                            Timestamp = msg.Timestamp
+                            Timestamp = msg.Timestamp,
+                            CloudPromptTokens = msg.CloudPromptTokens,
+                            CloudCompletionTokens = msg.CloudCompletionTokens,
+                            CloudTotalTokens = msg.CloudTotalTokens
                         });
                     }
                     foreach (var doc in snapshot.AttachedDocuments ?? [])

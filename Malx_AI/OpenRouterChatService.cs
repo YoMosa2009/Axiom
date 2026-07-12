@@ -35,7 +35,13 @@ namespace Malx_AI
     public sealed record OpenRouterChatResponse(
         string Text,
         string Reasoning,
-        IReadOnlyList<OpenRouterToolCall> ToolCalls);
+        IReadOnlyList<OpenRouterToolCall> ToolCalls,
+        OpenRouterTokenUsage? Usage = null);
+
+    public sealed record OpenRouterTokenUsage(
+        int PromptTokens,
+        int CompletionTokens,
+        int TotalTokens);
 
     // Thrown when every model in the fallback chain is rate-limited (429) and there is nowhere
     // left to fall back to. Carries the provider-suggested retry delay so callers can wait briefly
@@ -191,6 +197,9 @@ namespace Malx_AI
         private List<(string Id, string Label, bool IsFree)> _availableModels = new();
         private readonly Dictionary<string, HashSet<string>> _modelSupportedParameters = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _imageInputModelIds = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _tokenUsageGate = new();
+        private OpenRouterTokenUsage? _lastTokenUsage;
+        private double _promptTokenEstimateCorrectionFactor = 1d;
 
         static OpenRouterChatService()
         {
@@ -319,6 +328,7 @@ namespace Malx_AI
                 total += EstimateTokenCount(message.Role);
                 total += EstimateTokenCount(message.Text);
                 total += EstimateTokenCount(message.ToolCallId);
+                total += (message.ImageDataUrls?.Count ?? 0) * 1024;
 
                 if (message.ToolCalls?.Count > 0)
                 {
@@ -332,6 +342,34 @@ namespace Malx_AI
             }
 
             return Math.Max(0, total);
+        }
+
+        public int EstimateTokenCountForBudget(string? text)
+        {
+            return ApplyPromptTokenCorrection(EstimateTokenCount(text));
+        }
+
+        public int EstimateConversationTokensForBudget(IEnumerable<OpenRouterMessage>? messages, string? systemPrompt = null)
+        {
+            return ApplyPromptTokenCorrection(EstimateConversationTokens(messages, systemPrompt));
+        }
+
+        public OpenRouterTokenUsage? LastTokenUsage
+        {
+            get
+            {
+                lock (_tokenUsageGate)
+                    return _lastTokenUsage;
+            }
+        }
+
+        public double PromptTokenEstimateCorrectionFactor
+        {
+            get
+            {
+                lock (_tokenUsageGate)
+                    return _promptTokenEstimateCorrectionFactor;
+            }
         }
 
         public string BuildSystemPromptForModel(string selectedModelId, string baseSystemPrompt)
@@ -656,11 +694,19 @@ namespace Malx_AI
             if (_availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
+            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
+            const int maxCompletionTokens = 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
-            messages = TrimConversationHistory(messages, ConversationHistoryMessageLimit, ConversationHistoryCharacterBudget);
+            int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
+            messages = TrimConversationHistory(
+                messages,
+                ConversationHistoryMessageLimit,
+                ConversationHistoryCharacterBudget,
+                promptTokenBudget,
+                systemPrompt);
+            int estimatedPromptTokens = EstimateRequestPromptTokens(messages, systemPrompt, tools);
             string requestSignalText = string.Join("\n", messages.Select(m => m?.Text).Where(t => !string.IsNullOrWhiteSpace(t)));
 
-            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
             string displayModelLabel = originalModelLabel ?? requestedModelProfile.AliasLabel;
             attemptedModelIds.Add(requestedModelProfile.AliasId);
             string effectiveModelId = ResolveRequestedModelId(requestedModelProfile);
@@ -680,7 +726,7 @@ namespace Malx_AI
                     thinkingEnabled,
                     temperature,
                     topP,
-                    8192,
+                    maxCompletionTokens,
                     tools);
 
                 using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -749,6 +795,8 @@ namespace Malx_AI
             {
                 using JsonDocument document = JsonDocument.Parse(responseBody);
                 JsonElement root = document.RootElement;
+                OpenRouterTokenUsage? usage = OpenRouterTokenUsageParser.TryParse(root);
+                RecordTokenUsage(usage, estimatedPromptTokens);
                 if (root.TryGetProperty("choices", out JsonElement choices)
                     && choices.ValueKind == JsonValueKind.Array
                     && choices.GetArrayLength() > 0)
@@ -760,12 +808,13 @@ namespace Malx_AI
                         return new OpenRouterChatResponse(
                             ExtractMessageContent(message),
                             ExtractReasoningContent(firstChoice, message),
-                            ExtractToolCalls(message));
+                            ExtractToolCalls(message),
+                            usage);
                     }
                 }
 
                 await BackendLogService.LogEventAsync("OpenRouterEmptyResponse", responseBody.Length <= 500 ? responseBody : responseBody[..500]);
-                return new OpenRouterChatResponse(string.Empty, string.Empty, Array.Empty<OpenRouterToolCall>());
+                return new OpenRouterChatResponse(string.Empty, string.Empty, Array.Empty<OpenRouterToolCall>(), usage);
             }
             catch (Exception ex)
             {
@@ -793,11 +842,19 @@ namespace Malx_AI
             if (_availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
+            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
+            int maxCompletionTokens = maxTokensOverride is int tokenLimit && tokenLimit > 0 ? tokenLimit : 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
-            messages = TrimConversationHistory(messages, ConversationHistoryMessageLimit, ConversationHistoryCharacterBudget);
+            int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
+            messages = TrimConversationHistory(
+                messages,
+                ConversationHistoryMessageLimit,
+                ConversationHistoryCharacterBudget,
+                promptTokenBudget,
+                systemPrompt);
+            int estimatedPromptTokens = EstimateRequestPromptTokens(messages, systemPrompt, tools);
             string requestSignalText = string.Join("\n", messages.Select(m => m?.Text).Where(t => !string.IsNullOrWhiteSpace(t)));
 
-            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
             string displayModelLabel = originalModelLabel ?? requestedModelProfile.AliasLabel;
             attemptedModelIds.Add(requestedModelProfile.AliasId);
             string effectiveModelId = ResolveRequestedModelId(requestedModelProfile);
@@ -817,7 +874,7 @@ namespace Malx_AI
                     thinkingEnabled,
                     temperature,
                     topP,
-                    maxTokensOverride is int tokenLimit && tokenLimit > 0 ? tokenLimit : 8192,
+                    maxCompletionTokens,
                     tools,
                     stream: true,
                     stopSequences);
@@ -879,6 +936,7 @@ namespace Malx_AI
             bool padDegenerationDetected = false;
             bool streamStalled = false;
             string providerStreamError = string.Empty;
+            OpenRouterTokenUsage? usage = null;
 
             try
             {
@@ -930,6 +988,7 @@ namespace Malx_AI
 
                     using JsonDocument chunkDocument = JsonDocument.Parse(payload);
                     JsonElement root = chunkDocument.RootElement;
+                    usage = OpenRouterTokenUsageParser.TryParse(root) ?? usage;
 
                     // Provider failures that happen AFTER the 200/OK headers arrive as an SSE error
                     // payload with no "choices". Skipping it silently ended the turn with an empty
@@ -1063,11 +1122,13 @@ namespace Malx_AI
                         $"Model:{requestedModelProfile.AliasLabel}\nStalled:{streamStalled}\nError:{Truncate(providerStreamError, 300)}\nChars:{textBuilder.Length}");
                 }
 
+                RecordTokenUsage(usage, estimatedPromptTokens);
                 SetDetectedModel(requestedModelProfile.AliasId, requestedModelProfile.AliasLabel);
                 return new OpenRouterChatResponse(
                     textBuilder.ToString(),
                     reasoningBuilder.ToString(),
-                    BuildStreamingToolCalls(toolCallAccumulators));
+                    BuildStreamingToolCalls(toolCallAccumulators),
+                    usage);
             }
             catch (Exception ex)
             {
@@ -1362,44 +1423,120 @@ namespace Malx_AI
             return payload;
         }
 
-        private static List<OpenRouterMessage> TrimConversationHistory(List<OpenRouterMessage> conversationHistory, int maxMessages, int maxChars)
+        private int GetPromptTokenBudget(
+            OpenRouterModelProfile modelProfile,
+            int maxCompletionTokens,
+            IReadOnlyList<OpenRouterToolDefinition>? tools)
+        {
+            int contextWindow = Math.Max(4096, modelProfile.ApproximateContextWindowTokens);
+            int safetyMargin = Math.Max(1024, contextWindow / 100);
+            int toolTokens = EstimateToolDefinitionTokens(tools);
+            return Math.Max(2048, contextWindow - Math.Max(1, maxCompletionTokens) - safetyMargin - toolTokens);
+        }
+
+        private int EstimateRequestPromptTokens(
+            IEnumerable<OpenRouterMessage> messages,
+            string systemPrompt,
+            IReadOnlyList<OpenRouterToolDefinition>? tools)
+        {
+            return EstimateConversationTokens(messages, systemPrompt) + EstimateToolDefinitionTokens(tools);
+        }
+
+        private int EstimateToolDefinitionTokens(IReadOnlyList<OpenRouterToolDefinition>? tools)
+        {
+            if (tools == null || tools.Count == 0)
+                return 0;
+
+            int total = 0;
+            foreach (OpenRouterToolDefinition tool in tools)
+            {
+                total += 12;
+                total += EstimateTokenCount(tool.Name);
+                total += EstimateTokenCount(tool.Description);
+                total += EstimateTokenCount(tool.ParametersSchema?.ToJsonString());
+            }
+
+            return total;
+        }
+
+        private int ApplyPromptTokenCorrection(int estimate)
+        {
+            if (estimate <= 0)
+                return 0;
+
+            lock (_tokenUsageGate)
+                return Math.Max(1, (int)Math.Ceiling(estimate * _promptTokenEstimateCorrectionFactor));
+        }
+
+        private void RecordTokenUsage(OpenRouterTokenUsage? usage, int estimatedPromptTokens)
+        {
+            if (usage == null)
+                return;
+
+            lock (_tokenUsageGate)
+            {
+                _lastTokenUsage = usage;
+                if (usage.PromptTokens <= 0 || estimatedPromptTokens <= 0)
+                    return;
+
+                double observedRatio = Math.Clamp(usage.PromptTokens / (double)estimatedPromptTokens, 0.5d, 3d);
+                _promptTokenEstimateCorrectionFactor = Math.Clamp(
+                    (_promptTokenEstimateCorrectionFactor * 0.7d) + (observedRatio * 0.3d),
+                    0.5d,
+                    3d);
+            }
+        }
+
+        private List<OpenRouterMessage> TrimConversationHistory(
+            List<OpenRouterMessage> conversationHistory,
+            int maxMessages,
+            int maxChars,
+            int maxPromptTokens,
+            string systemPrompt)
         {
             if (conversationHistory == null || conversationHistory.Count == 0)
                 return new List<OpenRouterMessage>();
 
-            var candidates = conversationHistory.Where(m => m != null).ToList();
-            if (candidates.Count == 0)
+            var allMessages = conversationHistory.Where(message => message != null).ToList();
+            if (allMessages.Count == 0)
                 return new List<OpenRouterMessage>();
 
-            var trimmed = new List<OpenRouterMessage>();
+            int startIndex = Math.Max(0, allMessages.Count - Math.Max(1, maxMessages));
+            var candidates = allMessages
+                .Where((message, index) => index >= startIndex || message.PreserveFullText)
+                .ToList();
+
+            var selectedReversed = new List<OpenRouterMessage>();
             int totalChars = 0;
-            int startIndex = Math.Max(0, candidates.Count - Math.Max(1, maxMessages));
-            for (int i = startIndex; i < candidates.Count; i++)
+            int totalTokens = EstimateTokenCountForBudget(systemPrompt);
+
+            for (int i = candidates.Count - 1; i >= 0; i--)
             {
                 OpenRouterMessage message = candidates[i];
                 bool isFinalMessage = i == candidates.Count - 1;
+                bool preserveWhole = isFinalMessage || message.PreserveFullText;
 
                 string text = (message.Text ?? string.Empty).Trim();
-                // The final message carries the active request payload (council role payloads bundle
-                // the architect plan, current artifact, and document context in one user message).
-                // Capping it silently severed artifact iteration and document grounding, so the
-                // final message is always passed through whole. Messages flagged PreserveFullText get
-                // the same exemption: in tool-calling loops the active payload stops being the final
-                // message as soon as a tool turn is appended, and truncating it mid-loop destroyed
-                // the very context the tools were called to act on.
-                bool preserveWhole = isFinalMessage || message.PreserveFullText;
                 if (!preserveWhole && text.Length > PerHistoryMessageCharacterLimit)
                     text = text[..PerHistoryMessageCharacterLimit];
 
+                OpenRouterMessage normalizedMessage = message with { Text = text };
                 int toolChars = message.ToolCalls?.Sum(call => (call.Name?.Length ?? 0) + (call.ArgumentsJson?.Length ?? 0)) ?? 0;
-                if (!preserveWhole && trimmed.Count > 0 && totalChars + text.Length + toolChars > maxChars)
+                int messageChars = text.Length + toolChars;
+                int messageTokens = EstimateConversationTokensForBudget([normalizedMessage]);
+
+                bool exceedsCharacterBudget = totalChars + messageChars > maxChars;
+                bool exceedsTokenBudget = totalTokens + messageTokens > maxPromptTokens;
+                if (!preserveWhole && selectedReversed.Count > 0 && (exceedsCharacterBudget || exceedsTokenBudget))
                     continue;
 
-                trimmed.Add(message with { Text = text });
-                totalChars += text.Length + toolChars;
+                selectedReversed.Add(normalizedMessage);
+                totalChars += messageChars;
+                totalTokens += messageTokens;
             }
 
-            return RepairToolCallPairing(trimmed);
+            selectedReversed.Reverse();
+            return RepairToolCallPairing(selectedReversed);
         }
 
         // Trimming can strand a tool-result message from the assistant tool_calls turn that produced

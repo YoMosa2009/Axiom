@@ -27,6 +27,9 @@ namespace Malx_AI
         public DateTime Timestamp { get; set; } = DateTime.Now;
         public string Importance { get; set; } = "Low";
         public bool IsCompactionProtected { get; set; }
+        public int CloudPromptTokens { get; set; }
+        public int CloudCompletionTokens { get; set; }
+        public int CloudTotalTokens { get; set; }
     }
 
     public sealed class ChatWorkspaceStatePersistence

@@ -233,7 +233,10 @@ namespace Malx_AI
                 Importance = message.Importance,
                 IsCompactionProtected = message.IsCompactionProtected,
                 IsCompactionMarker = message.IsCompactionMarker,
-                CompactionSummaries = message.CompactionSummaries
+                CompactionSummaries = message.CompactionSummaries,
+                CloudPromptTokens = message.CloudPromptTokens,
+                CloudCompletionTokens = message.CloudCompletionTokens,
+                CloudTotalTokens = message.CloudTotalTokens
             };
         }
 
