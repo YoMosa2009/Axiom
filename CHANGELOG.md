@@ -1,5 +1,47 @@
 # Changelog
 
+## [Unreleased]
+
+Workflow, focus, and polish release: the council keeps one model for the whole task, the app
+tells you when your API key runs out, and the workplace chat got a visual overhaul.
+
+### Cloud & council behavior
+- The Workplace Council no longer falls back to a different cloud model mid-task — a silent
+  model swap left the replacement model unable to continue what the first model started. The
+  council now stays on its selected model, recovering with a bounded same-model retry instead
+- New API-key exhaustion detection: when the OpenRouter key is out of credits (402) or past its
+  free daily quota, both Normal Chat and the Workplace show a clear notification instead of a
+  generic provider error
+- Every AI model in the app (cloud and local, chat and council) now runs on a permanent hidden
+  truth-first foundation layer beneath all feature prompts
+
+### Settings
+- The API usage display under the OpenRouter key is now a pill-shaped meter showing used,
+  limit, and remaining requests, with a low-quota/exhausted warning line
+
+### Workplace chat UI/UX
+- Header status items are now clean chips instead of one dot-separated line
+- Chat cards were redesigned: real separation between turns, breathing room, a slim rounded
+  role-accent rail, warmer card tints that match the app theme, and better line spacing
+- The Agentic Pause banner uses the app's gold accent instead of error-red
+
+### Performance
+- Live streaming previews (council and cloud chat) are throttled to UI-rate updates instead of
+  re-rendering the full text on every token — long deliverables no longer saturate the UI thread
+- Workplace card brushes are shared and frozen; formatted card text is cached per change
+- Session memory (Hippocampus) caches keyword sets; queries, consolidation, and dedup no longer
+  re-run regex extraction per entry
+- PDF text extraction line grouping is linear instead of quadratic on dense pages
+
+### Features
+- Web search: sub-queries now run concurrently, tracking parameters are stripped so duplicate
+  articles dedup correctly, and stable docs/reference lookups are cached longer
+- Study Session: one failed chunk no longer aborts the whole run — it is skipped and logged
+- Council session-memory tool results now include their source/tag labels so models can weigh
+  studied references against prior role outputs
+
+---
+
 ## [V1.5] — 2026-07-08
 
 Reliability and intelligence release: cloud chat can no longer hang, local models of every size

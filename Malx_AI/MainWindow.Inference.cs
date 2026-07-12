@@ -103,6 +103,7 @@ namespace Malx_AI
             public static string BuildPrompt(string systemPrompt, IReadOnlyList<(string Role, string Content)> turns, string userPrompt, bool enableThinking)
             {
                 var sb = new StringBuilder();
+                systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
                 string systemText = enableThinking
                     ? ThinkControlToken + "\n" + systemPrompt
                     : systemPrompt;
@@ -860,7 +861,7 @@ namespace Malx_AI
 
             _chatSession = new LLama.ChatSession(_executor);
             _chatSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
-            _chatSession.AddSystemMessage(systemPrompt);
+            _chatSession.AddSystemMessage(FoundationSystemPrompt.Apply(systemPrompt));
         }
 
         private static bool IsStrictChatMlModel(string modelName)
@@ -961,7 +962,7 @@ namespace Malx_AI
         private static string BuildStrictChatMlPrompt(string systemPrompt, IReadOnlyList<(string Role, string Content)>? historyTurns, string userPrompt)
         {
             var sb = new StringBuilder();
-            sb.Append("<|im_start|>system\n").Append(systemPrompt).Append("<|im_end|>\n");
+            sb.Append("<|im_start|>system\n").Append(FoundationSystemPrompt.Apply(systemPrompt)).Append("<|im_end|>\n");
 
             foreach (var (role, content) in historyTurns ?? [])
                 sb.Append("<|im_start|>").Append(role).Append('\n').Append(content).Append("<|im_end|>\n");
@@ -2683,7 +2684,7 @@ namespace Malx_AI
             {
                 var tempSession = new LLama.ChatSession(tempExecutor);
                 tempSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
-                tempSession.AddSystemMessage(systemPrompt);
+                tempSession.AddSystemMessage(FoundationSystemPrompt.Apply(systemPrompt));
                 await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, () => Task.Run(async () =>
                 {
                     await foreach (var tokenPiece in tempSession.ChatAsync(new ChatHistory.Message(AuthorRole.User, userPrompt + BuildPriorComputationResultsBlock()), inferenceParams, token))
@@ -4086,6 +4087,16 @@ namespace Malx_AI
                     {
                         _inferenceTimer.Stop();
                         AddChatMessage("system", "Generation stopped by user.");
+                        SaveCurrentChat();
+                    }
+                    catch (OpenRouterKeyExhaustedException keyExhausted)
+                    {
+                        _inferenceTimer.Stop();
+                        AddChatMessage("system", "⚠ " + keyExhausted.Message);
+                        _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsDailyLimit
+                            ? "OpenRouter API key: daily free usage exhausted."
+                            : "OpenRouter API key: out of credits.");
+                        _ = LoadOpenRouterUsageAsync();
                         SaveCurrentChat();
                     }
                     catch (Exception ex)

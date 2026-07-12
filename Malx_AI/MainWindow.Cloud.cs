@@ -360,7 +360,7 @@ namespace Malx_AI
 
             string currentText = usageTextBlock?.Text ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(currentText)
-                && !string.Equals(currentText, "0 / 0 requests", StringComparison.Ordinal)
+                && !string.Equals(currentText, "No usage data yet", StringComparison.Ordinal)
                 && !string.Equals(currentText, "Unable to fetch usage. Check the key.", StringComparison.Ordinal))
             {
                 UpdateOpenRouterUsageVisibility();
@@ -410,19 +410,27 @@ namespace Malx_AI
                         usageTextBlock.Text = "Free tier — no request cap on this key";
                     if (usageFillBar != null)
                         usageFillBar.Background = GetOpenRouterUsageBrush(0);
+                    SetOpenRouterUsageHint(string.Empty);
                     UpdateOpenRouterUsageProgressBar();
                     return;
                 }
 
                 int used = Math.Max(0, keyInfo.RequestsUsed);
                 int limit = Math.Max(1, keyInfo.RequestsLimit);
+                int remaining = Math.Max(0, limit - used);
                 _openRouterUsagePercent = Math.Clamp(used * 100d / limit, 0d, 100d);
 
                 if (usageTextBlock != null)
-                    usageTextBlock.Text = $"{used} / {limit} requests";
+                    usageTextBlock.Text = $"{used} / {limit} used  ·  {remaining} left";
 
                 if (usageFillBar != null)
                     usageFillBar.Background = GetOpenRouterUsageBrush(_openRouterUsagePercent);
+
+                SetOpenRouterUsageHint(remaining == 0
+                    ? "⚠ Daily quota exhausted — cloud requests will fail until it resets (midnight UTC)."
+                    : _openRouterUsagePercent >= 85d
+                        ? "Running low on daily requests."
+                        : string.Empty);
 
                 UpdateOpenRouterUsageProgressBar();
             }
@@ -435,6 +443,17 @@ namespace Malx_AI
             }
         }
 
+        private void SetOpenRouterUsageHint(string hint)
+        {
+            if (FindName("OpenRouterUsageHintText") is not TextBlock hintText)
+                return;
+
+            hintText.Text = hint ?? string.Empty;
+            hintText.Visibility = string.IsNullOrWhiteSpace(hint) ? Visibility.Collapsed : Visibility.Visible;
+            hintText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(
+                hint != null && hint.StartsWith("⚠", StringComparison.Ordinal) ? "#FF6B6B" : "#B0A89F"));
+        }
+
         private void ResetOpenRouterUsageUi()
         {
             TextBlock? usageTextBlock = FindName("OpenRouterUsageText") as TextBlock;
@@ -445,7 +464,7 @@ namespace Malx_AI
             _openRouterUsagePercent = 0;
 
             if (usageTextBlock != null)
-                usageTextBlock.Text = "0 / 0 requests";
+                usageTextBlock.Text = "No usage data yet";
 
             if (usageFillBar != null)
                 usageFillBar.Background = GetOpenRouterUsageBrush(0);
@@ -453,6 +472,7 @@ namespace Malx_AI
             if (refreshButton != null)
                 refreshButton.IsEnabled = true;
 
+            SetOpenRouterUsageHint(string.Empty);
             UpdateOpenRouterUsageProgressBar();
             UpdateOpenRouterUsageVisibility();
         }
@@ -491,7 +511,8 @@ namespace Malx_AI
             if (usageFillBar == null || usageTrack == null)
                 return;
 
-            double trackWidth = Math.Max(0, usageTrack.ActualWidth);
+            // The fill sits inside the pill's 1px border with a 1px margin on each side.
+            double trackWidth = Math.Max(0, usageTrack.ActualWidth - 4);
             usageFillBar.Width = trackWidth <= 0
                 ? 0
                 : trackWidth * (_openRouterUsagePercent / 100d);
@@ -938,6 +959,9 @@ namespace Malx_AI
             CloudChatRequestContext requestContext = await PrepareCloudChatRequestContextAsync(userMsg, token).ConfigureAwait(false);
             var streamedResponseBuilder = new StringBuilder();
             bool firstTokenReceived = false;
+            var streamUiThrottle = Stopwatch.StartNew();
+            long lastStreamUiUpdateMs = long.MinValue;
+            const int streamUiUpdateIntervalMs = 80;
 
             await Dispatcher.InvokeAsync(() =>
             {
@@ -971,6 +995,15 @@ namespace Malx_AI
                             streamedResponseBuilder.Append(tokenChunk);
                         }
 
+                        // Throttle UI refreshes: re-rendering the full accumulated text on every
+                        // delta is quadratic on long answers and floods the dispatcher queue. The
+                        // first token always renders immediately (it clears the thinking state),
+                        // and the finalize step renders the complete text at the end.
+                        long elapsedMs = streamUiThrottle.ElapsedMilliseconds;
+                        if (firstTokenReceived && elapsedMs - lastStreamUiUpdateMs < streamUiUpdateIntervalMs)
+                            return;
+                        lastStreamUiUpdateMs = elapsedMs;
+
                         Dispatcher.InvokeAsync(() =>
                         {
                             if (_currentStreamingMessage == null)
@@ -983,7 +1016,13 @@ namespace Malx_AI
                                 _currentStreamingMessage.PreferPlainTextRendering = true;
                             }
 
-                            _currentStreamingMessage.SetStreamingContent(streamedResponseBuilder.ToString());
+                            string snapshot;
+                            lock (streamedResponseBuilder)
+                            {
+                                snapshot = streamedResponseBuilder.ToString();
+                            }
+
+                            _currentStreamingMessage.SetStreamingContent(snapshot);
                             ScrollChatToEnd();
                         }, System.Windows.Threading.DispatcherPriority.Background);
                     },
