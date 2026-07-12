@@ -14,7 +14,7 @@
     <WebView2EnableCsWinRTProjection>false</WebView2EnableCsWinRTProjection>
     <!-- Source of truth for the GitHub release update check: bump this for every release
          so it matches the release tag (e.g. tag v1.4.0 -> Version 1.4.0). -->
-    <Version>1.5.0</Version>
+    <Version>1.6.0</Version>
     <ApplicationIcon>Assets\Malx_Logo.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -63,7 +63,10 @@
 
   <ItemGroup>
     <Resource Include="Assets\Malx_Logo.ico" />
-    <Resource Include="Assets\Malx_Logo2.png" />
+    <Content Include="Assets\Malx_Logo2.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

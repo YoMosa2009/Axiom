@@ -31,7 +31,7 @@ namespace Malx_AI
 {
     public partial class MainWindow : Window
     {
-        private const string EmptyChatLogoResourcePath = "pack://application:,,,/Assets/Malx_Logo2.png";
+        private static readonly string EmptyChatLogoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Malx_Logo2.png");
         private LLamaWeights _model;
         private InteractiveExecutor _executor;
         private LLama.ChatSession _chatSession;
@@ -109,20 +109,15 @@ namespace Malx_AI
 
             try
             {
-                var bitmap = new BitmapImage();
-                bitmap.BeginInit();
-                bitmap.UriSource = new Uri(EmptyChatLogoResourcePath, UriKind.Absolute);
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
-                bitmap.EndInit();
-                bitmap.Freeze();
-
-                _emptyChatLogoSource = ConvertEmptyChatLogoToWhite(bitmap);
+                using Stream stream = File.OpenRead(EmptyChatLogoPath);
+                var decoder = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                _emptyChatLogoSource = ConvertEmptyChatLogoToWhite(decoder.Frames[0]);
                 EmptyChatLogoImage.Source = _emptyChatLogoSource;
             }
-            catch
+            catch (Exception ex)
             {
                 EmptyChatLogoImage.Visibility = Visibility.Collapsed;
+                Debug.WriteLine($"Empty chat logo load error: {ex.Message}");
             }
         }
 
@@ -1637,48 +1632,7 @@ namespace Malx_AI
             if (shouldShow)
             {
                 _ = EnsureOpenRouterUsageLoadedAsync();
-                _ = LoadRecentLogsAsync();
             }
-        }
-
-        private async Task LoadRecentLogsAsync()
-        {
-            try
-            {
-                string text = await BackendLogService.ReadRecentLinesAsync(200);
-                LogViewerTextBox.Text = string.IsNullOrWhiteSpace(text) ? "No backend logs yet." : text;
-                LogViewerTextBox.ScrollToEnd();
-            }
-            catch (Exception ex)
-            {
-                LogViewerTextBox.Text = "Unable to read backend logs: " + ex.Message;
-            }
-        }
-
-        private void OpenLogFolder_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                Directory.CreateDirectory(AppDataPaths.Logs);
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = AppDataPaths.Logs,
-                    UseShellExecute = true
-                });
-            }
-            catch (Exception ex)
-            {
-                _ = ShowNonIntrusiveErrorAsync("Unable to open the log folder: " + ex.Message);
-            }
-        }
-
-        private async void RefreshLogViewer_Click(object sender, RoutedEventArgs e)
-            => await LoadRecentLogsAsync();
-
-        private void CopyLogViewer_Click(object sender, RoutedEventArgs e)
-        {
-            if (!string.IsNullOrEmpty(LogViewerTextBox.Text))
-                Clipboard.SetText(LogViewerTextBox.Text);
         }
 
         private void LoadCouncilNotificationSetting()
@@ -1834,12 +1788,15 @@ namespace Malx_AI
             if (FindName("EmptyChatGreetingPanel") is not StackPanel emptyChatGreetingPanel)
                 return;
 
-            emptyChatGreetingPanel.Visibility = _chatMessages.Count == 0
+            bool isEmptyChat = _chatMessages.Count == 0;
+            emptyChatGreetingPanel.Visibility = isEmptyChat
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
-            if (_chatMessages.Count == 0 && EmptyChatLogoImage != null && _emptyChatLogoSource != null)
-                EmptyChatLogoImage.Visibility = Visibility.Visible;
+            if (EmptyChatLogoImage != null)
+                EmptyChatLogoImage.Visibility = isEmptyChat && _emptyChatLogoSource != null
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
 
             UpdateNormalChatChrome();
         }

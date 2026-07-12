@@ -1290,7 +1290,7 @@
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="56"/>
+                                        <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
 
                                     <Grid Grid.Row="0" MinHeight="78" MaxHeight="180">
@@ -1320,14 +1320,14 @@
                                     <WrapPanel x:Name="AttachmentTrayPanel" Grid.Row="1" Orientation="Horizontal"
                                                Margin="18,0,18,2" Visibility="Collapsed"/>
 
-                                    <Grid Grid.Row="2" Background="Transparent">
+                                    <Grid Grid.Row="2" MinHeight="56" Background="Transparent">
                                         <Grid Margin="0,0,0,0">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                                            <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,10,0,10">
                                                 <Button Width="34" Height="34" Margin="0,0,4,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
                                                     <Path Width="14" Height="14" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
                                                 </Button>
@@ -1349,7 +1349,7 @@
                                                         <TextBlock Text="System" VerticalAlignment="Center"/>
                                                     </StackPanel>
                                                 </Button>
-                                            </StackPanel>
+                                            </WrapPanel>
 
                                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,14,0">
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed">
@@ -1659,31 +1659,6 @@
                                                   FontSize="11"/>
                                         <TextBlock Text="Clicking the Windows notification restores and focuses Axiom. No notification is shown while this window is active."
                                                    FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
-                                    </StackPanel>
-                                </Border>
-
-                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,16">
-                                    <StackPanel>
-                                        <TextBlock Text="Backend logs" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
-                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                            <Button Content="Open log folder" Click="OpenLogFolder_Click" Height="30" Padding="12,5" Style="{StaticResource SubtleButtonStyle}"/>
-                                            <Button Content="Refresh" Click="RefreshLogViewer_Click" Height="30" Padding="12,5" Margin="8,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
-                                            <Button Content="Copy" Click="CopyLogViewer_Click" Height="30" Padding="12,5" Margin="8,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
-                                        </StackPanel>
-                                        <TextBox x:Name="LogViewerTextBox"
-                                                 Height="220"
-                                                 IsReadOnly="True"
-                                                 AcceptsReturn="True"
-                                                 TextWrapping="NoWrap"
-                                                 VerticalScrollBarVisibility="Auto"
-                                                 HorizontalScrollBarVisibility="Auto"
-                                                 FontFamily="Cascadia Mono, Consolas"
-                                                 FontSize="10"
-                                                 Padding="8"
-                                                 Background="{StaticResource NotebookBackgroundBrush}"
-                                                 Foreground="{StaticResource NotebookTextBrush}"
-                                                 BorderBrush="{StaticResource NotebookBorderBrush}"
-                                                 Text="Open Settings or press Refresh to load the last 200 log lines."/>
                                     </StackPanel>
                                 </Border>
 
