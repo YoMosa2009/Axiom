@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Malx_AI\SessionHippocampus.cs" Link="Production\SessionHippocampus.cs" />
+    <Compile Include="..\Malx_AI\WebSearchService.cs" Link="Production\WebSearchService.cs" />
+    <Compile Include="..\Malx_AI\ReasoningParser.cs" Link="Production\ReasoningParser.cs" />
+    <Compile Include="..\Malx_AI\MarkdownParser.cs" Link="Production\MarkdownParser.cs" />
+    <Compile Include="..\Malx_AI\LineDiff.cs" Link="Production\LineDiff.cs" />
+    <Compile Include="..\Malx_AI\SmartContextCompaction.cs" Link="Production\SmartContextCompaction.cs" />
+    <Compile Include="..\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />
+  </ItemGroup>
+</Project>

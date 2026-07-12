@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
 namespace Malx_AI
@@ -18,8 +19,19 @@ namespace Malx_AI
                 return new ParsedMarkdown { Html = "", HasCodeBlocks = false, HasTables = false };
 
             var result = new ParsedMarkdown { Html = markdown };
-            result.HasCodeBlocks = markdown.Contains("```") || markdown.Contains("```");
+            result.HasCodeBlocks = markdown.Contains("```");
             result.HasTables = markdown.Contains("|");
+
+            var fencedBlocks = new List<string>();
+            result.Html = Regex.Replace(
+                result.Html,
+                @"```(?:[^\r\n`]*)?(?:\r?\n)?(?<code>[\s\S]*?)```",
+                match =>
+                {
+                    int index = fencedBlocks.Count;
+                    fencedBlocks.Add(match.Groups["code"].Value.TrimEnd('\r', '\n'));
+                    return $"\uE000{index}\uE001";
+                });
 
             result.Html = Regex.Replace(result.Html, @"\*\*(.*?)\*\*", "<bold>$1</bold>");
             result.Html = Regex.Replace(result.Html, @"__(.*?)__", "<bold>$1</bold>");
@@ -29,11 +41,12 @@ namespace Malx_AI
 
             result.Html = Regex.Replace(result.Html, @"`([^`]+)`", "<code>$1</code>");
 
-            result.Html = Regex.Replace(result.Html, @"```(.*?)```", "<codeblock>$1</codeblock>", RegexOptions.Singleline);
-
             result.Html = Regex.Replace(result.Html, @"^### (.*?)$", "<h3>$1</h3>", RegexOptions.Multiline);
             result.Html = Regex.Replace(result.Html, @"^## (.*?)$", "<h2>$1</h2>", RegexOptions.Multiline);
             result.Html = Regex.Replace(result.Html, @"^# (.*?)$", "<h1>$1</h1>", RegexOptions.Multiline);
+
+            for (int index = 0; index < fencedBlocks.Count; index++)
+                result.Html = result.Html.Replace($"\uE000{index}\uE001", $"<codeblock>{fencedBlocks[index]}</codeblock>", StringComparison.Ordinal);
 
             return result;
         }

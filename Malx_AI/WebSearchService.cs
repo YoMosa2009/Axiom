@@ -1624,12 +1624,26 @@ namespace Malx_AI
                 : "[date unknown]";
         }
 
-        private static string NormalizeUrl(string url)
+        internal static string NormalizeUrl(string url)
         {
             if (string.IsNullOrWhiteSpace(url))
                 return string.Empty;
 
             return url.Trim().TrimEnd('/');
+        }
+
+        internal static IReadOnlyList<string> NormalizeAndDeduplicateUrls(IEnumerable<string?> urls)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var normalized = new List<string>();
+            foreach (string? url in urls ?? Array.Empty<string>())
+            {
+                string candidate = NormalizeUrl(url ?? string.Empty);
+                if (candidate.Length > 0 && seen.Add(candidate))
+                    normalized.Add(candidate);
+            }
+
+            return normalized;
         }
 
         private static string GetHostName(string url)

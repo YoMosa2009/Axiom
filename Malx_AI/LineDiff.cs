@@ -203,6 +203,9 @@ namespace Malx_AI
             string normalized = (text ?? string.Empty)
                 .Replace("\r\n", "\n", StringComparison.Ordinal)
                 .Replace('\r', '\n');
+            if (normalized.Length == 0)
+                return Array.Empty<string>();
+
             return normalized.Split('\n');
         }
     }
