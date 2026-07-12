@@ -4095,15 +4095,14 @@ namespace Malx_AI
                     catch (OperationCanceledException)
                     {
                         _inferenceTimer.Stop();
-                        AddChatMessage("system", "Generation stopped by user.");
+                        NotifyNormalChatFailure("Generation stopped by user.");
                         SaveCurrentChat();
                     }
                     catch (Exception ex)
                     {
                         _inferenceTimer.Stop();
                         string trimmed = TrimForInlineError(ex.Message, 150);
-                        AddChatMessage("system", $"Error: {trimmed}");
-                        _ = ShowNonIntrusiveErrorAsync(trimmed);
+                        NotifyNormalChatFailure(trimmed, IsPersistentCloudFailure(ex));
                         Debug.WriteLine($"Cloud generation error: {ex}");
                         SaveCurrentChat();
                     }
@@ -4172,7 +4171,7 @@ namespace Malx_AI
                     {
                         _chatMessages.Remove(_currentStreamingMessage);
                         _currentStreamingMessage = null;
-                        AddChatMessage("system", "⚠ No response generated — the prompt likely exceeded the context window. " +
+                        NotifyNormalChatFailure("No response generated - the prompt likely exceeded the context window. " +
                             "Try starting a New Chat, removing imported documents, or increasing context length in Settings.");
                         await ResetExecutorContextAsync(_cancellationTokenSource?.Token ?? CancellationToken.None);
                     }
@@ -4286,7 +4285,7 @@ namespace Malx_AI
                         _currentStreamingMessage.IsStreaming = false;
                     _chatMessages.Remove(_currentStreamingMessage);
                     _currentStreamingMessage = null;
-                    await AddChatMessageAsync("system", "Generation stopped by user.");
+                    NotifyNormalChatFailure("Generation stopped by user.");
                     // The turn's token is already cancelled — using it here would abort the
                     // context rebuild and leave the executor in a half-reset state.
                     await ResetExecutorContextAsync(CancellationToken.None);
@@ -4299,13 +4298,8 @@ namespace Malx_AI
                         _currentStreamingMessage.IsStreaming = false;
                     _chatMessages.Remove(_currentStreamingMessage);
                     _currentStreamingMessage = null;
-                    await AddChatMessageAsync("system", $"Error: {ex.Message}");
+                    NotifyNormalChatFailure($"Inference error: {GetMostRelevantError(ex)}");
                     await ResetExecutorContextAsync(CancellationToken.None);
-                    if (ex is OutOfMemoryException || ex is IOException
-                        || (ex.Message != null && ex.Message.Contains("NoKvSlot", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _ = ShowNonIntrusiveErrorAsync($"Inference error: {GetMostRelevantError(ex)}");
-                    }
                     Debug.WriteLine($"Generation error: {ex}");
                     SaveCurrentChat();
                 }

@@ -2502,6 +2502,25 @@ namespace Malx_AI
             ShowTransientStatus(message);
         }
 
+        private void NotifyNormalChatFailure(string message, bool includeTranscript = false)
+        {
+            string normalized = string.IsNullOrWhiteSpace(message) ? "An unexpected error occurred." : message.Trim();
+            _ = ShowNonIntrusiveErrorAsync(normalized);
+            if (includeTranscript)
+                AddChatMessage("system", "Error: " + normalized);
+        }
+
+        private static bool IsPersistentCloudFailure(Exception exception)
+        {
+            string message = exception.Message ?? string.Empty;
+            return message.Contains("valid OpenRouter API key", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("status 401", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("status 402", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("insufficient credits", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("credits exhausted", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("quota exhausted", StringComparison.OrdinalIgnoreCase);
+        }
+
         private void ShowTransientStatus(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
