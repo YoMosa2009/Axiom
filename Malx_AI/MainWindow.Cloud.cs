@@ -285,8 +285,8 @@ namespace Malx_AI
             if (_localModeButton != null)
             {
                 bool isSelected = !_cloudModeActive;
-                _localModeButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#B8924A" : "Transparent"));
-                _localModeButton.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#EDE8E3" : "#8A8279"));
+                _localModeButton.Background = AppBrushCache.Get(isSelected ? "#B8924A" : "Transparent");
+                _localModeButton.Foreground = AppBrushCache.Get(isSelected ? "#EDE8E3" : "#8A8279");
                 _localModeButton.BorderBrush = Brushes.Transparent;
                 _localModeButton.BorderThickness = new Thickness(0);
             }
@@ -297,8 +297,8 @@ namespace Malx_AI
                 _cloudModeButton.ToolTip = hasValidKey
                     ? "Use OpenRouter cloud inference"
                     : "Add an OpenRouter API key in Settings to enable cloud mode";
-                _cloudModeButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(_cloudModeActive ? "#B8924A" : "Transparent"));
-                _cloudModeButton.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(_cloudModeActive ? "#EDE8E3" : "#8A8279"));
+                _cloudModeButton.Background = AppBrushCache.Get(_cloudModeActive ? "#B8924A" : "Transparent");
+                _cloudModeButton.Foreground = AppBrushCache.Get(_cloudModeActive ? "#EDE8E3" : "#8A8279");
                 _cloudModeButton.BorderBrush = Brushes.Transparent;
                 _cloudModeButton.BorderThickness = new Thickness(0);
             }
@@ -321,8 +321,8 @@ namespace Malx_AI
             bool isSelected = string.Equals(_selectedOpenRouterModelId, modelId, StringComparison.OrdinalIgnoreCase);
             bool isAvailable = hasValidKey && _openRouterChatService.IsSelectableModelAvailable(modelId);
             button.IsEnabled = hasValidKey;
-            button.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#B8924A" : "Transparent"));
-            button.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isSelected ? "#EDE8E3" : "#8A8279"));
+            button.Background = AppBrushCache.Get(isSelected ? "#B8924A" : "Transparent");
+            button.Foreground = AppBrushCache.Get(isSelected ? "#EDE8E3" : "#8A8279");
             button.BorderBrush = Brushes.Transparent;
             button.BorderThickness = new Thickness(0);
             button.Opacity = isAvailable || !hasValidKey ? 1.0 : 0.45;
@@ -342,7 +342,7 @@ namespace Malx_AI
             {
                 OpenRouterKeyStatusText.Text = string.Empty;
                 OpenRouterKeyStatusText.Visibility = Visibility.Collapsed;
-                OpenRouterKeyStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#8A8279"));
+                OpenRouterKeyStatusText.Foreground = AppBrushCache.Get("#8A8279");
             }
         }
 
@@ -507,7 +507,7 @@ namespace Malx_AI
                 _ => "#22C55E"
             };
 
-            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
+            return AppBrushCache.Get(color);
         }
 
         private void SetOpenRouterKeyValidationStatus(bool isValid)
@@ -526,7 +526,7 @@ namespace Malx_AI
                     OpenRouterConnectionTestFailureReason.NetworkError => "Connection failed, check your network",
                     _ => "Test failed, check logs"
                 };
-            OpenRouterKeyStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isValid ? "#22C55E" : "#FF3B3B"));
+            OpenRouterKeyStatusText.Foreground = AppBrushCache.Get(isValid ? "#22C55E" : "#FF3B3B");
             OpenRouterKeyStatusText.Visibility = Visibility.Visible;
         }
 
@@ -1240,8 +1240,8 @@ namespace Malx_AI
             }
 
             cloudContextNoticeText.Text = $"{levelText} · {modelLabel} is using an estimated {usedTokens:N0} of {contextWindow:N0} tokens in this chat ({percentUsed}%).";
-            cloudContextNoticeText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(foregroundColor));
-            cloudContextNoticeBorder.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(borderColor));
+            cloudContextNoticeText.Foreground = AppBrushCache.Get(foregroundColor);
+            cloudContextNoticeBorder.BorderBrush = AppBrushCache.Get(borderColor);
             cloudContextNoticeBorder.Visibility = Visibility.Visible;
         }
 

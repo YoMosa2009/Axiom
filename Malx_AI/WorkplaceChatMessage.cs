@@ -77,28 +77,28 @@ namespace Malx_AI
 
         public SolidColorBrush CardBackground => Role switch
         {
-            "user" => new(Color.FromRgb(0x1E, 0x20, 0x28)),
-            "architect" => new(Color.FromRgb(0x1A, 0x1D, 0x2A)),
-            "builder" => new(Color.FromRgb(0x1A, 0x24, 0x20)),
-            "critic" or "critic-final" => new(Color.FromRgb(0x24, 0x20, 0x1A)),
-            "error" => new(Color.FromRgb(0x24, 0x1A, 0x1A)),
-            "sandbox" => new(Color.FromRgb(0x1A, 0x1D, 0x20)),
-            "warning" => new(Color.FromRgb(0x24, 0x20, 0x1A)),
-            "memory" => new(Color.FromRgb(0x1D, 0x1A, 0x24)),
-            _ => new(Color.FromRgb(0x30, 0x30, 0x2E))
+            "user" => AppBrushCache.Get("#1E2028"),
+            "architect" => AppBrushCache.Get("#1A1D2A"),
+            "builder" => AppBrushCache.Get("#1A2420"),
+            "critic" or "critic-final" => AppBrushCache.Get("#24201A"),
+            "error" => AppBrushCache.Get("#241A1A"),
+            "sandbox" => AppBrushCache.Get("#1A1D20"),
+            "warning" => AppBrushCache.Get("#24201A"),
+            "memory" => AppBrushCache.Get("#1D1A24"),
+            _ => AppBrushCache.Get("#30302E")
         };
 
         public SolidColorBrush AccentBrush => Role switch
         {
-            "user" => new(Color.FromRgb(0xC2, 0xC0, 0xB6)),
-            "architect" => new(Color.FromRgb(0x63, 0x66, 0xF1)),
-            "builder" => new(Color.FromRgb(0x22, 0xC5, 0x5E)),
-            "critic" or "critic-final" => new(Color.FromRgb(0xF5, 0x9E, 0x0B)),
-            "error" => new(Color.FromRgb(0xFF, 0x3B, 0x3B)),
-            "sandbox" => new(Color.FromRgb(0x06, 0xB6, 0xD4)),
-            "warning" => new(Color.FromRgb(0xF9, 0x73, 0x16)),
-            "memory" => new(Color.FromRgb(0xA7, 0x8B, 0xFA)),
-            _ => new(Color.FromRgb(0x4B, 0x55, 0x63))
+            "user" => AppBrushCache.Get("#C2C0B6"),
+            "architect" => AppBrushCache.Get("#6366F1"),
+            "builder" => AppBrushCache.Get("#22C55E"),
+            "critic" or "critic-final" => AppBrushCache.Get("#F59E0B"),
+            "error" => AppBrushCache.Get("#FF3B3B"),
+            "sandbox" => AppBrushCache.Get("#06B6D4"),
+            "warning" => AppBrushCache.Get("#F97316"),
+            "memory" => AppBrushCache.Get("#A78BFA"),
+            _ => AppBrushCache.Get("#4B5563")
         };
     }
 }

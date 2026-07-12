@@ -2879,14 +2879,14 @@ namespace Malx_AI
                              : int.TryParse(budgetMatch.Groups[4].Value, out int m2) ? m2 : 3;
                     AgenticPauseBudgetText.Text = $"{used} / {max}";
                     AgenticPauseBudgetText.Foreground = used >= max
-                        ? new SolidColorBrush(Color.FromRgb(255, 59, 59))
-                        : new SolidColorBrush(Color.FromRgb(138, 130, 121));
+                        ? AppBrushCache.Get(Color.FromRgb(255, 59, 59))
+                        : AppBrushCache.Get(Color.FromRgb(138, 130, 121));
                 }
                 else if (string.IsNullOrWhiteSpace(message))
                 {
                     // Reset pill on hide
                     AgenticPauseBudgetText.Text = "0 / 3";
-                    AgenticPauseBudgetText.Foreground = new SolidColorBrush(Color.FromRgb(138, 130, 121));
+                    AgenticPauseBudgetText.Foreground = AppBrushCache.Get(Color.FromRgb(138, 130, 121));
                 }
 
                 if (string.IsNullOrWhiteSpace(message))
@@ -3456,11 +3456,11 @@ namespace Malx_AI
                 >= 75 => Color.FromRgb(184, 146, 74),
                 _ => Color.FromRgb(95, 175, 125)
             };
-            var brush = new SolidColorBrush(meterColor);
+            var brush = AppBrushCache.Get(meterColor);
             bar.Foreground = brush;
             label.Foreground = percent >= 75
                 ? brush
-                : new SolidColorBrush(Color.FromRgb(138, 130, 121));
+                : AppBrushCache.Get(Color.FromRgb(138, 130, 121));
 
             string details = $"{role}: approximately {used:N0} of {capacity:N0} tokens ({percent:F0}%).";
             label.ToolTip = details;
@@ -8598,20 +8598,20 @@ namespace Malx_AI
         {
             if (isActive)
             {
-                border.Background = new SolidColorBrush(Color.FromRgb(255, 59, 59));
-                border.BorderBrush = new SolidColorBrush(Color.FromRgb(255, 59, 59));
+                border.Background = AppBrushCache.Get(Color.FromRgb(255, 59, 59));
+                border.BorderBrush = AppBrushCache.Get(Color.FromRgb(255, 59, 59));
                 return;
             }
 
             if (isDone)
             {
-                border.Background = new SolidColorBrush(Color.FromRgb(48, 48, 46));
-                border.BorderBrush = new SolidColorBrush(Color.FromRgb(64, 68, 75));
+                border.Background = AppBrushCache.Get(Color.FromRgb(48, 48, 46));
+                border.BorderBrush = AppBrushCache.Get(Color.FromRgb(64, 68, 75));
                 return;
             }
 
-            border.Background = new SolidColorBrush(Color.FromRgb(38, 38, 36));
-            border.BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 56));
+            border.Background = AppBrushCache.Get(Color.FromRgb(38, 38, 36));
+            border.BorderBrush = AppBrushCache.Get(Color.FromRgb(58, 58, 56));
         }
 
         private static string BuildPipelineStateHeader(string architectSummary, string builderSummary)
@@ -18633,11 +18633,11 @@ namespace Malx_AI
             CouncilConfidenceText.Text = label;
             CouncilConfidenceText.Foreground = label switch
             {
-                "High Confidence" => new SolidColorBrush(Color.FromRgb(34, 197, 94)),
-                "Moderate Confidence" => new SolidColorBrush(Color.FromRgb(245, 158, 11)),
-                "Reviewed and Revised" => new SolidColorBrush(Color.FromRgb(59, 130, 246)),
-                "Flagged for Review" => new SolidColorBrush(Color.FromRgb(255, 59, 59)),
-                _ => new SolidColorBrush(Color.FromRgb(122, 122, 114))
+                "High Confidence" => AppBrushCache.Get(Color.FromRgb(34, 197, 94)),
+                "Moderate Confidence" => AppBrushCache.Get(Color.FromRgb(245, 158, 11)),
+                "Reviewed and Revised" => AppBrushCache.Get(Color.FromRgb(59, 130, 246)),
+                "Flagged for Review" => AppBrushCache.Get(Color.FromRgb(255, 59, 59)),
+                _ => AppBrushCache.Get(Color.FromRgb(122, 122, 114))
             };
             RefineButton.Visibility = Visibility.Visible;
         }

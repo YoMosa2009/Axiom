@@ -97,9 +97,7 @@ namespace Malx_AI
         private Button _activeWorkplaceButton = null;
 
         private static SolidColorBrush BrushFromHex(string hex)
-        {
-            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-        }
+            => AppBrushCache.Get(hex);
 
         private void LoadEmptyChatLogo()
         {
@@ -2126,8 +2124,8 @@ namespace Malx_AI
                     _activeChatButton.BorderThickness = new Thickness(1);
                 }
 
-                button.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B8924A"));
-                button.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#302D2A"));
+                button.Background = AppBrushCache.Get("#B8924A");
+                button.BorderBrush = AppBrushCache.Get("#302D2A");
                 button.BorderThickness = new Thickness(1);
 
                 _activeChatButton = button;
@@ -2676,21 +2674,21 @@ namespace Malx_AI
 
             if (pct >= 90)
             {
-                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
+                TokenUsageProgressBar.Foreground = AppBrushCache.Get(Color.FromRgb(201, 106, 91));
                 TokenUsageProgressBar.ToolTip = "Warning: model may begin losing earlier context.";
-                TokenUsageLabel.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
+                TokenUsageLabel.Foreground = AppBrushCache.Get(Color.FromRgb(201, 106, 91));
             }
             else if (pct >= 75)
             {
-                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
+                TokenUsageProgressBar.Foreground = AppBrushCache.Get(Color.FromRgb(184, 146, 74));
                 TokenUsageProgressBar.ToolTip = "High context usage.";
-                TokenUsageLabel.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
+                TokenUsageLabel.Foreground = AppBrushCache.Get(Color.FromRgb(184, 146, 74));
             }
             else
             {
-                TokenUsageProgressBar.Foreground = new SolidColorBrush(Color.FromRgb(95, 175, 125));
+                TokenUsageProgressBar.Foreground = AppBrushCache.Get(Color.FromRgb(95, 175, 125));
                 TokenUsageProgressBar.ToolTip = null;
-                TokenUsageLabel.Foreground = new SolidColorBrush(Color.FromRgb(138, 130, 121));
+                TokenUsageLabel.Foreground = AppBrushCache.Get(Color.FromRgb(138, 130, 121));
             }
 
             if (_cloudModeActive)
@@ -2717,21 +2715,21 @@ namespace Malx_AI
 
                 if (_compactionEngine.CompactionPending)
                 {
-                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
+                    CompactionThresholdBar.Foreground = AppBrushCache.Get(Color.FromRgb(201, 106, 91));
                     CompactionHealthLabel.Text = $"Pending - {usagePctOfEffective:F0}%";
-                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(201, 106, 91));
+                    CompactionHealthLabel.Foreground = AppBrushCache.Get(Color.FromRgb(201, 106, 91));
                 }
                 else if (usagePctOfEffective >= 60)
                 {
-                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
+                    CompactionThresholdBar.Foreground = AppBrushCache.Get(Color.FromRgb(184, 146, 74));
                     CompactionHealthLabel.Text = $"{healthLabel} - {usagePctOfEffective:F0}%";
-                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(184, 146, 74));
+                    CompactionHealthLabel.Foreground = AppBrushCache.Get(Color.FromRgb(184, 146, 74));
                 }
                 else
                 {
-                    CompactionThresholdBar.Foreground = new SolidColorBrush(Color.FromRgb(95, 175, 125));
+                    CompactionThresholdBar.Foreground = AppBrushCache.Get(Color.FromRgb(95, 175, 125));
                     CompactionHealthLabel.Text = $"{healthLabel} - {usagePctOfEffective:F0}%";
-                    CompactionHealthLabel.Foreground = new SolidColorBrush(Color.FromRgb(138, 130, 121));
+                    CompactionHealthLabel.Foreground = AppBrushCache.Get(Color.FromRgb(138, 130, 121));
                 }
 
                 CompactionHealthGrid.ToolTip = $"Using {used:N0} of {effectiveLimit:N0} effective tokens. Compaction triggers at {thresholdPct:F0}%.";
