@@ -1305,6 +1305,8 @@ namespace Malx_AI
             public bool CurrentArtifactForIterationWasTruncated { get; set; }
             public bool CanvasMutationFailed { get; set; }
             public bool BuilderRoutedToCanvas { get; set; }
+            public string CriticBaselineArtifact { get; set; } = "";
+            public string PreviousCriticReview { get; set; } = "";
             public string PreviousArtifactRequest { get; set; } = "";
             public string PreviousArtifactFormatHint { get; set; } = "";
             public string ArchitectOutput { get; set; } = "";
@@ -10963,6 +10965,27 @@ namespace Malx_AI
             return BuildLabeledBlock("EXECUTED ACCEPTANCE CHECKS", body.ToString().Trim());
         }
 
+        private static string BuildCriticArtifactDiffBlock(CouncilRunContext context)
+        {
+            if (!context.IsArtifactCanvasRequest
+                || string.IsNullOrWhiteSpace(context.CriticBaselineArtifact)
+                || string.IsNullOrWhiteSpace(context.BuilderOutput))
+            {
+                return string.Empty;
+            }
+
+            int maxChars = context.IsCloudExecution ? 12000 : 5000;
+            int previousReviewCap = context.IsCloudExecution ? 3000 : 1200;
+            string compactDiff = ArtifactRevisionDiffFormatter.Build(
+                context.CriticBaselineArtifact,
+                context.BuilderOutput,
+                context.PreviousCriticReview,
+                context.CurrentArtifactForIterationWasTruncated,
+                maxChars,
+                previousReviewCap);
+            return BuildLabeledBlock("CHANGES SINCE YOUR LAST REVIEW", compactDiff);
+        }
+
         private static string BuildCriticPayload(CouncilRunContext context, string sandboxResult)
         {
             var payload = new StringBuilder();
@@ -10975,6 +10998,10 @@ namespace Malx_AI
             string acceptanceEvidence = BuildAcceptanceCheckEvidenceBlock(context);
             if (!string.IsNullOrWhiteSpace(acceptanceEvidence))
                 payload.AppendLine(acceptanceEvidence);
+
+            string artifactDiff = BuildCriticArtifactDiffBlock(context);
+            if (!string.IsNullOrWhiteSpace(artifactDiff))
+                payload.AppendLine(artifactDiff);
 
             if (context.StaticValidationFindings.Count > 0)
             {
@@ -11337,6 +11364,7 @@ namespace Malx_AI
                 PreferredArtifactFormatHint = preferredArtifactFormatHint,
                 PreviousArtifactRequest = _lastRunContext?.IsArtifactCanvasRequest == true ? _lastRunContext.UserPrompt : string.Empty,
                 PreviousArtifactFormatHint = _lastRunContext?.IsArtifactCanvasRequest == true ? _lastRunContext.PreferredArtifactFormatHint : string.Empty,
+                PreviousCriticReview = _lastRunContext?.IsArtifactCanvasRequest == true ? _lastRunContext.CriticReview : string.Empty,
                 CanvasViewportWidth = canvasViewportWidth,
                 CanvasViewportHeight = canvasViewportHeight,
                 WebGroundingRequired = webGroundingRequired,
@@ -11366,6 +11394,7 @@ namespace Malx_AI
                         ? currentCanvas[..artifactIterationCap]
                         : currentCanvas;
                     runContext.CurrentArtifactForIterationWasTruncated = currentCanvas.Length > artifactIterationCap;
+                    runContext.CriticBaselineArtifact = runContext.CurrentArtifactForIteration;
                     if (currentCanvas.Length > artifactIterationCap)
                         LogActivity($"Canvas iteration: source ({currentCanvas.Length} chars) exceeds the safe {artifactIterationCap}-char local context allowance; mutation verification will prevent a partial replacement from overwriting it.");
                     else
@@ -13083,6 +13112,8 @@ namespace Malx_AI
                     }
 
                     runContext.CriticReview = criticOutput;
+                    runContext.CriticBaselineArtifact = runContext.BuilderOutput;
+                    runContext.PreviousCriticReview = criticOutput;
                     contextState.CriticOutput = criticOutput;
                     runContext.CriticThinking = criticThinking;
                     WriteCriticSessionMemory(criticOutput, activeRunIndex);
@@ -19814,6 +19845,11 @@ namespace Malx_AI
                     && !BuilderStatesWebEvidenceUnavailable(rerunOutput))
                 {
                     rerunOutput = BuildWebEvidenceUnavailableBuilderFallback(_lastRunContext);
+                }
+                if (_lastRunContext.IsArtifactCanvasRequest)
+                {
+                    _lastRunContext.CriticBaselineArtifact = _lastRunContext.BuilderOutput;
+                    _lastRunContext.PreviousCriticReview = _lastRunContext.CriticReview;
                 }
                 _lastRunContext.BuilderOutput = rerunOutput;
                 _lastRunContext.BuilderProducedCode = rerunProducedCode;
