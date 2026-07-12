@@ -51,6 +51,9 @@ namespace Malx_AI
         public string Type { get; set; } = "";
         public string Info { get; set; } = "";
         public int ChunkCount { get; set; }
+        public string MimeType { get; set; } = "";
+        public string Base64Data { get; set; } = "";
+        public bool IsImage { get; set; }
     }
 
     public sealed class WorkplaceCouncilModelDto

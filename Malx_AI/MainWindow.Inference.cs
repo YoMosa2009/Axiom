@@ -767,28 +767,7 @@ namespace Malx_AI
         // Prefers the projector whose file name shares the longest prefix with the model name
         // (e.g. "mmproj-Qwen2.5-VL-7B..." next to "Qwen2.5-VL-7B...").
         private static string SelectBestMmprojCandidate(string modelPath, IReadOnlyList<string> candidates)
-        {
-            if (candidates == null || candidates.Count == 0)
-                return string.Empty;
-            if (candidates.Count == 1)
-                return candidates[0];
-
-            string modelStem = Path.GetFileNameWithoutExtension(modelPath).ToLowerInvariant();
-            return candidates
-                .OrderByDescending(c =>
-                {
-                    string stem = Path.GetFileNameWithoutExtension(c).ToLowerInvariant()
-                        .Replace("mmproj-", string.Empty)
-                        .Replace("mmproj", string.Empty)
-                        .Trim('-', '_', '.');
-                    int common = 0;
-                    while (common < Math.Min(stem.Length, modelStem.Length) && stem[common] == modelStem[common])
-                        common++;
-                    return common;
-                })
-                .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
-                .First();
-        }
+            => LocalVisionSupport.SelectBestProjector(modelPath, candidates);
 
         // Loads current image attachments into the executor's pending multimodal embeds.
         // Returns the number of images queued; the caller must place one image marker per
@@ -835,16 +814,7 @@ namespace Malx_AI
 
         // One "<image>" tag per embed — the executor replaces it with the native media marker.
         private static string PrependImageMarkers(string userText, int imageCount)
-        {
-            if (imageCount <= 0)
-                return userText;
-
-            var sb = new StringBuilder();
-            for (int i = 0; i < imageCount; i++)
-                sb.Append("<image>\n");
-            sb.Append(userText);
-            return sb.ToString();
-        }
+            => LocalVisionSupport.PrependImageMarkers(userText, imageCount);
 
         private void RebuildChatSession()
         {

@@ -3009,7 +3009,10 @@ namespace Malx_AI
                     FilePath = document.FilePath,
                     Type = document.Type,
                     Info = document.Info,
-                    ChunkCount = document.ChunkCount
+                    ChunkCount = document.ChunkCount,
+                    MimeType = document.MimeType,
+                    Base64Data = document.Base64Data,
+                    IsImage = document.IsImage
                 }).ToList(),
                 TaskHistory = (snapshot.TaskHistory ?? []).ToList(),
                 PerformanceLog = (snapshot.PerformanceLog ?? []).ToList(),

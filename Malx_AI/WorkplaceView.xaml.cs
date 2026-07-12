@@ -20,6 +20,7 @@ using System.Net.Http;
 using ICSharpCode.AvalonEdit.Highlighting;
 using LLama;
 using LLama.Common;
+using LLama.Native;
 using LLama.Sampling;
 using LLama.Transformers;
 using Microsoft.CodeAnalysis;
@@ -582,7 +583,7 @@ namespace Malx_AI
                 // PreserveFullText: the council payload (architect plan, current artifact, document
                 // context) must survive history trimming on tool-loop iterations 2+, where it is no
                 // longer the final message.
-                new("user", userPayload ?? string.Empty, PreserveFullText: true)
+                BuildCloudCouncilInitialUserMessage(role, userPayload)
             };
 
             var reasoningParts = new List<string>();
@@ -2082,7 +2083,10 @@ namespace Malx_AI
                     FilePath = doc.FilePath,
                     Type = doc.Type,
                     Info = doc.Info,
-                    ChunkCount = doc.ChunkCount
+                    ChunkCount = doc.ChunkCount,
+                    MimeType = doc.MimeType,
+                    Base64Data = doc.Base64Data,
+                    IsImage = doc.IsImage
                 });
             }
 
@@ -2254,6 +2258,42 @@ namespace Malx_AI
             public string Type { get; set; } = "";
             public string Info { get; set; } = "";
             public int ChunkCount { get; set; }
+            public string MimeType { get; set; } = "";
+            public string Base64Data { get; set; } = "";
+            public bool IsImage { get; set; }
+        }
+
+        private OpenRouterMessage BuildCloudCouncilInitialUserMessage(CouncilRole role, string? userPayload)
+        {
+            string payload = userPayload ?? string.Empty;
+            if (role != CouncilRole.Builder)
+                return new OpenRouterMessage("user", payload, PreserveFullText: true);
+
+            List<DocumentInfo> images = _documents
+                .Where(document => document.IsImage
+                    && !string.IsNullOrWhiteSpace(document.MimeType)
+                    && !string.IsNullOrWhiteSpace(document.Base64Data))
+                .Take(MaxCouncilVisionImagesPerTurn)
+                .ToList();
+            if (images.Count == 0)
+                return new OpenRouterMessage("user", payload, PreserveFullText: true);
+
+            if (!_openRouterChatService.SupportsImageInput(OpenRouterChatService.WorkplaceCouncilDefaultModelId))
+            {
+                payload += "\n\n" + LocalVisionSupport.BuildUnavailableNote(images.Count);
+                LogActivity($"Builder: {images.Count} image attachment(s) withheld because the routed cloud model does not advertise image input.");
+                return new OpenRouterMessage("user", payload, PreserveFullText: true);
+            }
+
+            List<string> imageDataUrls = images
+                .Select(image => LocalVisionSupport.BuildImageDataUrl(image.MimeType, image.Base64Data))
+                .ToList();
+            LogActivity($"Builder: attached {imageDataUrls.Count} image(s) to the cloud vision payload.");
+            return new OpenRouterMessage(
+                "user",
+                payload,
+                PreserveFullText: true,
+                ImageDataUrls: imageDataUrls);
         }
 
         private sealed class StudyChunk
@@ -2362,6 +2402,7 @@ namespace Malx_AI
         // legitimately need a research → compute → verify chain; the forced no-tools synthesis pass
         // still guarantees usable output if the budget is exhausted.
         private const int CloudCouncilToolLoopIterationLimit = 6;
+        private const int MaxCouncilVisionImagesPerTurn = 4;
         private const int CloudCouncilToolExecutionLimit = 6;
         private const int CloudCouncilToolResultCharacterLimit = 14000;
         // Above this many visible characters, Builder text accompanying tool calls is treated as the
@@ -3708,7 +3749,17 @@ namespace Malx_AI
                     ChatAttachmentImportResult imported = await ChatAttachmentImportService.ImportAsync(filePath);
                     if (imported.Attachment.IsImage)
                     {
-                        AppendChat("warning", $"Images are not supported as workplace knowledge documents: {fileName}");
+                        _documents.Add(new DocumentInfo
+                        {
+                            Name = fileName,
+                            FilePath = filePath,
+                            Type = "IMAGE",
+                            Info = $"Image attachment - {Math.Max(0, imported.Attachment.FileSizeBytes) / 1024d:N0} KB",
+                            MimeType = imported.Attachment.MimeType,
+                            Base64Data = imported.Attachment.Base64Data,
+                            IsImage = true
+                        });
+                        AppendChat("system", $"Image attached for Builder vision: {fileName}");
                         return;
                     }
 
@@ -11360,8 +11411,8 @@ namespace Malx_AI
             // When documents are present, the user's prompt is the instruction,
             // the document is the subject. These are never the same thing.
             // ═══════════════════════════════════════════════════════
-            bool documentsLoaded = _documents.Count > 0;
-            bool shouldUseDocuments = ShouldUseDocumentContext(userQuery, objective);
+            bool documentsLoaded = _documents.Any(document => !document.IsImage);
+            bool shouldUseDocuments = documentsLoaded && ShouldUseDocumentContext(userQuery, objective);
             bool isDocumentTask = documentsLoaded && shouldUseDocuments;
             // Engage sticky grounding so subsequent follow-up turns keep using the document even when
             // they don't name it (see ShouldUseDocumentContext).
@@ -16239,6 +16290,13 @@ namespace Malx_AI
                 string gemmaRoleName = role.ToString();
                 LogActivity($"{gemmaRoleName}: Gemma 4 local CLI mode.");
 
+                if (role == CouncilRole.Builder && !internalInferenceStep)
+                {
+                    int imageCount = _documents.Count(document => document.IsImage && !string.IsNullOrWhiteSpace(document.Base64Data));
+                    if (imageCount > 0)
+                        userPayload += "\n\n" + LocalVisionSupport.BuildUnavailableNote(Math.Min(imageCount, MaxCouncilVisionImagesPerTurn));
+                }
+
                 string prompt = BuildPrompt(PromptFormat.Gemma4, systemPrompt, userPayload);
 
                 var (gemmaRoleTemp, _) = GetRoleSamplingConfig(role);
@@ -16389,6 +16447,8 @@ namespace Malx_AI
             LLamaWeights? model = null;
             LLamaContext? context = null;
             InteractiveExecutor? executor = null;
+            MtmdWeights? visionProjector = null;
+            int queuedVisionImages = 0;
 
             // Cover model load + context creation with crash forensics, not just the decode.
             // A native abort during init (e.g. a CUDA OOM that ggml turns into abort() instead of
@@ -16447,7 +16507,6 @@ namespace Malx_AI
                         LogActivity($"{roleName}: base state load fallback ({stateEx.Message}).");
                     }
                 }
-                executor = new InteractiveExecutor(context);
                 LogActivity($"{roleName}: Session ready with native template.");
             }
             // User cancellation (Stop button) during model/context init is NOT a GPU
@@ -16496,7 +16555,6 @@ namespace Malx_AI
                         LogActivity($"{roleName}: base state load fallback on CPU ({stateEx.Message}).");
                     }
                 }
-                executor = new InteractiveExecutor(context);
                 LogActivity($"{roleName}: CPU fallback session ready and cached.");
             }
             finally
@@ -16508,7 +16566,7 @@ namespace Malx_AI
                 NativeDecodeForensics.EndDecode();
             }
 
-            if (executor == null || model == null)
+            if (context == null || model == null)
             {
                 throw new InvalidOperationException("Failed to initialize inference session.");
             }
@@ -16521,6 +16579,35 @@ namespace Malx_AI
                 ? loadedEntry.GpuLayerCount
                 : plan.Parameters.GpuLayerCount;
             NativeDecodeForensics.SetActiveModel(config.ModelPath!, loadedGpuLayers > 0, loadedGpuLayers);
+
+            List<DocumentInfo> builderImages = role == CouncilRole.Builder && !internalInferenceStep
+                ? _documents
+                    .Where(document => document.IsImage && !string.IsNullOrWhiteSpace(document.Base64Data))
+                    .Take(MaxCouncilVisionImagesPerTurn)
+                    .ToList()
+                : [];
+            if (builderImages.Count > 0)
+            {
+                visionProjector = await TryLoadBuilderVisionProjectorAsync(
+                    config.ModelPath!,
+                    model,
+                    loadedGpuLayers > 0,
+                    token);
+            }
+            executor = visionProjector != null
+                ? new InteractiveExecutor(context, visionProjector)
+                : new InteractiveExecutor(context);
+            if (visionProjector != null)
+            {
+                queuedVisionImages = AttachBuilderImagesToExecutor(builderImages, visionProjector, executor);
+                if (queuedVisionImages > 0)
+                    LogActivity($"Builder: queued {queuedVisionImages} local MTMD image embed(s).");
+            }
+            if (builderImages.Count > queuedVisionImages)
+            {
+                userPayload += "\n\n" + LocalVisionSupport.BuildUnavailableNote(builderImages.Count - queuedVisionImages);
+                LogActivity($"Builder: {builderImages.Count - queuedVisionImages} image attachment(s) unavailable to the local model.");
+            }
 
             // Use ChatSession + PromptTemplateTransformer so the model's native chat
             // template is applied and special tokens (<|im_start|>, <|im_end|>, etc.)
@@ -16560,7 +16647,9 @@ namespace Malx_AI
             // estimate undercounted code-heavy payloads badly enough to overflow the
             // context and fail llama_decode mid-run.
             // ═══════════════════════════════════════════════
-            int promptTokenEstimate = CountTokensWithContext(context, systemPrompt) + CountTokensWithContext(context, userPayload);
+            int promptTokenEstimate = CountTokensWithContext(context, systemPrompt)
+                + CountTokensWithContext(context, userPayload)
+                + (queuedVisionImages * 1024);
             int templateOverhead = 80; // chat template special tokens, role markers
             int contextBudget = (int)plan.Parameters.ContextSize;
             int availableForGeneration = contextBudget - promptTokenEstimate - templateOverhead;
@@ -16652,6 +16741,7 @@ namespace Malx_AI
             PromptFormat activeFormat = config.Format;
             IReadOnlyList<PromptInjectionBlockInfo> priorInjectionInfos = CollectPromptInjectionInfos(_chatHistory);
             userPayload = ApplyPreInferenceContextReduction(userPayload, priorInjectionInfos, _lastRunContext?.UserPrompt ?? userPayload);
+            userPayload = LocalVisionSupport.PrependImageMarkers(userPayload, queuedVisionImages);
 
             // Cross-family turn terminators MUST be stop sequences here. The council path was
             // missing "<|im_end|>" (only normal chat had it), so a ChatML role that emitted its
@@ -16837,6 +16927,8 @@ namespace Malx_AI
             {
                 sw.Stop();
                 NativeDecodeForensics.EndDecode();
+                DisposeExecutorEmbeds(executor);
+                try { visionProjector?.Dispose(); } catch { }
                 context?.Dispose();
             }
 
@@ -16909,9 +17001,98 @@ namespace Malx_AI
 
         private static bool IsMmprojFile(string modelPath)
         {
-            string file = Path.GetFileName(modelPath);
-            return file.StartsWith("mmproj", StringComparison.OrdinalIgnoreCase)
-                   || file.Contains("mmproj-", StringComparison.OrdinalIgnoreCase);
+            return LocalVisionSupport.IsMmprojFile(modelPath);
+        }
+
+        private async Task<MtmdWeights?> TryLoadBuilderVisionProjectorAsync(
+            string modelPath,
+            LLamaWeights model,
+            bool useGpu,
+            CancellationToken token)
+        {
+            string projectorPath = LocalVisionSupport.FindBestProjectorNextToModel(modelPath);
+            if (string.IsNullOrWhiteSpace(projectorPath))
+                return null;
+
+            var parameters = MtmdContextParams.Default();
+            parameters.UseGpu = useGpu;
+            try
+            {
+                MtmdWeights projector = await Task.Run(
+                    () => MtmdWeights.LoadFromFile(projectorPath, model, parameters),
+                    token);
+                LogActivity($"Builder: local vision projector loaded ({Path.GetFileName(projectorPath)}). ");
+                return projector;
+            }
+            catch (Exception gpuException) when (useGpu && gpuException is not OperationCanceledException)
+            {
+                await BackendLogService.LogErrorAsync("Workplace.BuilderVisionProjectorGpu", gpuException);
+                parameters.UseGpu = false;
+                try
+                {
+                    MtmdWeights projector = await Task.Run(
+                        () => MtmdWeights.LoadFromFile(projectorPath, model, parameters),
+                        token);
+                    LogActivity($"Builder: local vision projector loaded on CPU ({Path.GetFileName(projectorPath)}). ");
+                    return projector;
+                }
+                catch (Exception cpuException) when (cpuException is not OperationCanceledException)
+                {
+                    await BackendLogService.LogErrorAsync("Workplace.BuilderVisionProjectorCpu", cpuException);
+                    return null;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("Workplace.BuilderVisionProjector", ex);
+                return null;
+            }
+        }
+
+        private static int AttachBuilderImagesToExecutor(
+            IReadOnlyList<DocumentInfo> images,
+            MtmdWeights projector,
+            InteractiveExecutor executor)
+        {
+            int added = 0;
+            foreach (DocumentInfo image in images)
+            {
+                try
+                {
+                    byte[] bytes = Convert.FromBase64String(image.Base64Data);
+                    var embed = projector.LoadMedia(bytes);
+                    if (embed == null)
+                        continue;
+                    executor.Embeds.Add(embed);
+                    added++;
+                }
+                catch
+                {
+                    // The caller adds an explicit cannot-see note for every image that fails here.
+                }
+            }
+            return added;
+        }
+
+        private static void DisposeExecutorEmbeds(InteractiveExecutor? executor)
+        {
+            if (executor == null)
+                return;
+            try
+            {
+                foreach (var embed in executor.Embeds)
+                {
+                    try { embed?.Dispose(); } catch { }
+                }
+                executor.Embeds.Clear();
+            }
+            catch
+            {
+            }
         }
 
         private static class Gemma4Formatter
@@ -18297,7 +18478,10 @@ namespace Malx_AI
                     FilePath = d.FilePath,
                     Type = d.Type,
                     Info = d.Info,
-                    ChunkCount = d.ChunkCount
+                    ChunkCount = d.ChunkCount,
+                    MimeType = d.MimeType,
+                    Base64Data = d.Base64Data,
+                    IsImage = d.IsImage
                 }).ToList(),
                 TaskHistory = _taskHistory.ToList(),
                 PerformanceLog = _performanceLog.ToList(),
