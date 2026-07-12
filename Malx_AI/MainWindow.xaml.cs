@@ -423,6 +423,7 @@ namespace Malx_AI
         private bool _normalWebSearchEnabled = false;
         private bool _chatScrollPending;
         private CouncilPetWindow? _councilPetWindow;
+        private bool _isLoadingCouncilNotificationSetting;
 
         public MainWindow()
         {
@@ -435,6 +436,7 @@ namespace Malx_AI
                 WorkplaceViewControl.ReleaseHostChatModelAsync = ReleaseChatModelForCouncilAsync;
                 WorkplaceViewControl.CouncilPetToggleRequested += WorkplaceCouncilPetToggleRequested;
                 WorkplaceViewControl.CouncilPetStatusChanged += WorkplaceCouncilPetStatusChanged;
+                WorkplaceViewControl.CouncilRunFinished += WorkplaceCouncilRunFinished;
                 LoadEmptyChatLogo();
                 TemperatureSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
                 TopPSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
@@ -516,6 +518,7 @@ namespace Malx_AI
                 RefreshNormalWebToggleUi();
                 LoadOpenRouterSettings();
                 LoadStoredOpenRouterApiKey();
+                LoadCouncilNotificationSetting();
                 RefreshCloudModeToggleUi();
                 RefreshInferenceSettingsUi();
 
@@ -1629,6 +1632,36 @@ namespace Malx_AI
 
             if (shouldShow)
                 _ = EnsureOpenRouterUsageLoadedAsync();
+        }
+
+        private void LoadCouncilNotificationSetting()
+        {
+            _isLoadingCouncilNotificationSetting = true;
+            try
+            {
+                string stored = _database?.GetSetting("workplace_completion_notifications") ?? string.Empty;
+                CouncilCompletionToastToggle.IsChecked = !string.Equals(stored, "false", StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                _isLoadingCouncilNotificationSetting = false;
+            }
+        }
+
+        private void CouncilCompletionToastToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isLoadingCouncilNotificationSetting || _database is null)
+                return;
+
+            _database.SaveSetting(
+                "workplace_completion_notifications",
+                CouncilCompletionToastToggle.IsChecked == true ? "true" : "false");
+        }
+
+        private void WorkplaceCouncilRunFinished(string message)
+        {
+            if (CouncilCompletionToastToggle.IsChecked == true)
+                WindowsToastNotificationService.ShowCouncilCompletionIfInactive(message);
         }
 
         private void AnimateSettingsPanel(bool show)

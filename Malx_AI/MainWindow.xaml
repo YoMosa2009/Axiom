@@ -1618,6 +1618,21 @@
                                     </StackPanel>
                                 </Border>
 
+                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="Workplace notifications" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="CouncilCompletionToastToggle"
+                                                  Content="Notify me when a council run finishes while Axiom is in the background"
+                                                  IsChecked="True"
+                                                  Checked="CouncilCompletionToastToggle_Changed"
+                                                  Unchecked="CouncilCompletionToastToggle_Changed"
+                                                  Foreground="{StaticResource NotebookTextBrush}"
+                                                  FontSize="11"/>
+                                        <TextBlock Text="Clicking the Windows notification restores and focuses Axiom. No notification is shown while this window is active."
+                                                   FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,0">
                                     <StackPanel>
                                         <TextBlock Text="Smart Context Compaction" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>

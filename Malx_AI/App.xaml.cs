@@ -98,11 +98,13 @@ namespace Malx_AI
                 Debug.WriteLine($"Single-instance guard error: {ex.Message}");
             }
 
+            WindowsToastNotificationService.Initialize();
             base.OnStartup(e);
         }
 
         protected override void OnExit(ExitEventArgs e)
         {
+            WindowsToastNotificationService.Shutdown();
             // Reaching OnExit means a GRACEFUL shutdown — a native llama.cpp abort fail-fasts the
             // process and never runs this. So clear any in-flight decode marker now: a turn the user
             // interrupted by simply closing the app while it was still generating must NOT be misread

@@ -44,6 +44,7 @@ namespace Malx_AI
 
         public event Action<bool>? CouncilPetToggleRequested;
         public event Action<string, string>? CouncilPetStatusChanged;
+        public event Action<string>? CouncilRunFinished;
 
         public void SetCouncilPetEnabled(bool enabled)
         {
@@ -13760,6 +13761,9 @@ namespace Malx_AI
                 LogActivity(runContext.FinalVerificationFailed
                     ? "Council relay completed with unresolved final verification requirements."
                     : "Council relay completed successfully.");
+                string finishedRole = runContext.RevisionTriggered ? "Builder revision finished." : "Builder finished.";
+                string issueLabel = criticFindings == 1 ? "issue" : "issues";
+                CouncilRunFinished?.Invoke($"{finishedRole} Critic: {criticFindings} {issueLabel} found.");
                 ChatScrollViewer.ScrollToEnd();
             }
             catch (OperationCanceledException)
@@ -13797,6 +13801,7 @@ namespace Malx_AI
                 {
                     _ = ShowNonIntrusiveErrorAsync($"Pipeline error: {ex.Message}");
                 }
+                CouncilRunFinished?.Invoke("Council run failed. " + GetCompactNotificationError(ex.Message));
             }
             finally
             {
@@ -13818,6 +13823,12 @@ namespace Malx_AI
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
             }
+        }
+
+        private static string GetCompactNotificationError(string? message)
+        {
+            string normalized = Regex.Replace(message ?? "Unknown error.", @"\s+", " ").Trim();
+            return normalized.Length <= 160 ? normalized : normalized[..157] + "...";
         }
 
         private List<DocumentChunk> MergeWithPriority(List<DocumentChunk> baseChunks, int maxChunks)
