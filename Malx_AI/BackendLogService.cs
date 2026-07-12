@@ -3,6 +3,8 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Malx_AI
 {
@@ -33,6 +35,34 @@ namespace Malx_AI
             sb.AppendLine(ex.ToString());
             sb.AppendLine(new string('-', 80));
             return AppendWithRotationAsync("backend-errors.log", sb.ToString());
+        }
+
+        public static Task<string> ReadRecentLinesAsync(int maxLines = 200)
+        {
+            int boundedMaxLines = Math.Clamp(maxLines, 1, 2000);
+            return Task.Run(() =>
+            {
+                string logDir = AppDataPaths.Logs;
+                if (!Directory.Exists(logDir))
+                    return string.Empty;
+
+                var tail = new Queue<string>(boundedMaxLines);
+                foreach (FileInfo file in new DirectoryInfo(logDir)
+                    .EnumerateFiles("backend-*.log*")
+                    .OrderBy(item => item.LastWriteTimeUtc))
+                {
+                    tail.Enqueue($"--- {file.Name} ---");
+                    using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+                    while (reader.ReadLine() is string line)
+                    {
+                        tail.Enqueue(line);
+                        while (tail.Count > boundedMaxLines)
+                            tail.Dequeue();
+                    }
+                }
+                return string.Join(Environment.NewLine, tail);
+            });
         }
 
         private static async Task AppendWithRotationAsync(string fileName, string text)

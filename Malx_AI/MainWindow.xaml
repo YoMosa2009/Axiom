@@ -1662,6 +1662,31 @@
                                     </StackPanel>
                                 </Border>
 
+                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="Backend logs" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                            <Button Content="Open log folder" Click="OpenLogFolder_Click" Height="30" Padding="12,5" Style="{StaticResource SubtleButtonStyle}"/>
+                                            <Button Content="Refresh" Click="RefreshLogViewer_Click" Height="30" Padding="12,5" Margin="8,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
+                                            <Button Content="Copy" Click="CopyLogViewer_Click" Height="30" Padding="12,5" Margin="8,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
+                                        </StackPanel>
+                                        <TextBox x:Name="LogViewerTextBox"
+                                                 Height="220"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="NoWrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 HorizontalScrollBarVisibility="Auto"
+                                                 FontFamily="Cascadia Mono, Consolas"
+                                                 FontSize="10"
+                                                 Padding="8"
+                                                 Background="{StaticResource NotebookBackgroundBrush}"
+                                                 Foreground="{StaticResource NotebookTextBrush}"
+                                                 BorderBrush="{StaticResource NotebookBorderBrush}"
+                                                 Text="Open Settings or press Refresh to load the last 200 log lines."/>
+                                    </StackPanel>
+                                </Border>
+
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,0">
                                     <StackPanel>
                                         <TextBlock Text="Smart Context Compaction" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>

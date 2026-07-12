@@ -1633,7 +1633,50 @@ namespace Malx_AI
             AnimateSettingsPanel(shouldShow);
 
             if (shouldShow)
+            {
                 _ = EnsureOpenRouterUsageLoadedAsync();
+                _ = LoadRecentLogsAsync();
+            }
+        }
+
+        private async Task LoadRecentLogsAsync()
+        {
+            try
+            {
+                string text = await BackendLogService.ReadRecentLinesAsync(200);
+                LogViewerTextBox.Text = string.IsNullOrWhiteSpace(text) ? "No backend logs yet." : text;
+                LogViewerTextBox.ScrollToEnd();
+            }
+            catch (Exception ex)
+            {
+                LogViewerTextBox.Text = "Unable to read backend logs: " + ex.Message;
+            }
+        }
+
+        private void OpenLogFolder_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Directory.CreateDirectory(AppDataPaths.Logs);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = AppDataPaths.Logs,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                _ = ShowNonIntrusiveErrorAsync("Unable to open the log folder: " + ex.Message);
+            }
+        }
+
+        private async void RefreshLogViewer_Click(object sender, RoutedEventArgs e)
+            => await LoadRecentLogsAsync();
+
+        private void CopyLogViewer_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(LogViewerTextBox.Text))
+                Clipboard.SetText(LogViewerTextBox.Text);
         }
 
         private void LoadCouncilNotificationSetting()
