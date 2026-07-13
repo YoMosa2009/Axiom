@@ -32,8 +32,8 @@ namespace Malx_AI
                 Background = Brushes.Transparent,
                 Foreground = TextBrush,
                 FontFamily = BodyFont,
-                FontSize = 12,
-                LineHeight = 16,
+                FontSize = 12.5,
+                LineHeight = 18,
                 PagePadding = new Thickness(0),
                 TextAlignment = TextAlignment.Left
             };

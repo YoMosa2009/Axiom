@@ -9,7 +9,7 @@ namespace Malx_AI
     public sealed class WorkplaceChatMessage : INotifyPropertyChanged
     {
         private string _content = "";
-        private FlowDocument _formattedDocument = WorkplaceMarkdownDocumentFactory.Create(string.Empty);
+        private string? _formattedContentCache;
 
         public string Role { get; init; } = "system";
 
@@ -20,7 +20,7 @@ namespace Malx_AI
             {
                 if (_content == value) return;
                 _content = value;
-                _formattedDocument = WorkplaceMarkdownDocumentFactory.Create(value);
+                _formattedContentCache = null;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(FormattedContent));
                 OnPropertyChanged(nameof(FormattedDocument));
@@ -30,8 +30,17 @@ namespace Malx_AI
             }
         }
 
-        public string FormattedContent => MarkdownParser.ToDisplayText(Content);
-        public FlowDocument FormattedDocument => _formattedDocument;
+        // Cached per content change: bindings can re-read this several times per update, and
+        // the markdown strip is regex work proportional to the message size.
+        public string FormattedContent => _formattedContentCache ??= MarkdownParser.ToDisplayText(Content);
+
+        // NEVER cache this document. WPF allows a FlowDocument to be hosted by exactly ONE
+        // FlowDocumentScrollViewer; the council re-adds streaming cards (and "Show earlier
+        // messages" re-materializes containers), so a cached instance gets claimed by a second
+        // viewer and throws "Document belongs to another FlowDocumentScrollViewer already" on
+        // every refresh. A fresh instance per read gives each viewer its own document. Reads
+        // happen once per PropertyChanged, which is already throttled during streaming.
+        public FlowDocument FormattedDocument => WorkplaceMarkdownDocumentFactory.Create(Content);
         public bool IsGeneratingStatus
         {
             get
@@ -75,30 +84,61 @@ namespace Malx_AI
 
         public string TimestampLabel => Timestamp.ToString("HH:mm:ss");
 
+        // Brushes are shared, frozen singletons: the old per-access `new SolidColorBrush(...)`
+        // allocated a fresh brush every time a card rendered or its bindings refreshed, which is
+        // constant churn while a role streams. Frozen brushes are also safely shareable across
+        // the UI. Backgrounds are warm-tinted to sit naturally on the app's notebook theme
+        // instead of the old cool blue-gray tints.
+        private static SolidColorBrush Frozen(byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
+
+        private static readonly SolidColorBrush UserCardBrush = Frozen(0x24, 0x22, 0x1E);
+        private static readonly SolidColorBrush ArchitectCardBrush = Frozen(0x1E, 0x1D, 0x26);
+        private static readonly SolidColorBrush BuilderCardBrush = Frozen(0x1B, 0x21, 0x1C);
+        private static readonly SolidColorBrush CriticCardBrush = Frozen(0x25, 0x20, 0x18);
+        private static readonly SolidColorBrush ErrorCardBrush = Frozen(0x26, 0x1A, 0x19);
+        private static readonly SolidColorBrush SandboxCardBrush = Frozen(0x19, 0x20, 0x22);
+        private static readonly SolidColorBrush MemoryCardBrush = Frozen(0x20, 0x1D, 0x26);
+        private static readonly SolidColorBrush SystemCardBrush = Frozen(0x21, 0x1F, 0x1D);
+
+        private static readonly SolidColorBrush UserAccentBrush = Frozen(0xC2, 0xC0, 0xB6);
+        private static readonly SolidColorBrush ArchitectAccentBrush = Frozen(0x8B, 0x8D, 0xF5);
+        private static readonly SolidColorBrush BuilderAccentBrush = Frozen(0x34, 0xD1, 0x78);
+        private static readonly SolidColorBrush CriticAccentBrush = Frozen(0xF5, 0xA6, 0x23);
+        private static readonly SolidColorBrush ErrorAccentBrush = Frozen(0xFF, 0x5C, 0x5C);
+        private static readonly SolidColorBrush SandboxAccentBrush = Frozen(0x22, 0xB8, 0xCE);
+        private static readonly SolidColorBrush WarningAccentBrush = Frozen(0xF9, 0x73, 0x16);
+        private static readonly SolidColorBrush MemoryAccentBrush = Frozen(0xA7, 0x8B, 0xFA);
+        private static readonly SolidColorBrush SystemAccentBrush = Frozen(0x8A, 0x82, 0x79);
+
         public SolidColorBrush CardBackground => Role switch
         {
-            "user" => AppBrushCache.Get("#1E2028"),
-            "architect" => AppBrushCache.Get("#1A1D2A"),
-            "builder" => AppBrushCache.Get("#1A2420"),
-            "critic" or "critic-final" => AppBrushCache.Get("#24201A"),
-            "error" => AppBrushCache.Get("#241A1A"),
-            "sandbox" => AppBrushCache.Get("#1A1D20"),
-            "warning" => AppBrushCache.Get("#24201A"),
-            "memory" => AppBrushCache.Get("#1D1A24"),
-            _ => AppBrushCache.Get("#30302E")
+            "user" => UserCardBrush,
+            "architect" => ArchitectCardBrush,
+            "builder" => BuilderCardBrush,
+            "critic" or "critic-final" => CriticCardBrush,
+            "error" => ErrorCardBrush,
+            "sandbox" => SandboxCardBrush,
+            "warning" => CriticCardBrush,
+            "memory" => MemoryCardBrush,
+            _ => SystemCardBrush
         };
 
         public SolidColorBrush AccentBrush => Role switch
         {
-            "user" => AppBrushCache.Get("#C2C0B6"),
-            "architect" => AppBrushCache.Get("#6366F1"),
-            "builder" => AppBrushCache.Get("#22C55E"),
-            "critic" or "critic-final" => AppBrushCache.Get("#F59E0B"),
-            "error" => AppBrushCache.Get("#FF3B3B"),
-            "sandbox" => AppBrushCache.Get("#06B6D4"),
-            "warning" => AppBrushCache.Get("#F97316"),
-            "memory" => AppBrushCache.Get("#A78BFA"),
-            _ => AppBrushCache.Get("#4B5563")
+            "user" => UserAccentBrush,
+            "architect" => ArchitectAccentBrush,
+            "builder" => BuilderAccentBrush,
+            "critic" or "critic-final" => CriticAccentBrush,
+            "error" => ErrorAccentBrush,
+            "sandbox" => SandboxAccentBrush,
+            "warning" => WarningAccentBrush,
+            "memory" => MemoryAccentBrush,
+            _ => SystemAccentBrush
         };
     }
 }

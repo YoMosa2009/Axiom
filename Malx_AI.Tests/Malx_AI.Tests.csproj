@@ -25,5 +25,7 @@
     <Compile Include="..\Malx_AI\LineDiff.cs" Link="Production\LineDiff.cs" />
     <Compile Include="..\Malx_AI\SmartContextCompaction.cs" Link="Production\SmartContextCompaction.cs" />
     <Compile Include="..\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />
+    <Compile Include="..\Malx_AI\Mcp\McpModels.cs" Link="Production\Mcp\McpModels.cs" />
+    <Compile Include="..\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
   </ItemGroup>
 </Project>

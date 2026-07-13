@@ -6,14 +6,20 @@ using System.Linq;
 namespace Malx_AI
 {
     /// <summary>
-    /// Central user-data locations under %LOCALAPPDATA%\Axiom. Persistence previously wrote
-    /// working-directory-relative paths ("ChatHistory", "axiom_data.db"), which for an installed
-    /// build resolve inside the install folder — an installer cleaning that folder wiped chats,
-    /// settings, and the API key, and Program Files is typically not writable at runtime.
-    /// The first reference to this class migrates any legacy working-directory data once.
+    /// Central user-data locations under %LOCALAPPDATA%.
+    /// <para>
+    /// <b>Debug / VS runs</b> use <c>Axiom-Dev</c> so day-to-day development never pollutes the
+    /// release profile that end users (and your published-zip smoke tests) get.
+    /// <b>Release / published builds</b> use <c>Axiom</c>.
+    /// </para>
+    /// Override with environment variable <c>AXIOM_DATA_DIR</c> for a fully isolated folder
+    /// (useful when smoke-testing a release zip without wiping your real release profile).
     /// </summary>
     public static class AppDataPaths
     {
+        /// <summary>Env var: absolute path for all app data (takes precedence over profile roots).</summary>
+        public const string DataDirEnvironmentVariable = "AXIOM_DATA_DIR";
+
         public static string Root { get; }
         public static string ChatHistory { get; }
         public static string Logs { get; }
@@ -22,9 +28,13 @@ namespace Malx_AI
         public static string EmbeddingModels { get; }
         public static string LocalModels { get; }
 
+        /// <summary>Human-readable profile name for diagnostics (dev / release / custom).</summary>
+        public static string ProfileLabel { get; }
+
         static AppDataPaths()
         {
-            Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Axiom");
+            Root = ResolveRoot(out string profileLabel);
+            ProfileLabel = profileLabel;
             ChatHistory = Path.Combine(Root, "ChatHistory");
             Logs = Path.Combine(Root, "logs");
             DatabaseFile = Path.Combine(Root, "axiom_data.db");
@@ -42,7 +52,18 @@ namespace Malx_AI
                 Directory.CreateDirectory(EmbeddingModels);
                 Directory.CreateDirectory(LocalModels);
                 Directory.CreateDirectory(WebView2UserData);
+
+#if DEBUG
+                // Bring existing developer data from the old shared %LocalAppData%\Axiom folder
+                // into Axiom-Dev once so switching profiles doesn't look like "data disappeared".
+                TryMigrateSharedAxiomIntoDevProfile();
+                // Old relative paths under bin/Debug — only for development.
                 MigrateLegacyWorkingDirectoryData();
+#else
+                // Release/published builds: do NOT scrape ChatHistory / DB out of the install
+                // folder. That path is how a poorly packed zip could ship the author's personal
+                // chats into every first launch on a machine. End-user data lives only in Root.
+#endif
             }
             catch (Exception ex)
             {
@@ -50,18 +71,75 @@ namespace Malx_AI
             }
         }
 
+        private static string ResolveRoot(out string profileLabel)
+        {
+            string? overrideDir = Environment.GetEnvironmentVariable(DataDirEnvironmentVariable);
+            if (!string.IsNullOrWhiteSpace(overrideDir))
+            {
+                profileLabel = "custom";
+                return Path.GetFullPath(overrideDir.Trim());
+            }
+
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+#if DEBUG
+            // Isolated from the release/end-user profile.
+            profileLabel = "dev";
+            return Path.Combine(localAppData, "Axiom-Dev");
+#else
+            profileLabel = "release";
+            return Path.Combine(localAppData, "Axiom");
+#endif
+        }
+
+#if DEBUG
+        private static void TryMigrateSharedAxiomIntoDevProfile()
+        {
+            try
+            {
+                string legacyShared = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Axiom");
+
+                if (!Directory.Exists(legacyShared) || PathsEqual(legacyShared, Root))
+                    return;
+
+                // Only migrate when the dev profile looks empty (first switch to Axiom-Dev).
+                bool devHasDb = File.Exists(DatabaseFile);
+                bool devHasChats = Directory.Exists(ChatHistory)
+                    && Directory.EnumerateFileSystemEntries(ChatHistory).Any();
+                if (devHasDb || devHasChats)
+                    return;
+
+                string legacyDb = Path.Combine(legacyShared, "axiom_data.db");
+                if (File.Exists(legacyDb) && !File.Exists(DatabaseFile))
+                {
+                    foreach (string legacyDbFile in Directory.GetFiles(legacyShared, "axiom_data.db*"))
+                        File.Copy(legacyDbFile, Path.Combine(Root, Path.GetFileName(legacyDbFile)), overwrite: false);
+                }
+
+                string legacyChat = Path.Combine(legacyShared, "ChatHistory");
+                if (Directory.Exists(legacyChat))
+                    CopyDirectoryIfMissing(legacyChat, ChatHistory);
+
+                // MCP tokens / connector state side-car
+                string legacyMcp = Path.Combine(legacyShared, "mcp_connector_state.dpapi");
+                string targetMcp = Path.Combine(Root, "mcp_connector_state.dpapi");
+                if (File.Exists(legacyMcp) && !File.Exists(targetMcp))
+                    File.Copy(legacyMcp, targetMcp, overwrite: false);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Dev profile migration error: {ex.Message}");
+            }
+        }
+
         /// <summary>
         /// Copies legacy data from the process working directory into the app-data root.
-        /// Existing target files are never overwritten, so the migration is idempotent and a
-        /// stale legacy copy can't clobber data the app has already written to the new location.
+        /// DEBUG only — Release must never pull personal data out of a publish folder.
         /// </summary>
         private static void MigrateLegacyWorkingDirectoryData()
         {
-            // The exe directory comes first: relative paths historically resolved against the
-            // working directory, which for normal launches (double-click, VS debug) IS the exe
-            // directory — that's where the authoritative data accumulated. The current working
-            // directory is only a fallback for launches that overrode it, and because existing
-            // target files are never overwritten, the exe-directory copy always wins conflicts.
             string[] legacyRoots = { AppContext.BaseDirectory, Directory.GetCurrentDirectory() };
 
             foreach (string legacyRoot in legacyRoots.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -71,9 +149,6 @@ namespace Malx_AI
 
                 try
                 {
-                    // SQLite database plus WAL/SHM sidecars — the family must come whole from ONE
-                    // root: pairing a .db from one location with a -wal from another corrupts it.
-                    // So the whole family is skipped once a database exists at the target.
                     if (!File.Exists(DatabaseFile))
                     {
                         foreach (string legacyDbFile in Directory.GetFiles(legacyRoot, "axiom_data.db*"))
@@ -90,6 +165,7 @@ namespace Malx_AI
                 }
             }
         }
+#endif
 
         // KV-cache snapshots are per-run caches the app purges and rebuilds anyway — copying
         // them (hundreds of MB) would stall the first launch for nothing.
@@ -130,5 +206,70 @@ namespace Malx_AI
                 Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar),
                 Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar),
                 StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Deletes the entire current profile root (chats, DB, connectors, WebView2 cache).
+        /// Caller must restart the app for a clean session. Returns false on failure.
+        /// </summary>
+        public static bool TryResetAllLocalData(out string? error)
+        {
+            error = null;
+            try
+            {
+                if (Directory.Exists(Root))
+                {
+                    // Best-effort close SQLite handles by renaming, then delete.
+                    string trash = Root + ".trash-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                    try
+                    {
+                        Directory.Move(Root, trash);
+                        Directory.Delete(trash, recursive: true);
+                    }
+                    catch
+                    {
+                        // Fallback: delete contents in place if rename fails (locked files).
+                        DeleteDirectoryContents(Root);
+                    }
+                }
+
+                Directory.CreateDirectory(Root);
+                Directory.CreateDirectory(ChatHistory);
+                Directory.CreateDirectory(Logs);
+                Directory.CreateDirectory(EmbeddingModels);
+                Directory.CreateDirectory(LocalModels);
+                Directory.CreateDirectory(WebView2UserData);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static void DeleteDirectoryContents(string directory)
+        {
+            if (!Directory.Exists(directory))
+                return;
+
+            foreach (string file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                    File.Delete(file);
+                }
+                catch
+                {
+                    // skip locked
+                }
+            }
+
+            foreach (string dir in Directory.GetDirectories(directory))
+            {
+                try { Directory.Delete(dir, recursive: true); }
+                catch { /* skip locked */ }
+            }
+        }
     }
 }

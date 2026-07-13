@@ -9,7 +9,7 @@ namespace Malx_AI
 {
     public partial class DefaultModelDownloadDialog : Window
     {
-        private readonly DefaultModelDownloadService _downloadService = new();
+        private readonly DefaultModelDownloadService _downloadService;
         private CancellationTokenSource? _downloadCancellation;
         private bool _isDownloading;
         private bool _closeAfterCancellation;
@@ -19,6 +19,13 @@ namespace Malx_AI
         public DefaultModelDownloadDialog()
         {
             InitializeComponent();
+            _downloadService = new DefaultModelDownloadService();
+            ModelDownloadRecommendation recommendation = _downloadService.Recommendation;
+            RecommendedModelNameText.Text = recommendation.DisplayName;
+            RecommendedModelDescriptionText.Text =
+                $"Download the recommended {recommendation.Manifest.ExpectedSizeBytes / 1024d / 1024d / 1024d:F1} GB GGUF model from Hugging Face. " +
+                "Axiom verifies its SHA-256 checksum, stores it in your local app data, and imports it automatically.";
+            RecommendationReasonText.Text = recommendation.SelectionReason;
         }
 
         private async void StartDownloadButton_Click(object sender, RoutedEventArgs e)

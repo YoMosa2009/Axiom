@@ -6,13 +6,13 @@ namespace Malx_AI
     public partial class WorkplaceView
     {
         // Reserve room for system instructions, tool observations, and the role's output instead
-        // of treating an advertised 131k window as 131k tokens of usable input.
+        // of treating Laguna M.1's advertised 256K window as fully usable input.
         private int GetCloudCouncilInputBudgetTokens()
         {
             int contextWindow = _openRouterChatService.GetApproximateContextWindowTokens(
                 OpenRouterChatService.WorkplaceCouncilDefaultModelId);
             const int outputAndSafetyReserve = 32768;
-            return Math.Clamp(contextWindow - outputAndSafetyReserve, 32768, 100000);
+            return Math.Clamp(contextWindow - outputAndSafetyReserve, 32768, 196608);
         }
 
         private int ResolveCloudCouncilRoleMaxTokens(CouncilRole role, CouncilRunContext? context)

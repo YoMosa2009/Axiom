@@ -73,4 +73,14 @@
     <Resource Include="Assets\Logo.cs" />
   </ItemGroup>
 
+  <!-- Never ship developer/user runtime data with published zips. -->
+  <ItemGroup>
+    <Content Update="ChatHistory\**\*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/axiom_data.db*" CopyToPublishDirectory="Never" />
+    <Content Update="**/mcp_connector_state*" CopyToPublishDirectory="Never" />
+    <None Update="ChatHistory\**\*" CopyToPublishDirectory="Never" />
+    <None Update="**/axiom_data.db*" CopyToPublishDirectory="Never" />
+    <None Update="**/mcp_connector_state*" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
 </Project>

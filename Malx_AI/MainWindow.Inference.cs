@@ -103,6 +103,7 @@ namespace Malx_AI
             public static string BuildPrompt(string systemPrompt, IReadOnlyList<(string Role, string Content)> turns, string userPrompt, bool enableThinking)
             {
                 var sb = new StringBuilder();
+                systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
                 string systemText = enableThinking
                     ? ThinkControlToken + "\n" + systemPrompt
                     : systemPrompt;
@@ -376,14 +377,15 @@ namespace Malx_AI
                 return;
 
             string lastModel = _database.GetUserFact("last_model");
-            string promptShown = _database.GetSetting("qwen3_first_run_prompt_shown");
+            string promptShown = _database.GetSetting("recommended_model_first_run_prompt_shown");
             if (!string.IsNullOrWhiteSpace(lastModel) || string.Equals(promptShown, "true", StringComparison.OrdinalIgnoreCase))
                 return;
 
+            ModelDownloadRecommendation recommendation = DefaultModelDownloadService.GetRecommendedModel();
             AddChatMessage(
                 "system",
-                $"First run: download and import {ModelInferenceProfiles.DefaultQwen3FileName} with the built-in downloader, or use Import AI Model to choose a GGUF manually. Approximate download size: 2.5 GB.");
-            _database.SaveSetting("qwen3_first_run_prompt_shown", "true");
+                $"First run: Axiom recommends {recommendation.DisplayName} for this machine. Download and import {Path.GetFileName(recommendation.Manifest.DestinationPath)} with the built-in downloader, or use Import AI Model to choose a GGUF manually. Approximate download size: {recommendation.Manifest.ExpectedSizeBytes / 1024d / 1024d / 1024d:F1} GB.");
+            _database.SaveSetting("recommended_model_first_run_prompt_shown", "true");
 
             RoutedEventHandler? openDownloadHandler = null;
             openDownloadHandler = async (_, _) =>
@@ -480,7 +482,7 @@ namespace Malx_AI
             _gemma4ModelPath = "";
 
             if (IsQwen3Model(modelPath))
-                _modelName = ModelInferenceProfiles.DefaultQwen3DisplayName;
+                _modelName = ModelInferenceProfiles.GetQwen3DisplayName(modelPath);
 
             if (_model != null)
             {
@@ -870,7 +872,7 @@ namespace Malx_AI
 
             _chatSession = new LLama.ChatSession(_executor);
             _chatSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
-            _chatSession.AddSystemMessage(systemPrompt);
+            _chatSession.AddSystemMessage(FoundationSystemPrompt.Apply(systemPrompt));
         }
 
         private static bool IsStrictChatMlModel(string modelName)
@@ -971,7 +973,7 @@ namespace Malx_AI
         private static string BuildStrictChatMlPrompt(string systemPrompt, IReadOnlyList<(string Role, string Content)>? historyTurns, string userPrompt)
         {
             var sb = new StringBuilder();
-            sb.Append("<|im_start|>system\n").Append(systemPrompt).Append("<|im_end|>\n");
+            sb.Append("<|im_start|>system\n").Append(FoundationSystemPrompt.Apply(systemPrompt)).Append("<|im_end|>\n");
 
             foreach (var (role, content) in historyTurns ?? [])
                 sb.Append("<|im_start|>").Append(role).Append('\n').Append(content).Append("<|im_end|>\n");
@@ -2693,7 +2695,7 @@ namespace Malx_AI
             {
                 var tempSession = new LLama.ChatSession(tempExecutor);
                 tempSession.WithHistoryTransform(new PromptTemplateTransformer(_model, withAssistant: true));
-                tempSession.AddSystemMessage(systemPrompt);
+                tempSession.AddSystemMessage(FoundationSystemPrompt.Apply(systemPrompt));
                 await InferenceBackendService.RunScopedExclusiveAsync(InferenceBackendService.NormalChatScope, () => Task.Run(async () =>
                 {
                     await foreach (var tokenPiece in tempSession.ChatAsync(new ChatHistory.Message(AuthorRole.User, userPrompt + BuildPriorComputationResultsBlock()), inferenceParams, token))
@@ -3833,6 +3835,9 @@ namespace Malx_AI
 
         private void InputBox_KeyDown(object sender, KeyEventArgs e)
         {
+            if (HandleMcpMentionPreviewKeyDown(e))
+                return;
+
             if (e.Key == Key.Enter || e.Key == Key.Return)
             {
                 if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
@@ -3852,6 +3857,7 @@ namespace Malx_AI
 
         private void InputBox_TextChanged(object sender, TextChangedEventArgs e)
         {
+            HandleMcpMentionInputTextChanged();
             UpdateUIState(!_isProcessing);
         }
 
@@ -3862,6 +3868,16 @@ namespace Malx_AI
 
         private void InputBox_LostFocus(object sender, RoutedEventArgs e)
         {
+            // Delay closing so list item clicks can complete.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (McpMentionPopup != null && McpMentionPopup.IsMouseOver)
+                    return;
+                if (InputBox != null && InputBox.IsKeyboardFocusWithin)
+                    return;
+                CloseMcpMentionPopup();
+            }), System.Windows.Threading.DispatcherPriority.Background);
+
             AnimateInputContainer(1.0, 1.0);
         }
 
@@ -4096,6 +4112,16 @@ namespace Malx_AI
                     {
                         _inferenceTimer.Stop();
                         NotifyNormalChatFailure("Generation stopped by user.");
+                        SaveCurrentChat();
+                    }
+                    catch (OpenRouterKeyExhaustedException keyExhausted)
+                    {
+                        _inferenceTimer.Stop();
+                        AddChatMessage("system", "⚠ " + keyExhausted.Message);
+                        _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsDailyLimit
+                            ? "OpenRouter API key: daily free usage exhausted."
+                            : "OpenRouter API key: out of credits.");
+                        _ = LoadOpenRouterUsageAsync();
                         SaveCurrentChat();
                     }
                     catch (Exception ex)

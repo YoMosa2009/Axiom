@@ -1132,9 +1132,10 @@ namespace Malx_AI
             string parentFolder,
             string? preferredFolderName,
             IProgress<string>? progress,
-            CancellationToken token)
+            CancellationToken token,
+            string? authenticatedCloneUrl = null)
         {
-            if (!LooksLikeRepositoryUrl(repositoryUrl))
+            if (!LooksLikeRepositoryUrl(repositoryUrl) && string.IsNullOrWhiteSpace(authenticatedCloneUrl))
                 throw new ArgumentException("Repository URL is not valid.", nameof(repositoryUrl));
             if (string.IsNullOrWhiteSpace(parentFolder))
                 throw new ArgumentException("Clone parent folder is empty.", nameof(parentFolder));
@@ -1147,6 +1148,11 @@ namespace Malx_AI
                 : preferredFolderName);
             string target = GetAvailableClonePath(parent, folderName);
 
+            // Prefer tokenized URL for private GitHub repos when Cloud Connectors GitHub is linked.
+            string cloneSource = !string.IsNullOrWhiteSpace(authenticatedCloneUrl)
+                ? authenticatedCloneUrl.Trim()
+                : repositoryUrl.Trim();
+
             var output = new StringBuilder();
             var psi = new ProcessStartInfo
             {
@@ -1158,7 +1164,7 @@ namespace Malx_AI
             };
             psi.ArgumentList.Add("clone");
             psi.ArgumentList.Add("--progress");
-            psi.ArgumentList.Add(repositoryUrl);
+            psi.ArgumentList.Add(cloneSource);
             psi.ArgumentList.Add(target);
 
             using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };

@@ -19,6 +19,19 @@ namespace Malx_AI
         public const string DefaultQwen3Sha256 = "ab27b9bfa375a178d6cba48f3ad892b94b7739659dcc7aae8058ce0ffed6b328";
         public const long DefaultQwen3FileSizeBytes = 2497280640;
 
+        public static string GetQwen3DisplayName(string? modelPath)
+        {
+            string fileName = Path.GetFileNameWithoutExtension(modelPath ?? string.Empty);
+            if (fileName.Contains("Qwen3-0.6B", StringComparison.OrdinalIgnoreCase))
+                return "Axiom Qwen3-0.6B";
+            if (fileName.Contains("Qwen3-1.7B", StringComparison.OrdinalIgnoreCase))
+                return "Axiom Qwen3-1.7B";
+            if (fileName.Contains("Qwen3-8B", StringComparison.OrdinalIgnoreCase))
+                return "Axiom Qwen3-8B";
+
+            return DefaultQwen3DisplayName;
+        }
+
         public static readonly InferenceParams Qwen3NonThinkingParams = new InferenceParams
         {
             MaxTokens = 2048,

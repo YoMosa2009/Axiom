@@ -144,6 +144,9 @@
                             <Button x:Name="ConnectWorkspaceFilesButton" Content="Pick Individual Files" Click="ConnectWorkspaceFilesButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
                             <Button x:Name="ConnectWorkspaceRepositoryButton" Content="Clone GitHub/Repo" Click="ConnectWorkspaceRepositoryButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
                             <Button x:Name="CloneWorkspaceRepositoryButton" Content="Clone Repo to Folder" Click="CloneWorkspaceRepositoryButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                            <Button x:Name="ConnectGitHubAccountButton" Content="Connect GitHub Account" Click="ConnectGitHubAccountButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"
+                                    ToolTip="Sign in with GitHub so council can use full github_* tools and private clones work without extra prompts"/>
+                            <TextBlock x:Name="GitHubAccountStatusBlock" Text="GitHub: not connected" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
                             <TextBlock x:Name="ConnectedWorkspaceDetailBlock" Text="No code connected yet." FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
                             <TextBlock x:Name="CodebaseReviewHintBlock" Text="Step 3: ask for a change. Proposed edits appear in Project Canvas for review." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,10,0,6" TextWrapping="Wrap"/>
                             <CheckBox x:Name="CodebaseAutoApplyToggle" Content="Auto apply valid patches" Margin="0,0,0,4" Checked="CodebaseAutoApplyToggle_Changed" Unchecked="CodebaseAutoApplyToggle_Changed" IsEnabled="False" ToolTip="When enabled, valid codebase patches are applied automatically after Builder produces them."/>
@@ -276,27 +279,45 @@
         <!-- CENTER — Header + Chat + Input              -->
         <!-- ═══════════════════════════════════════════ -->
         <DockPanel Grid.Column="1" Background="{StaticResource NotebookBackgroundBrush}">
-            <!-- Header bar -->
-            <Border DockPanel.Dock="Top" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="0,0,0,1" Padding="24,14" Background="{StaticResource NotebookSurfaceBrush}">
+            <!-- Header bar: title + status chips. Chips replace the old dot-separated status
+                 string, which read as one long mushed line once several statuses were active. -->
+            <Border DockPanel.Dock="Top" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="0,0,0,1" Padding="24,12" Background="{StaticResource NotebookSurfaceBrush}">
+                <Border.Resources>
+                    <Style x:Key="HeaderStatusChipStyle" TargetType="Border">
+                        <Setter Property="Background" Value="{StaticResource NotebookBackgroundBrush}"/>
+                        <Setter Property="BorderBrush" Value="{StaticResource NotebookBorderBrush}"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="CornerRadius" Value="9"/>
+                        <Setter Property="Padding" Value="8,3"/>
+                        <Setter Property="Margin" Value="0,0,6,0"/>
+                        <Setter Property="VerticalAlignment" Value="Center"/>
+                    </Style>
+                </Border.Resources>
                 <DockPanel>
                     <StackPanel>
-                        <TextBlock Text="Axiom Workplace" FontSize="18" FontWeight="SemiBold"/>
-                        <WrapPanel Orientation="Horizontal" Margin="0,4,0,0">
-                            <TextBlock x:Name="ContextInfoBlock" Text="Context: Ready" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
-                            <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
-                            <TextBlock x:Name="HardwareInfoBlock" Text="Adaptive mode" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
-                            <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
-                            <TextBlock x:Name="RelayStatusBlock" Text="Relay: Idle" FontSize="10" Foreground="{StaticResource PrimaryAccentBrush}"/>
-                            <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
-                            <Border x:Name="TaskTypeBadge" Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="6,2" Margin="0,0,8,0">
+                        <DockPanel Margin="0,0,0,7">
+                            <TextBlock Text="Axiom Workplace" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="PipelineProgressBlock" Text="" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="12,1,0,0"/>
+                        </DockPanel>
+                        <WrapPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource HeaderStatusChipStyle}" BorderBrush="{StaticResource PrimaryAccentBrush}">
+                                <TextBlock x:Name="RelayStatusBlock" Text="Relay: Idle" FontSize="10" Foreground="{StaticResource PrimaryAccentBrush}"/>
+                            </Border>
+                            <Border x:Name="TaskTypeBadge" Style="{StaticResource HeaderStatusChipStyle}">
                                 <TextBlock x:Name="TaskTypeBadgeText" Text="General Task" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
                             </Border>
-                            <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
-                            <TextBlock x:Name="MemoryFocusBlock" Text="Memory: None" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
-                            <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
-                            <TextBlock x:Name="ContextPressureBlock" Text="Context pressure: --" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
-                            <TextBlock Text="  •  " FontSize="10" Foreground="{StaticResource NotebookBorderBrush}"/>
-                            <TextBlock x:Name="PipelineProgressBlock" Text="" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource PrimaryAccentBrush}"/>
+                            <Border Style="{StaticResource HeaderStatusChipStyle}">
+                                <TextBlock x:Name="ContextInfoBlock" Text="Context: Ready" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                            </Border>
+                            <Border Style="{StaticResource HeaderStatusChipStyle}">
+                                <TextBlock x:Name="HardwareInfoBlock" Text="Adaptive mode" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                            </Border>
+                            <Border Style="{StaticResource HeaderStatusChipStyle}">
+                                <TextBlock x:Name="MemoryFocusBlock" Text="Memory: None" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                            </Border>
+                            <Border Style="{StaticResource HeaderStatusChipStyle}" Margin="0">
+                                <TextBlock x:Name="ContextPressureBlock" Text="Context pressure: --" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                            </Border>
                         </WrapPanel>
                     </StackPanel>
                 </DockPanel>
@@ -343,7 +364,7 @@
                     <Border x:Name="RefinementModeBanner" Visibility="Collapsed" Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,8">
                         <TextBlock Text="Refinement Mode" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource PrimaryAccentBrush}" TextTrimming="CharacterEllipsis"/>
                     </Border>
-                    <Border Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="10" Margin="0,0,0,10">
+                    <Border Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12,9" Margin="0,0,0,8">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -469,7 +490,7 @@
                                      Height="72" MinHeight="72" MaxHeight="72"/>
                         </DockPanel>
                     </Border>
-                    <TextBlock Text="Architect/Critic in chat  •  Builder in Project Canvas" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                    <TextBlock Text="Architect and Critic reply in chat — the Builder's deliverable renders in the Project Canvas" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="2,0,0,0"/>
                 </StackPanel>
             </Border>
 
@@ -518,14 +539,14 @@
                     Opacity="0"
                     Padding="14,5,14,5"
                     Background="#171615"
-                    BorderBrush="#FF3B3B"
+                    BorderBrush="#B8924A"
                     BorderThickness="0,0,0,1">
                 <DockPanel>
-                    <!-- Left: animated pulse dot -->
+                    <!-- Left: animated pulse dot (accent gold — this is activity, not an error) -->
                     <Border x:Name="AgenticPulseDot"
                             Width="7" Height="7"
                             CornerRadius="4"
-                            Background="#FF3B3B"
+                            Background="#B8924A"
                             VerticalAlignment="Center"
                             Margin="0,0,8,0"
                             DockPanel.Dock="Left"/>
@@ -558,7 +579,7 @@
             </Border>
 
             <!-- Chat display (fills remaining space — shows only user/architect/builder/critic/sandbox) -->
-            <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{StaticResource NotebookBackgroundBrush}" Padding="12,12" PreviewMouseWheel="ChatScrollViewer_PreviewMouseWheel">
+            <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{StaticResource NotebookBackgroundBrush}" Padding="16,14" PreviewMouseWheel="ChatScrollViewer_PreviewMouseWheel">
                 <StackPanel>
                 <Button x:Name="ShowEarlierWorkplaceMessagesButton"
                         Content="Show earlier messages"
@@ -573,37 +594,49 @@
                 <ItemsControl x:Name="ChatCardsList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Margin="0,2" Padding="12,7" CornerRadius="10"
+                            <!-- Card: soft surface with a slim rounded role-accent rail on the left.
+                                 Cards get real vertical separation and inner breathing room so the
+                                 relay reads as distinct turns instead of a stacked wall of text. -->
+                            <Border Margin="0,5" CornerRadius="12"
                                     Background="{Binding CardBackground}"
-                                    BorderBrush="{Binding AccentBrush}" BorderThickness="3,0,0,0">
-                                <StackPanel>
-                                    <DockPanel Margin="0,0,0,3">
-                                        <TextBlock Text="{Binding RoleLabel}" FontSize="10" FontWeight="SemiBold" Foreground="{Binding AccentBrush}"/>
-                                        <Button x:Name="CopyWorkplaceMessageButton" Content="Copy" Click="CopyWorkplaceMessage_Click" Tag="{Binding}" FontSize="9" Padding="6,1" Margin="0,0,6,0" DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}"/>
-                                        <TextBlock Text="{Binding TimestampLabel}" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" HorizontalAlignment="Right" DockPanel.Dock="Right"/>
-                                    </DockPanel>
-                                    <!-- Full message shown (no inner scrollbar). Slightly smaller font
-                                         and tightened line spacing keep each response compact so it
-                                         takes less vertical space in the chat column. -->
-                                    <local:ShimmerTextBlock x:Name="WorkplaceCardGenerationStatusText"
-                                                            Text="{Binding GenerationStatusText}"
-                                                            FontSize="12"
-                                                            FontWeight="SemiBold"
-                                                            BaseColor="#A1A1AA"
-                                                            HighlightColor="#FFFFFF"
-                                                            ShimmerDurationSeconds="2"
-                                                            TextTrimming="CharacterEllipsis"
-                                                            Visibility="Collapsed"/>
-                                    <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText"
-                                                              Document="{Binding FormattedDocument}"
-                                                              Background="Transparent"
-                                                              BorderThickness="0"
-                                                              Padding="0"
-                                                              IsToolBarVisible="False"
-                                                              VerticalScrollBarVisibility="Disabled"
-                                                              HorizontalScrollBarVisibility="Disabled"
-                                                              IsTabStop="False"/>
-                                </StackPanel>
+                                    BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Width="3" CornerRadius="2" Background="{Binding AccentBrush}" Margin="10,12,0,12"/>
+                                    <StackPanel Grid.Column="1" Margin="12,10,14,11">
+                                        <DockPanel Margin="0,0,0,6">
+                                            <TextBlock Text="{Binding RoleLabel}" FontSize="11" FontWeight="SemiBold" Foreground="{Binding AccentBrush}" VerticalAlignment="Center"/>
+                                            <Button x:Name="CopyWorkplaceMessageButton" Content="Copy" Click="CopyWorkplaceMessage_Click" Tag="{Binding}" FontSize="9" Padding="8,2" DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding TimestampLabel}" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" HorizontalAlignment="Right" DockPanel.Dock="Right" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                        </DockPanel>
+                                        <local:ShimmerTextBlock x:Name="WorkplaceCardGenerationStatusText"
+                                                                Text="{Binding GenerationStatusText}"
+                                                                FontSize="12"
+                                                                FontWeight="SemiBold"
+                                                                BaseColor="#A1A1AA"
+                                                                HighlightColor="#FFFFFF"
+                                                                ShimmerDurationSeconds="2"
+                                                                TextTrimming="CharacterEllipsis"
+                                                                Visibility="Collapsed"/>
+                                        <!-- Native markdown rendering (headings, lists, code) inside the
+                                             redesigned card layout. -->
+                                        <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText"
+                                                                  Document="{Binding FormattedDocument}"
+                                                                  Background="Transparent"
+                                                                  BorderThickness="0"
+                                                                  Padding="0"
+                                                                  FontSize="12.5"
+                                                                  FontFamily="Segoe UI"
+                                                                  Foreground="{StaticResource NotebookTextBrush}"
+                                                                  IsToolBarVisible="False"
+                                                                  VerticalScrollBarVisibility="Disabled"
+                                                                  HorizontalScrollBarVisibility="Disabled"
+                                                                  IsTabStop="False"/>
+                                    </StackPanel>
+                                </Grid>
                             </Border>
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding Role}" Value="user">

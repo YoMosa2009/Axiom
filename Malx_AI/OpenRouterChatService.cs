@@ -57,6 +57,23 @@ namespace Malx_AI
         }
     }
 
+    // Thrown when the API key itself has no usage left — out of credits (402) or past the
+    // free-tier daily request cap. Distinct from a transient 429 throttle: every free model
+    // shares the same key quota, so retrying or switching models cannot help until the quota
+    // resets or the user adds credits. Callers surface this as a user-facing notification.
+    public sealed class OpenRouterKeyExhaustedException : Exception
+    {
+        public bool IsDailyLimit { get; }
+
+        public OpenRouterKeyExhaustedException(bool isDailyLimit)
+            : base(isDailyLimit
+                ? "Your OpenRouter API key has used up its free daily request quota. Cloud responses will resume when the quota resets (midnight UTC), or add credits at openrouter.ai to raise the limit."
+                : "Your OpenRouter API key is out of credits. Add credits at openrouter.ai or switch to a local model to continue.")
+        {
+            IsDailyLimit = isDailyLimit;
+        }
+    }
+
     public sealed record OpenRouterInferenceSettingsSnapshot(
         double Temperature,
         double TopP,
@@ -114,8 +131,7 @@ namespace Malx_AI
             "python", "python 3", "main.py", "online python compiler", "python compiler", "python interpreter"
         ];
         // Model IDs below were selected against the most popular free models being permanently
-        // rate-limited (429) or down (503) on OpenRouter's free tier. The models chosen here were
-        // verified live to respond reliably with clean content. Each profile lists multiple working
+        // rate-limited (429) or down (503) on OpenRouter's free tier. Each profile lists multiple
         // free models as alternatives so availability resolution can pick a live one.
         private static readonly OpenRouterModelProfile[] SupportedModelProfiles =
         [
@@ -149,7 +165,7 @@ namespace Malx_AI
             new(
                 AliasId: WorkplaceCouncilDefaultModelId,
                 AliasLabel: WorkplaceCouncilDefaultModelLabel,
-                PrimaryApiModelId: "qwen/qwen3-coder:free",
+                PrimaryApiModelId: "poolside/laguna-m.1:free",
                 AlternativeApiModelIds:
                 [
                     "nvidia/nemotron-3-super-120b-a12b:free",
@@ -157,7 +173,7 @@ namespace Malx_AI
                     "google/gemma-4-26b-a4b-it:free"
                 ],
                 IsCodeSpecialized: true,
-                ApproximateContextWindowTokens: 131072)
+                ApproximateContextWindowTokens: 262144)
         ];
         private const string AuthKeyUrl = "https://openrouter.ai/api/v1/auth/key";
         private const string KeyInfoUrl = "https://openrouter.ai/api/v1/key";
@@ -249,7 +265,7 @@ namespace Malx_AI
         public const string Hepha1ModelId = "hepha-1";
         public const string Hepha1ModelLabel = "Hepha 1";
         public const string WorkplaceCouncilDefaultModelId = "workplace-gpt-oss-20b";
-        public const string WorkplaceCouncilDefaultModelLabel = "Qwen3 Coder 480B (free)";
+        public const string WorkplaceCouncilDefaultModelLabel = "Poolside: Laguna M.1 (free)";
         public const string DefaultModelId = Eidos1ModelId;
         public const string DefaultModelLabel = Eidos1ModelLabel;
         public static string WorkplaceCouncilDisplayLabel => SupportedModelProfiles
@@ -574,7 +590,8 @@ namespace Malx_AI
             bool thinkingEnabled = false,
             string modelId = DefaultModelId,
             IReadOnlyList<OpenRouterToolDefinition>? tools = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            bool allowModelFallback = true)
         {
             return await SendMessageInternalAsync(
                 messages,
@@ -583,7 +600,8 @@ namespace Malx_AI
                 modelId,
                 tools,
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                cancellationToken);
+                cancellationToken,
+                allowModelFallback: allowModelFallback);
         }
 
         public async Task<OpenRouterChatResponse> SendConversationStreamAsync(
@@ -595,7 +613,8 @@ namespace Malx_AI
             Action<string>? onToken = null,
             CancellationToken cancellationToken = default,
             int? maxTokensOverride = null,
-            IReadOnlyList<string>? stopSequences = null)
+            IReadOnlyList<string>? stopSequences = null,
+            bool allowModelFallback = true)
         {
             return await SendMessageStreamInternalAsync(
                 messages,
@@ -608,7 +627,8 @@ namespace Malx_AI
                 cancellationToken,
                 null,
                 maxTokensOverride,
-                stopSequences);
+                stopSequences,
+                allowModelFallback: allowModelFallback);
         }
 
         public async Task<bool> ValidateModelAvailabilityAsync(string modelId, CancellationToken cancellationToken = default)
@@ -688,7 +708,8 @@ namespace Malx_AI
             IReadOnlyList<OpenRouterToolDefinition>? tools,
             HashSet<string> attemptedModelIds,
             CancellationToken cancellationToken,
-            string? originalModelLabel = null)
+            string? originalModelLabel = null,
+            bool allowModelFallback = true)
         {
             if (!HasValidKey)
                 throw new InvalidOperationException("A valid OpenRouter API key is required.");
@@ -696,6 +717,9 @@ namespace Malx_AI
             if (_availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
+            // Non-negotiable behavioral foundation for every cloud model, applied at the request
+            // choke point so no caller-supplied prompt can omit it.
+            systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
             OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
             const int maxCompletionTokens = 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
@@ -754,10 +778,16 @@ namespace Malx_AI
                 if (finalStatusCode == HttpStatusCode.TooManyRequests)
                     LastTestFailureReason = OpenRouterConnectionTestFailureReason.RateLimited;
 
+                // Key-quota exhaustion (out of credits / past the daily free cap) affects every
+                // model on this key, so model fallback cannot help — surface it immediately as a
+                // typed, user-facing condition.
+                if (IsKeyUsageExhausted(finalStatusCode, responseBody))
+                    throw new OpenRouterKeyExhaustedException(finalStatusCode == HttpStatusCode.TooManyRequests);
+
                 if (ContainsIgnoredProvidersMessage(responseBody) || IsTransientProviderFailure(finalStatusCode, responseBody))
                 {
                     LastTestFailureReason = OpenRouterConnectionTestFailureReason.ProviderUnavailable;
-                    if (ShouldRetryWithFallback(finalStatusCode, effectiveModelId))
+                    if (allowModelFallback && ShouldRetryWithFallback(finalStatusCode, effectiveModelId))
                     {
                         string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
@@ -767,7 +797,7 @@ namespace Malx_AI
                         }
                     }
 
-                    // Fallback chain exhausted. Treat a 429 as a typed, retryable throttle.
+                    // Fallback chain exhausted (or disabled). Treat a 429 as a typed, retryable throttle.
                     if (finalStatusCode == HttpStatusCode.TooManyRequests)
                         throw new OpenRouterRateLimitedException(displayModelLabel, ParseRetryAfterSeconds(null, responseBody));
 
@@ -776,7 +806,7 @@ namespace Malx_AI
                         : $"OpenRouter provider for {displayModelLabel} is temporarily unavailable. Try again shortly or switch models.");
                 }
 
-                if (ShouldRetryWithFallback(finalStatusCode, effectiveModelId))
+                if (allowModelFallback && ShouldRetryWithFallback(finalStatusCode, effectiveModelId))
                 {
                     string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
                     if (!string.IsNullOrWhiteSpace(fallbackModelId))
@@ -836,7 +866,9 @@ namespace Malx_AI
             CancellationToken cancellationToken,
             string? originalModelLabel = null,
             int? maxTokensOverride = null,
-            IReadOnlyList<string>? stopSequences = null)
+            IReadOnlyList<string>? stopSequences = null,
+            bool allowModelFallback = true,
+            int sameModelStreamRetries = 0)
         {
             if (!HasValidKey)
                 throw new InvalidOperationException("A valid OpenRouter API key is required.");
@@ -844,6 +876,9 @@ namespace Malx_AI
             if (_availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
+            // Non-negotiable behavioral foundation for every cloud model, applied at the request
+            // choke point so no caller-supplied prompt can omit it.
+            systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
             OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
             int maxCompletionTokens = maxTokensOverride is int tokenLimit && tokenLimit > 0 ? tokenLimit : 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
@@ -901,10 +936,16 @@ namespace Malx_AI
                 if (response.StatusCode == HttpStatusCode.TooManyRequests)
                     LastTestFailureReason = OpenRouterConnectionTestFailureReason.RateLimited;
 
+                // Key-quota exhaustion (out of credits / past the daily free cap) affects every
+                // model on this key, so model fallback cannot help — surface it immediately as a
+                // typed, user-facing condition.
+                if (IsKeyUsageExhausted(response.StatusCode, retryBody))
+                    throw new OpenRouterKeyExhaustedException(response.StatusCode == HttpStatusCode.TooManyRequests);
+
                 if (ContainsIgnoredProvidersMessage(retryBody) || IsTransientProviderFailure(response.StatusCode, retryBody))
                 {
                     LastTestFailureReason = OpenRouterConnectionTestFailureReason.ProviderUnavailable;
-                    if (ShouldRetryWithFallback(response.StatusCode, effectiveModelId))
+                    if (allowModelFallback && ShouldRetryWithFallback(response.StatusCode, effectiveModelId))
                     {
                         string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
@@ -914,8 +955,8 @@ namespace Malx_AI
                         }
                     }
 
-                    // Fallback chain exhausted. A 429 here is a transient throttle (free-tier models all
-                    // share the limit window), so surface it as a typed, retryable exception.
+                    // Fallback chain exhausted (or disabled). A 429 here is a transient throttle (free-tier
+                    // models all share the limit window), so surface it as a typed, retryable exception.
                     if (response.StatusCode == HttpStatusCode.TooManyRequests)
                         throw new OpenRouterRateLimitedException(displayModelLabel, ParseRetryAfterSeconds(response, retryBody));
 
@@ -1101,19 +1142,42 @@ namespace Malx_AI
                         : streamStalled ? "StreamStalled"
                         : providerStreamError.Length > 0 ? "MidStreamError"
                         : "EmptyCompletion";
-                    string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
-                    await BackendLogService.LogEventAsync(
-                        "OpenRouterStreamDegeneration",
-                        $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}");
-                    if (!string.IsNullOrWhiteSpace(fallbackModelId))
-                        return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
 
-                    if (streamStalled)
-                        throw new InvalidOperationException($"{displayModelLabel} stopped responding mid-stream and no fallback model is available. Try again shortly or switch models.");
-                    if (providerStreamError.Length > 0)
-                        throw new InvalidOperationException($"OpenRouter provider for {displayModelLabel} failed mid-stream: {Truncate(providerStreamError, 200)}");
-                    // Pad/empty completions keep the previous behavior of returning what
-                    // accumulated rather than failing the whole turn.
+                    if (!allowModelFallback)
+                    {
+                        // Fallback disabled (council pipeline): a mid-task model swap breaks role
+                        // continuity, so recover on the SAME model — one in-place retry — and
+                        // otherwise fail loudly for the caller's own retry logic.
+                        await BackendLogService.LogEventAsync(
+                            "OpenRouterStreamDegeneration",
+                            $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:disabled\nSameModelRetry:{sameModelStreamRetries}");
+                        if (sameModelStreamRetries < 1)
+                        {
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, allowModelFallback: false, sameModelStreamRetries: sameModelStreamRetries + 1);
+                        }
+
+                        if (streamStalled)
+                            throw new InvalidOperationException($"{displayModelLabel} stopped responding mid-stream. Try again shortly.");
+                        if (providerStreamError.Length > 0)
+                            throw new InvalidOperationException($"OpenRouter provider for {displayModelLabel} failed mid-stream: {Truncate(providerStreamError, 200)}");
+                        // Pad/empty completions return what accumulated rather than failing the turn.
+                    }
+                    else
+                    {
+                        string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
+                        await BackendLogService.LogEventAsync(
+                            "OpenRouterStreamDegeneration",
+                            $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}");
+                        if (!string.IsNullOrWhiteSpace(fallbackModelId))
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+
+                        if (streamStalled)
+                            throw new InvalidOperationException($"{displayModelLabel} stopped responding mid-stream and no fallback model is available. Try again shortly or switch models.");
+                        if (providerStreamError.Length > 0)
+                            throw new InvalidOperationException($"OpenRouter provider for {displayModelLabel} failed mid-stream: {Truncate(providerStreamError, 200)}");
+                        // Pad/empty completions keep the previous behavior of returning what
+                        // accumulated rather than failing the whole turn.
+                    }
                 }
                 else if ((streamStalled || providerStreamError.Length > 0) && !noUsableContent)
                 {
@@ -2131,6 +2195,26 @@ namespace Malx_AI
         {
             return !string.IsNullOrWhiteSpace(responseBody)
                 && responseBody.Contains("All providers have been ignored", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Distinguishes "the key itself has no usage left" from a transient per-model throttle.
+        // 402 always means the account is out of credits. A 429 means quota exhaustion only when
+        // OpenRouter's body names the per-day free-model limit (per-minute throttles recover on
+        // their own and are handled by the retry/fallback paths instead).
+        private static bool IsKeyUsageExhausted(HttpStatusCode statusCode, string responseBody)
+        {
+            if (statusCode == HttpStatusCode.PaymentRequired)
+                return true;
+
+            if (statusCode != HttpStatusCode.TooManyRequests || string.IsNullOrWhiteSpace(responseBody))
+                return false;
+
+            return responseBody.Contains("free-models-per-day", StringComparison.OrdinalIgnoreCase)
+                || responseBody.Contains("per-day", StringComparison.OrdinalIgnoreCase)
+                || responseBody.Contains("daily limit", StringComparison.OrdinalIgnoreCase)
+                || responseBody.Contains("daily quota", StringComparison.OrdinalIgnoreCase)
+                || (responseBody.Contains("quota", StringComparison.OrdinalIgnoreCase)
+                    && responseBody.Contains("exceeded", StringComparison.OrdinalIgnoreCase));
         }
 
         private bool ShouldRetryWithFallback(HttpStatusCode statusCode, string modelId)

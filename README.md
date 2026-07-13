@@ -109,7 +109,7 @@ Cloud mode (via OpenRouter, using your own API key) adds two model aliases plus 
 |---|---|---|
 | **Eidos 1** | Gemma 4 26B | General-purpose reasoning |
 | **Hepha 1** | Nemotron 3 Super 120B | Code-specialized |
-| **Workplace Council (default)** | Qwen3 Coder 480B | Used by the Architect/Builder/Critic pipeline |
+| **Workplace Council (default)** | Poolside Laguna M.1 | Used by the Architect/Builder/Critic pipeline |
 
 Use cloud mode from **Settings → Cloud AI** after inserting your OpenRouter API key.
 

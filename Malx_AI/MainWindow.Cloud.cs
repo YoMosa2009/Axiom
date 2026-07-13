@@ -25,6 +25,7 @@ using LLama;
 using LLama.Common;
 using LLama.Sampling;
 using LLama.Transformers;
+using Malx_AI.Mcp;
 
 namespace Malx_AI
 {
@@ -311,6 +312,10 @@ namespace Malx_AI
             UpdateUIState(!_isProcessing);
             UpdateTokenUsageIndicator();
             UpdateOpenRouterUsageVisibility();
+            RefreshMcpConnectorsUi();
+            UpdateInputMcpMentionHighlight();
+            if (!_cloudModeActive)
+                CloseMcpMentionPopup();
         }
 
         private void RefreshCloudModelSelectionUi(Button? button, string modelId, bool hasValidKey)
@@ -361,7 +366,7 @@ namespace Malx_AI
 
             string currentText = usageTextBlock?.Text ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(currentText)
-                && !string.Equals(currentText, "0 / 0 requests", StringComparison.Ordinal)
+                && !string.Equals(currentText, "No usage data yet", StringComparison.Ordinal)
                 && !string.Equals(currentText, "Unable to fetch usage. Check the key.", StringComparison.Ordinal))
             {
                 UpdateOpenRouterUsageVisibility();
@@ -411,19 +416,27 @@ namespace Malx_AI
                         usageTextBlock.Text = "Free tier — no request cap on this key";
                     if (usageFillBar != null)
                         usageFillBar.Background = GetOpenRouterUsageBrush(0);
+                    SetOpenRouterUsageHint(string.Empty);
                     UpdateOpenRouterUsageProgressBar();
                     return;
                 }
 
                 int used = Math.Max(0, keyInfo.RequestsUsed);
                 int limit = Math.Max(1, keyInfo.RequestsLimit);
+                int remaining = Math.Max(0, limit - used);
                 _openRouterUsagePercent = Math.Clamp(used * 100d / limit, 0d, 100d);
 
                 if (usageTextBlock != null)
-                    usageTextBlock.Text = $"{used} / {limit} requests";
+                    usageTextBlock.Text = $"{used} / {limit} used  ·  {remaining} left";
 
                 if (usageFillBar != null)
                     usageFillBar.Background = GetOpenRouterUsageBrush(_openRouterUsagePercent);
+
+                SetOpenRouterUsageHint(remaining == 0
+                    ? "⚠ Daily quota exhausted — cloud requests will fail until it resets (midnight UTC)."
+                    : _openRouterUsagePercent >= 85d
+                        ? "Running low on daily requests."
+                        : string.Empty);
 
                 UpdateOpenRouterUsageProgressBar();
             }
@@ -434,6 +447,17 @@ namespace Malx_AI
                     refreshButton.IsEnabled = true;
                 UpdateOpenRouterUsageVisibility();
             }
+        }
+
+        private void SetOpenRouterUsageHint(string hint)
+        {
+            if (FindName("OpenRouterUsageHintText") is not TextBlock hintText)
+                return;
+
+            hintText.Text = hint ?? string.Empty;
+            hintText.Visibility = string.IsNullOrWhiteSpace(hint) ? Visibility.Collapsed : Visibility.Visible;
+            hintText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(
+                hint != null && hint.StartsWith("⚠", StringComparison.Ordinal) ? "#FF6B6B" : "#B0A89F"));
         }
 
         private void OpenRouterChatService_TokenUsageRecorded(OpenRouterTokenUsage usage)
@@ -480,7 +504,7 @@ namespace Malx_AI
             _openRouterUsagePercent = 0;
 
             if (usageTextBlock != null)
-                usageTextBlock.Text = "0 / 0 requests";
+                usageTextBlock.Text = "No usage data yet";
 
             if (usageFillBar != null)
                 usageFillBar.Background = GetOpenRouterUsageBrush(0);
@@ -488,6 +512,7 @@ namespace Malx_AI
             if (refreshButton != null)
                 refreshButton.IsEnabled = true;
 
+            SetOpenRouterUsageHint(string.Empty);
             UpdateOpenRouterUsageProgressBar();
             UpdateOpenRouterUsageVisibility();
         }
@@ -526,7 +551,8 @@ namespace Malx_AI
             if (usageFillBar == null || usageTrack == null)
                 return;
 
-            double trackWidth = Math.Max(0, usageTrack.ActualWidth);
+            // The fill sits inside the pill's 1px border with a 1px margin on each side.
+            double trackWidth = Math.Max(0, usageTrack.ActualWidth - 4);
             usageFillBar.Width = trackWidth <= 0
                 ? 0
                 : trackWidth * (_openRouterUsagePercent / 100d);
@@ -679,10 +705,10 @@ namespace Malx_AI
                 : normalized[..maxLength];
         }
 
-        private static IReadOnlyList<OpenRouterToolDefinition> BuildCloudToolDefinitions()
+        private IReadOnlyList<OpenRouterToolDefinition> BuildCloudToolDefinitions(IReadOnlyCollection<string>? mentionedMcpHandles = null)
         {
-            return
-            [
+            var tools = new List<OpenRouterToolDefinition>
+            {
                 new OpenRouterToolDefinition(
                     "web_search",
                     "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets. Use this for source-backed facts and when conversation context is needed to answer correctly. Include relevant conversation context in the query: resolve pronouns and phrases like 'the movie', 'that model', or 'this article' to the actual title, product, person, or topic from prior turns.",
@@ -734,7 +760,26 @@ namespace Malx_AI
                         ["required"] = new JsonArray("expression"),
                         ["additionalProperties"] = false
                     })
-            ];
+            };
+
+            // MCP / Cloud Connectors: only when Cloud Mode is active (this method is cloud-only)
+            // and at least one connector is connected. @mentions focus those connectors in the system
+            // prompt; tools for all connected connectors remain available for seamless use.
+            if (_mcpConnectorService != null && _cloudModeActive)
+            {
+                foreach (McpToolDefinition mcpTool in _mcpConnectorService.GetActiveTools(mentionedHandles: null))
+                {
+                    tools.Add(new OpenRouterToolDefinition(
+                        mcpTool.Name,
+                        mcpTool.Description,
+                        mcpTool.ParametersSchema));
+                }
+
+                // If the user @mentioned disconnected connectors only, still no MCP tools — fine.
+                _ = mentionedMcpHandles;
+            }
+
+            return tools;
         }
 
         private async Task<CloudToolCallLoopResult> RunCloudToolCallingLoopAsync(
@@ -752,7 +797,8 @@ namespace Malx_AI
             // ImageDataUrls: attached images ride the same payload message as multipart content.
             messages.Add(new OpenRouterMessage("user", userMsg, PreserveFullText: true, ImageDataUrls: imageDataUrls));
 
-            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions();
+            IReadOnlyList<string> mentionedMcpHandles = ResolveMentionedMcpHandles(userMsg);
+            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions(mentionedMcpHandles);
             var reasoningParts = new List<string>();
             int toolCallCount = 0;
             bool pythonSessionStarted = false;
@@ -943,6 +989,31 @@ namespace Malx_AI
                     };
                 }
 
+                if (_mcpConnectorService != null
+                    && _cloudModeActive
+                    && _mcpConnectorService.TryResolveTool(normalizedName, out McpConnectorInfo? mcpConnector)
+                    && mcpConnector != null)
+                {
+                    string activity = string.Equals(normalizedName, "gmail_send", StringComparison.OrdinalIgnoreCase)
+                        ? "Sending email"
+                        : string.Equals(normalizedName, "gmail_create_draft", StringComparison.OrdinalIgnoreCase)
+                            ? "Creating Gmail draft"
+                            : normalizedName.StartsWith("github_", StringComparison.OrdinalIgnoreCase)
+                                ? "GitHub"
+                                : normalizedName.StartsWith("todoist_", StringComparison.OrdinalIgnoreCase)
+                                    ? "Todoist"
+                                    : mcpConnector.DisplayName;
+                    StartToolActivityIndicator(activity);
+                    McpToolExecutionResult mcpResult = await _mcpConnectorService
+                        .ExecuteToolAsync(normalizedName, toolCall.ArgumentsJson ?? "{}", token)
+                        .ConfigureAwait(false);
+                    return new CloudToolExecutionResult
+                    {
+                        Name = normalizedName,
+                        Result = mcpResult.Result
+                    };
+                }
+
                 return new CloudToolExecutionResult
                 {
                     Name = normalizedName,
@@ -975,6 +1046,9 @@ namespace Malx_AI
             CloudChatRequestContext requestContext = await PrepareCloudChatRequestContextAsync(userMsg, token).ConfigureAwait(false);
             var streamedResponseBuilder = new StringBuilder();
             bool firstTokenReceived = false;
+            var streamUiThrottle = Stopwatch.StartNew();
+            long lastStreamUiUpdateMs = long.MinValue;
+            const int streamUiUpdateIntervalMs = 80;
 
             await Dispatcher.InvokeAsync(() =>
             {
@@ -1008,6 +1082,15 @@ namespace Malx_AI
                             streamedResponseBuilder.Append(tokenChunk);
                         }
 
+                        // Throttle UI refreshes: re-rendering the full accumulated text on every
+                        // delta is quadratic on long answers and floods the dispatcher queue. The
+                        // first token always renders immediately (it clears the thinking state),
+                        // and the finalize step renders the complete text at the end.
+                        long elapsedMs = streamUiThrottle.ElapsedMilliseconds;
+                        if (firstTokenReceived && elapsedMs - lastStreamUiUpdateMs < streamUiUpdateIntervalMs)
+                            return;
+                        lastStreamUiUpdateMs = elapsedMs;
+
                         Dispatcher.InvokeAsync(() =>
                         {
                             if (_currentStreamingMessage == null)
@@ -1020,7 +1103,13 @@ namespace Malx_AI
                                 _currentStreamingMessage.PreferPlainTextRendering = true;
                             }
 
-                            _currentStreamingMessage.SetStreamingContent(streamedResponseBuilder.ToString());
+                            string snapshot;
+                            lock (streamedResponseBuilder)
+                            {
+                                snapshot = streamedResponseBuilder.ToString();
+                            }
+
+                            _currentStreamingMessage.SetStreamingContent(snapshot);
                             ScrollChatToEnd();
                         }, System.Windows.Threading.DispatcherPriority.Background);
                     },
@@ -1195,6 +1284,11 @@ namespace Malx_AI
                 string cloudIdentityInstruction = BuildCloudIdentitySystemInstruction();
                 if (!string.IsNullOrWhiteSpace(cloudIdentityInstruction))
                     systemPrompt += "\n\n" + cloudIdentityInstruction;
+
+                IReadOnlyList<string> mentionedMcp = ResolveMentionedMcpHandles(userMsg);
+                string mcpInstruction = _mcpConnectorService?.BuildSystemInstruction(mentionedMcp, cloudModeActive: true) ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(mcpInstruction))
+                    systemPrompt += "\n\n" + mcpInstruction;
 
                 // Inject hippocampus context (prior research sessions) into the cloud system prompt
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.HippocampusContext))

@@ -28,23 +28,50 @@ namespace Malx_AI
         long ExpectedSizeBytes,
         string Sha256);
 
+    internal sealed record ModelDownloadRecommendation(
+        ModelDownloadManifest Manifest,
+        string DisplayName,
+        string SelectionReason);
+
     internal sealed class DefaultModelDownloadService
     {
         private const long DiskSafetyMarginBytes = 256L * 1024 * 1024;
         private static readonly HttpClient Http = CreateHttpClient();
+        private static readonly ModelDownloadRecommendation[] Recommendations =
+        [
+            CreateRecommendation(
+                "Axiom Qwen3-0.6B",
+                "Qwen3-0.6B-Q4_0.gguf",
+                "https://huggingface.co/ggml-org/Qwen3-0.6B-GGUF/resolve/a41486f827d17edd055fe6b3b0ba3f8d427c0519/Qwen3-0.6B-Q4_0.gguf?download=true",
+                428970080,
+                "da2572f16c06133561ce56accaa822216f2391ef4d37fba427801cd6736417d4"),
+            CreateRecommendation(
+                "Axiom Qwen3-1.7B",
+                "Qwen3-1.7B-Q4_K_M.gguf",
+                "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/daeb8e2d528a760970442092f6bf1e55c3b659eb/Qwen3-1.7B-Q4_K_M.gguf?download=true",
+                1282439264,
+                "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5"),
+            CreateRecommendation(
+                ModelInferenceProfiles.DefaultQwen3DisplayName,
+                ModelInferenceProfiles.DefaultQwen3FileName,
+                ModelInferenceProfiles.DefaultQwen3DownloadUrl,
+                ModelInferenceProfiles.DefaultQwen3FileSizeBytes,
+                ModelInferenceProfiles.DefaultQwen3Sha256),
+            CreateRecommendation(
+                "Axiom Qwen3-8B",
+                "Qwen3-8B-Q4_K_M.gguf",
+                "https://huggingface.co/ggml-org/Qwen3-8B-GGUF/resolve/2473489dc243ccaffb4ce569c55bf1df66b2088f/Qwen3-8B-Q4_K_M.gguf?download=true",
+                5027783872,
+                "a67d87633b5f5f191a5bd11e6d37cab18b9ce3d4a6af6861561e8a767352080b")
+        ];
         private readonly HttpClient _httpClient;
         private readonly ModelDownloadManifest _manifest;
 
         public string DestinationPath => _manifest.DestinationPath;
+        public ModelDownloadRecommendation Recommendation { get; }
 
         public DefaultModelDownloadService()
-            : this(
-                Http,
-                new ModelDownloadManifest(
-                    ModelInferenceProfiles.DefaultQwen3DownloadUrl,
-                    Path.Combine(AppDataPaths.LocalModels, ModelInferenceProfiles.DefaultQwen3FileName),
-                    ModelInferenceProfiles.DefaultQwen3FileSizeBytes,
-                    ModelInferenceProfiles.DefaultQwen3Sha256))
+            : this(Http, GetRecommendedModel())
         {
         }
 
@@ -52,6 +79,63 @@ namespace Malx_AI
         {
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             _manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
+            Recommendation = new ModelDownloadRecommendation(
+                _manifest,
+                Path.GetFileNameWithoutExtension(_manifest.DestinationPath),
+                "Selected model manifest.");
+        }
+
+        private DefaultModelDownloadService(HttpClient httpClient, ModelDownloadRecommendation recommendation)
+        {
+            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            Recommendation = recommendation ?? throw new ArgumentNullException(nameof(recommendation));
+            _manifest = recommendation.Manifest;
+        }
+
+        public static ModelDownloadRecommendation GetRecommendedModel()
+        {
+            HardwareProfile hardware = HardwareProfiler.Capture();
+            double ramGb = hardware.AvailableRamGb;
+            double vramGb = hardware.AvailableVramGb;
+
+            ModelDownloadRecommendation selected = ramGb >= 24
+                && hardware.LogicalProcessorCount >= 8
+                && hardware.HasNvidiaGpu
+                && vramGb >= 8
+                ? Recommendations[3]
+                : ramGb >= 10 && hardware.LogicalProcessorCount >= 4
+                    ? Recommendations[2]
+                    : ramGb >= 6
+                        ? Recommendations[1]
+                        : Recommendations[0];
+
+            string gpuSummary = hardware.HasNvidiaGpu && vramGb > 0
+                ? $"{hardware.PrimaryGpuName} with {vramGb:F1} GB free VRAM"
+                : hardware.HasNvidiaGpu
+                    ? $"{hardware.PrimaryGpuName} (free VRAM unavailable)"
+                    : "no CUDA-compatible GPU detected";
+            string reason =
+                $"Selected for {ramGb:F1} GB available RAM, {hardware.LogicalProcessorCount} logical CPU cores, and {gpuSummary}. " +
+                "Axiom will apply an additional safe memory and GPU-layer plan when it imports the model.";
+
+            return selected with { SelectionReason = reason };
+        }
+
+        private static ModelDownloadRecommendation CreateRecommendation(
+            string displayName,
+            string fileName,
+            string downloadUrl,
+            long expectedSizeBytes,
+            string sha256)
+        {
+            return new ModelDownloadRecommendation(
+                new ModelDownloadManifest(
+                    downloadUrl,
+                    Path.Combine(AppDataPaths.LocalModels, fileName),
+                    expectedSizeBytes,
+                    sha256),
+                displayName,
+                string.Empty);
         }
 
         public async Task<string> DownloadAsync(

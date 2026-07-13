@@ -683,7 +683,7 @@
                     <Rectangle Height="1" Fill="#302D2A" Margin="0,0,0,14"/>
                     <Button x:Name="ImportModelSidebarButton" Content="+ Import AI Model" Click="ImportModel_Click" Height="40"
                             Margin="0,0,0,8" Style="{StaticResource PremiumButtonStyle}" FontSize="12" Background="#B8924A" BorderBrush="#B8924A" Foreground="#EDE8E3"/>
-                    <Button x:Name="DownloadDefaultModelSidebarButton" Content="↓ Download default model" Click="DownloadDefaultModel_Click" Height="36"
+                    <Button x:Name="DownloadDefaultModelSidebarButton" Content="↓ Download recommended model" Click="DownloadDefaultModel_Click" Height="36"
                             Margin="0,0,0,8" Style="{StaticResource SidebarOutlineButtonStyle}" FontSize="12"/>
                     <Button Content="⚙ Settings" Click="Settings_Click" Height="36" Margin="0,0,0,8"
                             Style="{StaticResource SidebarOutlineButtonStyle}" FontSize="12"/>
@@ -1294,13 +1294,24 @@
                                     </Grid.RowDefinitions>
 
                                     <Grid Grid.Row="0" MinHeight="78" MaxHeight="180">
+                                        <!-- Underlay: gold @MCP mentions (PrimaryAccent) while InputBox ink is transparent -->
+                                        <TextBlock x:Name="InputBoxMentionOverlay"
+                                                   VerticalAlignment="Top"
+                                                   Padding="22,20,22,10"
+                                                   Margin="0"
+                                                   Background="Transparent"
+                                                   FontFamily="Segoe UI"
+                                                   FontSize="16"
+                                                   TextWrapping="Wrap"
+                                                   IsHitTestVisible="False"
+                                                   Visibility="Collapsed"/>
                                         <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="22,20,22,10"
                                               Background="Transparent" Foreground="#EDE8E3" BorderThickness="0" CaretBrush="#EDE8E3"
                                               FontFamily="Segoe UI" FontSize="16" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
                                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="78" MaxHeight="180"
                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                               SelectionBrush="#66B8924A" SelectionOpacity="1"/>
-                                        <TextBlock Text="How can I help you today?" Foreground="#8A8279" FontFamily="Segoe UI" FontSize="15"
+                                        <TextBlock Text="Ask anything" Foreground="#8A8279" FontFamily="Segoe UI" FontSize="15"
                                                    Margin="22,20,22,10" IsHitTestVisible="False" VerticalAlignment="Top">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -1313,6 +1324,76 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
+                                        <!-- @ connector picker (Cloud Mode only; shown from code-behind) -->
+                                        <Popup x:Name="McpMentionPopup"
+                                               Placement="Top"
+                                               PlacementTarget="{Binding ElementName=InputBox}"
+                                               StaysOpen="True"
+                                               AllowsTransparency="True"
+                                               PopupAnimation="Fade"
+                                               HorizontalOffset="18"
+                                               VerticalOffset="-6">
+                                            <Border Background="#211F1D"
+                                                    BorderBrush="#B8924A"
+                                                    BorderThickness="1"
+                                                    CornerRadius="12"
+                                                    Padding="6"
+                                                    MinWidth="260"
+                                                    MaxWidth="360"
+                                                    MaxHeight="220"
+                                                    Effect="{StaticResource SoftShadow}">
+                                                <ListBox x:Name="McpMentionList"
+                                                         Background="Transparent"
+                                                         BorderThickness="0"
+                                                         Padding="0"
+                                                         FontFamily="Segoe UI"
+                                                         FontSize="13"
+                                                         Foreground="#EDE8E3"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         MouseLeftButtonUp="McpMentionList_MouseLeftButtonUp">
+                                                    <ListBox.ItemContainerStyle>
+                                                        <Style TargetType="ListBoxItem">
+                                                            <Setter Property="Padding" Value="10,8"/>
+                                                            <Setter Property="Margin" Value="0,1"/>
+                                                            <Setter Property="Cursor" Value="Hand"/>
+                                                            <Setter Property="Template">
+                                                                <Setter.Value>
+                                                                    <ControlTemplate TargetType="ListBoxItem">
+                                                                        <Border x:Name="Bd" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                                                            <ContentPresenter/>
+                                                                        </Border>
+                                                                        <ControlTemplate.Triggers>
+                                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                                <Setter TargetName="Bd" Property="Background" Value="#2A2724"/>
+                                                                            </Trigger>
+                                                                            <Trigger Property="IsSelected" Value="True">
+                                                                                <Setter TargetName="Bd" Property="Background" Value="#3A3226"/>
+                                                                            </Trigger>
+                                                                        </ControlTemplate.Triggers>
+                                                                    </ControlTemplate>
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                        </Style>
+                                                    </ListBox.ItemContainerStyle>
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <Border Width="28" Height="28" CornerRadius="7" Background="#171615" BorderBrush="#302D2A" BorderThickness="1" Margin="0,0,10,0">
+                                                                    <TextBlock Text="{Binding LogoGlyph}" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                </Border>
+                                                                <StackPanel VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="#EDE8E3"/>
+                                                                    <TextBlock FontSize="11" Foreground="#B8924A">
+                                                                        <Run Text="@"/><Run Text="{Binding Handle}"/>
+                                                                    </TextBlock>
+                                                                </StackPanel>
+                                                                <TextBlock Text="{Binding AccountLabel}" FontSize="10" Foreground="#8A8279" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                            </Border>
+                                        </Popup>
                                     </Grid>
 
                                     <!-- Attachment preview tray: chips are created in code-behind with an
@@ -1497,6 +1578,24 @@
 
                             <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
                             <StackPanel>
+                                <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,12"/>
+
+                                <!-- Settings category menu -->
+                                <Border Background="#171615" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="4" Margin="0,0,0,16" HorizontalAlignment="Left">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button x:Name="SettingsNavInferenceButton" Content="Inference" Click="SettingsNavButton_Click" Tag="Inference"
+                                                MinWidth="88" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                        <Button x:Name="SettingsNavCloudButton" Content="Cloud AI" Click="SettingsNavButton_Click" Tag="Cloud"
+                                                MinWidth="88" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                        <Button x:Name="SettingsNavConnectorsButton" Content="Connectors" Click="SettingsNavButton_Click" Tag="Connectors"
+                                                MinWidth="96" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                        <Button x:Name="SettingsNavGeneralButton" Content="General" Click="SettingsNavButton_Click" Tag="General"
+                                                MinWidth="88" Height="30" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- ═══ INFERENCE ═══ -->
+                                <StackPanel x:Name="SettingsPageInference">
                                 <TextBlock Text="Inference Settings" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,16"/>
 
                                 <Grid Margin="0,0,0,20">
@@ -1597,10 +1696,13 @@
                                          <TextBlock Text="Choose whether normal chat runs on your local model or the configured OpenRouter cloud model." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                      </StackPanel>
                                  </Border>
+                                </StackPanel>
 
-                                 <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,16">
+                                <!-- ═══ CLOUD AI ═══ -->
+                                <StackPanel x:Name="SettingsPageCloud" Visibility="Collapsed">
+                                 <Border BorderThickness="0,0,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,0,0,16">
                                      <StackPanel>
-                                        <TextBlock Text="Cloud AI" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Cloud AI" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
                                         <TextBlock Text="OpenRouter API Key" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
                                         <PasswordBox x:Name="OpenRouterApiKeyPasswordBox" Height="32" Padding="8,6" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" PasswordChanged="OpenRouterApiKeyPasswordBox_PasswordChanged"/>
                                         <TextBlock Text="Your key is stored locally. Cloud conversations are subject to the selected model/provider via OpenRouter." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
@@ -1611,43 +1713,241 @@
                                             <TextBlock x:Name="OpenRouterKeyStatusText" Text="" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                                         </StackPanel>
                                          <StackPanel x:Name="OpenRouterUsagePanel" Margin="0,12,0,0" Visibility="Collapsed">
-                                             <TextBlock Text="Daily requests" FontSize="12" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI"/>
-                                             <Border x:Name="OpenRouterUsageTrack" Height="8" Margin="0,6,0,0" Background="{StaticResource NotebookSurfaceBrush}" CornerRadius="4" HorizontalAlignment="Stretch" SizeChanged="OpenRouterUsageTrack_SizeChanged">
-                                                 <Grid HorizontalAlignment="Left">
-                                                     <Border x:Name="OpenRouterUsageFillBar" Height="8" Width="0" Background="#22C55E" CornerRadius="4" HorizontalAlignment="Left"/>
-                                                 </Grid>
-                                             </Border>
-                                             <Grid Margin="0,6,0,0">
+                                             <Grid Margin="0,0,0,6">
                                                  <Grid.ColumnDefinitions>
                                                      <ColumnDefinition Width="*"/>
                                                      <ColumnDefinition Width="Auto"/>
                                                  </Grid.ColumnDefinitions>
-                                                 <TextBlock x:Name="OpenRouterUsageText"
-                                                            Text="0 / 0 requests"
-                                                            FontSize="11"
-                                                            Foreground="{StaticResource DarkSecondaryBrush}"
-                                                            FontFamily="Segoe UI"
-                                                            VerticalAlignment="Center"
-                                                            TextWrapping="Wrap"/>
+                                                 <TextBlock Text="API key usage" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" VerticalAlignment="Center"/>
                                                  <Button x:Name="RefreshOpenRouterUsageButton"
                                                          Grid.Column="1"
-                                                         Width="24"
-                                                         Height="24"
+                                                         Width="22"
+                                                         Height="22"
                                                          Margin="8,0,0,0"
                                                          Click="RefreshOpenRouterUsageButton_Click"
                                                          Style="{StaticResource ChatInputIconButtonStyle}"
-                                                         ToolTip="Refresh daily request usage">
+                                                         ToolTip="Refresh usage">
                                                      <TextBlock Text="↻" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                  </Button>
                                              </Grid>
+                                             <!-- Pill-shaped usage meter: color-coded fill behind a centered
+                                                  "used / limit · remaining" label. Fill is deliberately translucent
+                                                  so the label stays readable at any fill level. -->
+                                             <Border x:Name="OpenRouterUsageTrack" Height="24" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" HorizontalAlignment="Stretch" SizeChanged="OpenRouterUsageTrack_SizeChanged">
+                                                 <Grid>
+                                                     <Border x:Name="OpenRouterUsageFillBar" Width="0" Background="#22C55E" Opacity="0.38" CornerRadius="11" HorizontalAlignment="Left" Margin="1"/>
+                                                     <TextBlock x:Name="OpenRouterUsageText"
+                                                                Text="0 / 0 requests"
+                                                                FontSize="11"
+                                                                FontWeight="SemiBold"
+                                                                Foreground="{StaticResource NotebookTextBrush}"
+                                                                FontFamily="Segoe UI"
+                                                                HorizontalAlignment="Center"
+                                                                VerticalAlignment="Center"
+                                                                TextTrimming="CharacterEllipsis"/>
+                                                 </Grid>
+                                             </Border>
+                                             <TextBlock x:Name="OpenRouterUsageHintText"
+                                                        Text=""
+                                                        FontSize="10"
+                                                        Foreground="{StaticResource DarkSecondaryBrush}"
+                                                        FontFamily="Segoe UI"
+                                                        Margin="0,5,0,0"
+                                                        TextWrapping="Wrap"
+                                                        Visibility="Collapsed"/>
                                          </StackPanel>
                                          <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,14,0,8"/>
                                          <TextBlock x:Name="OpenRouterDetectedModelText" Text="Eidos 1" FontSize="11" Foreground="{StaticResource NotebookTextBrush}" TextWrapping="Wrap"/>
                                          <TextBlock x:Name="OpenRouterDetectedModelIdText" Text="General reasoning profile tuned for Axiom's tool pipeline." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
+                                </StackPanel>
 
-                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,16">
+                                <!-- ═══ CONNECTORS ═══ -->
+                                <StackPanel x:Name="SettingsPageConnectors" Visibility="Collapsed">
+                                    <TextBlock Text="Connectors" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                    <TextBlock x:Name="McpConnectorsCloudHintText"
+                                               Text="Connect third-party accounts for Cloud Mode. Click Connect, sign in with your browser, then return here. In chat, type @ to mention a connector (e.g. @Gmail, @GitHub, @Todoist)."
+                                               FontSize="10"
+                                               Foreground="{StaticResource DarkSecondaryBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,14"/>
+
+                                    <!-- Google account (Gmail + Drive) -->
+                                    <Border Background="#171615" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="10" Padding="12,10" Margin="0,0,0,10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Google" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}"/>
+                                                <TextBlock x:Name="McpGoogleAccountStatusText"
+                                                           Text="Not connected — opens your browser to sign in"
+                                                           FontSize="10"
+                                                           Foreground="{StaticResource DarkSecondaryBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,0"/>
+                                                <TextBlock Text="Gmail · Google Drive" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                                <Button x:Name="McpConnectGoogleButton"
+                                                        Content="Connect"
+                                                        Click="McpConnectGoogleButton_Click"
+                                                        MinWidth="100"
+                                                        Height="32"
+                                                        Style="{StaticResource PremiumButtonStyle}"
+                                                        Background="#B8924A"
+                                                        BorderBrush="#B8924A"
+                                                        ToolTip="Sign in with Google in your browser"/>
+                                                <Button x:Name="McpDisconnectGoogleButton"
+                                                        Content="Disconnect"
+                                                        Click="McpDisconnectGoogleButton_Click"
+                                                        MinWidth="100"
+                                                        Height="32"
+                                                        Margin="8,0,0,0"
+                                                        Style="{StaticResource SubtleButtonStyle}"
+                                                        Visibility="Collapsed"
+                                                        ToolTip="Disconnect Gmail and Google Drive"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- GitHub account (device flow) -->
+                                    <Border Background="#171615" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="10" Padding="12,10" Margin="0,0,0,10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="GitHub" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}"/>
+                                                <TextBlock x:Name="McpGitHubAccountStatusText"
+                                                           Text="Not connected — opens browser device login"
+                                                           FontSize="10"
+                                                           Foreground="{StaticResource DarkSecondaryBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,0"/>
+                                                <TextBlock Text="Repos · issues · PRs · code" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                                <Button x:Name="McpConnectGitHubButton"
+                                                        Content="Connect"
+                                                        Click="McpConnectGitHubButton_Click"
+                                                        MinWidth="100"
+                                                        Height="32"
+                                                        Style="{StaticResource PremiumButtonStyle}"
+                                                        Background="#B8924A"
+                                                        BorderBrush="#B8924A"
+                                                        ToolTip="Sign in with GitHub (device code in browser)"/>
+                                                <Button x:Name="McpDisconnectGitHubButton"
+                                                        Content="Disconnect"
+                                                        Click="McpDisconnectGitHubButton_Click"
+                                                        MinWidth="100"
+                                                        Height="32"
+                                                        Margin="8,0,0,0"
+                                                        Style="{StaticResource SubtleButtonStyle}"
+                                                        Visibility="Collapsed"
+                                                        ToolTip="Disconnect GitHub"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Todoist -->
+                                    <Border Background="#171615" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="10" Padding="12,10" Margin="0,0,0,10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Todoist" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}"/>
+                                                <TextBlock x:Name="McpTodoistAccountStatusText"
+                                                           Text="Not connected — opens browser to sign in"
+                                                           FontSize="10"
+                                                           Foreground="{StaticResource DarkSecondaryBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,0"/>
+                                                <TextBlock Text="Tasks · projects · labels" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                                <Button x:Name="McpConnectTodoistButton"
+                                                        Content="Connect"
+                                                        Click="McpConnectTodoistButton_Click"
+                                                        MinWidth="100"
+                                                        Height="32"
+                                                        Style="{StaticResource PremiumButtonStyle}"
+                                                        Background="#B8924A"
+                                                        BorderBrush="#B8924A"
+                                                        ToolTip="Sign in with Todoist in your browser"/>
+                                                <Button x:Name="McpDisconnectTodoistButton"
+                                                        Content="Disconnect"
+                                                        Click="McpDisconnectTodoistButton_Click"
+                                                        MinWidth="100"
+                                                        Height="32"
+                                                        Margin="8,0,0,0"
+                                                        Style="{StaticResource SubtleButtonStyle}"
+                                                        Visibility="Collapsed"
+                                                        ToolTip="Disconnect Todoist"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Dropbox (hidden until McpFeatureFlags.DropboxConnectorEnabled = true) -->
+                                    <Border x:Name="McpDropboxConnectorCard"
+                                            Background="#171615"
+                                            BorderBrush="#302D2A"
+                                            BorderThickness="1"
+                                            CornerRadius="10"
+                                            Padding="12,10"
+                                            Margin="0,0,0,10"
+                                            Visibility="Collapsed">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Dropbox" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}"/>
+                                                <TextBlock x:Name="McpDropboxAccountStatusText"
+                                                           Text="Coming soon — pending Dropbox review"
+                                                           FontSize="10"
+                                                           Foreground="{StaticResource DarkSecondaryBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="0,3,0,0"/>
+                                                <TextBlock Text="Files · folders · share" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                                                <Button x:Name="McpConnectDropboxButton"
+                                                        Content="Connect"
+                                                        IsEnabled="False"
+                                                        MinWidth="100"
+                                                        Height="32"
+                                                        Style="{StaticResource PremiumButtonStyle}"
+                                                        Background="#B8924A"
+                                                        BorderBrush="#B8924A"
+                                                        Opacity="0.55"
+                                                        ToolTip="Dropbox will unlock after App Console approval"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <TextBlock x:Name="McpConnectProgressText"
+                                               Text=""
+                                               FontSize="10"
+                                               Foreground="#B8924A"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,10"
+                                               Visibility="Collapsed"/>
+
+                                    <TextBlock Text="Active services" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" Margin="0,4,0,8"/>
+                                    <StackPanel x:Name="McpConnectorsPanel"/>
+                                </StackPanel>
+
+                                <!-- ═══ GENERAL ═══ -->
+                                <StackPanel x:Name="SettingsPageGeneral" Visibility="Collapsed">
+                                <TextBlock Text="General" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,12"/>
+                                <Border BorderThickness="0,0,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,0,0,16">
                                     <StackPanel>
                                         <TextBlock Text="Workplace notifications" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
                                         <CheckBox x:Name="CouncilCompletionToastToggle"
@@ -1669,6 +1969,31 @@
                                         <TextBlock Text="Automatically compresses low-priority messages when context usage reaches 80% of the model's reliability ceiling." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                     </StackPanel>
                                 </Border>
+
+                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Local data" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                        <TextBlock x:Name="AppDataProfilePathText"
+                                                   Text=""
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource DarkSecondaryBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,10"/>
+                                        <TextBlock Text="Published release builds store data separately from Visual Studio debug runs. Reset only clears the profile this build is using."
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource DarkSecondaryBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,10"/>
+                                        <Button Content="Reset all local app data…"
+                                                Click="ResetLocalAppDataButton_Click"
+                                                Height="32"
+                                                MinWidth="180"
+                                                HorizontalAlignment="Left"
+                                                Style="{StaticResource SubtleButtonStyle}"
+                                                ToolTip="Deletes chats, settings, connectors, and caches for this app profile. Restart Axiom afterward."/>
+                                    </StackPanel>
+                                </Border>
+                                </StackPanel>
                             </StackPanel>
                             </ScrollViewer>
 

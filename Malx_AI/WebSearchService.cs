@@ -23,6 +23,7 @@ namespace Malx_AI
         private const string CacheVersionPrefix = "v2::";
         private static readonly string CacheGenerationPrefix = "v6::";
         private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(2);
+        private static readonly TimeSpan StableInfoCacheTtl = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan CurrentInfoCacheTtl = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan SearchDeadline = TimeSpan.FromSeconds(18);
         private static readonly TimeSpan CurrentSearchDeadline = TimeSpan.FromSeconds(22);
@@ -358,13 +359,20 @@ namespace Malx_AI
         private async Task<List<SearchResult>> FetchRankedResultsAsync(SearchIntent intent, CancellationToken token)
         {
             List<string> subQueries = BuildDeterministicSubQueries(intent);
+
+            // Sub-queries run concurrently (each already fans out across providers with its own
+            // deadline). The old sequential loop meant a second sub-query often had little or no
+            // time left inside the overall search deadline. Position numbering preserves the
+            // deterministic sub-query order so ranking tie-breaks stay stable.
+            Task<List<SearchResult>>[] subQueryTasks = subQueries
+                .Select(subQuery => SearchAcrossProvidersAsync(subQuery, intent, token))
+                .ToArray();
+            List<SearchResult>[] subQueryResults = await Task.WhenAll(subQueryTasks).ConfigureAwait(false);
+
             var aggregated = new List<SearchResult>();
             int position = 0;
-
-            foreach (string subQuery in subQueries)
+            foreach (List<SearchResult> results in subQueryResults)
             {
-                List<SearchResult> results = await SearchAcrossProvidersAsync(subQuery, intent, token).ConfigureAwait(false);
-
                 foreach (SearchResult result in results)
                     aggregated.Add(result with { Position = position++ });
             }
@@ -1455,33 +1463,6 @@ namespace Malx_AI
             return selected;
         }
 
-        private async Task<List<SearchResult>> EnrichResultsWithPageEvidenceAsync(IReadOnlyList<SearchResult> results, SearchIntent intent, CancellationToken token)
-        {
-            var enriched = new List<SearchResult>();
-
-            for (int i = 0; i < results.Count; i++)
-            {
-                SearchResult result = results[i];
-                string snippet = result.Snippet;
-                string host = GetHostName(result.Url);
-                bool structuredFeedSnippet = LooksLikeStructuredFeedSnippet(snippet);
-
-                if (i < MaxEvidenceFetchCount && !ShouldSkipPageEvidenceFetch(host, structuredFeedSnippet))
-                {
-                    PageEvidence fetchedEvidence = await TryFetchPageEvidenceAsync(result.Url, result.Title, intent, token).ConfigureAwait(false);
-                    if (ShouldReplaceSnippetWithFetchedEvidence(snippet, fetchedEvidence.Text, intent, result.Title, host))
-                    {
-                        snippet = fetchedEvidence.Text.Trim();
-                        result = result with { PublishedAt = fetchedEvidence.PublishedAt ?? result.PublishedAt };
-                    }
-                }
-
-                enriched.Add(result with { Snippet = snippet });
-            }
-
-            return enriched;
-        }
-
         private static string FormatSourcesBlock(IReadOnlyList<SearchResult> results, SearchIntent intent, bool includeFreshnessLabel = false)
         {
             var sb = new StringBuilder();
@@ -1624,12 +1605,54 @@ namespace Malx_AI
                 : "[date unknown]";
         }
 
+        // Query parameters that only identify the click source, never the page content. Stripping
+        // them lets dedup recognize the same article shared through different tracking links,
+        // which yields more DISTINCT sources for the model instead of near-duplicates.
+        private static readonly HashSet<string> TrackingQueryParameters = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+            "fbclid", "gclid", "msclkid", "twclid", "igshid", "mc_cid", "mc_eid", "ref", "ref_src",
+            "cmpid", "ocid", "smid", "ito", "srnd", "guccounter", "guce_referrer", "ncid", "sref"
+        };
+
+        // Internal for unit tests. Canonicalizes for dedup: scheme/fragment dropped, host
+        // lowercased without "www.", tracking query parameters stripped.
         internal static string NormalizeUrl(string url)
         {
             if (string.IsNullOrWhiteSpace(url))
                 return string.Empty;
 
-            return url.Trim().TrimEnd('/');
+            string trimmed = url.Trim();
+            if (!Uri.TryCreate(trimmed, UriKind.Absolute, out Uri? uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                return trimmed.TrimEnd('/');
+            }
+
+            string host = uri.Host.ToLowerInvariant();
+            if (host.StartsWith("www.", StringComparison.Ordinal))
+                host = host[4..];
+
+            string path = uri.AbsolutePath.TrimEnd('/');
+
+            string query = string.Empty;
+            if (!string.IsNullOrEmpty(uri.Query) && uri.Query.Length > 1)
+            {
+                var keptPairs = uri.Query[1..]
+                    .Split('&', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(pair =>
+                    {
+                        int equalsIndex = pair.IndexOf('=');
+                        string key = equalsIndex >= 0 ? pair[..equalsIndex] : pair;
+                        return !TrackingQueryParameters.Contains(key);
+                    })
+                    .ToList();
+                if (keptPairs.Count > 0)
+                    query = "?" + string.Join("&", keptPairs);
+            }
+
+            // Scheme and fragment are dropped: http/https and #anchors point at the same content.
+            return host + path + query;
         }
 
         internal static IReadOnlyList<string> NormalizeAndDeduplicateUrls(IEnumerable<string?> urls)
@@ -2929,7 +2952,13 @@ namespace Malx_AI
             if (!SearchCache.TryGetValue(query, out var item))
                 return false;
 
-            TimeSpan ttl = intent.CurrentInfo || intent.News ? CurrentInfoCacheTtl : CacheTtl;
+            // Docs/reference lookups are stable content — hold them longer so repeated council
+            // iterations on the same task reuse the evidence instead of re-searching.
+            TimeSpan ttl = intent.CurrentInfo || intent.News
+                ? CurrentInfoCacheTtl
+                : intent.Docs || intent.Release
+                    ? StableInfoCacheTtl
+                    : CacheTtl;
             if (DateTimeOffset.UtcNow - item.SavedAt > ttl)
             {
                 SearchCache.TryRemove(query, out _);

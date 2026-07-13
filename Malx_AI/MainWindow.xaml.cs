@@ -26,6 +26,7 @@ using LLama;
 using LLama.Common;
 using LLama.Sampling;
 using LLama.Transformers;
+using Malx_AI.Mcp;
 
 namespace Malx_AI
 {
@@ -260,6 +261,12 @@ namespace Malx_AI
         private readonly PythonExecutionService _pythonExecutionService = new();
         private readonly OpenRouterChatService _openRouterChatService = new();
         private readonly OpenRouterUsageRefreshThrottle _openRouterUsageRefreshThrottle = new(TimeSpan.FromSeconds(60));
+        private McpConnectorService? _mcpConnectorService;
+        private int _mcpMentionAtIndex = -1;
+        private int _mcpMentionSelectedIndex;
+        private bool _mcpMentionPopupOpen;
+        private bool _isApplyingMcpMentionCompletion;
+        private bool _isRefreshingMcpConnectorsUi;
         private ScrollViewer? _chatDisplayScrollViewer;
         private int _coordinatedPersistenceVersion;
         private bool _cloudModeActive;
@@ -267,7 +274,8 @@ namespace Malx_AI
         private bool _isTestingOpenRouterKey;
         private const int CloudHistoryTokenBudget = 6000;
         private const int CloudToolResultCharacterLimit = 6000;
-        private const int CloudToolLoopIterationLimit = 4;
+        // Higher budget: full Gmail/Drive tool chains often need search → read → act.
+        private const int CloudToolLoopIterationLimit = 8;
         private const int CloudContextNoticeThresholdPercent = 80;
         private const int CloudContextCriticalThresholdPercent = 92;
         private const string OpenRouterModelSettingKey = "openrouter_model_id";
@@ -384,7 +392,17 @@ namespace Malx_AI
             "What's the goal today",
             "Let's get to work",
             "What do you need",
-            "Ask me anything"
+            "Ask me anything",
+            "Take your time",
+            "Let's figure it out",
+            "Where should we begin",
+            "I'm here to help",
+            "Your next step",
+            "Let's make progress",
+            "What matters most",
+            "Tell me your idea",
+            "Let's think it through",
+            "You've got this"
         ];
 
         private const string NormalChatAttachmentDialogFilter = "Supported files (documents;spreadsheets;presentations;e-books;notebooks;code;images)|*.pdf;*.txt;*.md;*.markdown;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.csv;*.tsv;*.xlsx;*.docx;*.pptx;*.odt;*.ods;*.odp;*.epub;*.ipynb;*.rtf;*.log;*.ini;*.config;*.cs;*.js;*.ts;*.jsx;*.tsx;*.html;*.htm;*.css;*.sql;*.py;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh;*.tex;*.srt;*.vtt;*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|Documents (*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md)|*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md;*.markdown|Spreadsheets and data (*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb)|*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb|Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|All files (*.*)|*.*";
@@ -515,6 +533,15 @@ namespace Malx_AI
                 RefreshNormalWebToggleUi();
                 LoadOpenRouterSettings();
                 LoadStoredOpenRouterApiKey();
+                InitializeMcpConnectors();
+                try
+                {
+                    WorkplaceViewControl?.SetMcpConnectorService(_mcpConnectorService);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Workplace MCP wiring error: {ex.Message}");
+                }
                 LoadCouncilNotificationSetting();
                 RefreshCloudModeToggleUi();
                 RefreshInferenceSettingsUi();
@@ -1632,7 +1659,93 @@ namespace Malx_AI
             if (shouldShow)
             {
                 _ = EnsureOpenRouterUsageLoadedAsync();
+                ShowSettingsPage("Inference");
+                RefreshMcpConnectorsUi();
+                RefreshAppDataProfileLabel();
             }
+        }
+
+        private void RefreshAppDataProfileLabel()
+        {
+            if (AppDataProfilePathText == null)
+                return;
+
+            AppDataProfilePathText.Text =
+                $"Profile: {AppDataPaths.ProfileLabel}\nFolder: {AppDataPaths.Root}";
+        }
+
+        private void ResetLocalAppDataButton_Click(object sender, RoutedEventArgs e)
+        {
+            MessageBoxResult confirm = MessageBox.Show(
+                "This permanently deletes chats, Workplace sessions, connectors, API keys, and caches " +
+                "for this app profile:\n\n" + AppDataPaths.Root +
+                "\n\nAxiom will close after reset so the next launch is clean. Continue?",
+                "Reset all local app data",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirm != MessageBoxResult.Yes)
+                return;
+
+            if (!AppDataPaths.TryResetAllLocalData(out string? error))
+            {
+                MessageBox.Show(
+                    "Could not fully reset local data:\n" + (error ?? "Unknown error") +
+                    "\n\nClose Axiom and delete the folder manually if needed.",
+                    "Reset failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            MessageBox.Show(
+                "Local app data was cleared. Axiom will now exit — open it again for a fresh start.",
+                "Reset complete",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            Application.Current.Shutdown();
+        }
+
+        private void SettingsNavButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button || button.Tag is not string page)
+                return;
+            ShowSettingsPage(page);
+            if (string.Equals(page, "Connectors", StringComparison.OrdinalIgnoreCase))
+                RefreshMcpConnectorsUi();
+        }
+
+        private void ShowSettingsPage(string page)
+        {
+            string key = (page ?? "Inference").Trim();
+            if (SettingsPageInference != null)
+                SettingsPageInference.Visibility = string.Equals(key, "Inference", StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Collapsed;
+            if (SettingsPageCloud != null)
+                SettingsPageCloud.Visibility = string.Equals(key, "Cloud", StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Collapsed;
+            if (SettingsPageConnectors != null)
+                SettingsPageConnectors.Visibility = string.Equals(key, "Connectors", StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Collapsed;
+            if (SettingsPageGeneral != null)
+                SettingsPageGeneral.Visibility = string.Equals(key, "General", StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Collapsed;
+
+            HighlightSettingsNavButton(SettingsNavInferenceButton, string.Equals(key, "Inference", StringComparison.OrdinalIgnoreCase));
+            HighlightSettingsNavButton(SettingsNavCloudButton, string.Equals(key, "Cloud", StringComparison.OrdinalIgnoreCase));
+            HighlightSettingsNavButton(SettingsNavConnectorsButton, string.Equals(key, "Connectors", StringComparison.OrdinalIgnoreCase));
+            HighlightSettingsNavButton(SettingsNavGeneralButton, string.Equals(key, "General", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void HighlightSettingsNavButton(Button? button, bool selected)
+        {
+            if (button == null)
+                return;
+            button.Background = AppBrushCache.Get(selected ? "#B8924A" : "Transparent");
+            button.Foreground = AppBrushCache.Get(selected ? "#EDE8E3" : "#8A8279");
+            button.BorderBrush = Brushes.Transparent;
+            button.BorderThickness = new Thickness(0);
         }
 
         private void LoadCouncilNotificationSetting()

@@ -15,6 +15,7 @@ namespace Malx_AI
         public bool HasNvidiaGpu { get; set; }
         public bool HasAmdGpu { get; set; }
         public string PrimaryGpuName { get; set; } = "Unknown";
+        public int LogicalProcessorCount { get; set; }
         /// <summary>
         /// NVIDIA CUDA compute capability (e.g. 6.1 for Pascal, 7.5 for Turing), or 0 when
         /// it could not be probed. Flash Attention is only numerically reliable / accelerated
@@ -65,6 +66,7 @@ namespace Malx_AI
                 HasAmdGpu = gpuIdentity.HasAmdGpu,
                 PrimaryGpuName = gpuIdentity.PrimaryGpuName,
                 GpuComputeCapability = gpuIdentity.GpuComputeCapability,
+                LogicalProcessorCount = Math.Max(1, Environment.ProcessorCount),
                 AvailableRamBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
                 AvailableVramBytes = GetFreeGpuMemoryBytes()
             };

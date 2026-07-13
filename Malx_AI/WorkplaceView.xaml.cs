@@ -30,6 +30,7 @@ using Microsoft.Win32;
 using System.Windows.Threading;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Rendering;
+using Malx_AI.Mcp;
 
 namespace Malx_AI
 {
@@ -122,6 +123,31 @@ namespace Malx_AI
                     : Visibility.Collapsed;
             }
 
+            if (ConnectGitHubAccountButton != null)
+            {
+                bool githubLinked = _mcpConnectorService?.IsGitHubConnected == true;
+                ConnectGitHubAccountButton.IsEnabled = enabled && !_isProcessing;
+                ConnectGitHubAccountButton.Content = githubLinked ? "GitHub Connected" : "Connect GitHub Account";
+                ConnectGitHubAccountButton.Opacity = githubLinked ? 0.85 : 1.0;
+            }
+
+            if (GitHubAccountStatusBlock != null)
+            {
+                if (_mcpConnectorService?.IsGitHubConnected == true)
+                {
+                    string? label = _mcpConnectorService.GetGitHubAccountLabel();
+                    GitHubAccountStatusBlock.Text = string.IsNullOrWhiteSpace(label)
+                        ? "GitHub: connected — full github_* tools available to cloud council"
+                        : $"GitHub: connected as {label} — full github_* tools available";
+                    GitHubAccountStatusBlock.Foreground = AppBrushCache.Get("#B8924A");
+                }
+                else
+                {
+                    GitHubAccountStatusBlock.Text = "GitHub: not connected — connect for private clones + issues/PRs/API tools";
+                    GitHubAccountStatusBlock.Foreground = AppBrushCache.Get("#8A8279");
+                }
+            }
+
             if (CodebaseAutoApplyToggle != null)
             {
                 CodebaseAutoApplyToggle.IsEnabled = enabled && !_isProcessing;
@@ -170,7 +196,7 @@ namespace Malx_AI
 
             if (ConnectedWorkspaceConnectHintBlock != null)
                 ConnectedWorkspaceConnectHintBlock.Text = enabled
-                    ? "Step 2: open local code, pick files, or clone a GitHub repo in one step."
+                    ? "Step 2: open local code, pick files, clone a repo, or Connect GitHub for API tools + private clones."
                     : "Step 2 unlocks after access is enabled.";
 
             if (CodebaseReviewHintBlock != null)
@@ -502,13 +528,24 @@ namespace Malx_AI
                 .Replace("except through WEB_SEARCH", "except through the web_search tool", StringComparison.Ordinal);
             CouncilRunContext? activeRunContext = _activeCouncilRunContext ?? _lastRunContext;
             cloudSystemPrompt += BuildCloudCouncilIntelligenceNote(role, activeRunContext);
+            if (_mcpConnectorService?.IsGitHubConnected == true)
+            {
+                string ghInstr = _mcpConnectorService.BuildSystemInstruction(
+                    mentionedHandles: Array.Empty<string>(),
+                    cloudModeActive: true);
+                if (!string.IsNullOrWhiteSpace(ghInstr))
+                    cloudSystemPrompt += "\n\n" + ghInstr;
+            }
             if (role == CouncilRole.Builder)
             {
                 string codebaseToolNames = _connectedWorkspace.CodebaseEditAccessEnabled
                     ? ", read_file, search_codebase, list_files"
                     : string.Empty;
+                string githubToolNames = _mcpConnectorService?.IsGitHubConnected == true
+                    ? ", github_* (repos/issues/PRs/files/Actions)"
+                    : string.Empty;
                 cloudSystemPrompt += "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
-                    "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + ") BEFORE you write your deliverable, " +
+                    "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ") BEFORE you write your deliverable, " +
                     "whenever you need a real fact, number, computation, conversion, or current detail. Never guess or fabricate values you could verify with a tool. " +
                     "If proactive web evidence is partial, off-topic, or missing the user's named entities, call a narrower web_search before writing the final deliverable instead of treating the mismatched evidence as a reason to refuse the whole answer. " +
                     "For stable non-current background context, you may use the prompt, council plan, project knowledge, session memory, or general knowledge when not contradicted by source evidence. " +
@@ -604,6 +641,8 @@ namespace Malx_AI
                     || executedToolCount >= CloudCouncilToolExecutionLimit
                     ? null
                     : tools;
+                var streamThrottle = Stopwatch.StartNew();
+                long lastStreamUiUpdateMs = -CouncilStreamUiUpdateIntervalMs;
                 OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
                     adaptedSystemPrompt,
@@ -615,6 +654,15 @@ namespace Malx_AI
                         // Padding sentinels ("<pad>" spam) are already suppressed at the stream source,
                         // so the accumulated text is safe to show live without per-token cleanup.
                         textBuilder.Append(t);
+
+                        // Throttle live-preview work: token estimation + preview building both scan
+                        // the ENTIRE accumulated text, so doing it per-delta made streaming O(n²)
+                        // and saturated the dispatcher on long deliverables.
+                        long elapsedMs = streamThrottle.ElapsedMilliseconds;
+                        if (elapsedMs - lastStreamUiUpdateMs < CouncilStreamUiUpdateIntervalMs)
+                            return;
+                        lastStreamUiUpdateMs = elapsedMs;
+
                         string current = textBuilder.ToString();
                         int generatedTokens = EstimateTokenCount(current);
                         _pipelineTokenCount = Math.Max(_pipelineTokenCount, generatedTokens);
@@ -628,7 +676,11 @@ namespace Malx_AI
                     },
                     token,
                     maxTokens,
-                    stopSequences);
+                    stopSequences,
+                    // Council roles build on each other's output mid-task. A silent model swap
+                    // leaves the next role unable to continue what the first model started, so
+                    // the cloud council always stays on its selected model.
+                    allowModelFallback: false);
 
                 if (!string.IsNullOrWhiteSpace(response.Reasoning))
                     reasoningParts.Add(response.Reasoning.Trim());
@@ -737,6 +789,8 @@ namespace Malx_AI
                         "Your previous Critic turn produced no visible structured review. Produce the final Critic review now. Do not call tools. Do not output thinking, hidden reasoning, analysis notes, or deliberation. Output only either 'No issues found.' or a numbered actionable findings list with Location/Reference, Severity, Problem, and Fix."));
                 }
                 var forcedTextBuilder = new StringBuilder();
+                var forcedStreamThrottle = Stopwatch.StartNew();
+                long lastForcedUiUpdateMs = -CouncilStreamUiUpdateIntervalMs;
                 OpenRouterChatResponse forcedFinal = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
                     adaptedSystemPrompt,
@@ -746,6 +800,12 @@ namespace Malx_AI
                     onToken: t =>
                     {
                         forcedTextBuilder.Append(t);
+
+                        long elapsedMs = forcedStreamThrottle.ElapsedMilliseconds;
+                        if (elapsedMs - lastForcedUiUpdateMs < CouncilStreamUiUpdateIntervalMs)
+                            return;
+                        lastForcedUiUpdateMs = elapsedMs;
+
                         string current = forcedTextBuilder.ToString();
                         int generatedTokens = EstimateTokenCount(current);
                         _pipelineTokenCount = Math.Max(_pipelineTokenCount, generatedTokens);
@@ -759,7 +819,8 @@ namespace Malx_AI
                     },
                     token,
                     maxTokens,
-                    stopSequences);
+                    stopSequences,
+                    allowModelFallback: false);
 
                 if (!string.IsNullOrWhiteSpace(forcedFinal.Reasoning))
                     reasoningParts.Add(forcedFinal.Reasoning.Trim());
@@ -999,6 +1060,21 @@ namespace Malx_AI
                     ["additionalProperties"] = false
                 }));
 
+            // Full GitHub API surface when the user connected GitHub (Settings or Workplace).
+            if (_mcpConnectorService?.IsGitHubConnected == true)
+            {
+                foreach (McpToolDefinition mcpTool in _mcpConnectorService.GetActiveTools(null))
+                {
+                    if (!mcpTool.Name.StartsWith("github_", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    defs.Add(new OpenRouterToolDefinition(mcpTool.Name, mcpTool.Description, mcpTool.ParametersSchema));
+                }
+
+                string? ghUser = _mcpConnectorService.GetGitHubAccountLabel();
+                // Instruction is injected via system prompt in ExecuteCouncilRoleCloudAsync when tools are listed.
+                _ = ghUser;
+            }
+
             if (_connectedWorkspace.CodebaseEditAccessEnabled)
             {
                 defs.Add(new OpenRouterToolDefinition(
@@ -1120,10 +1196,12 @@ namespace Malx_AI
                     var memoryEntries = _sessionHippocampus.Query(memoryQuery, 4);
                     if (memoryEntries.Count == 0)
                         return "No relevant entries were found in session memory.";
-                    var memoryText = new StringBuilder();
-                    foreach (var entry in memoryEntries)
-                        memoryText.AppendLine(entry.Content.Trim());
-                    return memoryText.ToString().Trim();
+                    // Labeled context (source/tag/priority) instead of bare content lines, so the
+                    // model can weigh studied references against prior role outputs.
+                    string labeled = SessionHippocampus.BuildPromptContext(memoryEntries, maxTokens: 480);
+                    return string.IsNullOrWhiteSpace(labeled)
+                        ? "No relevant entries were found in session memory."
+                        : labeled;
                 }
 
                 if (string.Equals(name, "run_python", StringComparison.OrdinalIgnoreCase))
@@ -1167,6 +1245,16 @@ namespace Malx_AI
                     string query = root.TryGetProperty("query", out JsonElement lq) ? lq.GetString() ?? string.Empty : string.Empty;
                     WorkspaceReadToolResult result = _workspaceAccessService.ListFilesForTool(_connectedWorkspace, query);
                     return result.Output;
+                }
+
+                if (_mcpConnectorService != null
+                    && name.StartsWith("github_", StringComparison.OrdinalIgnoreCase)
+                    && _mcpConnectorService.TryResolveTool(name, out _))
+                {
+                    McpToolExecutionResult mcpResult = await _mcpConnectorService
+                        .ExecuteToolAsync(name, toolCall.ArgumentsJson ?? "{}", token)
+                        .ConfigureAwait(false);
+                    return mcpResult.Result;
                 }
 
                 return $"Unsupported tool: {name}";
@@ -2413,6 +2501,9 @@ namespace Malx_AI
         private const int CloudCouncilRateLimitRetryLimit = 2;
         private const int DefaultCloudCouncilRateLimitWaitSeconds = 6;
         private const int MaxCloudCouncilRateLimitWaitSeconds = 22;
+        // Minimum gap between live streaming-card refreshes. Preview building and token estimation
+        // rescan the whole accumulated text, so refreshing per-delta is quadratic on long outputs.
+        private const int CouncilStreamUiUpdateIntervalMs = 90;
         private static readonly Regex ModelParamBillionsRegex = new(@"(\d+(?:\.\d+)?)\s*[bB]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const string ProjectCanvasManualTrigger = "@ProjectCanvas";
         private static readonly Regex ProjectCanvasManualTriggerRegex = new(@"(?<![A-Za-z0-9_])@ProjectCanvas(?![A-Za-z0-9_])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -2531,6 +2622,7 @@ namespace Malx_AI
         private bool _isNotificationPanelOpen;
         private int _unreadNotificationCount;
         private readonly OpenRouterChatService _openRouterChatService = new();
+        private McpConnectorService? _mcpConnectorService;
         private bool _isCloudModeEnabled;
 
         private static readonly HashSet<string> NotificationRoles = new(StringComparer.OrdinalIgnoreCase)
@@ -4340,13 +4432,103 @@ namespace Malx_AI
                 _connectedWorkspace.DisplayName);
         }
 
+        internal void SetMcpConnectorService(McpConnectorService? service)
+        {
+            if (_mcpConnectorService != null)
+                _mcpConnectorService.Changed -= OnMcpConnectorServiceChanged;
+            _mcpConnectorService = service;
+            if (_mcpConnectorService != null)
+                _mcpConnectorService.Changed += OnMcpConnectorServiceChanged;
+            RefreshCodebaseAccessUi();
+        }
+
+        private void OnMcpConnectorServiceChanged()
+        {
+            Dispatcher.InvokeAsync(RefreshCodebaseAccessUi, DispatcherPriority.Background);
+        }
+
+        private async void ConnectGitHubAccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_mcpConnectorService == null)
+            {
+                AppendChat("system", "GitHub connectors are unavailable. Open Settings → Cloud Connectors after restarting Axiom.");
+                return;
+            }
+
+            if (_mcpConnectorService.IsGitHubConnected)
+            {
+                MessageBoxResult result = MessageBox.Show(
+                    "GitHub is already connected. Disconnect?",
+                    "GitHub",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (result == MessageBoxResult.Yes)
+                {
+                    _mcpConnectorService.DisconnectGitHub();
+                    AppendChat("system", "GitHub disconnected.");
+                    RefreshCodebaseAccessUi();
+                }
+                return;
+            }
+
+            if (ConnectGitHubAccountButton != null)
+                ConnectGitHubAccountButton.IsEnabled = false;
+            AppendChat("system", "Opening GitHub device login in your browser…");
+            var progressUi = new Progress<string>(msg =>
+            {
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (msg.StartsWith("DEVICE_CODE|", StringComparison.Ordinal))
+                    {
+                        string[] parts = msg.Split('|');
+                        string userCode = parts.Length > 1 ? parts[1] : "";
+                        string verifyUri = parts.Length > 2 ? parts[2] : "https://github.com/login/device";
+                        if (!string.IsNullOrWhiteSpace(userCode))
+                        {
+                            try { Clipboard.SetText(userCode); } catch { /* ignore */ }
+                            LogActivity("GitHub device code: " + userCode);
+                            MessageBox.Show(
+                                "Enter this code on the GitHub page:\n\n" +
+                                "        " + userCode + "\n\n" +
+                                "(Copied to clipboard — Ctrl+V on GitHub.)\n\n" +
+                                "1. Paste/type the code\n2. Authorize Axiom\n3. Return here\n\n" +
+                                "Page: " + verifyUri,
+                                "GitHub device code",
+                                MessageBoxButton.OK,
+                                MessageBoxImage.Information);
+                        }
+                        return;
+                    }
+                    LogActivity("GitHub: " + msg);
+                }, DispatcherPriority.Background);
+            });
+
+            try
+            {
+                string account = await _mcpConnectorService.ConnectGitHubAsync(CancellationToken.None, progressUi)
+                    .ConfigureAwait(true);
+                AppendChat("system", $"GitHub connected as {account}. Cloud council can use full github_* tools; private clones use your token automatically.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Connect GitHub", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            finally
+            {
+                RefreshCodebaseAccessUi();
+            }
+        }
+
         private async Task CloneConnectedRepositoryToFolderAsync(string repositoryUrl, string parentFolder, string displayName)
         {
             SetCodebaseConnectionButtonsEnabled(false);
             string previousStatus = _connectedWorkspace.StatusMessage;
             _connectedWorkspace.StatusMessage = "Cloning repository...";
             RefreshCodebaseAccessUi();
-            AppendChat("system", "Cloning repository. If it is private, Git may ask for credentials through your normal Git/GitHub sign-in.");
+            string? authUrl = _mcpConnectorService?.TryGetAuthenticatedGitHubCloneUrl(repositoryUrl);
+            AppendChat("system", authUrl != null
+                ? "Cloning repository with connected GitHub account (private repos supported)…"
+                : "Cloning repository. If it is private, connect GitHub Account first, or Git may ask for credentials.");
 
             try
             {
@@ -4363,7 +4545,8 @@ namespace Malx_AI
                     parentFolder,
                     displayName,
                     progress,
-                    cts.Token);
+                    cts.Token,
+                    authenticatedCloneUrl: authUrl);
 
                 WorkspaceIndexResult index = _workspaceAccessService.IndexWorkspace(clone.LocalPath);
                 _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.GitRepository.ToString();
@@ -4420,6 +4603,8 @@ namespace Malx_AI
                     && !_isProcessing
                     && !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
                     && string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath);
+            if (ConnectGitHubAccountButton != null)
+                ConnectGitHubAccountButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
         }
 
         private static string BuildRepositoryDisplayName(string url)
@@ -13913,6 +14098,18 @@ namespace Malx_AI
                 LogActivity("Council relay stopped by user.");
                 AppendChat("system", "Relay stopped by user.");
             }
+            catch (OpenRouterKeyExhaustedException keyExhausted)
+            {
+                RelayStatusBlock.Text = "Relay: API key out of usage";
+                PublishCouncilPetStatus("Council", "API key out of usage.");
+                UpdateStageIndicator(null, false, false, false);
+                LogActivity($"Relay stopped: {keyExhausted.Message}");
+                await BackendLogService.LogErrorAsync("Workplace.Relay.KeyExhausted", keyExhausted);
+                AppendChat("error", "⚠ " + keyExhausted.Message);
+                _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsDailyLimit
+                    ? "OpenRouter API key: daily free usage exhausted — cloud council paused."
+                    : "OpenRouter API key: out of credits — cloud council paused.");
+            }
             catch (Exception ex)
             {
                 RelayStatusBlock.Text = "Relay: Error";
@@ -13921,7 +14118,7 @@ namespace Malx_AI
                 LogActivity($"Relay error: {ex.Message}");
                 await BackendLogService.LogErrorAsync("Workplace.Relay", ex);
                 AppendChat("error", ex is OpenRouterRateLimitedException
-                    ? ex.Message + " (All free models are currently rate-limited. Add an OpenRouter key/credits or retry shortly.)"
+                    ? ex.Message + " (The council stays on its selected model. Retry shortly or check your OpenRouter usage.)"
                     : ex.Message);
                 if (ex is OutOfMemoryException || ex is IOException)
                 {
@@ -16344,6 +16541,11 @@ namespace Malx_AI
             if (isQwen3)
                 systemPrompt = BuildQwen3SystemPrompt(systemPrompt, false);
 
+            // Apply the hidden foundation before the context-budget math below so the token
+            // count reflects the prompt that is actually sent (AddSystemMessage re-applying it
+            // later is a no-op — Apply is idempotent).
+            systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
+
             string roleName = role.ToString();
             LogActivity($"{roleName}: Loading model '{config.DisplayName}'...");
 
@@ -16614,7 +16816,7 @@ namespace Malx_AI
             // are tokenized as single special tokens — not split into characters.
             var session = new LLama.ChatSession(executor);
             session.WithHistoryTransform(new PromptTemplateTransformer(model, withAssistant: true));
-            session.AddSystemMessage(systemPrompt);
+            session.AddSystemMessage(FoundationSystemPrompt.Apply(systemPrompt));
 
             LogActivity($"{roleName}: Session ready with native template. Starting inference...");
 
@@ -17132,6 +17334,7 @@ namespace Malx_AI
 
         private string BuildPrompt(PromptFormat format, string systemPrompt, string userPayload)
         {
+            systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
             return format switch
             {
                 PromptFormat.Gemma4 => Gemma4Formatter.BuildPrompt(systemPrompt, userPayload),
@@ -19260,10 +19463,40 @@ namespace Malx_AI
                     Message = $"Processing {chunks.Count} chunk(s)..."
                 });
 
+                int failedChunks = 0;
                 for (int i = 0; i < chunks.Count; i++)
                 {
                     StudyChunk chunk = chunks[i];
-                    StudyChunkResult parsed = await RunStudyChunkInferenceAsync(studyRole.Value, chunk, _studySessionCts.Token);
+                    StudyChunkResult parsed;
+                    try
+                    {
+                        parsed = await RunStudyChunkInferenceAsync(studyRole.Value, chunk, _studySessionCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception chunkEx)
+                    {
+                        // One bad chunk (provider hiccup, malformed segment) must not abort the
+                        // whole study run — skip it and keep the knowledge from the others.
+                        failedChunks++;
+                        LogActivity($"Study Session: chunk {i + 1}/{chunks.Count} failed and was skipped ({chunkEx.Message}).");
+                        await BackendLogService.LogEventAsync("Workplace.StudyChunkFailed", $"Chunk:{i + 1}/{chunks.Count}\nDoc:{chunk.DocumentName}\nError:{chunkEx.Message}");
+                        StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
+                        {
+                            PhaseName = "Phase 2 · Core Study Loop",
+                            Current = i + 1,
+                            Total = chunks.Count,
+                            EntriesWritten = totalEntriesWritten,
+                            Message = $"Chunk {i + 1}/{chunks.Count} skipped after an error; continuing."
+                        });
+
+                        if (_studySessionCancelRequested || failedChunks >= Math.Max(3, chunks.Count / 2))
+                            break;
+
+                        continue;
+                    }
 
                     string combined = BuildStudyMemoryContent(chunk, parsed);
                     _sessionHippocampus.Write(new SessionHippocampusEntry
@@ -19844,7 +20077,8 @@ namespace Malx_AI
                         false,
                         OpenRouterChatService.WorkplaceCouncilDefaultModelId,
                         null,
-                        token);
+                        token,
+                        allowModelFallback: false);
                     summary = string.IsNullOrWhiteSpace(cloudSummary.Text)
                         ? BuildFallbackSummary(oldMessages)
                         : cloudSummary.Text.Trim();
