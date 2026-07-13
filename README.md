@@ -171,4 +171,7 @@ The source code is publicly viewable, but it may not be redistributed, modified,
 ## Author
 
 Built by [YoMosa2009](https://github.com/YoMosa2009)  
+
 Portfolio: [MalxLabs.work](https://malxlabs.work)
+
+Website: [MalxInference.work](https://malxinference.work/)
