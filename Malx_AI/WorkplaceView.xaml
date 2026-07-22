@@ -104,6 +104,11 @@
                             <!-- Cloud mode info panel (visible only when cloud council is active) -->
                             <TextBlock x:Name="CloudContextInfoBlock" Visibility="Collapsed" FontSize="9" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,0,0,6" TextWrapping="Wrap"/>
 
+                            <!-- Cloud sub-mode: OpenRouter vs self-hosted Hybrid Local (visible only when cloud council is active) -->
+                            <Button x:Name="WorkplaceHybridToggleButton" Content="Use Hybrid Local (Kestral 1)" Click="WorkplaceHybridToggleButton_Click"
+                                    Visibility="Collapsed" HorizontalAlignment="Left" FontSize="10" Padding="8,4" Margin="0,0,0,8"
+                                    Style="{StaticResource SubtleButtonStyle}" ToolTip="Route the Council through your self-hosted endpoint instead of OpenRouter"/>
+
                             <!-- Local slider controls (hidden in cloud mode) -->
                             <StackPanel x:Name="ContextSlidersPanel">
                                 <TextBlock Text="Global Context" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}"/>

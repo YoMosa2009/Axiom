@@ -133,6 +133,33 @@ namespace Malx_AI
             }
         }
 
+        private void LoadStoredCustomEndpointSettings()
+        {
+            try
+            {
+                string baseUrl = _database?.GetSetting(DatabaseService.CustomEndpointBaseUrlSettingKey) ?? string.Empty;
+                string modelId = _database?.GetSetting(DatabaseService.CustomEndpointModelIdSettingKey) ?? string.Empty;
+                string apiKey = _database?.LoadCustomEndpointApiKey() ?? string.Empty;
+
+                _openRouterChatService.SetCustomEndpoint(baseUrl, apiKey, modelId);
+                // Additive: never clobber a true already set by LoadStoredOpenRouterApiKey, which
+                // runs first in the startup sequence.
+                _cloudModeActive = _cloudModeActive || _openRouterChatService.HasValidCustomEndpoint;
+
+                if (CustomEndpointBaseUrlBox != null && !string.IsNullOrWhiteSpace(baseUrl))
+                    CustomEndpointBaseUrlBox.Text = baseUrl;
+                if (CustomEndpointModelIdBox != null && !string.IsNullOrWhiteSpace(modelId))
+                    CustomEndpointModelIdBox.Text = modelId;
+                if (CustomEndpointApiKeyPasswordBox != null && !string.IsNullOrWhiteSpace(apiKey))
+                    CustomEndpointApiKeyPasswordBox.Password = apiKey;
+            }
+            catch (Exception ex)
+            {
+                _openRouterChatService.SetCustomEndpoint(string.Empty, string.Empty, string.Empty);
+                _ = BackendLogService.LogErrorAsync("MainWindow.LoadStoredCustomEndpointSettings", ex);
+            }
+        }
+
         private void LocalModeButton_Click(object sender, RoutedEventArgs e)
         {
             _cloudModeActive = false;
@@ -153,9 +180,36 @@ namespace Malx_AI
             }
 
             _cloudModeActive = true;
-            RefreshCloudModeToggleUi();
-            RefreshInferenceSettingsUi();
-            UpdateHeaderDisplay();
+            // Cloud means OpenRouter -- if Hybrid Local's model was active, switch back to a real
+            // OpenRouter model instead of leaving Kestral 1 selected under the "Cloud" label.
+            if (IsCustomEndpointModelSelected())
+                SelectCloudModel(OpenRouterChatService.DefaultModelId);
+            else
+            {
+                RefreshCloudModeToggleUi();
+                RefreshInferenceSettingsUi();
+                UpdateHeaderDisplay();
+            }
+        }
+
+        private void HybridLocalModeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_openRouterChatService.HasValidCustomEndpoint)
+            {
+                _cloudModeActive = false;
+                RefreshCloudModeToggleUi();
+                RefreshInferenceSettingsUi();
+                UpdateHeaderDisplay();
+                return;
+            }
+
+            _cloudModeActive = true;
+            SelectCloudModel(OpenRouterChatService.CustomEndpointModelId);
+        }
+
+        private bool IsCustomEndpointModelSelected()
+        {
+            return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase);
         }
 
         private void EidosModelButton_Click(object sender, RoutedEventArgs e)
@@ -166,6 +220,11 @@ namespace Malx_AI
         private void HephaModelButton_Click(object sender, RoutedEventArgs e)
         {
             SelectCloudModel(OpenRouterChatService.Hepha1ModelId);
+        }
+
+        private void CustomEndpointModelButton_Click(object sender, RoutedEventArgs e)
+        {
+            SelectCloudModel(OpenRouterChatService.CustomEndpointModelId);
         }
 
         private void SelectCloudModel(string modelId)
@@ -268,20 +327,121 @@ namespace Malx_AI
             await LoadOpenRouterUsageAsync();
         }
 
+        private async void SaveCustomEndpointButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SaveCustomEndpointButton == null)
+                return;
+
+            string baseUrl = CustomEndpointBaseUrlBox?.Text?.Trim() ?? string.Empty;
+            string modelId = CustomEndpointModelIdBox?.Text?.Trim() ?? string.Empty;
+            string apiKey = CustomEndpointApiKeyPasswordBox?.Password ?? string.Empty;
+
+            _database?.SaveSetting(DatabaseService.CustomEndpointBaseUrlSettingKey, baseUrl);
+            _database?.SaveSetting(DatabaseService.CustomEndpointModelIdSettingKey, modelId);
+            _database?.SaveCustomEndpointApiKey(apiKey);
+            _openRouterChatService.SetCustomEndpoint(baseUrl, apiKey, modelId);
+            RefreshCloudModeToggleUi();
+
+            _isTestingCustomEndpoint = true;
+            SaveCustomEndpointButton.IsEnabled = false;
+            if (CustomEndpointTestingText != null)
+                CustomEndpointTestingText.Visibility = Visibility.Visible;
+            if (CustomEndpointStatusText != null)
+                CustomEndpointStatusText.Visibility = Visibility.Collapsed;
+
+            bool isValid = false;
+            try
+            {
+                isValid = await _openRouterChatService.TestCustomEndpointConnectionAsync();
+            }
+            finally
+            {
+                _isTestingCustomEndpoint = false;
+                SaveCustomEndpointButton.IsEnabled = true;
+                if (CustomEndpointTestingText != null)
+                    CustomEndpointTestingText.Visibility = Visibility.Collapsed;
+            }
+
+            SetCustomEndpointValidationStatus(isValid);
+
+            // First-time setup with no OpenRouter key configured: activate Hybrid Local immediately
+            // rather than leaving the user on a "Cloud" state that has nothing valid selected.
+            if (isValid && !_openRouterChatService.HasValidKey && !IsCustomEndpointModelSelected())
+            {
+                _cloudModeActive = true;
+                SelectCloudModel(OpenRouterChatService.CustomEndpointModelId);
+            }
+
+            RefreshCloudModeToggleUi();
+            UpdateHeaderDisplay();
+        }
+
+        private void ClearCustomEndpointButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (CustomEndpointBaseUrlBox != null)
+                CustomEndpointBaseUrlBox.Text = string.Empty;
+            if (CustomEndpointModelIdBox != null)
+                CustomEndpointModelIdBox.Text = string.Empty;
+            if (CustomEndpointApiKeyPasswordBox != null)
+                CustomEndpointApiKeyPasswordBox.Password = string.Empty;
+
+            _database?.SaveSetting(DatabaseService.CustomEndpointBaseUrlSettingKey, string.Empty);
+            _database?.SaveSetting(DatabaseService.CustomEndpointModelIdSettingKey, string.Empty);
+            _database?.SaveCustomEndpointApiKey(string.Empty);
+            _openRouterChatService.SetCustomEndpoint(string.Empty, string.Empty, string.Empty);
+
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
+                _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
+                UpdateOpenRouterDetectedModelUi();
+            }
+
+            if (CustomEndpointStatusText != null)
+                CustomEndpointStatusText.Visibility = Visibility.Collapsed;
+
+            RefreshCloudModeToggleUi();
+            UpdateHeaderDisplay();
+        }
+
+        private void SetCustomEndpointValidationStatus(bool isValid)
+        {
+            if (CustomEndpointStatusText == null)
+                return;
+
+            CustomEndpointStatusText.Text = isValid ? "Valid" : "Could not reach endpoint, check URL/key/model";
+            CustomEndpointStatusText.Foreground = AppBrushCache.Get(isValid ? "#22C55E" : "#FF3B3B");
+            CustomEndpointStatusText.Visibility = Visibility.Visible;
+        }
+
         private void RefreshCloudModeToggleUi()
         {
             _localModeButton ??= FindName("LocalModeButton") as Button;
             _cloudModeButton ??= FindName("CloudModeButton") as Button;
+            _hybridLocalModeButton ??= FindName("HybridLocalModeButton") as Button;
             _eidosModelButton ??= FindName("EidosModelButton") as Button;
             _hephaModelButton ??= FindName("HephaModelButton") as Button;
+            _customEndpointModelButton ??= FindName("CustomEndpointModelButton") as Button;
 
             bool hasValidKey = _openRouterChatService.HasValidKey;
-            if (!hasValidKey)
+            bool hasValidCustomEndpoint = _openRouterChatService.HasValidCustomEndpoint;
+            if (!_openRouterChatService.HasAnyValidCloudCredential)
                 _cloudModeActive = false;
 
-            // Show cloud model selector (Eidos / Hepha) only when in cloud mode
+            bool isHybridLocalActive = _cloudModeActive && IsCustomEndpointModelSelected();
+            bool isCloudActive = _cloudModeActive && !IsCustomEndpointModelSelected();
+
+            // The header's model-indicator row shows for either cloud-ish mode, but which pill(s)
+            // appear inside it differs: Eidos/Hepha are a real picker (Cloud has two models),
+            // Kestral 1 is just a status indicator (Hybrid Local only ever has the one).
             if (FindName("CloudModelSelectorBorder") is Border cloudSelectorBorder)
                 cloudSelectorBorder.Visibility = _cloudModeActive ? Visibility.Visible : Visibility.Collapsed;
+            if (_eidosModelButton != null)
+                _eidosModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+            if (_hephaModelButton != null)
+                _hephaModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+            if (_customEndpointModelButton != null)
+                _customEndpointModelButton.Visibility = isHybridLocalActive ? Visibility.Visible : Visibility.Collapsed;
 
             if (_localModeButton != null)
             {
@@ -292,20 +452,34 @@ namespace Malx_AI
                 _localModeButton.BorderThickness = new Thickness(0);
             }
 
+            if (_hybridLocalModeButton != null)
+            {
+                _hybridLocalModeButton.IsEnabled = hasValidCustomEndpoint;
+                _hybridLocalModeButton.ToolTip = hasValidCustomEndpoint
+                    ? "Send compute to your self-hosted inference server"
+                    : "Configure a custom endpoint in Settings to enable Hybrid Local";
+                _hybridLocalModeButton.Background = AppBrushCache.Get(isHybridLocalActive ? "#B8924A" : "Transparent");
+                _hybridLocalModeButton.Foreground = AppBrushCache.Get(isHybridLocalActive ? "#EDE8E3" : "#8A8279");
+                _hybridLocalModeButton.BorderBrush = Brushes.Transparent;
+                _hybridLocalModeButton.BorderThickness = new Thickness(0);
+            }
+
             if (_cloudModeButton != null)
             {
                 _cloudModeButton.IsEnabled = hasValidKey;
                 _cloudModeButton.ToolTip = hasValidKey
                     ? "Use OpenRouter cloud inference"
                     : "Add an OpenRouter API key in Settings to enable cloud mode";
-                _cloudModeButton.Background = AppBrushCache.Get(_cloudModeActive ? "#B8924A" : "Transparent");
-                _cloudModeButton.Foreground = AppBrushCache.Get(_cloudModeActive ? "#EDE8E3" : "#8A8279");
+                _cloudModeButton.Background = AppBrushCache.Get(isCloudActive ? "#B8924A" : "Transparent");
+                _cloudModeButton.Foreground = AppBrushCache.Get(isCloudActive ? "#EDE8E3" : "#8A8279");
                 _cloudModeButton.BorderBrush = Brushes.Transparent;
                 _cloudModeButton.BorderThickness = new Thickness(0);
             }
 
             RefreshCloudModelSelectionUi(_eidosModelButton, OpenRouterChatService.Eidos1ModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_hephaModelButton, OpenRouterChatService.Hepha1ModelId, hasValidKey);
+            RefreshCloudModelSelectionUi(_customEndpointModelButton, OpenRouterChatService.CustomEndpointModelId, hasValidCustomEndpoint,
+                disabledHint: "Configure a custom endpoint in Settings to enable Hybrid Local");
             RefreshInferenceSettingsUi();
 
             UpdateHeaderDisplay();
@@ -318,7 +492,7 @@ namespace Malx_AI
                 CloseMcpMentionPopup();
         }
 
-        private void RefreshCloudModelSelectionUi(Button? button, string modelId, bool hasValidKey)
+        private void RefreshCloudModelSelectionUi(Button? button, string modelId, bool hasValidKey, string? disabledHint = null)
         {
             if (button == null)
                 return;
@@ -332,7 +506,7 @@ namespace Malx_AI
             button.BorderThickness = new Thickness(0);
             button.Opacity = isAvailable || !hasValidKey ? 1.0 : 0.45;
             button.ToolTip = !hasValidKey
-                ? "Add an OpenRouter API key in Settings to enable cloud models"
+                ? disabledHint ?? "Add an OpenRouter API key in Settings to enable cloud models"
                 : isAvailable
                     ? _openRouterChatService.DescribeModelSelection(modelId)
                     : $"{_openRouterChatService.ResolveModelLabel(modelId)} is not available on this OpenRouter key.";
@@ -671,6 +845,11 @@ namespace Malx_AI
                 return "[MODEL PROFILE: HEPHA 1] You are operating in Axiom's Hepha 1 cloud profile. Prioritize code correctness, deterministic tool usage, compact structured outputs, and environment-aware solutions that work cleanly with the app's Python sandbox, web retrieval, imported documents, and persisted chat state. When tool-produced context is present, treat it as authoritative and integrate it directly without re-describing internal plumbing. Use the larger cloud context window to connect the latest user message with relevant prior turns before choosing tools or answering.";
             }
 
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[MODEL PROFILE: KESTRAL 1] You are operating in Axiom's Kestral 1 profile -- a smaller, self-hosted local model, not one of Axiom's larger cloud models. You do not have a large context window: keep answers focused and do not assume you can lean on distant conversation history the way a large-context cloud model would. For ordinary conversational messages -- greetings, small talk, or anything you can answer directly from what you already know -- just answer directly and naturally; do not reach for a tool (web search, Python, calculator, connectors) unless the request genuinely requires one. Smaller models tend to over-use tools on messages that don't need them, which only slows down the response. When a tool is genuinely warranted, use it deliberately and integrate its output directly without describing internal plumbing.";
+            }
+
             string taskBias = IsCodingRequest(userMsg)
                 ? "When coding is requested, stay implementation-first and keep code directly usable."
                 : "Favor strong reasoning, concise execution-ready answers, and efficient use of supplied context blocks.";
@@ -680,11 +859,17 @@ namespace Malx_AI
 
         private string BuildCloudWebSearchSystemInstruction(string userMsg, bool proactiveWebContextAttached)
         {
+            bool webSearchAvailable = proactiveWebContextAttached || _normalWebSearchEnabled || ContainsExplicitWebSearchRequest(userMsg);
+            if (!webSearchAvailable)
+            {
+                // web_search is not in the tools list this turn (see BuildCloudToolDefinitions) --
+                // say so plainly rather than describing a tool the model cannot actually call.
+                return "[CLOUD WEB SEARCH BEHAVIOR]\nWeb search is off for this turn (the user has not enabled it). Answer from your own knowledge. Do not claim to have searched the web or fabricate sources -- if current or source-backed information is genuinely required, say so directly instead of guessing.";
+            }
+
             string webAvailability = proactiveWebContextAttached
                 ? "A proactive web evidence block is already attached for this turn."
-                : _normalWebSearchEnabled || ContainsExplicitWebSearchRequest(userMsg)
-                    ? "Web Search is enabled or explicitly requested for this turn."
-                    : "The web_search tool is available for cases where current or source-backed information is needed.";
+                : "Web Search is enabled or explicitly requested for this turn.";
 
             return "[CLOUD WEB SEARCH BEHAVIOR]\n" +
                 webAvailability + "\n" +
@@ -705,11 +890,21 @@ namespace Malx_AI
                 : normalized[..maxLength];
         }
 
-        private IReadOnlyList<OpenRouterToolDefinition> BuildCloudToolDefinitions(IReadOnlyCollection<string>? mentionedMcpHandles = null)
+        private IReadOnlyList<OpenRouterToolDefinition> BuildCloudToolDefinitions(
+            IReadOnlyCollection<string>? mentionedMcpHandles = null,
+            bool includeWebSearch = true,
+            bool includeRunPython = true,
+            bool includeCalculate = true)
         {
-            var tools = new List<OpenRouterToolDefinition>
+            var tools = new List<OpenRouterToolDefinition>();
+
+            // Only offered when the user has switched Web Search on (or explicitly asked for it
+            // this turn) -- exposing the tool unconditionally left the model to decide for itself
+            // whether to search, and smaller/weaker models (notably local ones) reach for it far
+            // too eagerly, e.g. treating a bare "hello" as a lookup request.
+            if (includeWebSearch)
             {
-                new OpenRouterToolDefinition(
+                tools.Add(new OpenRouterToolDefinition(
                     "web_search",
                     "Search the web for relevant evidence, definitions, explanations, comparisons, documentation, or current information, then return grounded snippets. Use this for source-backed facts and when conversation context is needed to answer correctly. Include relevant conversation context in the query: resolve pronouns and phrases like 'the movie', 'that model', or 'this article' to the actual title, product, person, or topic from prior turns.",
                     new JsonObject
@@ -725,8 +920,16 @@ namespace Malx_AI
                         },
                         ["required"] = new JsonArray("query"),
                         ["additionalProperties"] = false
-                    }),
-                new OpenRouterToolDefinition(
+                    }));
+            }
+
+            // Same principle as web_search above: only offered when the message actually looks
+            // like it needs it (see LooksLikeCodeExecutionRequest/LooksLikeCalculationRequest) for
+            // models that have proven unreliable at judging this for themselves -- see the callers
+            // of BuildCloudToolDefinitions for which models actually gate on this.
+            if (includeRunPython)
+            {
+                tools.Add(new OpenRouterToolDefinition(
                     "run_python",
                     "Execute Python code in the existing sandbox and return stdout/stderr.",
                     new JsonObject
@@ -742,8 +945,12 @@ namespace Malx_AI
                         },
                         ["required"] = new JsonArray("code"),
                         ["additionalProperties"] = false
-                    }),
-                new OpenRouterToolDefinition(
+                    }));
+            }
+
+            if (includeCalculate)
+            {
+                tools.Add(new OpenRouterToolDefinition(
                     "calculate",
                     "Evaluate a math or unit conversion expression with the existing calculator.",
                     new JsonObject
@@ -759,8 +966,8 @@ namespace Malx_AI
                         },
                         ["required"] = new JsonArray("expression"),
                         ["additionalProperties"] = false
-                    })
-            };
+                    }));
+            }
 
             // MCP / Cloud Connectors: only when Cloud Mode is active (this method is cloud-only)
             // and at least one connector is connected. @mentions focus those connectors in the system
@@ -782,6 +989,54 @@ namespace Malx_AI
             return tools;
         }
 
+        private static readonly string[] CalculationSignalWords =
+        [
+            "plus", "minus", "times", "multipli", "multiply", "divided", "divide", "subtract",
+            " add ", " sum ", "product of", "difference between", "quotient", "squared", "cubed",
+            "percent", "percentage", "average of", "total of", "convert", "calculate", "compute",
+            "what is the", "how much is", "how many"
+        ];
+        private static readonly Regex CalculationUnambiguousOperatorRegex = new(@"\d\s*[\+\*/\^%]\s*\d?", RegexOptions.Compiled);
+        private static readonly Regex CalculationSpacedMinusRegex = new(@"\d\s+-\s+\d", RegexOptions.Compiled);
+
+        // Deliberately narrower than a generic "contains a number" check: phone numbers, ages,
+        // times, and order/room numbers all contain digits without asking for a calculation.
+        // Requires either an unambiguous math symbol, or a number paired with an arithmetic word.
+        private static bool LooksLikeCalculationRequest(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            if (CalculationUnambiguousOperatorRegex.IsMatch(message) || CalculationSpacedMinusRegex.IsMatch(message))
+                return true;
+
+            if (!Regex.IsMatch(message, @"\d"))
+                return false;
+
+            string lower = " " + message.ToLowerInvariant() + " ";
+            return CalculationSignalWords.Any(lower.Contains);
+        }
+
+        private static readonly string[] CodeExecutionSignalWords =
+        [
+            "python", "run this", "run the", "execute this", "execute the", "run it", "execute it",
+            "what does this print", "what's the output", "what is the output", "write", "code",
+            "script", "function", "program", "debug", "fix this", "error", "bug", "javascript",
+            "c#", "java", "sql"
+        ];
+
+        private static bool LooksLikeCodeExecutionRequest(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            if (message.Contains("```", StringComparison.Ordinal))
+                return true;
+
+            string lower = message.ToLowerInvariant();
+            return CodeExecutionSignalWords.Any(lower.Contains);
+        }
+
         private async Task<CloudToolCallLoopResult> RunCloudToolCallingLoopAsync(
             string userMsg,
             string systemPrompt,
@@ -798,7 +1053,16 @@ namespace Malx_AI
             messages.Add(new OpenRouterMessage("user", userMsg, PreserveFullText: true, ImageDataUrls: imageDataUrls));
 
             IReadOnlyList<string> mentionedMcpHandles = ResolveMentionedMcpHandles(userMsg);
-            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions(mentionedMcpHandles);
+            bool includeWebSearch = _normalWebSearchEnabled || ContainsExplicitWebSearchRequest(userMsg);
+            // Kestral 1 (self-hosted local model) has proven unreliable at judging for itself
+            // whether run_python/calculate are actually warranted -- e.g. it called run_python on a
+            // bare "hello" even when explicitly instructed not to. Gate those two on a lightweight
+            // heuristic for this model specifically; other (OpenRouter) models keep the tools
+            // unconditionally available as before, since they haven't shown this problem.
+            bool isCustomEndpoint = IsCustomEndpointModelSelected();
+            bool includeRunPython = !isCustomEndpoint || LooksLikeCodeExecutionRequest(userMsg);
+            bool includeCalculate = !isCustomEndpoint || LooksLikeCalculationRequest(userMsg);
+            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions(mentionedMcpHandles, includeWebSearch, includeRunPython, includeCalculate);
             var reasoningParts = new List<string>();
             int toolCallCount = 0;
             bool pythonSessionStarted = false;
@@ -1040,8 +1304,8 @@ namespace Malx_AI
 
         private async Task HandleCloudChatRequestAsync(string userMsg, CancellationToken token)
         {
-            if (!_openRouterChatService.HasValidKey)
-                throw new InvalidOperationException("Add a valid OpenRouter API key in Settings to enable cloud mode.");
+            if (!_openRouterChatService.HasAnyValidCloudCredential)
+                throw new InvalidOperationException("Add a valid OpenRouter API key or custom endpoint in Settings to enable cloud mode.");
 
             CloudChatRequestContext requestContext = await PrepareCloudChatRequestContextAsync(userMsg, token).ConfigureAwait(false);
             var streamedResponseBuilder = new StringBuilder();

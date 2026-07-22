@@ -151,10 +151,18 @@ namespace Malx_AI
             _settings.Save();
         }
 
-        private static int ResolveDefaultCeiling(string modelName)
+        // Public and stateless (no settings-file dependency) specifically so tests can exercise
+        // it directly without touching the real persisted SmartCompactionSettings on disk.
+        public static int ResolveDefaultCeiling(string modelName)
         {
             if (string.IsNullOrWhiteSpace(modelName))
                 return 75;
+
+            // Mirrors OpenRouterChatService.CustomEndpointModelId ("custom-endpoint", Kestral 1's
+            // model id) -- kept as a literal rather than a cross-reference so this file stays
+            // dependency-free (it's linked directly into the test project).
+            if (string.Equals(modelName, "custom-endpoint", StringComparison.OrdinalIgnoreCase))
+                return 70; // small self-hosted endpoint -- keep the ceiling conservative
 
             string lower = modelName.ToLowerInvariant();
 
@@ -219,13 +227,19 @@ namespace Malx_AI
         // ═══════════════════════════════════════════════
         // Importance classification
         // ═══════════════════════════════════════════════
-        public static MessageImportance ClassifyImportance(string role, string content, bool isPinned)
+        public static MessageImportance ClassifyImportance(string role, string content, bool isPinned, bool hasActiveAttachment = false)
         {
             if (isPinned)
                 return MessageImportance.High;
 
             if (string.IsNullOrWhiteSpace(content))
                 return MessageImportance.Low;
+
+            // A short "summarize this"/"what does this say" tied to an active attachment carries
+            // real meaning even under the 60-char short-filler threshold below -- without this,
+            // it can get classified Low and swept into compaction like ordinary chatter.
+            if (hasActiveAttachment && string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
+                return MessageImportance.High;
 
             // Always high: code blocks, errors, stack traces
             if (content.Contains("```") || content.Contains("Traceback") || content.Contains("Exception:") ||
@@ -452,6 +466,53 @@ namespace Malx_AI
         public static int EstimateTokens(string text)
         {
             return string.IsNullOrWhiteSpace(text) ? 0 : (int)Math.Ceiling(text.Length / AvgCharsPerToken);
+        }
+
+        // ═══════════════════════════════════════════════
+        // Extend a removal set to avoid orphaning half a user/assistant exchange.
+        // NormalizeMessagesForChatSession/BuildChatMlHistoryTurns both silently drop an
+        // assistant turn not immediately preceded by a user turn (and vice versa is never
+        // sent without its user), so leaving one side of a pair behind after compaction
+        // causes it to be discarded later anyway -- unpredictably, and without a summary.
+        // Only ever adds to the removal set; never rescues a message out of it.
+        // ═══════════════════════════════════════════════
+        public static HashSet<int> ExtendRemovalToAvoidOrphanedTurns(
+            List<(string Role, bool IsProtected)> messages,
+            HashSet<int> indicesToRemove)
+        {
+            var extended = new HashSet<int>(indicesToRemove);
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (int idx in extended.ToList())
+                {
+                    if (string.Equals(messages[idx].Role, "user", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int partner = idx + 1;
+                        if (partner < messages.Count
+                            && string.Equals(messages[partner].Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                            && !messages[partner].IsProtected
+                            && extended.Add(partner))
+                        {
+                            changed = true;
+                        }
+                    }
+                    else if (string.Equals(messages[idx].Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int partner = idx - 1;
+                        if (partner >= 0
+                            && string.Equals(messages[partner].Role, "user", StringComparison.OrdinalIgnoreCase)
+                            && !messages[partner].IsProtected
+                            && extended.Add(partner))
+                        {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+
+            return extended;
         }
     }
 }

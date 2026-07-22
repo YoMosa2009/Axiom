@@ -1701,6 +1701,39 @@ namespace Malx_AI
                 "or load the model with a larger context size.");
         }
 
+        // Compaction-generated summaries use this role (not "system") so they survive
+        // IsNormalChatNotificationRole's persistence filter, which treats "system" as a
+        // disposable toast. ExpandContextSummariesForWireFormat below converts them into a
+        // synthetic user/assistant pair before they reach the model, so this role never needs
+        // to be understood by NormalizeMessagesForChatSession/BuildChatMlHistoryTurns/
+        // BuildOpenRouterConversationHistory.
+        private const string ContextSummaryRole = "context-summary";
+
+        // Compaction can insert a "context-summary" entry at an arbitrary position in history
+        // (wherever the compacted group happened to be), so the message immediately before or
+        // after it could be either role. Expanding it into a self-contained user/assistant pair
+        // means it always forms a well-formed alternating unit regardless of its neighbors,
+        // instead of risking silent collapse in NormalizeMessagesForChatSession's consecutive-
+        // user handling.
+        private static List<ChatMessage> ExpandContextSummariesForWireFormat(List<ChatMessage> messages)
+        {
+            var expanded = new List<ChatMessage>(messages.Count);
+            foreach (ChatMessage message in messages)
+            {
+                if (string.Equals(message.Role, ContextSummaryRole, StringComparison.OrdinalIgnoreCase))
+                {
+                    expanded.Add(new ChatMessage("user",
+                        $"(System note) Retain this summary of earlier discussion for context:\n{message.Content}"));
+                    expanded.Add(new ChatMessage("assistant", "Understood — I'll keep that context in mind."));
+                }
+                else
+                {
+                    expanded.Add(message);
+                }
+            }
+            return expanded;
+        }
+
         private static List<ChatMessage> NormalizeMessagesForChatSession(IEnumerable<ChatMessage> messages)
         {
             var normalized = new List<ChatMessage>();
@@ -1746,11 +1779,13 @@ namespace Malx_AI
         {
             var allMessages = _chatMessages
                 .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
-                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(m.Role, ContextSummaryRole, StringComparison.OrdinalIgnoreCase))
                 .Where(m => !string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
                          || !string.IsNullOrWhiteSpace(m.Content))
                 .Select(CloneMessageForInferenceContext)
                 .ToList();
+            allMessages = ExpandContextSummariesForWireFormat(allMessages);
 
             if (allMessages.Count > 0
                 && string.Equals(allMessages[^1].Role, "user", StringComparison.OrdinalIgnoreCase)
@@ -1829,7 +1864,7 @@ namespace Malx_AI
                     selectedRanges.Add(msgIndex);
             }
 
-            int contextBudget = Math.Max(ContextSelectionThresholdTokens, (int)(CtxSlider?.Value ?? 2048));
+            int contextBudget = Math.Max(ContextSelectionThresholdTokens, GetLoadedLocalContextSize());
             int selectedTokens = selectedRanges.Sum(i => Math.Max(0, (allMessages[i].Content?.Length ?? 0) / 4));
             foreach (var candidate in candidates
                 .Where(c => anchor == null || c.StartIndex != anchor.StartIndex)
@@ -1868,11 +1903,13 @@ namespace Malx_AI
         {
             var allMessages = (sourceMessages ?? [])
                 .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
-                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                         || string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(m.Role, ContextSummaryRole, StringComparison.OrdinalIgnoreCase))
                 .Where(m => !string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
                          || !string.IsNullOrWhiteSpace(m.Content))
                 .Select(CloneMessageForInferenceContext)
                 .ToList();
+            allMessages = ExpandContextSummariesForWireFormat(allMessages);
 
             if (allMessages.Count > 0
                 && string.Equals(allMessages[^1].Role, "user", StringComparison.OrdinalIgnoreCase)
@@ -3270,7 +3307,12 @@ namespace Malx_AI
                     AttachedDocumentMemory = BuildAttachedDocumentMemoryBlock(),
                     DocumentContext = BuildPersistentDocumentContextBlock(userMsg, isCloudMode),
                     HasVisionAttachmentForCloudTurn = HasVisionAttachmentForCloudTurn(),
-                    ContextSize = (int)Math.Max(512, CtxSlider?.Value ?? 2048),
+                    // Local and cloud draw from different models' context windows -- using the
+                    // loaded local model's window for a cloud turn (or vice versa) would size
+                    // SelectRelevantChatHistory's budget off the wrong model entirely.
+                    ContextSize = isCloudMode
+                        ? _openRouterChatService.GetApproximateContextWindowTokens(_selectedOpenRouterModelId)
+                        : GetLoadedLocalContextSize(),
                     Temperature = (float)TemperatureSlider.Value,
                     MinP = (float)TopPSlider.Value,
                     ChatMessages = _chatMessages.Select(CloneMessageForInferenceContext).ToList(),
@@ -3384,10 +3426,11 @@ namespace Malx_AI
 
             var snapshot = await Dispatcher.InvokeAsync(() => new
             {
-                ContextSize = (int)Math.Max(512, CtxSlider?.Value ?? 2048),
+                ContextSize = GetLoadedLocalContextSize(),
                 Messages = _chatMessages.Select(CloneMessageForInferenceContext).ToList(),
                 CurrentStreamingMessageId = _currentStreamingMessage?.Id,
-                PinnedTopics = _pinnedMessages.Select(p => p.Content).ToList()
+                PinnedTopics = _pinnedMessages.Select(p => p.Content).ToList(),
+                HasActiveAttachments = _chatDocuments.Count > 0
             }, System.Windows.Threading.DispatcherPriority.Background);
 
             int contextSize = snapshot.ContextSize;
@@ -3415,7 +3458,7 @@ namespace Malx_AI
                     for (int i = 0; i < messageList.Count; i++)
                     {
                         var msg = messageList[i];
-                        msg.Importance = SmartContextCompactionEngine.ClassifyImportance(msg.Role, msg.Content, msg.IsPinned || msg.IsCompactionProtected);
+                        msg.Importance = SmartContextCompactionEngine.ClassifyImportance(msg.Role, msg.Content, msg.IsPinned || msg.IsCompactionProtected, snapshot.HasActiveAttachments);
 
                         if (i == 0 && string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase))
                         {
@@ -3423,6 +3466,13 @@ namespace Malx_AI
                             msg.Importance = MessageImportance.High;
                         }
                     }
+
+                    // Protect the most recent messages from compaction regardless of topic
+                    // similarity, mirroring cloud mode's RecentMessagesToPreserve floor -- without
+                    // this, a recent-but-Low message can still get swept in if it happens to share
+                    // keywords with an old topic.
+                    const int RecentMessagesToPreserve = 12;
+                    int recencyCutoff = Math.Max(0, messageList.Count - RecentMessagesToPreserve);
 
                     var lowCandidates = new List<(int Index, string Content)>();
                     var highContents = new List<string>();
@@ -3434,7 +3484,7 @@ namespace Malx_AI
                         if (msg.IsCompactionMarker)
                             continue;
 
-                        if (msg.Importance == MessageImportance.High || msg.IsCompactionProtected || msg.IsPinned)
+                        if (msg.Importance == MessageImportance.High || msg.IsCompactionProtected || msg.IsPinned || i >= recencyCutoff)
                         {
                             highContents.Add(msg.Content ?? string.Empty);
                         }
@@ -3458,7 +3508,15 @@ namespace Malx_AI
                     {
                         token.ThrowIfCancellationRequested();
                         if (group.Count < 2)
+                        {
+                            // No cluster partner to summarize with -- if it's short filler
+                            // (the exact content ClassifyImportance already flagged Low), remove
+                            // it outright instead of stranding it forever with no removal path.
+                            string soleContent = messageList[group[0]].Content ?? string.Empty;
+                            if (soleContent.Length < 60)
+                                indicesToRemove.Add(group[0]);
                             continue;
+                        }
 
                         var groupMessages = group.Select(idx => messageList[idx].Content ?? string.Empty).ToList();
                         string topicLabel = SmartContextCompactionEngine.GenerateTopicLabel(groupMessages);
@@ -3518,7 +3576,18 @@ namespace Malx_AI
                     }
 
                     if (indicesToRemove.Count == 0)
+                    {
+                        _ = BackendLogService.LogEventAsync("SmartCompaction",
+                            $"Triggered but nothing removable (tokens={tokensBefore}, candidates={lowCandidates.Count}, groups={groups.Count}).");
                         return (Summaries: summaries, IndicesToRemove: indicesToRemove, MissingTopics: new List<string>(), TokensAfter: tokensBefore);
+                    }
+
+                    var protectionFlags = messageList.Select((msg, i) => (
+                        msg.Role,
+                        IsProtected: msg.Importance == MessageImportance.High || msg.IsCompactionProtected || msg.IsPinned || i >= recencyCutoff
+                            || (snapshot.CurrentStreamingMessageId.HasValue && msg.Id == snapshot.CurrentStreamingMessageId.Value)
+                    )).ToList();
+                    indicesToRemove = SmartContextCompactionEngine.ExtendRemovalToAvoidOrphanedTurns(protectionFlags, indicesToRemove);
 
                     var missingTopics = SmartContextCompactionEngine.ValidateCompaction(
                         snapshot.PinnedTopics, new List<string>(), highContents, summaries);
@@ -3555,7 +3624,7 @@ namespace Malx_AI
 
                     foreach (var entry in compactionResult.Summaries)
                     {
-                        var summaryMsg = new ChatMessage("system", $"[Compressed: {entry.TopicLabel}] {entry.Summary}");
+                        var summaryMsg = new ChatMessage(ContextSummaryRole, $"[Compressed: {entry.TopicLabel}] {entry.Summary}");
                         summaryMsg.Importance = MessageImportance.Low;
                         summaryMsg.IsCompactionProtected = true;
                         if (adjustedInsert <= _chatMessages.Count)
@@ -3567,7 +3636,7 @@ namespace Malx_AI
                     // Add missing topic stubs
                     foreach (var topic in compactionResult.MissingTopics)
                     {
-                        var stub = new ChatMessage("system", $"[Prior context note] {topic}");
+                        var stub = new ChatMessage(ContextSummaryRole, $"[Prior context note] {topic}");
                         stub.Importance = MessageImportance.High;
                         stub.IsCompactionProtected = true;
                         _chatMessages.Add(stub);
@@ -3599,27 +3668,38 @@ namespace Malx_AI
 
         private async Task RunCloudModeCompactionIfNeededAsync(CancellationToken token)
         {
-            const int MinMessagesForCloudCompaction = 20;
+            // A raw message-count floor alone is context-window-blind: a huge-window model gets
+            // compacted after just a handful of short messages (unnecessary loss), while a short
+            // conversation with large pasted content could overflow context without ever
+            // compacting. Keep a small floor only to avoid degenerate compaction attempts on a
+            // near-empty chat; the real gate is the token/window-based ShouldCompact check below.
+            const int MinMessagesForCloudCompaction = 8;
             const int RecentMessagesToPreserve = 12;
 
             var snapshot = await Dispatcher.InvokeAsync(() => new
             {
                 Messages = _chatMessages.Select(CloneMessageForInferenceContext).ToList(),
                 CurrentStreamingMessageId = _currentStreamingMessage?.Id,
-                PinnedTopics = _pinnedMessages.Select(p => p.Content).ToList()
+                PinnedTopics = _pinnedMessages.Select(p => p.Content).ToList(),
+                HasActiveAttachments = _chatDocuments.Count > 0
             }, System.Windows.Threading.DispatcherPriority.Background);
 
             if (snapshot.Messages.Count < MinMessagesForCloudCompaction)
                 return;
 
-            if (!_openRouterChatService.HasValidKey)
+            if (!_openRouterChatService.HasAnyValidCloudCredential)
+                return;
+
+            int estimatedTokens = snapshot.Messages.Sum(m => Math.Max(0, (m.Content?.Length ?? 0) / 4));
+            int contextWindow = _openRouterChatService.GetApproximateContextWindowTokens(_selectedOpenRouterModelId);
+            if (!_compactionEngine.ShouldCompact(estimatedTokens, contextWindow, _selectedOpenRouterModelId))
                 return;
 
             // Classify importance for all messages
             for (int i = 0; i < snapshot.Messages.Count; i++)
             {
                 var msg = snapshot.Messages[i];
-                msg.Importance = SmartContextCompactionEngine.ClassifyImportance(msg.Role, msg.Content, msg.IsPinned || msg.IsCompactionProtected);
+                msg.Importance = SmartContextCompactionEngine.ClassifyImportance(msg.Role, msg.Content, msg.IsPinned || msg.IsCompactionProtected, snapshot.HasActiveAttachments);
                 if (i == 0 && string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase))
                 {
                     msg.IsCompactionProtected = true;
@@ -3630,12 +3710,17 @@ namespace Malx_AI
             // Only compact messages outside the most recent window
             int cutoffIndex = Math.Max(0, snapshot.Messages.Count - RecentMessagesToPreserve);
             var lowCandidates = new List<(int Index, string Content)>();
-            for (int i = 0; i < cutoffIndex; i++)
+            var highContents = new List<string>();
+            for (int i = 0; i < snapshot.Messages.Count; i++)
             {
                 var msg = snapshot.Messages[i];
-                if (msg.IsCompactionMarker || msg.IsCompactionProtected || msg.IsPinned) continue;
+                if (msg.IsCompactionMarker) continue;
                 if (snapshot.CurrentStreamingMessageId.HasValue && msg.Id == snapshot.CurrentStreamingMessageId.Value) continue;
-                if (msg.Importance == MessageImportance.Low)
+
+                bool isProtectedOrRecent = msg.Importance == MessageImportance.High || msg.IsCompactionProtected || msg.IsPinned || i >= cutoffIndex;
+                if (isProtectedOrRecent)
+                    highContents.Add(msg.Content ?? string.Empty);
+                else if (i < cutoffIndex)
                     lowCandidates.Add((i, msg.Content ?? string.Empty));
             }
 
@@ -3658,7 +3743,13 @@ namespace Malx_AI
                 foreach (var group in groups)
                 {
                     token.ThrowIfCancellationRequested();
-                    if (group.Count < 2) continue;
+                    if (group.Count < 2)
+                    {
+                        string soleContent = snapshot.Messages[group[0]].Content ?? string.Empty;
+                        if (soleContent.Length < 60)
+                            indicesToRemove.Add(group[0]);
+                        continue;
+                    }
 
                     var groupMessages = group.Select(idx => snapshot.Messages[idx].Content ?? string.Empty).ToList();
                     string topicLabel = SmartContextCompactionEngine.GenerateTopicLabel(groupMessages);
@@ -3695,7 +3786,22 @@ namespace Malx_AI
                         indicesToRemove.Add(idx);
                 }
 
-                if (indicesToRemove.Count == 0) return;
+                if (indicesToRemove.Count == 0)
+                {
+                    _ = BackendLogService.LogEventAsync("SmartCompaction",
+                        $"Cloud compaction triggered but nothing removable (candidates={lowCandidates.Count}, groups={groups.Count}).");
+                    return;
+                }
+
+                var cloudProtectionFlags = snapshot.Messages.Select((msg, i) => (
+                    msg.Role,
+                    IsProtected: msg.Importance == MessageImportance.High || msg.IsCompactionProtected || msg.IsPinned || i >= cutoffIndex
+                        || (snapshot.CurrentStreamingMessageId.HasValue && msg.Id == snapshot.CurrentStreamingMessageId.Value)
+                )).ToList();
+                indicesToRemove = SmartContextCompactionEngine.ExtendRemovalToAvoidOrphanedTurns(cloudProtectionFlags, indicesToRemove);
+
+                var missingTopics = SmartContextCompactionEngine.ValidateCompaction(
+                    snapshot.PinnedTopics, new List<string>(), highContents, summaries);
 
                 await Dispatcher.InvokeAsync(() =>
                 {
@@ -3711,13 +3817,21 @@ namespace Malx_AI
 
                     foreach (var entry in summaries)
                     {
-                        var summaryMsg = new ChatMessage("system", $"[Compressed: {entry.TopicLabel}] {entry.Summary}");
+                        var summaryMsg = new ChatMessage(ContextSummaryRole, $"[Compressed: {entry.TopicLabel}] {entry.Summary}");
                         summaryMsg.Importance = MessageImportance.Low;
                         summaryMsg.IsCompactionProtected = true;
                         if (adjustedInsert <= _chatMessages.Count)
                             _chatMessages.Insert(adjustedInsert++, summaryMsg);
                         else
                             _chatMessages.Add(summaryMsg);
+                    }
+
+                    foreach (var topic in missingTopics)
+                    {
+                        var stub = new ChatMessage(ContextSummaryRole, $"[Prior context note] {topic}");
+                        stub.Importance = MessageImportance.High;
+                        stub.IsCompactionProtected = true;
+                        _chatMessages.Add(stub);
                     }
 
                     var marker = new ChatMessage("system",
