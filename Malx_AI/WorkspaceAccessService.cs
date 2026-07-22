@@ -13,7 +13,8 @@ namespace Malx_AI
     public enum WorkspaceAgentMode
     {
         Local,
-        Cloud
+        Cloud,
+        Hybrid
     }
 
     public enum WorkspaceConnectionKind

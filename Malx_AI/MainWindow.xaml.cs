@@ -256,6 +256,8 @@ namespace Malx_AI
         private Button? _cloudModeButton;
         private Button? _eidosModelButton;
         private Button? _hephaModelButton;
+        private Button? _hybridLocalModeButton;
+        private Button? _customEndpointModelButton;
         private bool _isFetchingOpenRouterUsage;
         private double _openRouterUsagePercent;
         private readonly PythonExecutionService _pythonExecutionService = new();
@@ -272,6 +274,7 @@ namespace Malx_AI
         private bool _cloudModeActive;
         private string _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
         private bool _isTestingOpenRouterKey;
+        private bool _isTestingCustomEndpoint;
         private const int CloudHistoryTokenBudget = 6000;
         private const int CloudToolResultCharacterLimit = 6000;
         // Higher budget: full Gmail/Drive tool chains often need search → read → act.
@@ -533,6 +536,7 @@ namespace Malx_AI
                 RefreshNormalWebToggleUi();
                 LoadOpenRouterSettings();
                 LoadStoredOpenRouterApiKey();
+                LoadStoredCustomEndpointSettings();
                 InitializeMcpConnectors();
                 try
                 {
@@ -1364,6 +1368,8 @@ namespace Malx_AI
                 Timestamp = msg.Timestamp,
                 Importance = msg.Importance.ToString(),
                 IsCompactionProtected = msg.IsCompactionProtected,
+                IsCompactionMarker = msg.IsCompactionMarker,
+                CompactionSummaries = msg.CompactionSummaries,
                 CloudPromptTokens = msg.CloudPromptTokens,
                 CloudCompletionTokens = msg.CloudCompletionTokens,
                 CloudTotalTokens = msg.CloudTotalTokens
@@ -3091,6 +3097,8 @@ namespace Malx_AI
                 Timestamp = message.Timestamp,
                 Importance = message.Importance,
                 IsCompactionProtected = message.IsCompactionProtected,
+                IsCompactionMarker = message.IsCompactionMarker,
+                CompactionSummaries = message.CompactionSummaries,
                 CloudPromptTokens = message.CloudPromptTokens,
                 CloudCompletionTokens = message.CloudCompletionTokens,
                 CloudTotalTokens = message.CloudTotalTokens
@@ -3288,6 +3296,8 @@ namespace Malx_AI
                     Timestamp = msg.Timestamp,
                     Importance = msg.Importance.ToString(),
                     IsCompactionProtected = msg.IsCompactionProtected,
+                    IsCompactionMarker = msg.IsCompactionMarker,
+                    CompactionSummaries = msg.CompactionSummaries,
                     CloudPromptTokens = msg.CloudPromptTokens,
                     CloudCompletionTokens = msg.CloudCompletionTokens,
                     CloudTotalTokens = msg.CloudTotalTokens
@@ -3872,6 +3882,8 @@ namespace Malx_AI
                     Timestamp = msg.Timestamp,
                     Importance = msg.Importance.ToString(),
                     IsCompactionProtected = msg.IsCompactionProtected,
+                    IsCompactionMarker = msg.IsCompactionMarker,
+                    CompactionSummaries = msg.CompactionSummaries,
                     CloudPromptTokens = msg.CloudPromptTokens,
                     CloudCompletionTokens = msg.CloudCompletionTokens,
                     CloudTotalTokens = msg.CloudTotalTokens
@@ -3990,7 +4002,11 @@ namespace Malx_AI
                             Timestamp = msg.Timestamp,
                             CloudPromptTokens = msg.CloudPromptTokens,
                             CloudCompletionTokens = msg.CloudCompletionTokens,
-                            CloudTotalTokens = msg.CloudTotalTokens
+                            CloudTotalTokens = msg.CloudTotalTokens,
+                            Importance = Enum.TryParse<MessageImportance>(msg.Importance, out var restoredImportance) ? restoredImportance : MessageImportance.Low,
+                            IsCompactionProtected = msg.IsCompactionProtected,
+                            IsCompactionMarker = msg.IsCompactionMarker,
+                            CompactionSummaries = msg.CompactionSummaries
                         });
                     }
                     foreach (var doc in snapshot.AttachedDocuments ?? [])
@@ -4042,7 +4058,7 @@ namespace Malx_AI
         private void UpdateUIState(bool isReady)
         {
             bool canSend = _cloudModeActive
-                ? _openRouterChatService.HasValidKey
+                ? _openRouterChatService.HasAnyValidCloudCredential
                 : (_chatSession != null || _useGemma4LocalCliMode);
             bool hasInput = !string.IsNullOrWhiteSpace(InputBox?.Text);
             SendButton.IsEnabled = isReady && canSend && hasInput;

@@ -11,6 +11,11 @@ namespace Malx_AI
     {
         private static readonly string DatabasePath = AppDataPaths.DatabaseFile;
         private const string OpenRouterApiKeySettingKey = "openrouter_api_key";
+        private const string CustomEndpointApiKeySettingKey = "custom_endpoint_api_key";
+        // Public: shared with WorkplaceView, which loads the same custom-endpoint config into its
+        // own separate OpenRouterChatService instance rather than duplicating these literal strings.
+        public const string CustomEndpointBaseUrlSettingKey = "custom_endpoint_base_url";
+        public const string CustomEndpointModelIdSettingKey = "custom_endpoint_model_id";
         private readonly SQLiteConnection _connection;
         private readonly object _gate = new();
         private bool _isInitialized;
@@ -339,6 +344,54 @@ namespace Malx_AI
 
             SaveOpenRouterApiKey(legacyKey);
             return legacyKey;
+        }
+
+        public void SaveCustomEndpointApiKey(string apiKey)
+        {
+            if (!IsReady) return;
+
+            try
+            {
+                string normalized = (apiKey ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(normalized))
+                {
+                    SaveSetting(CustomEndpointApiKeySettingKey, string.Empty);
+                    return;
+                }
+
+                byte[] plainBytes = System.Text.Encoding.UTF8.GetBytes(normalized);
+                byte[] protectedBytes = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
+                string base64 = Convert.ToBase64String(protectedBytes);
+                SaveSetting(CustomEndpointApiKeySettingKey, base64);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"SaveCustomEndpointApiKey error: {ex.Message}");
+                _ = BackendLogService.LogErrorAsync("DatabaseService.SaveCustomEndpointApiKey", ex);
+            }
+        }
+
+        public string? LoadCustomEndpointApiKey()
+        {
+            if (!IsReady) return null;
+
+            try
+            {
+                string stored = GetSetting(CustomEndpointApiKeySettingKey);
+                if (string.IsNullOrWhiteSpace(stored))
+                    return null;
+
+                byte[] protectedBytes = Convert.FromBase64String(stored);
+                byte[] plainBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
+                string decryptedKey = System.Text.Encoding.UTF8.GetString(plainBytes).Trim();
+                return string.IsNullOrWhiteSpace(decryptedKey) ? null : decryptedKey;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"LoadCustomEndpointApiKey error: {ex.Message}");
+                _ = BackendLogService.LogErrorAsync("DatabaseService.LoadCustomEndpointApiKey", ex);
+                return null;
+            }
         }
 
         public void Dispose()

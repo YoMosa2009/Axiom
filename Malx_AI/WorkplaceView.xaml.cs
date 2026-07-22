@@ -36,7 +36,7 @@ namespace Malx_AI
 {
     public partial class WorkplaceView : UserControl
     {
-        private static string WorkplaceCloudRoleDisplayName => OpenRouterChatService.WorkplaceCouncilDisplayLabel;
+        private string WorkplaceCloudRoleDisplayName => _openRouterChatService.ResolveModelLabel(GetEffectiveCouncilModelId());
 
         private enum CouncilRole
         {
@@ -90,7 +90,7 @@ namespace Malx_AI
         {
             bool enabled = _connectedWorkspace.CodebaseEditAccessEnabled;
             string lockedMode = string.IsNullOrWhiteSpace(_connectedWorkspace.LockedMode)
-                ? (_isCloudModeEnabled ? WorkspaceAgentMode.Cloud.ToString() : WorkspaceAgentMode.Local.ToString())
+                ? GetEffectiveWorkspaceAgentModeLabel()
                 : _connectedWorkspace.LockedMode;
 
             if (CodebaseAccessModeText != null)
@@ -407,10 +407,15 @@ namespace Malx_AI
             {
                 if (_isCloudModeEnabled)
                 {
-                    int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(OpenRouterChatService.WorkplaceCouncilDefaultModelId);
+                    int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId());
                     int builderCtx = cloudWindow;
                     int otherCtx = cloudWindow / 2;
-                    CloudContextInfoBlock.Text = $"Provider-managed: {builderCtx / 1024}K window · Builder {builderCtx / 1024}K · Architect & Critic {otherCtx / 1024}K";
+                    string windowLabel = cloudWindow >= 1024 ? $"{cloudWindow / 1024}K" : $"{cloudWindow}";
+                    string builderLabel = builderCtx >= 1024 ? $"{builderCtx / 1024}K" : $"{builderCtx}";
+                    string otherLabel = otherCtx >= 1024 ? $"{otherCtx / 1024}K" : $"{otherCtx}";
+                    CloudContextInfoBlock.Text = _isHybridLocalCouncilSelected
+                        ? $"Self-hosted (Kestral 1): {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}"
+                        : $"Provider-managed: {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}";
                     CloudContextInfoBlock.Visibility = Visibility.Visible;
                 }
                 else
@@ -424,9 +429,23 @@ namespace Malx_AI
                     }
                 }
             }
+
+            if (FindName("WorkplaceHybridToggleButton") is Button hybridToggleButton)
+            {
+                hybridToggleButton.Visibility = _isCloudModeEnabled ? Visibility.Visible : Visibility.Collapsed;
+                hybridToggleButton.IsEnabled = !_connectedWorkspace.CodebaseEditAccessEnabled;
+                hybridToggleButton.Content = _isHybridLocalCouncilSelected
+                    ? "Using Hybrid Local (Kestral 1) — switch to OpenRouter"
+                    : "Use Hybrid Local (Kestral 1)";
+                hybridToggleButton.ToolTip = _isHybridLocalCouncilSelected
+                    ? "Switch back to OpenRouter for the Council"
+                    : _openRouterChatService.HasValidCustomEndpoint
+                        ? "Route the Council through your self-hosted endpoint instead of OpenRouter"
+                        : "Configure a custom endpoint in Settings to enable this";
+            }
         }
 
-        private bool CanUseCloudCouncil => _isCloudModeEnabled && _openRouterChatService.HasValidKey;
+        private bool CanUseCloudCouncil => _isCloudModeEnabled && _openRouterChatService.HasAnyValidCloudCredential;
 
         private string GetCouncilDisplayName(CouncilRole role)
         {
@@ -441,7 +460,7 @@ namespace Malx_AI
             {
                 return CanUseCloudCouncil
                     ? $"Cloud council · {WorkplaceCloudRoleDisplayName}"
-                    : "Cloud council unavailable · add OpenRouter key in Settings";
+                    : "Cloud council unavailable · add an OpenRouter key or custom endpoint in Settings";
             }
 
             return "Adaptive mode";
@@ -489,7 +508,7 @@ namespace Malx_AI
             bool showLiveCard = true)
         {
             if (!CanUseCloudCouncil)
-                throw new InvalidOperationException("A valid OpenRouter API key is required for workplace cloud mode.");
+                throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required for workplace cloud mode.");
 
             string roleName = role.ToString();
             string roleKey = roleName.ToLowerInvariant();
@@ -544,13 +563,22 @@ namespace Malx_AI
                 string githubToolNames = _mcpConnectorService?.IsGitHubConnected == true
                     ? ", github_* (repos/issues/PRs/files/Actions)"
                     : string.Empty;
-                cloudSystemPrompt += "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
-                    "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ") BEFORE you write your deliverable, " +
-                    "whenever you need a real fact, number, computation, conversion, or current detail. Never guess or fabricate values you could verify with a tool. " +
-                    "If proactive web evidence is partial, off-topic, or missing the user's named entities, call a narrower web_search before writing the final deliverable instead of treating the mismatched evidence as a reason to refuse the whole answer. " +
-                    "For stable non-current background context, you may use the prompt, council plan, project knowledge, session memory, or general knowledge when not contradicted by source evidence. " +
-                    "Gather every tool result you need first, then produce EXACTLY ONE final Builder deliverable that already incorporates those results. " +
-                    "Once you begin writing the final deliverable, stop calling tools — do not restart, revise, repeat, or continue after it is complete.";
+                // Kestral 1 has proven overeager about tool use even when explicitly told not to
+                // bother for trivial cases -- this variant drops the "whenever you need... never
+                // guess" framing that pushes toward calling something on every turn, and relies on
+                // the tool-gating at the call site (only offering tools the turn actually looks like
+                // it needs) as the primary defense rather than prompt persuasion alone.
+                cloudSystemPrompt += _isHybridLocalCouncilSelected
+                    ? "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
+                        "You are a smaller, self-hosted model with a small context window. Only call a tool (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ") when the deliverable genuinely requires a fact, computation, or lookup you cannot already answer correctly yourself -- do not call one out of habit on every turn. " +
+                        "If you do call tools, gather what you need first, then produce EXACTLY ONE final Builder deliverable that incorporates those results, and stop calling tools once you begin writing it."
+                    : "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
+                        "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ") BEFORE you write your deliverable, " +
+                        "whenever you need a real fact, number, computation, conversion, or current detail. Never guess or fabricate values you could verify with a tool. " +
+                        "If proactive web evidence is partial, off-topic, or missing the user's named entities, call a narrower web_search before writing the final deliverable instead of treating the mismatched evidence as a reason to refuse the whole answer. " +
+                        "For stable non-current background context, you may use the prompt, council plan, project knowledge, session memory, or general knowledge when not contradicted by source evidence. " +
+                        "Gather every tool result you need first, then produce EXACTLY ONE final Builder deliverable that already incorporates those results. " +
+                        "Once you begin writing the final deliverable, stop calling tools — do not restart, revise, repeat, or continue after it is complete.";
             }
             if (role == CouncilRole.Builder && activeRunContext?.IsWorkspaceTask == true)
             {
@@ -564,14 +592,31 @@ namespace Malx_AI
             }
 
             string adaptedSystemPrompt = _openRouterChatService.BuildSystemPromptForModel(
-                OpenRouterChatService.WorkplaceCouncilDefaultModelId,
+                GetEffectiveCouncilModelId(),
                 cloudSystemPrompt);
 
             // Every cloud role — Builder included — now gets the full tool surface so it can ground
             // facts/math through the Agentic Pause tools. The remake-loop that originally forced the
             // Builder tool-free is contained by the substantial-deliverable guard in the tool loop,
             // which ignores tool calls emitted after a real Builder answer has already streamed.
-            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCouncilCloudToolDefinitions();
+            //
+            // Hybrid Local's model has proven unreliable at judging for itself whether run_python /
+            // calculate are actually warranted (it called run_python on a bare "hello" even when
+            // explicitly told not to, in Normal Chat testing) -- gate on what the user actually typed
+            // this run, using the pipeline's own purpose-built signals first (more reliable than
+            // keyword matching against the assembled per-role payload, which is mostly scaffolding)
+            // and the keyword heuristic only as a fallback. Real OpenRouter models keep unconditional
+            // access, unchanged.
+            string runTurnSignalText = activeRunContext != null
+                ? $"{activeRunContext.UserPrompt} {activeRunContext.Objective}"
+                : userPayload;
+            bool includeRunPython = !_isHybridLocalCouncilSelected
+                || (activeRunContext?.PythonSandboxEligible ?? false)
+                || LooksLikeCodeExecutionRequest(runTurnSignalText);
+            bool includeCalculate = !_isHybridLocalCouncilSelected
+                || (activeRunContext?.IsCalculationTask ?? false)
+                || LooksLikeCalculationRequest(runTurnSignalText);
+            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCouncilCloudToolDefinitions(includeRunPython, includeCalculate);
 
             // Bounded retry around transient free-tier rate limits. When every fallback model is 429,
             // the service throws OpenRouterRateLimitedException; rather than killing the whole relay we
@@ -647,7 +692,7 @@ namespace Malx_AI
                     messages,
                     adaptedSystemPrompt,
                     false,
-                    OpenRouterChatService.WorkplaceCouncilDefaultModelId,
+                    GetEffectiveCouncilModelId(),
                     toolsForThisPass,
                     onToken: t =>
                     {
@@ -795,7 +840,7 @@ namespace Malx_AI
                     messages,
                     adaptedSystemPrompt,
                     false,
-                    OpenRouterChatService.WorkplaceCouncilDefaultModelId,
+                    GetEffectiveCouncilModelId(),
                     null,
                     onToken: t =>
                     {
@@ -979,7 +1024,7 @@ namespace Malx_AI
         // Cloud-only tool surface for council roles. web_search is advertised only when the user's
         // web toggle is on, preserving the existing toggle as the single web gate. run_python and
         // calculate are always available (offline-safe, sandboxed).
-        private IReadOnlyList<OpenRouterToolDefinition> BuildCouncilCloudToolDefinitions()
+        private IReadOnlyList<OpenRouterToolDefinition> BuildCouncilCloudToolDefinitions(bool includeRunPython = true, bool includeCalculate = true)
         {
             var defs = new List<OpenRouterToolDefinition>();
 
@@ -1004,41 +1049,51 @@ namespace Malx_AI
                     }));
             }
 
-            defs.Add(new OpenRouterToolDefinition(
-                "run_python",
-                "Execute Python 3 code in the offline sandbox and return its printed output.",
-                new JsonObject
-                {
-                    ["type"] = "object",
-                    ["properties"] = new JsonObject
+            // Unconditional for real OpenRouter models. Gated for Hybrid Local (see the call site in
+            // ExecuteCouncilRoleCloudAsync) -- that model has proven unreliable at judging for itself
+            // whether these are actually warranted, the same failure Normal Chat's Kestral 1 path
+            // already hit and fixed the same way.
+            if (includeRunPython)
+            {
+                defs.Add(new OpenRouterToolDefinition(
+                    "run_python",
+                    "Execute Python 3 code in the offline sandbox and return its printed output.",
+                    new JsonObject
                     {
-                        ["code"] = new JsonObject
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
                         {
-                            ["type"] = "string",
-                            ["description"] = "The Python code to execute. Use print() for the final answer."
-                        }
-                    },
-                    ["required"] = new JsonArray("code"),
-                    ["additionalProperties"] = false
-                }));
+                            ["code"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "The Python code to execute. Use print() for the final answer."
+                            }
+                        },
+                        ["required"] = new JsonArray("code"),
+                        ["additionalProperties"] = false
+                    }));
+            }
 
-            defs.Add(new OpenRouterToolDefinition(
-                "calculate",
-                "Evaluate a math or unit-conversion expression with the built-in calculator.",
-                new JsonObject
-                {
-                    ["type"] = "object",
-                    ["properties"] = new JsonObject
+            if (includeCalculate)
+            {
+                defs.Add(new OpenRouterToolDefinition(
+                    "calculate",
+                    "Evaluate a math or unit-conversion expression with the built-in calculator.",
+                    new JsonObject
                     {
-                        ["expression"] = new JsonObject
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
                         {
-                            ["type"] = "string",
-                            ["description"] = "The expression or conversion to evaluate."
-                        }
-                    },
-                    ["required"] = new JsonArray("expression"),
-                    ["additionalProperties"] = false
-                }));
+                            ["expression"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "The expression or conversion to evaluate."
+                            }
+                        },
+                        ["required"] = new JsonArray("expression"),
+                        ["additionalProperties"] = false
+                    }));
+            }
 
             // Mirrors the local SEARCH_HIPPOCAMPUS pause tool so cloud roles can recall facts,
             // prior plans, and outputs stored earlier in the session on demand (offline-safe).
@@ -1133,6 +1188,56 @@ namespace Malx_AI
             }
 
             return defs;
+        }
+
+        // Fallback signals for tool gating below, mirroring the validated heuristic already shipped
+        // for Normal Chat's Kestral 1 path (MainWindow.Cloud.cs). Kept as a duplicate rather than a
+        // shared utility since Council already has its own, more reliable primary signals
+        // (runContext.PythonSandboxEligible / .IsCalculationTask) -- these only matter when those
+        // haven't already decided the answer.
+        private static readonly string[] CouncilCalculationSignalWords =
+        [
+            "plus", "minus", "times", "multipli", "multiply", "divided", "divide", "subtract",
+            " add ", " sum ", "product of", "difference between", "quotient", "squared", "cubed",
+            "percent", "percentage", "average of", "total of", "convert", "calculate", "compute",
+            "what is the", "how much is", "how many"
+        ];
+        private static readonly Regex CouncilCalculationUnambiguousOperatorRegex = new(@"\d\s*[\+\*/\^%]\s*\d?", RegexOptions.Compiled);
+        private static readonly Regex CouncilCalculationSpacedMinusRegex = new(@"\d\s+-\s+\d", RegexOptions.Compiled);
+
+        private static bool LooksLikeCalculationRequest(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            if (CouncilCalculationUnambiguousOperatorRegex.IsMatch(message) || CouncilCalculationSpacedMinusRegex.IsMatch(message))
+                return true;
+
+            if (!Regex.IsMatch(message, @"\d"))
+                return false;
+
+            string lower = " " + message.ToLowerInvariant() + " ";
+            return CouncilCalculationSignalWords.Any(lower.Contains);
+        }
+
+        private static readonly string[] CouncilCodeExecutionSignalWords =
+        [
+            "python", "run this", "run the", "execute this", "execute the", "run it", "execute it",
+            "what does this print", "what's the output", "what is the output", "write", "code",
+            "script", "function", "program", "debug", "fix this", "error", "bug", "javascript",
+            "c#", "java", "sql"
+        ];
+
+        private static bool LooksLikeCodeExecutionRequest(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            if (message.Contains("```", StringComparison.Ordinal))
+                return true;
+
+            string lower = message.ToLowerInvariant();
+            return CouncilCodeExecutionSignalWords.Any(lower.Contains);
         }
 
         // Routes a cloud tool call to the council's existing tool implementations.
@@ -1446,6 +1551,11 @@ namespace Malx_AI
             // True when this run executes on the cloud council (~131k-token windows). Lets payload
             // builders use larger evidence budgets without changing local sizing.
             public bool IsCloudExecution { get; init; }
+            // True when IsCloudExecution is on the self-hosted custom endpoint rather than real
+            // OpenRouter -- its real window is a small fraction of a real cloud model's, so static
+            // helpers that can't read instance state (e.g. GetCloudDocumentCharacterBudget) need
+            // this to avoid applying real-cloud-sized budgets to a small local window.
+            public bool IsHybridLocalExecution { get; init; }
         }
 
         private sealed record CodebasePatchValidationResult(
@@ -1596,7 +1706,7 @@ namespace Malx_AI
             int localWorkspaceBudget = promptNamesFile
                 ? Math.Min(builderWindowChars, 36000)
                 : Math.Min(builderWindowChars * 3 / 4, 28000);
-            int maxChars = runContext.IsCloudExecution ? 60000 : localWorkspaceBudget;
+            int maxChars = runContext.IsCloudExecution && !runContext.IsHybridLocalExecution ? 60000 : localWorkspaceBudget;
             WorkspaceContextResult context = _workspaceAccessService.BuildContextPacket(_connectedWorkspace, combined, maxChars);
             string pendingPatchContext = BuildPendingCodebasePatchContext(runContext, maxChars);
             string packet = string.IsNullOrWhiteSpace(pendingPatchContext)
@@ -1812,7 +1922,7 @@ namespace Malx_AI
             }
 
             turns.AddRange(_chatHistory
-                .Where(h => h.Role is "user" or "architect" or "builder")
+                .Where(h => h.Role is "user" or "architect" or "builder" or "system")
                 .Where(h => !string.IsNullOrWhiteSpace(h.Content))
                 .TakeLast(10)
                 .Select(h => new ConversationSearchTurn(h.Role, h.Content)));
@@ -2224,6 +2334,7 @@ namespace Malx_AI
             ResetWorkspaceTransientState(clearSessionCollections: true, resetCanvas: true);
             _restoredIsolatedRunState = snapshot.IsRunStateIsolated;
             _isCloudModeEnabled = snapshot.CloudModeEnabled;
+            _isHybridLocalCouncilSelected = snapshot.HybridLocalCouncilSelected;
 
             ProjectCanvasEditor.Text = snapshot.ProjectCanvasText ?? "";
             SetCanvasHighlighting(DetectLanguage(ProjectCanvasEditor.Text));
@@ -2366,7 +2477,7 @@ namespace Malx_AI
             if (images.Count == 0)
                 return new OpenRouterMessage("user", payload, PreserveFullText: true);
 
-            if (!_openRouterChatService.SupportsImageInput(OpenRouterChatService.WorkplaceCouncilDefaultModelId))
+            if (!_openRouterChatService.SupportsImageInput(GetEffectiveCouncilModelId()))
             {
                 payload += "\n\n" + LocalVisionSupport.BuildUnavailableNote(images.Count);
                 LogActivity($"Builder: {images.Count} image attachment(s) withheld because the routed cloud model does not advertise image input.");
@@ -2624,6 +2735,10 @@ namespace Malx_AI
         private readonly OpenRouterChatService _openRouterChatService = new();
         private McpConnectorService? _mcpConnectorService;
         private bool _isCloudModeEnabled;
+        // Sub-mode within cloud-ish Council execution: false = real OpenRouter, true = the
+        // self-hosted custom endpoint ("Kestral 1"). Independent of _isCloudModeEnabled itself,
+        // which just means "not running the in-process local GGUF path."
+        private bool _isHybridLocalCouncilSelected;
 
         private static readonly HashSet<string> NotificationRoles = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -2766,6 +2881,36 @@ namespace Malx_AI
             }
         }
 
+        private void LoadCustomEndpointForWorkplace()
+        {
+            try
+            {
+                using var database = new DatabaseService();
+                string baseUrl = database.GetSetting(DatabaseService.CustomEndpointBaseUrlSettingKey);
+                string modelId = database.GetSetting(DatabaseService.CustomEndpointModelIdSettingKey);
+                string apiKey = database.LoadCustomEndpointApiKey() ?? string.Empty;
+                _openRouterChatService.SetCustomEndpoint(baseUrl, apiKey, modelId);
+            }
+            catch
+            {
+                _openRouterChatService.SetCustomEndpoint(string.Empty, string.Empty, string.Empty);
+            }
+        }
+
+        private string GetEffectiveCouncilModelId()
+        {
+            return _isHybridLocalCouncilSelected
+                ? OpenRouterChatService.CustomEndpointModelId
+                : OpenRouterChatService.WorkplaceCouncilDefaultModelId;
+        }
+
+        private string GetEffectiveWorkspaceAgentModeLabel()
+        {
+            if (!_isCloudModeEnabled)
+                return WorkspaceAgentMode.Local.ToString();
+            return (_isHybridLocalCouncilSelected ? WorkspaceAgentMode.Hybrid : WorkspaceAgentMode.Cloud).ToString();
+        }
+
         public WorkplaceView()
         {
             InitializeComponent();
@@ -2773,6 +2918,7 @@ namespace Malx_AI
             QueryInput.TextChanged += (_, _) => UpdateWorkplaceTokenUsageIndicator();
             Directory.CreateDirectory(CouncilKvStateFolder);
             LoadOpenRouterKeyForWorkplace();
+            LoadCustomEndpointForWorkplace();
 
             _council[CouncilRole.Architect] = new CouncilModelConfig();
             _council[CouncilRole.Builder] = new CouncilModelConfig();
@@ -3439,7 +3585,7 @@ namespace Malx_AI
         {
             if (_isCloudModeEnabled)
             {
-                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(OpenRouterChatService.WorkplaceCouncilDefaultModelId);
+                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId());
                 int builderCtx = cloudWindow;
                 int otherCtx = cloudWindow / 2;
                 int maxChunks = _documentRetriever.CalculateMaxChunksForContext(builderCtx);
@@ -3510,7 +3656,10 @@ namespace Malx_AI
         {
             if (_isCloudModeEnabled)
             {
-                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(OpenRouterChatService.WorkplaceCouncilDefaultModelId);
+                if (_isHybridLocalCouncilSelected)
+                    return (int)GetRoleContextSize(role);
+
+                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId());
                 return role == CouncilRole.Builder ? cloudWindow : cloudWindow / 2;
             }
 
@@ -4233,9 +4382,7 @@ namespace Malx_AI
                 return;
             }
 
-            string lockedMode = _isCloudModeEnabled
-                ? WorkspaceAgentMode.Cloud.ToString()
-                : WorkspaceAgentMode.Local.ToString();
+            string lockedMode = GetEffectiveWorkspaceAgentModeLabel();
 
             _connectedWorkspace.CodebaseEditAccessEnabled = true;
             _connectedWorkspace.LockedMode = lockedMode;
@@ -5374,7 +5521,7 @@ namespace Malx_AI
             // Cloud roles run 131k-token-window models, so they can safely regenerate a much larger
             // file; any drop is still caught downstream by the destructive-truncation/size-collapse
             // validators and (for HTML) the completion stitcher, so a bad rewrite fails closed anyway.
-            int maxRescueSourceChars = runContext.IsCloudExecution ? 120000 : 24000;
+            int maxRescueSourceChars = runContext.IsCloudExecution && !runContext.IsHybridLocalExecution ? 120000 : 24000;
             if (existingContent.Length > maxRescueSourceChars)
             {
                 LogActivity($"Content-only patch rescue skipped: {targetPath} is too large for a safe full-file rewrite ({existingContent.Length:n0} > {maxRescueSourceChars:n0} chars).");
@@ -6030,7 +6177,7 @@ namespace Malx_AI
         {
             var sb = new StringBuilder();
             string mode = _connectedWorkspace.LockedMode?.ToString()
-                ?? (_isCloudModeEnabled ? WorkspaceAgentMode.Cloud.ToString() : WorkspaceAgentMode.Local.ToString());
+                ?? GetEffectiveWorkspaceAgentModeLabel();
             string source = !string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath)
                 ? _connectedWorkspace.RootPath
                 : !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
@@ -7049,6 +7196,46 @@ namespace Malx_AI
             }
         }
 
+        private void WorkplaceHybridToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isProcessing)
+            {
+                AppendChat("system", "Cannot switch workplace cloud sub-mode during an active council run.");
+                return;
+            }
+
+            if (_connectedWorkspace.CodebaseEditAccessEnabled)
+            {
+                AppendChat("system", "Cloud/local mode is locked because Codebase Edit Access is enabled. Start a new Workplace chat to change it.");
+                return;
+            }
+
+            if (_isHybridLocalCouncilSelected)
+            {
+                _isHybridLocalCouncilSelected = false;
+                RefreshWorkplaceCloudModeUi();
+                UpdateCouncilBlocks();
+                UpdateContextInfo();
+                AppendChat("system", $"Workplace cloud mode now uses {OpenRouterChatService.WorkplaceCouncilDisplayLabel} (OpenRouter).");
+                SavePersistedSession();
+                return;
+            }
+
+            LoadCustomEndpointForWorkplace();
+            if (!_openRouterChatService.HasValidCustomEndpoint)
+            {
+                AppendChat("error", "Hybrid Local needs a custom endpoint configured in Settings.");
+                return;
+            }
+
+            _isHybridLocalCouncilSelected = true;
+            RefreshWorkplaceCloudModeUi();
+            UpdateCouncilBlocks();
+            UpdateContextInfo();
+            AppendChat("system", "Workplace cloud mode now uses Kestral 1 (your self-hosted endpoint) for Architect, Builder, and Critic.");
+            SavePersistedSession();
+        }
+
         private async Task<string> ExecuteWebSearchAsync(string query, CancellationToken token)
         {
             if (!_isWebSearchEnabled)
@@ -7115,7 +7302,7 @@ namespace Malx_AI
                     return "Web search returned no usable results.";
                 }
 
-                int promptContextLimit = CanUseCloudCouncil ? 12000 : 4200;
+                int promptContextLimit = CanUseCloudCouncil && !_isHybridLocalCouncilSelected ? 12000 : 4200;
                 if (data.Length > promptContextLimit)
                     data = _webSearchService.PreparePromptContext(data, promptContextLimit);
 
@@ -7699,8 +7886,14 @@ namespace Malx_AI
             };
         }
 
-        private static bool IsSmallLocalCouncilModel(string? modelNameOrPath, bool isCloudModeEnabled)
+        private static bool IsSmallLocalCouncilModel(string? modelNameOrPath, bool isCloudModeEnabled, bool isHybridLocal = false)
         {
+            // Kestral 1's whole purpose is being a small, self-hosted model -- it needs the same
+            // small-model prompt scaffolding a small local GGUF gets, arguably more than a real
+            // (often much larger) OpenRouter model does.
+            if (isHybridLocal)
+                return true;
+
             if (isCloudModeEnabled || string.IsNullOrWhiteSpace(modelNameOrPath))
                 return false;
 
@@ -11257,9 +11450,10 @@ namespace Malx_AI
             if (context.AcceptanceCheckResults.Count == 0)
                 return string.Empty;
 
-            int resultCap = context.IsCloudExecution ? 24 : 10;
-            int checkCap = context.IsCloudExecution ? 260 : 120;
-            int evidenceCap = context.IsCloudExecution ? 320 : 140;
+            bool useGenerousBudget = context.IsCloudExecution && !context.IsHybridLocalExecution;
+            int resultCap = useGenerousBudget ? 24 : 10;
+            int checkCap = useGenerousBudget ? 260 : 120;
+            int evidenceCap = useGenerousBudget ? 320 : 140;
 
             var body = new StringBuilder();
             body.AppendLine("Deterministic acceptance harness generated minimal assertions from A-items and executed them in the local Python/Java sandbox. Treat FAIL as blocking evidence unless the Builder output changed after this run.");
@@ -11286,8 +11480,9 @@ namespace Malx_AI
                 return string.Empty;
             }
 
-            int maxChars = context.IsCloudExecution ? 12000 : 5000;
-            int previousReviewCap = context.IsCloudExecution ? 3000 : 1200;
+            bool useGenerousReviewBudget = context.IsCloudExecution && !context.IsHybridLocalExecution;
+            int maxChars = useGenerousReviewBudget ? 12000 : 5000;
+            int previousReviewCap = useGenerousReviewBudget ? 3000 : 1200;
             string compactDiff = ArtifactRevisionDiffFormatter.Build(
                 context.CriticBaselineArtifact,
                 context.BuilderOutput,
@@ -11327,8 +11522,9 @@ namespace Malx_AI
             // Cloud council models have ~131k-token windows; the tight local caps starved the cloud
             // Critic of the very evidence it audits (it literally could not see most of a large
             // artifact). Budgets stay unchanged for local models.
-            int sandboxCap = context.IsCloudExecution ? 16000 : 2000;
-            int requestCap = context.IsCloudExecution ? 12000 : 2000;
+            bool useGenerousCriticBudget = context.IsCloudExecution && !context.IsHybridLocalExecution;
+            int sandboxCap = useGenerousCriticBudget ? 16000 : 2000;
+            int requestCap = useGenerousCriticBudget ? 12000 : 2000;
 
             if (!string.IsNullOrWhiteSpace(sandboxResult))
             {
@@ -11375,7 +11571,7 @@ namespace Malx_AI
                 // Provide just enough document reference for the Critic to verify factual grounding.
                 // Local: 1500 chars to protect small context windows. Cloud: 6000 chars — the cloud
                 // Critic has the headroom, and more source text means better hallucination checks.
-                int maxDocChars = context.IsCloudExecution ? 48000 : 1500;
+                int maxDocChars = context.IsCloudExecution && !context.IsHybridLocalExecution ? 48000 : 1500;
                 string docSnippet = context.DocumentContent.Length > maxDocChars
                     ? context.DocumentContent[..maxDocChars] + "\n[...document truncated — Critic should verify Builder output against Architect plan steps]"
                     : context.DocumentContent;
@@ -11387,9 +11583,10 @@ namespace Malx_AI
                 string builderText = context.BuilderOutput;
                 // Keep start and end for review when over budget. Cloud gets a much larger window so
                 // the Critic can actually audit big artifacts instead of reviewing 5k of a 20k file.
-                int builderCap = context.IsCloudExecution ? 96000 : 5000;
-                int builderHead = context.IsCloudExecution ? 64000 : 3500;
-                int builderTail = context.IsCloudExecution ? 32000 : 1500;
+                bool useGenerousBuilderReviewBudget = context.IsCloudExecution && !context.IsHybridLocalExecution;
+                int builderCap = useGenerousBuilderReviewBudget ? 96000 : 5000;
+                int builderHead = useGenerousBuilderReviewBudget ? 64000 : 3500;
+                int builderTail = useGenerousBuilderReviewBudget ? 32000 : 1500;
                 if (builderText.Length > builderCap)
                 {
                     builderText = builderText[..builderHead] + "\n[...middle section truncated for context budget...]\n" + builderText[^builderTail..];
@@ -11680,7 +11877,8 @@ namespace Malx_AI
                 CanvasViewportWidth = canvasViewportWidth,
                 CanvasViewportHeight = canvasViewportHeight,
                 WebGroundingRequired = webGroundingRequired,
-                IsCloudExecution = CanUseCloudCouncil
+                IsCloudExecution = CanUseCloudCouncil,
+                IsHybridLocalExecution = CanUseCloudCouncil && _isHybridLocalCouncilSelected
             };
             _latestCouncilReactiveWebContext = string.Empty;
             _activeCouncilRunContext = runContext;
@@ -11898,7 +12096,7 @@ namespace Malx_AI
                     LogActivity("Architect relay started — analyzing request...");
 
                     var architectConfig = GetEffectiveRoleConfig(CouncilRole.Architect);
-                    bool smallLocalArchitectModel = IsSmallLocalCouncilModel(architectConfig.ModelPath ?? architectConfig.DisplayName, _isCloudModeEnabled);
+                    bool smallLocalArchitectModel = IsSmallLocalCouncilModel(architectConfig.ModelPath ?? architectConfig.DisplayName, _isCloudModeEnabled, _isHybridLocalCouncilSelected);
 
                     string architectSystem = GetEmbeddedSystemPrompt(CouncilRole.Architect)
                         + objectiveClause
@@ -12152,7 +12350,7 @@ namespace Malx_AI
                     var builderConfig = GetEffectiveRoleConfig(CouncilRole.Builder);
                     if (string.IsNullOrWhiteSpace(_council[CouncilRole.Builder].ModelPath) && !CanUseCloudCouncil)
                         AppendChat("system", $"Builder has no dedicated model — running on '{builderConfig.DisplayName}'.");
-                    bool smallLocalBuilderModel = IsSmallLocalCouncilModel(builderConfig.ModelPath ?? builderConfig.DisplayName, _isCloudModeEnabled);
+                    bool smallLocalBuilderModel = IsSmallLocalCouncilModel(builderConfig.ModelPath ?? builderConfig.DisplayName, _isCloudModeEnabled, _isHybridLocalCouncilSelected);
 
                     string builderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
                         + objectiveClause
@@ -12184,7 +12382,10 @@ namespace Malx_AI
                     builderPriorKnowledge = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(runContext.ArchitectOutput, 4));
                     string previousBuilderOutput = GetPreviousRoleOutput("builder");
 
-                    bool useSegmented = taskType == CouncilTaskType.Coding && !runContext.IsCloudExecution
+                    // Segmentation splits large coding tasks into steps for small-context models --
+                    // needed for both real local GGUF models AND Hybrid Local (also a small window),
+                    // only skipped for a real, generously-windowed OpenRouter execution.
+                    bool useSegmented = taskType == CouncilTaskType.Coding && (!runContext.IsCloudExecution || runContext.IsHybridLocalExecution)
                         && !runContext.IsWorkspaceTask
                         && !runContext.IsArtifactCanvasRequest   // a canvas artifact is ONE self-contained file — segmenting it emits partial code chunks that never render
                         && !runContext.IsProjectCanvasIteration // an edit must return one coherent replacement of the existing canvas source
@@ -13926,7 +14127,7 @@ namespace Malx_AI
                                 ? "\n[SENSITIVITY: CRITICAL ONLY] Report only failures that would cause incorrect results or complete failure. Ignore style and minor structure issues."
                                 : "")
                         + objectiveClause
-                        + (useArtifactCanvasContract && IsSmallLocalCouncilModel(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? GetEffectiveRoleConfig(CouncilRole.Critic).DisplayName, _isCloudModeEnabled) ? BuildSmallModelArtifactAssist(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
+                        + (useArtifactCanvasContract && IsSmallLocalCouncilModel(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? GetEffectiveRoleConfig(CouncilRole.Critic).DisplayName, _isCloudModeEnabled, _isHybridLocalCouncilSelected) ? BuildSmallModelArtifactAssist(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
                         + BuildCriticContract(taskType, useArtifactCanvasContract)
                         + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract.";
                     criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
@@ -15925,10 +16126,23 @@ namespace Malx_AI
         {
             if (CanUseCloudCouncil)
             {
+                if (_isHybridLocalCouncilSelected)
+                {
+                    // The "full window" / "half window" local-slider-free approach below assumes a
+                    // real OpenRouter-sized window (131072+) with plenty of room left after output
+                    // reservation. Kestral 1's real window is a small fraction of that -- derive an
+                    // actual input budget (window minus this role's real output reservation) instead
+                    // of handing out the whole window as "input capacity".
+                    string effectiveModelId = GetEffectiveCouncilModelId();
+                    int maxOutputTokens = ResolveCloudCouncilRoleMaxTokens(role, _activeCouncilRunContext ?? _lastRunContext);
+                    int inputBudget = _openRouterChatService.GetPromptTokenBudgetForModel(effectiveModelId, maxOutputTokens);
+                    return Math.Max((uint)inputBudget, MinRoleContext);
+                }
+
                 // Use the cloud model's full context window — no local slider cap.
                 // Builder gets the full window (needs maximum room for code + docs).
                 // Architect and Critic get half, which is still far larger than any local model.
-                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(OpenRouterChatService.WorkplaceCouncilDefaultModelId);
+                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId());
                 uint cloudCtx = role == CouncilRole.Builder
                     ? (uint)cloudWindow
                     : (uint)(cloudWindow / 2);
@@ -16446,7 +16660,11 @@ namespace Malx_AI
             LocalModelCapabilityProfile localCapability = LocalModelCapabilityProfile.FromModel(config.ModelPath);
             bool useSubOneBMode = localCapability.IsSubOneB && !isGemma4;
             bool reasoningLocalModel = LocalModelCapabilityProfile.IsLikelyReasoningModel(config.ModelPath, config.DisplayName);
-            if (useSubOneBMode)
+            // An internal maintenance call (e.g. context-compaction summarization) supplies its
+            // own purpose-built system prompt/payload -- overriding it with generic sub-1B role
+            // boilerplate here would make the model produce ordinary role output instead of
+            // actually performing the internal task.
+            if (useSubOneBMode && !internalInferenceStep)
             {
                 systemPrompt = BuildSubOneBCouncilSystemPrompt(role, systemPrompt, outputGrammar != null, allowAgenticPauses);
                 bool subOneBWorkspaceTask = (_activeCouncilRunContext ?? _lastRunContext)?.IsWorkspaceTask == true
@@ -18663,6 +18881,7 @@ namespace Malx_AI
                 ObjectiveText = "",
                 ProjectCanvasText = ProjectCanvasEditor.Text,
                 CloudModeEnabled = _isCloudModeEnabled,
+                HybridLocalCouncilSelected = _isHybridLocalCouncilSelected,
                 GlobalContextSize = _contextSize,
                 ArchitectContextSize = _architectContextSize,
                 BuilderContextSize = _builderContextSize,
@@ -20011,8 +20230,16 @@ namespace Malx_AI
         {
             if (CanUseCloudCouncil)
             {
-                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(
-                    OpenRouterChatService.WorkplaceCouncilDefaultModelId);
+                if (_isHybridLocalCouncilSelected)
+                {
+                    // The fixed 32768-token reservation/floor below is sized for real OpenRouter
+                    // windows (131072+) and would exceed Kestral 1's entire real window. Reuse the
+                    // already-correct (for this model) usable-input-budget derivation instead.
+                    int hybridUsableHistoryWindow = GetCloudCouncilInputBudgetTokens();
+                    return Math.Max((int)MinRoleContext, (int)(hybridUsableHistoryWindow * 0.60));
+                }
+
+                int cloudWindow = _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId());
                 int cloudUsableHistoryWindow = Math.Max(32768, cloudWindow - 32768);
                 return Math.Max(ContextCompressionThreshold, (int)(cloudUsableHistoryWindow * 0.60));
             }
@@ -20031,7 +20258,7 @@ namespace Malx_AI
 
         private int GetRecentMessagesToKeepAfterCompression()
         {
-            return CanUseCloudCouncil ? 16 : 6;
+            return CanUseCloudCouncil && !_isHybridLocalCouncilSelected ? 16 : 6;
         }
 
         private async Task CompressChatHistoryIfNeededAsync(CancellationToken token)
@@ -20044,9 +20271,9 @@ namespace Malx_AI
             }
 
             int recentMessagesToKeep = GetRecentMessagesToKeepAfterCompression();
-            int messagesToCompress = Math.Max(2, _chatHistory.Count - recentMessagesToKeep);
-            if (messagesToCompress >= _chatHistory.Count)
-                messagesToCompress = Math.Max(2, _chatHistory.Count / 2);
+            int messagesToCompress = WorkplaceCompactionEngine.ComputeMessagesToCompress(_chatHistory.Count, recentMessagesToKeep);
+            if (messagesToCompress == 0)
+                return;
             var oldMessages = _chatHistory.Take(messagesToCompress).ToList();
 
             var summaryInput = new StringBuilder();
@@ -20064,6 +20291,8 @@ namespace Malx_AI
                 .Select(c => c.ModelPath)
                 .FirstOrDefault();
 
+            string compactionPath;
+
             if (CanUseCloudCouncil)
             {
                 // Summarize via a direct (non-streamed) cloud call. Routing through
@@ -20071,63 +20300,74 @@ namespace Malx_AI
                 // card for an internal maintenance step and burn a full council role turn.
                 try
                 {
+                    string effectiveSummarizerModelId = GetEffectiveCouncilModelId();
+                    string summaryInputText = summaryInput.ToString();
+                    // GetPromptTokenBudgetForModel is model-driven (resolves Kestral 1's small
+                    // real window vs. a real OpenRouter model's large one), so this guard applies
+                    // correctly regardless of hybrid state -- no need to gate it to Hybrid only,
+                    // and plain cloud mode previously had no size guard on this input at all.
+                    int summarizerCharBudget = _openRouterChatService.GetPromptTokenBudgetForModel(effectiveSummarizerModelId, 512) * 3;
+                    if (summaryInputText.Length > summarizerCharBudget)
+                        summaryInputText = summaryInputText[^summarizerCharBudget..];
+
                     OpenRouterChatResponse cloudSummary = await _openRouterChatService.SendConversationAsync(
-                        new List<OpenRouterMessage> { new("user", summaryInput.ToString()) },
+                        new List<OpenRouterMessage> { new("user", summaryInputText) },
                         "You are a context compactor for a multi-role AI council. Keep durable facts, requirements, constraints, tool results, source-backed evidence, and unresolved tasks. Remove repetition and chatter. Be concise but not lossy.",
                         false,
-                        OpenRouterChatService.WorkplaceCouncilDefaultModelId,
+                        effectiveSummarizerModelId,
                         null,
                         token,
                         allowModelFallback: false);
-                    summary = string.IsNullOrWhiteSpace(cloudSummary.Text)
-                        ? BuildFallbackSummary(oldMessages)
-                        : cloudSummary.Text.Trim();
+                    if (string.IsNullOrWhiteSpace(cloudSummary.Text))
+                    {
+                        summary = WorkplaceCompactionEngine.BuildFallbackSummary(oldMessages);
+                        compactionPath = "cloud-fallback:empty-response";
+                    }
+                    else
+                    {
+                        summary = cloudSummary.Text.Trim();
+                        compactionPath = "cloud-llm";
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    summary = BuildFallbackSummary(oldMessages);
+                    summary = WorkplaceCompactionEngine.BuildFallbackSummary(oldMessages);
+                    compactionPath = $"cloud-fallback:exception:{ex.Message}";
                 }
             }
             else if (!string.IsNullOrWhiteSpace(summarizerModelPath))
             {
                 try
                 {
-                    var config = _council.Values.First(c => c.ModelPath == summarizerModelPath);
                     var summaryResult = await ExecuteCouncilRoleAsync(
                         _council.First(kv => kv.Value.ModelPath == summarizerModelPath).Key,
                         "You are a context compactor for a multi-role AI council. Keep durable facts, requirements, constraints, tool results, source-backed evidence, and unresolved tasks. Remove repetition and chatter. Be concise but not lossy.",
                         summaryInput.ToString(),
                         token,
-                        showLiveCard: false);
+                        showLiveCard: false,
+                        useBuilderToolDecision: false,
+                        internalInferenceStep: true);
                     summary = summaryResult.Answer;
+                    compactionPath = "local-llm";
                 }
-                catch
+                catch (Exception ex)
                 {
-                    summary = BuildFallbackSummary(oldMessages);
+                    summary = WorkplaceCompactionEngine.BuildFallbackSummary(oldMessages);
+                    compactionPath = $"local-fallback:exception:{ex.Message}";
                 }
             }
             else
             {
-                summary = BuildFallbackSummary(oldMessages);
+                summary = WorkplaceCompactionEngine.BuildFallbackSummary(oldMessages);
+                compactionPath = "fallback:no-model";
             }
 
             _chatHistory.RemoveRange(0, messagesToCompress);
             _chatHistory.Insert(0, ("system", $"[Context Summary] {summary}"));
 
             int newTokens = EstimateTotalHistoryTokens();
-            LogActivity($"Context compressed: {totalTokens} → {newTokens} tokens ({messagesToCompress} messages summarized)");
+            LogActivity($"Context compressed: {totalTokens} → {newTokens} tokens ({messagesToCompress} messages summarized) via {compactionPath}.");
             AppendChat("system", $"Context compressed: {totalTokens} → {newTokens} tokens");
-        }
-
-        private static string BuildFallbackSummary(List<(string Role, string Content)> messages)
-        {
-            var sb = new StringBuilder();
-            foreach (var msg in messages)
-            {
-                string truncated = msg.Content.Length > 120 ? msg.Content[..120] + "..." : msg.Content;
-                sb.AppendLine($"{msg.Role}: {truncated}");
-            }
-            return sb.ToString();
         }
 
         /// <summary>
@@ -20145,7 +20385,7 @@ namespace Malx_AI
                 return "";
 
             var recentTurns = _chatHistory
-                .Where(h => h.Role is "user" or "architect" or "builder")
+                .Where(h => h.Role is "user" or "architect" or "builder" or "system")
                 .TakeLast(maxTurns * 2)
                 .ToList();
 
@@ -20163,6 +20403,7 @@ namespace Malx_AI
                     "user" => "User",
                     "architect" => "Architect",
                     "builder" => "Builder",
+                    "system" => "Context Summary",
                     _ => role
                 };
 
@@ -20276,7 +20517,7 @@ namespace Malx_AI
                 var chunks = MergeWithPriority(_documentRetriever.RetrieveRelevantChunks(_lastRunContext.UserPrompt, maxChunks), maxChunks);
                 string knowledge = BuildKnowledgePacket(chunks, _nextPromptPriorityConcept);
                 var builderConfig = GetEffectiveRoleConfig(CouncilRole.Builder);
-                bool smallLocalBuilderModel = IsSmallLocalCouncilModel(builderConfig.ModelPath ?? builderConfig.DisplayName, _isCloudModeEnabled);
+                bool smallLocalBuilderModel = IsSmallLocalCouncilModel(builderConfig.ModelPath ?? builderConfig.DisplayName, _isCloudModeEnabled, _isHybridLocalCouncilSelected);
                 bool useArtifactCanvasContract = ShouldUseArtifactCanvasContract(_lastRunContext);
 
                 string builderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
@@ -20694,7 +20935,7 @@ namespace Malx_AI
                 probes.Add(probe);
             }
 
-            return probes.Take(context.IsCloudExecution ? 16 : 10).ToList();
+            return probes.Take(context.IsCloudExecution && !context.IsHybridLocalExecution ? 16 : 10).ToList();
         }
 
         private static IEnumerable<string> ExtractAcceptanceIdentifiers(string text)

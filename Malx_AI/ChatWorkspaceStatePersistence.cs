@@ -27,6 +27,8 @@ namespace Malx_AI
         public DateTime Timestamp { get; set; } = DateTime.Now;
         public string Importance { get; set; } = "Low";
         public bool IsCompactionProtected { get; set; }
+        public bool IsCompactionMarker { get; set; }
+        public List<CompactionSummaryEntry>? CompactionSummaries { get; set; }
         public int CloudPromptTokens { get; set; }
         public int CloudCompletionTokens { get; set; }
         public int CloudTotalTokens { get; set; }

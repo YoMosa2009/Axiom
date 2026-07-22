@@ -1206,6 +1206,15 @@
                                                 <Setter TargetName="BubbleText" Property="FontSize" Value="11"/>
                                                 <Setter TargetName="BubbleText" Property="TextAlignment" Value="Center"/>
                                             </DataTrigger>
+                                            <DataTrigger Binding="{Binding Role}" Value="context-summary">
+                                                <Setter TargetName="BubbleBorder" Property="HorizontalAlignment" Value="Center"/>
+                                                <Setter TargetName="BubbleBorder" Property="Background" Value="Transparent"/>
+                                                <Setter TargetName="BubbleBorder" Property="Padding" Value="8,6"/>
+                                                <Setter TargetName="BubbleBorder" Property="MaxWidth" Value="900"/>
+                                                <Setter TargetName="BubbleText" Property="Foreground" Value="{StaticResource DarkSecondaryBrush}"/>
+                                                <Setter TargetName="BubbleText" Property="FontSize" Value="11"/>
+                                                <Setter TargetName="BubbleText" Property="TextAlignment" Value="Center"/>
+                                            </DataTrigger>
                                             <DataTrigger Binding="{Binding Role}" Value="assistant">
                                                 <Setter TargetName="RenderedBubble" Property="Margin" Value="0"/>
                                             </DataTrigger>
@@ -1474,6 +1483,7 @@
                                                      <StackPanel Orientation="Horizontal">
                                                          <Button x:Name="EidosModelButton" Content="Eidos 1" Click="EidosModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use the Eidos 1 cloud model" Margin="0,0,2,0"/>
                                                          <Button x:Name="HephaModelButton" Content="Hepha 1" Click="HephaModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use the Hepha 1 cloud model"/>
+                                                         <Button x:Name="CustomEndpointModelButton" Content="Kestral 1" Click="CustomEndpointModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
                                                      </StackPanel>
                                                  </Border>
                                                 <Button x:Name="NormalThinkingToggleButton" Width="Auto" Height="32" Margin="0,0,8,0" Click="NormalThinkingToggle_Click"
@@ -1690,10 +1700,11 @@
                                              </Border.Resources>
                                              <StackPanel Orientation="Horizontal">
                                                  <Button x:Name="LocalModeButton" Content="Local" Click="LocalModeButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use the local on-device model" Margin="0,0,2,0"/>
+                                                 <Button x:Name="HybridLocalModeButton" Content="Hybrid Local" Click="HybridLocalModeButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Configure a custom endpoint in Settings to enable Hybrid Local" Margin="0,0,2,0"/>
                                                  <Button x:Name="CloudModeButton" Content="Cloud" Click="CloudModeButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Add an OpenRouter API key in Settings to enable cloud mode"/>
                                              </StackPanel>
                                          </Border>
-                                         <TextBlock Text="Choose whether normal chat runs on your local model or the configured OpenRouter cloud model." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                         <TextBlock Text="Local runs on-device. Hybrid Local sends compute to your own self-hosted inference server. Cloud uses the configured OpenRouter model." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                      </StackPanel>
                                  </Border>
                                 </StackPanel>
@@ -1759,6 +1770,24 @@
                                          <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,14,0,8"/>
                                          <TextBlock x:Name="OpenRouterDetectedModelText" Text="Eidos 1" FontSize="11" Foreground="{StaticResource NotebookTextBrush}" TextWrapping="Wrap"/>
                                          <TextBlock x:Name="OpenRouterDetectedModelIdText" Text="General reasoning profile tuned for Axiom's tool pipeline." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Custom Endpoint" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Base URL" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                        <TextBox x:Name="CustomEndpointBaseUrlBox" Height="32" Padding="8,6" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" Text="https://your-server.example.com/v1"/>
+                                        <TextBlock Text="Model Name" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,12,0,6"/>
+                                        <TextBox x:Name="CustomEndpointModelIdBox" Height="32" Padding="8,6" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1"/>
+                                        <TextBlock Text="API Key" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,12,0,6"/>
+                                        <PasswordBox x:Name="CustomEndpointApiKeyPasswordBox" Height="32" Padding="8,6" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1"/>
+                                        <TextBlock Text="Points at your own OpenAI-compatible server (e.g. a self-hosted proxy). Stored locally." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0" VerticalAlignment="Center">
+                                            <Button x:Name="SaveCustomEndpointButton" Content="Save" Click="SaveCustomEndpointButton_Click" Height="32" MinWidth="100" Style="{StaticResource PremiumButtonStyle}" Background="#B8924A" BorderBrush="#B8924A"/>
+                                            <Button x:Name="ClearCustomEndpointButton" Content="Clear" Click="ClearCustomEndpointButton_Click" Height="32" MinWidth="90" Margin="8,0,0,0" Style="{StaticResource SubtleButtonStyle}" Background="Transparent" BorderBrush="Transparent" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                            <TextBlock x:Name="CustomEndpointTestingText" Text="Testing" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                            <TextBlock x:Name="CustomEndpointStatusText" Text="" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
                                 </StackPanel>

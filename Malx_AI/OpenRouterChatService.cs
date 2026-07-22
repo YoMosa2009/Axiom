@@ -92,7 +92,8 @@ namespace Malx_AI
         string PrimaryApiModelId,
         string[] AlternativeApiModelIds,
             bool IsCodeSpecialized,
-            int ApproximateContextWindowTokens)
+            int ApproximateContextWindowTokens,
+            bool IsCustomEndpoint = false)
     {
         public IEnumerable<string> AllApiModelIds
         {
@@ -179,6 +180,7 @@ namespace Malx_AI
         private const string KeyInfoUrl = "https://openrouter.ai/api/v1/key";
         private const string ModelsUrl = "https://openrouter.ai/api/v1/models";
         private const string ChatCompletionsUrl = "https://openrouter.ai/api/v1/chat/completions";
+        private string CustomEndpointChatCompletionsUrl => _customEndpointBaseUrl.TrimEnd('/') + "/chat/completions";
         private static readonly Regex TokenWordRegex = new(@"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", RegexOptions.Compiled);
         private static readonly Regex RetryAfterSecondsRegex = new("\"retry_after_seconds\"\\s*:\\s*(?<value>\\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const int TransientOpenRouterRetryLimit = 1;
@@ -212,6 +214,9 @@ namespace Malx_AI
         private const int ConversationHistoryCharacterBudget = 48000;
         private const int ConversationHistoryMessageLimit = 24;
         private string _apiKey = string.Empty;
+        private string _customEndpointBaseUrl = string.Empty;
+        private string _customEndpointApiKey = string.Empty;
+        private string _customEndpointModelId = string.Empty;
         private List<(string Id, string Label, bool IsFree)> _availableModels = new();
         private readonly Dictionary<string, HashSet<string>> _modelSupportedParameters = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _imageInputModelIds = new(StringComparer.OrdinalIgnoreCase);
@@ -266,6 +271,10 @@ namespace Malx_AI
         public const string Hepha1ModelLabel = "Hepha 1";
         public const string WorkplaceCouncilDefaultModelId = "workplace-gpt-oss-20b";
         public const string WorkplaceCouncilDefaultModelLabel = "Poolside: Laguna M.1 (free)";
+        public const string CustomEndpointModelId = "custom-endpoint";
+        public const string CustomEndpointModelLabel = "Kestral 1";
+        // Keep in sync with the OLLAMA_CONTEXT_LENGTH the target server actually runs with.
+        public const int CustomEndpointContextWindowTokens = 8192;
         public const string DefaultModelId = Eidos1ModelId;
         public const string DefaultModelLabel = Eidos1ModelLabel;
         public static string WorkplaceCouncilDisplayLabel => SupportedModelProfiles
@@ -291,10 +300,13 @@ namespace Malx_AI
 
         public bool IsSelectableModelAvailable(string modelId)
         {
+            OpenRouterModelProfile profile = FindModelProfile(modelId);
+            if (profile?.IsCustomEndpoint == true)
+                return true;
+
             if (_availableModels.Count == 0)
                 return true;
 
-            OpenRouterModelProfile profile = FindModelProfile(modelId);
             return profile != null && ResolveAvailableApiModelId(profile) != null;
         }
 
@@ -309,7 +321,11 @@ namespace Malx_AI
         public int GetApproximateContextWindowTokens(string modelId)
         {
             OpenRouterModelProfile profile = FindModelProfile(modelId) ?? SupportedModelProfiles[0];
-            return Math.Max(32768, profile.ApproximateContextWindowTokens);
+            // The 32768 floor is a no-op for every real OpenRouter profile (all >=131072) but would
+            // be a 4x overestimate for a custom endpoint's real, often much smaller, declared window.
+            return profile.IsCustomEndpoint
+                ? profile.ApproximateContextWindowTokens
+                : Math.Max(32768, profile.ApproximateContextWindowTokens);
         }
 
         public OpenRouterInferenceSettingsSnapshot GetInferenceSettingsSnapshot(string modelId, bool isCodingRequest = false, bool isPythonRequest = false)
@@ -436,6 +452,59 @@ namespace Malx_AI
         }
 
         public bool HasValidKey => !string.IsNullOrWhiteSpace(_apiKey) && _apiKey.Length > 10;
+
+        public void SetCustomEndpoint(string baseUrl, string apiKey, string modelId)
+        {
+            _customEndpointBaseUrl = (baseUrl ?? string.Empty).Trim();
+            _customEndpointApiKey = (apiKey ?? string.Empty).Trim();
+            _customEndpointModelId = (modelId ?? string.Empty).Trim();
+        }
+
+        public bool HasValidCustomEndpoint =>
+            !string.IsNullOrWhiteSpace(_customEndpointBaseUrl)
+            && Uri.TryCreate(_customEndpointBaseUrl, UriKind.Absolute, out Uri? parsedUrl)
+            && parsedUrl.Scheme == Uri.UriSchemeHttps
+            && !string.IsNullOrWhiteSpace(_customEndpointApiKey)
+            && !string.IsNullOrWhiteSpace(_customEndpointModelId);
+
+        public bool HasAnyValidCloudCredential => HasValidKey || HasValidCustomEndpoint;
+
+        public async Task<bool> TestCustomEndpointConnectionAsync(CancellationToken cancellationToken = default)
+        {
+            if (!HasValidCustomEndpoint)
+                return false;
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, CustomEndpointChatCompletionsUrl)
+                {
+                    Content = new StringContent(
+                        new JsonObject
+                        {
+                            ["model"] = _customEndpointModelId,
+                            ["messages"] = new JsonArray { new JsonObject { ["role"] = "user", ["content"] = "Reply with OK." } },
+                            ["max_tokens"] = 8,
+                            ["stream"] = false
+                        }.ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+                ApplyCustomEndpointHeaders(request);
+
+                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                return response.StatusCode == HttpStatusCode.OK;
+            }
+            catch (HttpRequestException ex)
+            {
+                await BackendLogService.LogErrorAsync("CustomEndpointTestFailed", ex);
+                return false;
+            }
+            catch (TaskCanceledException ex)
+            {
+                await BackendLogService.LogErrorAsync("CustomEndpointTestFailed", ex);
+                return false;
+            }
+        }
 
         public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
         {
@@ -711,16 +780,16 @@ namespace Malx_AI
             string? originalModelLabel = null,
             bool allowModelFallback = true)
         {
-            if (!HasValidKey)
-                throw new InvalidOperationException("A valid OpenRouter API key is required.");
+            if (!HasAnyValidCloudCredential)
+                throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required.");
 
-            if (_availableModels.Count == 0)
+            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
+            if (!requestedModelProfile.IsCustomEndpoint && _availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
             // choke point so no caller-supplied prompt can omit it.
             systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
-            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
             const int maxCompletionTokens = 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
@@ -753,7 +822,8 @@ namespace Malx_AI
                     temperature,
                     topP,
                     maxCompletionTokens,
-                    tools);
+                    tools,
+                    isCustomEndpoint: requestedModelProfile.IsCustomEndpoint);
 
                 using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 finalStatusCode = response.StatusCode;
@@ -870,16 +940,16 @@ namespace Malx_AI
             bool allowModelFallback = true,
             int sameModelStreamRetries = 0)
         {
-            if (!HasValidKey)
-                throw new InvalidOperationException("A valid OpenRouter API key is required.");
+            if (!HasAnyValidCloudCredential)
+                throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required.");
 
-            if (_availableModels.Count == 0)
+            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
+            if (!requestedModelProfile.IsCustomEndpoint && _availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
             // choke point so no caller-supplied prompt can omit it.
             systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
-            OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
             int maxCompletionTokens = maxTokensOverride is int tokenLimit && tokenLimit > 0 ? tokenLimit : 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
@@ -914,7 +984,8 @@ namespace Malx_AI
                     maxCompletionTokens,
                     tools,
                     stream: true,
-                    stopSequences);
+                    stopSequences,
+                    isCustomEndpoint: requestedModelProfile.IsCustomEndpoint);
 
                 response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
@@ -1304,7 +1375,8 @@ namespace Malx_AI
             int maxTokens,
             IReadOnlyList<OpenRouterToolDefinition>? tools,
             bool stream = false,
-            IReadOnlyList<string>? stopSequences = null)
+            IReadOnlyList<string>? stopSequences = null,
+            bool isCustomEndpoint = false)
         {
             JsonArray messagePayload = BuildMessages(messages, systemPrompt);
             JsonObject payload = new()
@@ -1350,11 +1422,14 @@ namespace Malx_AI
                     payload["tool_choice"] = "auto";
             }
 
-            var request = new HttpRequestMessage(HttpMethod.Post, ChatCompletionsUrl)
+            var request = new HttpRequestMessage(HttpMethod.Post, isCustomEndpoint ? CustomEndpointChatCompletionsUrl : ChatCompletionsUrl)
             {
                 Content = new StringContent(payload.ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web)), Encoding.UTF8, "application/json")
             };
-            ApplyHeaders(request);
+            if (isCustomEndpoint)
+                ApplyCustomEndpointHeaders(request);
+            else
+                ApplyHeaders(request);
             return request;
         }
 
@@ -1498,6 +1573,15 @@ namespace Malx_AI
             int safetyMargin = Math.Max(1024, contextWindow / 100);
             int toolTokens = EstimateToolDefinitionTokens(tools);
             return Math.Max(2048, contextWindow - Math.Max(1, maxCompletionTokens) - safetyMargin - toolTokens);
+        }
+
+        // Public wrapper so callers outside this class (e.g. Workplace's own budget/sizing
+        // functions) can reuse this exact, already-correct arithmetic instead of re-deriving their
+        // own constants against a model's real context window.
+        public int GetPromptTokenBudgetForModel(string modelId, int maxCompletionTokens, IReadOnlyList<OpenRouterToolDefinition>? tools = null)
+        {
+            OpenRouterModelProfile profile = FindModelProfile(modelId) ?? SupportedModelProfiles[0];
+            return GetPromptTokenBudget(profile, maxCompletionTokens, tools);
         }
 
         private int EstimateRequestPromptTokens(
@@ -2127,6 +2211,11 @@ namespace Malx_AI
             request.Headers.TryAddWithoutValidation("X-Title", "Axiom");
         }
 
+        private void ApplyCustomEndpointHeaders(HttpRequestMessage request)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _customEndpointApiKey);
+        }
+
         private void SetDetectedModel(string modelId, string modelLabel)
         {
             DetectedModelId = string.IsNullOrWhiteSpace(modelId) ? DefaultModelId : modelId.Trim();
@@ -2171,6 +2260,14 @@ namespace Malx_AI
             }
 
             string normalizedModelId = (modelId ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(_customEndpointModelId)
+                && string.Equals(normalizedModelId, _customEndpointModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                // Untested field against arbitrary OpenAI-compatible servers -- omit it rather than
+                // assume support. temperature/top_p/tools/tool_choice are left enabled as normal.
+                return !string.Equals(parameterName, "reasoning", StringComparison.OrdinalIgnoreCase);
+            }
+
             if (normalizedModelId.StartsWith("openai/gpt-oss-", StringComparison.OrdinalIgnoreCase))
             {
                 // gpt-oss models don't support top_p or the reasoning field.
@@ -2271,6 +2368,10 @@ namespace Malx_AI
                     [FindModelProfile(Eidos1ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
                 WorkplaceCouncilDefaultModelId =>
                     [FindModelProfile(Eidos1ModelId), FindModelProfile(Hepha1ModelId)],
+                // The custom endpoint is a single self-hosted model with no OpenRouter alternates --
+                // a transient failure should fail cleanly, never silently cross over to a real
+                // OpenRouter model (which could fire with a missing/invalid OpenRouter key).
+                CustomEndpointModelId => [],
                 _ => AllKnownModelProfiles
             };
 
@@ -2397,11 +2498,31 @@ namespace Malx_AI
             return null;
         }
 
-        private static OpenRouterModelProfile FindModelProfile(string modelId)
+        private OpenRouterModelProfile FindModelProfile(string modelId)
         {
             string normalized = (modelId ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized))
                 return SupportedModelProfiles[0];
+
+            if (string.Equals(normalized, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                // Built on demand from runtime settings, not a static array entry -- the base URL,
+                // model, and key can change at any time via Settings, unlike the fixed OpenRouter
+                // aliases below.
+                return new OpenRouterModelProfile(
+                    AliasId: CustomEndpointModelId,
+                    AliasLabel: CustomEndpointModelLabel,
+                    PrimaryApiModelId: _customEndpointModelId,
+                    AlternativeApiModelIds: [],
+                    IsCodeSpecialized: false,
+                    // Must not exceed the server's actual context window -- GetPromptTokenBudget
+                    // sizes the prompt/history sent to this figure, and a larger declared window
+                    // than the server can really attend to causes severe slowdowns (context
+                    // overflow/thrashing) or hangs, not a clean error. Keep in sync with whatever
+                    // OLLAMA_CONTEXT_LENGTH (or equivalent) the target server is actually running.
+                    ApproximateContextWindowTokens: CustomEndpointContextWindowTokens,
+                    IsCustomEndpoint: true);
+            }
 
             return AllKnownModelProfiles.FirstOrDefault(profile =>
                 string.Equals(profile.AliasId, normalized, StringComparison.OrdinalIgnoreCase)
@@ -2466,7 +2587,7 @@ namespace Malx_AI
             return "user";
         }
 
-        private static string NormalizeModelId(string modelId)
+        private string NormalizeModelId(string modelId)
         {
             string normalized = (modelId ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized))
