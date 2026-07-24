@@ -6,6 +6,7 @@
 - User wants the assistant to extensively review and thoroughly analyze the app to build deep project understanding before and during future updates.
 - For Council pipeline internals, enforce strict per-role output contracts with termination markers, role-boundary drift checks with one correction rerun, deterministic compressed pipeline state headers, completed-steps registry with loop detection, and explicit pipeline health signals for Critic; do not alter normal chat mode or unrelated UI/features.
 - For Council research/analysis summarization of attached files, Architect/Builder must treat uploaded document text as already ingested in PROJECT KNOWLEDGE BASE and must not output external file-operation steps like opening files or OCR.
+- In Council/Workplace chat, the Architect role must only produce planning output and must never generate or build code; implementation belongs exclusively to the Builder role.
 - User prefers all inference to run locally on-device and does not want API-based model calls for chat systems.
 - When Qwen3 thinking mode is off, enforce strict direct-response behavior with no exposed reasoning text to conserve tokens and context.
 - User expects published app behavior to be validated carefully for regressions, especially LaTeX rendering and visible reasoning content in normal chat.
@@ -13,6 +14,8 @@
 - User wants OpenRouter cloud mode to always prefer Nvidia Nemotron 3 Super (free) as the selected model.
 - User wants OpenRouter normal chat cloud mode to expose exactly two user-switchable aliases: Eidos 1 for GPT-OSS 20B Free (thinking) and Hepha 1 for a free coding-focused OpenRouter model, with thinking controlled via the OpenRouter reasoning parameter instead of prompt tokens, and Gemini services removed from the app. User wants these model options visible in normal chat again.
 - User may explicitly switch out of AGENT mode and ask for explanation-only responses without generated code; comply when stated.
+- For Kestrel 1 in hybrid-local mode with Codebase Access, retain the full available tool catalog; do not restrict it to read-only codebase inspection tools. File creation and edits are performed through the returned patch envelope.
+- For Kestrel 1 in hybrid-local Council/Workplace chat, the Builder must stop tool/planning loops and return a complete requested implementation; it must not emit Architect-style plans or end a turn without a deliverable.
 
 ## UI Design Preferences
 - For Axiom UI refinements, prefer a modern, clean, easy-to-navigate palette with the following color scheme:

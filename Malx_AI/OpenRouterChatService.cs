@@ -210,6 +210,11 @@ namespace Malx_AI
         // (document context is appended at the *end* of the system prompt — a tail-truncating
         // cap below that budget silently severs attached documents from the model).
         private const int SystemPromptCharacterLimit = 80000;
+        // Kestrel 1 is served by a small, self-hosted context window. Its Council payload is the
+        // working state for the current task, so allowing broad cloud-role instructions to consume
+        // most of the request leaves the model unable to attend to the code and requirements.
+        private const double CustomEndpointSystemPromptShare = 0.30d;
+        private const int CustomEndpointMinimumSystemPromptTokens = 768;
         private const int PerHistoryMessageCharacterLimit = 8000;
         private const int ConversationHistoryCharacterBudget = 48000;
         private const int ConversationHistoryMessageLimit = 24;
@@ -274,7 +279,7 @@ namespace Malx_AI
         public const string CustomEndpointModelId = "custom-endpoint";
         public const string CustomEndpointModelLabel = "Kestral 1";
         // Keep in sync with the OLLAMA_CONTEXT_LENGTH the target server actually runs with.
-        public const int CustomEndpointContextWindowTokens = 8192;
+        public const int CustomEndpointContextWindowTokens = 9216;
         public const string DefaultModelId = Eidos1ModelId;
         public const string DefaultModelLabel = Eidos1ModelLabel;
         public static string WorkplaceCouncilDisplayLabel => SupportedModelProfiles
@@ -334,7 +339,9 @@ namespace Malx_AI
             return new OpenRouterInferenceSettingsSnapshot(
                 ResolveTemperature(profile, isCodingRequest, isPythonRequest),
                 ResolveTopP(profile, isCodingRequest),
-                Math.Max(32768, profile.ApproximateContextWindowTokens),
+                profile.IsCustomEndpoint
+                    ? profile.ApproximateContextWindowTokens
+                    : Math.Max(32768, profile.ApproximateContextWindowTokens),
                 profile.AliasLabel);
         }
 
@@ -793,6 +800,7 @@ namespace Malx_AI
             const int maxCompletionTokens = 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
+            systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
             messages = TrimConversationHistory(
                 messages,
                 ConversationHistoryMessageLimit,
@@ -953,6 +961,7 @@ namespace Malx_AI
             int maxCompletionTokens = maxTokensOverride is int tokenLimit && tokenLimit > 0 ? tokenLimit : 8192;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
+            systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
             messages = TrimConversationHistory(
                 messages,
                 ConversationHistoryMessageLimit,
@@ -1573,6 +1582,38 @@ namespace Malx_AI
             int safetyMargin = Math.Max(1024, contextWindow / 100);
             int toolTokens = EstimateToolDefinitionTokens(tools);
             return Math.Max(2048, contextWindow - Math.Max(1, maxCompletionTokens) - safetyMargin - toolTokens);
+        }
+
+        private string FitSystemPromptToContextBudget(
+            OpenRouterModelProfile modelProfile,
+            string systemPrompt,
+            int promptTokenBudget)
+        {
+            if (!modelProfile.IsCustomEndpoint || string.IsNullOrWhiteSpace(systemPrompt))
+                return systemPrompt;
+
+            int systemTokenBudget = Math.Max(
+                CustomEndpointMinimumSystemPromptTokens,
+                (int)(promptTokenBudget * CustomEndpointSystemPromptShare));
+            if (EstimateTokenCountForBudget(systemPrompt) <= systemTokenBudget)
+                return systemPrompt;
+
+            int characterBudget = Math.Max(1600, systemTokenBudget * 3);
+            string compacted = systemPrompt.Length <= characterBudget
+                ? systemPrompt
+                : systemPrompt[..(characterBudget / 2)].TrimEnd()
+                  + "\n[...Kestrel system context compacted...]\n"
+                  + systemPrompt[^((characterBudget / 2) - 48)..].TrimStart();
+
+            while (compacted.Length > 1600 && EstimateTokenCountForBudget(compacted) > systemTokenBudget)
+            {
+                int nextBudget = Math.Max(1600, compacted.Length - 256);
+                compacted = compacted[..(nextBudget / 2)].TrimEnd()
+                    + "\n[...Kestrel system context compacted...]\n"
+                    + compacted[^((nextBudget / 2) - 48)..].TrimStart();
+            }
+
+            return compacted;
         }
 
         // Public wrapper so callers outside this class (e.g. Workplace's own budget/sizing
@@ -2514,7 +2555,7 @@ namespace Malx_AI
                     AliasLabel: CustomEndpointModelLabel,
                     PrimaryApiModelId: _customEndpointModelId,
                     AlternativeApiModelIds: [],
-                    IsCodeSpecialized: false,
+                    IsCodeSpecialized: true,
                     // Must not exceed the server's actual context window -- GetPromptTokenBudget
                     // sizes the prompt/history sent to this figure, and a larger declared window
                     // than the server can really attend to causes severe slowdowns (context

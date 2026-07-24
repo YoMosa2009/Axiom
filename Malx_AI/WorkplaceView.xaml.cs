@@ -591,6 +591,9 @@ namespace Malx_AI
                     "Do not output analysis, chain-of-thought, approach notes, raw HTML outside the envelope, markdown explanations, or claims that files were changed.";
             }
 
+            if (_isHybridLocalCouncilSelected)
+                cloudSystemPrompt = BuildHybridLocalCouncilSystemPrompt(role, activeRunContext);
+
             string adaptedSystemPrompt = _openRouterChatService.BuildSystemPromptForModel(
                 GetEffectiveCouncilModelId(),
                 cloudSystemPrompt);
@@ -647,6 +650,43 @@ namespace Malx_AI
                     await Task.Delay(TimeSpan.FromSeconds(waitSeconds), token);
                 }
             }
+        }
+
+        private string BuildHybridLocalCouncilSystemPrompt(CouncilRole role, CouncilRunContext? context)
+        {
+            string taskKind = context?.IsWorkspaceTask == true
+                ? "connected-codebase change"
+                : context?.IsArtifactCanvasRequest == true
+                    ? "self-contained Project Canvas artifact"
+                    : context?.TaskType == CouncilTaskType.Coding
+                        ? "code implementation"
+                        : "direct user response";
+
+            return role switch
+            {
+                CouncilRole.Architect =>
+                    "You are the Architect in a three-role coding relay. Produce a short implementation plan only. " +
+                    "Use the TASK CONTRACT as the source of truth. List 3-6 concrete steps that map each requested behavior to a file, component, function, or verification action. " +
+                    "Do not write code, use tools, repeat the request, or explain your reasoning. End with ARCHITECT PLAN COMPLETE.",
+
+                CouncilRole.Builder when context?.IsWorkspaceTask == true =>
+                    "You are the Builder, an agentic coding implementer. The TASK CONTRACT and CONNECTED CODEBASE CONTEXT are authoritative. " +
+                    "Use any provided tool when it helps inspect, verify, run, build, create, or correctly implement the requested " + taskKind + ". " +
+                    "Your final response must be exactly one valid [[AXIOM_CODEBASE_PATCH]] envelope. Use only relative FILE paths, ACTION edit/create/replace, exact SEARCH/REPLACE blocks for edits, and [[END FILE]] markers. " +
+                    "Return no analysis, plan, explanation, tool text, or claims that files were changed. Do not alter unrelated behavior.",
+
+                CouncilRole.Builder =>
+                    "You are the Builder, an agentic implementer. Use the TASK CONTRACT as the source of truth and implement the requested " + taskKind + ". " +
+                    "Use a tool only if its observation is necessary to inspect supplied code or verify a fact; otherwise implement directly. " +
+                    "Return one complete deliverable only: executable code for coding tasks, one complete source artifact for Canvas tasks, or a direct answer for prose tasks. " +
+                    "Do not output a plan, analysis, hidden reasoning, tool text, prompt labels, alternatives, or a change summary.",
+
+                CouncilRole.Critic =>
+                    "You are the Critic. Independently compare the Builder output with every requirement and acceptance check in the TASK CONTRACT. " +
+                    "Return only concrete actionable defects with evidence and an exact fix, or exactly 'No issues found.' Do not write hidden reasoning, a plan, or tool calls.",
+
+                _ => string.Empty
+            };
         }
 
         // Runs one cloud council role through the native tool-calling loop, streaming into the card.
@@ -8648,7 +8688,7 @@ namespace Malx_AI
                     "Name the artifact type, required source format, hard constraints, explicit must-include items, Builder instruction, and acceptance tests. " +
                     "Do NOT describe function signatures, class hierarchies, server-side code, or generic build steps. " +
                     "The handoff must tell Builder to return one complete renderable source only, with no explanatory prose. " +
-                    "'Output the complete implementation as a single ```html … ``` code block with no text outside the fence.'",
+                    "Do not include source code, patch syntax, or code-fence syntax in the handoff; those belong exclusively to the Builder output.",
                 CouncilRole.Builder =>
                     "\n[VISUAL ARTIFACT TASK] This response is a renderable artifact — not a prose explanation and not a research document. " +
                     "ANTI-DRIFT: You are the BUILDER — do NOT output a numbered plan or step list before the artifact. " +
