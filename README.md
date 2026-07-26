@@ -101,7 +101,7 @@ The three-role council pipeline — Architect, Builder, and Critic — with the 
 
 ## Models
 
-Axiom ships with **Axiom Qwen3-4B** (a quantized GGUF model) as its default local model. Any GGUF model can be imported and used in its place.
+Axiom ships with local LLM mode as default. Any GGUF model can be imported and used in its place. - AI models may also be installed from the app itself to use immediately.
 
 Cloud mode (via OpenRouter, using your own API key) adds two model aliases plus the Workplace Council's default cloud model. Each is backed by a primary model with automatic fallbacks if a provider is rate-limited or unavailable:
 
