@@ -174,4 +174,6 @@ Built by [YoMosa2009](https://github.com/YoMosa2009)
 
 Portfolio: [MalxLabs.work](https://malxlabs.work)
 
-Website: [MalxInference.work](https://malxinference.work/)
+Malx Inference: [MalxInference.work](https://malxinference.work/)
+
+Axiom Inference: [Axiominference.work](https://axiominference.work/)
