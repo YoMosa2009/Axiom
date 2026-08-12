@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [V1.6] - 2026-8-11
 
 Workflow, focus, and polish release: the council keeps one model for the whole task, the app
 tells you when your API key runs out, and the workplace chat got a visual overhaul — plus a
