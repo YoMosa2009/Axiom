@@ -177,7 +177,8 @@ $releaseNotes
 
 Existing Axiom V1.7.0+ installations can install this release from the in-app update notification. New users can download the Windows ZIP, extract the complete folder, and run Malx_AI.exe.
 "@
-Set-Content -LiteralPath $notesPath -Value $notesDocument -Encoding UTF8
+$utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($notesPath, $notesDocument, $utf8WithoutBom)
 
 if ($PackageOnly) {
     Write-Host "Package-only build complete." -ForegroundColor Green
