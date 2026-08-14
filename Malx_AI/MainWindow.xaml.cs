@@ -1997,6 +1997,7 @@ namespace Malx_AI
             _chatMessages.Clear();
             _chatDocuments.Clear();
             _documentRetriever.ClearChunks();
+            ResetNormalProjectCanvas();
             RefreshAttachmentTray();
             SetRandomEmptyChatGreeting();
             _chatContent[_currentChatId] = "";
@@ -2409,6 +2410,7 @@ namespace Malx_AI
             _chatMessages.Clear();
             _chatDocuments.Clear();
             _documentRetriever.ClearChunks();
+            ResetNormalProjectCanvas();
             _chatNames[chatId] = chatName;
 
             ChatSession? persisted = null;

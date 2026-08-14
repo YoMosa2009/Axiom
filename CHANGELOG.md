@@ -1,5 +1,27 @@
 # Changelog
 
+## [V1.8.0] - 2026-08-14
+
+Normal Chat Project Canvas release.
+
+### Added
+- Added `@ProjectCanvas` to Normal Chat's `@` menu for Local, Hybrid Local, and
+  OpenRouter Cloud modes, with gold mention highlighting in the composer
+- Added a responsive right-side Project Canvas with an adaptive collapsed handle,
+  smooth open/close animation, automatic expansion after artifact completion,
+  Preview and Source modes, source copy, and file export
+- Reused Workplace artifact detection so Normal Chat can render self-contained HTML,
+  SVG, interactive JavaScript, and formatted Markdown documents offline
+- Made calculator and Python tools available when a Project Canvas request benefits
+  from them, and added bounded Java compile/run support for explicit Java tasks
+
+### Fixed
+- Prevented rendered LaTeX, Markdown tables, and other rich messages from flashing
+  back to raw source while scrolling by restoring recycled rows from a bounded
+  rendered-image cache
+- Cleared the Normal Chat canvas when starting or switching chats so artifacts do not
+  leak between conversations
+
 ## [V1.7.2] - 2026-08-13
 
 Updater reliability hotfix.

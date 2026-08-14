@@ -7,7 +7,7 @@ computer unless you deliberately use a cloud model or connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.7.2-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.8.0-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 <img width="1906" height="1026" alt="Axiom screenshot" src="https://github.com/user-attachments/assets/07bbb46d-1bc8-42d7-a16c-5912d2f874d8" />
@@ -38,8 +38,12 @@ computer unless you deliberately use a cloud model or connected service.
 - Attach documents, spreadsheets, presentations, e-books, notebooks, source code,
   subtitles, and common image formats
 - Run Python, calculate expressions and unit conversions, and search the web when
-  the selected mode exposes those tools; Workplace can also compile and run Java
-- Render Markdown, LaTeX, charts, SVG, HTML, and interactive JavaScript artifacts
+  the selected mode exposes those tools; Java execution is available for explicit
+  Java tasks in Project Canvas and supported Workplace flows
+- Type `@ProjectCanvas` or select **Project Canvas** from the `@` menu to render a
+  completed Markdown, SVG, HTML, or interactive JavaScript artifact in a responsive
+  right-hand canvas across Local, Hybrid Local, and Cloud modes
+- Render Markdown and LaTeX stably while scrolling through long conversations
 - Preserve chat history, persona memory, and document retrieval context locally
 
 ### Workplace

@@ -653,13 +653,7 @@ namespace Malx_AI
 
         private void UpdateMcpMentionPopup()
         {
-            if (InputBox == null || McpMentionPopup == null || McpMentionList == null || _mcpConnectorService == null)
-            {
-                CloseMcpMentionPopup();
-                return;
-            }
-
-            if (!_cloudModeActive || !_openRouterChatService.HasValidKey)
+            if (InputBox == null || McpMentionPopup == null || McpMentionList == null)
             {
                 CloseMcpMentionPopup();
                 return;
@@ -673,10 +667,17 @@ namespace Malx_AI
                 return;
             }
 
-            IReadOnlyList<McpConnectorInfo> matches = McpMentionHelper.FilterConnectors(
-                _mcpConnectorService.GetConnectors(),
-                query,
-                connectedOnly: false);
+            var matches = new List<McpConnectorInfo>();
+            if (ProjectCanvasMentionMatches(query))
+                matches.Add(CreateProjectCanvasMentionOption());
+
+            if (_cloudModeActive && _openRouterChatService.HasValidKey && _mcpConnectorService != null)
+            {
+                matches.AddRange(McpMentionHelper.FilterConnectors(
+                    _mcpConnectorService.GetConnectors(),
+                    query,
+                    connectedOnly: false));
+            }
 
             if (matches.Count == 0)
             {
@@ -717,10 +718,10 @@ namespace Malx_AI
                 return;
 
             string text = InputBox.Text ?? string.Empty;
-            IReadOnlyList<string> known = _mcpConnectorService?.GetKnownHandles() ?? Array.Empty<string>();
-            IReadOnlyList<McpMentionSpan> mentions = _cloudModeActive
-                ? McpMentionHelper.FindMentions(text, known)
-                : Array.Empty<McpMentionSpan>();
+            var known = new List<string> { ProjectCanvasMentionHandle };
+            if (_cloudModeActive && _mcpConnectorService != null)
+                known.AddRange(_mcpConnectorService.GetKnownHandles());
+            IReadOnlyList<McpMentionSpan> mentions = McpMentionHelper.FindMentions(text, known);
 
             bool hasComplete = mentions.Any(m => m.IsComplete);
             if (!hasComplete || string.IsNullOrEmpty(text))

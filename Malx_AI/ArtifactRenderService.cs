@@ -162,11 +162,10 @@ namespace Malx_AI
 
         public static ArtifactRenderInfo DetectForNormalChat(string responseText)
         {
-            string raw = responseText ?? string.Empty;
-            if (TryCreateInteractiveJavaScriptArtifact(raw, allowRawSource: false, out ArtifactRenderInfo? jsArtifact))
-                return jsArtifact;
-
-            return ArtifactRenderInfo.None(raw);
+            // Normal Chat's explicit @ProjectCanvas route supports the same artifact
+            // formats as Workplace. Keeping one detector prevents the two surfaces from
+            // disagreeing about whether HTML, SVG, JavaScript, or Markdown is renderable.
+            return DetectForCanvas(responseText, sandboxOutput: null);
         }
 
         public static string ExtractChartOutputBase64(string? sandboxOutput)
@@ -354,7 +353,7 @@ except Exception:
             if (string.IsNullOrWhiteSpace(base64))
                 return false;
 
-            ChatMessageCodeBlock? pythonBlock = ExtractCodeBlocks(raw).FirstOrDefault(block => string.Equals(block.Language, "python", StringComparison.OrdinalIgnoreCase));
+            ArtifactCodeBlock? pythonBlock = ExtractCodeBlocks(raw).FirstOrDefault(block => string.Equals(block.Language, "python", StringComparison.OrdinalIgnoreCase));
             string source = pythonBlock?.Code ?? raw;
             artifact = new ArtifactRenderInfo
             {
@@ -405,7 +404,7 @@ except Exception:
         private static bool TryCreateInteractiveJavaScriptArtifact(string raw, bool allowRawSource, out ArtifactRenderInfo? artifact)
         {
             artifact = null;
-            ChatMessageCodeBlock? jsBlock = ExtractCodeBlocks(raw).FirstOrDefault(block =>
+            ArtifactCodeBlock? jsBlock = ExtractCodeBlocks(raw).FirstOrDefault(block =>
                 string.Equals(block.Language, "javascript", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(block.Language, "js", StringComparison.OrdinalIgnoreCase));
             if (jsBlock == null && !allowRawSource)
@@ -456,7 +455,7 @@ except Exception:
                     return htmlTail;
             }
 
-            ChatMessageCodeBlock? htmlBlock = ExtractCodeBlocks(source).FirstOrDefault(block => string.Equals(block.Language, "html", StringComparison.OrdinalIgnoreCase));
+            ArtifactCodeBlock? htmlBlock = ExtractCodeBlocks(source).FirstOrDefault(block => string.Equals(block.Language, "html", StringComparison.OrdinalIgnoreCase));
             if (htmlBlock != null)
             {
                 string fencedHtmlContent = htmlBlock.Code.Trim();
@@ -531,19 +530,21 @@ except Exception:
             return dataRows;
         }
 
-        private static List<ChatMessageCodeBlock> ExtractCodeBlocks(string content)
+        private static List<ArtifactCodeBlock> ExtractCodeBlocks(string content)
         {
-            var blocks = new List<ChatMessageCodeBlock>();
+            var blocks = new List<ArtifactCodeBlock>();
             foreach (Match match in FencedCodeBlockRegex.Matches(content ?? string.Empty))
             {
                 string language = match.Groups["language"].Value.Trim();
                 string code = match.Groups["code"].Value.Replace("\r\n", "\n").Trim();
                 if (!string.IsNullOrWhiteSpace(code))
-                    blocks.Add(new ChatMessageCodeBlock(language, code));
+                    blocks.Add(new ArtifactCodeBlock(language, code));
             }
 
             return blocks;
         }
+
+        private sealed record ArtifactCodeBlock(string Language, string Code);
 
         private static string StripExternalResources(string html)
         {

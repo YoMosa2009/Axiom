@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using System.Text.Json;
 using System.Windows;
@@ -12,6 +15,12 @@ namespace Malx_AI
     public partial class RenderedMessageView : UserControl
     {
         private const string KatexVirtualHostName = "katex.local";
+        private const long RenderCacheByteLimit = 64L * 1024 * 1024;
+        private const int RenderCacheEntryLimit = 64;
+        private static readonly object RenderCacheGate = new();
+        private static readonly Dictionary<string, CachedRender> RenderCache = new(StringComparer.Ordinal);
+        private static readonly LinkedList<string> RenderCacheLru = new();
+        private static long _renderCacheBytes;
 
         public static readonly DependencyProperty RawTextProperty = DependencyProperty.Register(
             nameof(RawText), typeof(string), typeof(RenderedMessageView),
@@ -56,6 +65,7 @@ namespace Malx_AI
         private bool _webViewReady;
         private bool _hasCapturedImage;
         private int _captureRequestVersion;
+        private string _activeRenderCacheKey = string.Empty;
         public RenderedMessageView()
         {
             InitializeComponent();
@@ -82,14 +92,16 @@ namespace Malx_AI
         {
             _isLoaded = true;
 
+            // A recycled ListBox row can restore an already-rendered KaTeX/Markdown image
+            // synchronously. This prevents raw source from flashing while WebView2 warms up.
+            Render();
+
             if (_initialized)
             {
                 UpdatePresentationMode();
                 Render();
                 return;
             }
-
-            UpdatePresentationMode();
 
             if (IsHtmlRenderingEnabled)
                 await EnsureBrowserInitializedAsync();
@@ -110,7 +122,7 @@ namespace Malx_AI
 
         private static void OnRawTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            if (d is RenderedMessageView v && v._initialized)
+            if (d is RenderedMessageView v)
                 v.Render();
         }
 
@@ -137,6 +149,21 @@ namespace Malx_AI
             if (!IsHtmlRenderingEnabled)
                 return;
 
+            double renderWidth = GetRenderWidth();
+            if (renderWidth < MinRenderWidth)
+                return;
+
+            string html = MessageHtmlRenderer.BuildHtml(RawText ?? string.Empty);
+            string cacheKey = BuildRenderCacheKey(html, renderWidth);
+            if (TryGetCachedRender(cacheKey, out CachedRender? cached))
+            {
+                _lastRenderedHtml = html;
+                _lastRenderWidth = renderWidth;
+                _activeRenderCacheKey = cacheKey;
+                ApplyCachedRender(cached!);
+                return;
+            }
+
             if (!_initialized)
             {
                 if (_isLoaded && !_initializationInProgress)
@@ -144,11 +171,6 @@ namespace Malx_AI
                 return;
             }
 
-            double renderWidth = GetRenderWidth();
-            if (renderWidth < MinRenderWidth)
-                return;
-
-            string html = MessageHtmlRenderer.BuildHtml(RawText ?? string.Empty);
             if (string.Equals(_lastRenderedHtml, html, StringComparison.Ordinal)
                 && _hasMeasuredHeight
                 && Math.Abs(renderWidth - _lastRenderWidth) <= 6)
@@ -159,6 +181,7 @@ namespace Malx_AI
 
             _lastRenderedHtml = html;
             _lastRenderWidth = renderWidth;
+            _activeRenderCacheKey = cacheKey;
             _renderVersion++;
             ResetRenderSurface();
             Browser.Width = renderWidth;
@@ -168,7 +191,7 @@ namespace Malx_AI
         private void UpdatePresentationMode()
         {
             TextBlock? plainTextBlock = GetPlainTextBlock();
-            if (!_initialized)
+            if (!_initialized && !_hasCapturedImage)
             {
                 if (plainTextBlock != null)
                     plainTextBlock.Text = PlainText ?? RawText ?? string.Empty;
@@ -564,6 +587,11 @@ namespace Malx_AI
                 RenderedImage.Height = Math.Max(MinRenderHeight, Browser.Height);
                 RenderedImage.Source = image;
                 _hasCapturedImage = true;
+                AddCachedRender(
+                    _activeRenderCacheKey,
+                    image,
+                    Math.Max(1, Browser.Width),
+                    Math.Max(MinRenderHeight, Browser.Height));
 
                 // NOW hide the HWND and switch to the static image — single atomic update.
                 UpdatePresentationMode();
@@ -574,5 +602,85 @@ namespace Malx_AI
                 UpdatePresentationMode();
             }
         }
+
+        private void ApplyCachedRender(CachedRender cached)
+        {
+            _captureRequestVersion++;
+            _hasMeasuredHeight = true;
+            _hasCapturedImage = true;
+            Browser.Width = cached.Width;
+            Browser.Height = cached.Height;
+            RenderedImage.Width = cached.Width;
+            RenderedImage.Height = cached.Height;
+            RenderedImage.Source = cached.Image;
+            Canvas? browserHost = GetBrowserHost();
+            if (browserHost != null)
+            {
+                browserHost.Width = cached.Width;
+                browserHost.Height = cached.Height;
+                browserHost.Visibility = Visibility.Collapsed;
+            }
+            Height = cached.Height;
+            MinHeight = cached.Height;
+            ClipToBounds = true;
+            UpdatePresentationMode();
+        }
+
+        private static string BuildRenderCacheKey(string html, double width)
+        {
+            int widthBucket = Math.Max(1, (int)Math.Round(width));
+            byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(html ?? string.Empty));
+            return widthBucket.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ":" + Convert.ToHexString(digest);
+        }
+
+        private static bool TryGetCachedRender(string key, out CachedRender? cached)
+        {
+            lock (RenderCacheGate)
+            {
+                if (!RenderCache.TryGetValue(key, out cached))
+                    return false;
+
+                RenderCacheLru.Remove(key);
+                RenderCacheLru.AddLast(key);
+                return true;
+            }
+        }
+
+        private static void AddCachedRender(string key, BitmapImage image, double width, double height)
+        {
+            if (string.IsNullOrWhiteSpace(key) || image == null)
+                return;
+
+            long estimatedBytes = Math.Max(1L, (long)image.PixelWidth * image.PixelHeight * 4L);
+            if (estimatedBytes > RenderCacheByteLimit / 2)
+                return;
+
+            lock (RenderCacheGate)
+            {
+                if (RenderCache.TryGetValue(key, out CachedRender? existing))
+                {
+                    _renderCacheBytes -= existing.EstimatedBytes;
+                    RenderCacheLru.Remove(key);
+                }
+
+                RenderCache[key] = new CachedRender(image, width, height, estimatedBytes);
+                RenderCacheLru.AddLast(key);
+                _renderCacheBytes += estimatedBytes;
+
+                while (RenderCacheLru.Count > RenderCacheEntryLimit || _renderCacheBytes > RenderCacheByteLimit)
+                {
+                    LinkedListNode<string>? oldest = RenderCacheLru.First;
+                    if (oldest == null)
+                        break;
+
+                    RenderCacheLru.RemoveFirst();
+                    if (RenderCache.Remove(oldest.Value, out CachedRender? removed))
+                        _renderCacheBytes -= removed.EstimatedBytes;
+                }
+            }
+        }
+
+        private sealed record CachedRender(BitmapImage Image, double Width, double Height, long EstimatedBytes);
     }
 }

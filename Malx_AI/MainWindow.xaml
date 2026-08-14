@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Malx_AI"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Axiom - Chat" Height="900" Width="1600" MinWidth="1040" MinHeight="640" WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/AxiomLogo.ico"
         AllowsTransparency="False" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}"
@@ -866,7 +867,11 @@
                 <!-- Settings panel is now rendered as a global overlay in ContentContainer -->
 
                 <!-- Chat Area -->
-                <Grid>
+                <Grid x:Name="NormalChatWorkspaceGrid" SizeChanged="NormalChatWorkspaceGrid_SizeChanged">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="0"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
@@ -1606,6 +1611,94 @@
                             </Border>
                         </StackPanel>
                     </Border>
+
+                    <Border x:Name="NormalProjectCanvasHandle"
+                            Grid.Column="1" Grid.RowSpan="2"
+                            Width="48"
+                            Background="#1B1A19"
+                            BorderBrush="#302D2A"
+                            BorderThickness="1,0,0,0">
+                        <Button Width="34" Height="34"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                Click="NormalProjectCanvasOpen_Click"
+                                Style="{StaticResource ChatInputIconButtonStyle}"
+                                ToolTip="Show Project Canvas">
+                            <Grid Width="15" Height="15">
+                                <Border CornerRadius="3" BorderBrush="#77716B" BorderThickness="1.4"/>
+                                <Border Width="2.5" Height="8" CornerRadius="1.25" Background="#8A8279"
+                                        HorizontalAlignment="Right" Margin="0,0,3,0"/>
+                            </Grid>
+                        </Button>
+                    </Border>
+
+                    <Border x:Name="NormalProjectCanvasPane"
+                            Grid.Column="1" Grid.RowSpan="2"
+                            Width="0" MaxWidth="680"
+                            Visibility="Collapsed"
+                            Background="#211F1D"
+                            BorderBrush="#302D2A"
+                            BorderThickness="1,0,0,0"
+                            ClipToBounds="True">
+                        <Grid Margin="14">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Border Grid.Row="0" Background="#171615" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" MinWidth="0"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Project Canvas" FontSize="14" FontWeight="SemiBold" Foreground="#EDE8E3"/>
+                                        <TextBlock x:Name="NormalProjectCanvasStatusText" Text="Use @ProjectCanvas to render an artifact." FontSize="10" Foreground="#8A8279" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+                                        <Button x:Name="NormalProjectCanvasPreviewButton" Content="Preview" Click="NormalProjectCanvasPreview_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" MinWidth="66" Padding="10,0" Margin="0,0,5,0" IsEnabled="False"/>
+                                        <Button x:Name="NormalProjectCanvasSourceButton" Content="Source" Click="NormalProjectCanvasSource_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" MinWidth="58" Padding="10,0" Margin="0,0,7,0" IsEnabled="False"/>
+                                        <Button Width="30" Height="30" Click="NormalProjectCanvasClose_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Hide Project Canvas">
+                                            <TextBlock Text="&#x203A;" FontSize="18" Foreground="#A69D92" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Row="1" Background="#171615" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="12" ClipToBounds="True">
+                                <Grid>
+                                    <wv2:WebView2 x:Name="NormalProjectCanvasWebView" DefaultBackgroundColor="#00000000" Visibility="Collapsed"/>
+                                    <TextBox x:Name="NormalProjectCanvasSourceView"
+                                             Visibility="Collapsed"
+                                             IsReadOnly="True"
+                                             AcceptsReturn="True"
+                                             TextWrapping="NoWrap"
+                                             FontFamily="Consolas"
+                                             FontSize="12"
+                                             Padding="12"
+                                             Background="#171615"
+                                             Foreground="#EDE8E3"
+                                             BorderThickness="0"
+                                             HorizontalScrollBarVisibility="Auto"
+                                             VerticalScrollBarVisibility="Auto"/>
+                                    <StackPanel x:Name="NormalProjectCanvasEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="280" Margin="24">
+                                        <Border Width="46" Height="46" CornerRadius="12" Background="#262321" BorderBrush="#3A3632" BorderThickness="1" HorizontalAlignment="Center" Margin="0,0,0,14">
+                                            <TextBlock Text="&#x25C7;" FontSize="23" Foreground="#B8924A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <TextBlock Text="Project Canvas is ready" FontSize="14" FontWeight="SemiBold" Foreground="#EDE8E3" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="Add @ProjectCanvas to a prompt. Axiom will render the completed HTML, SVG, interactive JavaScript, chart, or document here." FontSize="11" Foreground="#8A8279" TextAlignment="Center" TextWrapping="Wrap" Margin="0,7,0,0" LineHeight="16"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                                <Button x:Name="NormalProjectCanvasCopyButton" Content="Copy source" Click="NormalProjectCanvasCopy_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" Padding="10,0" Margin="0,0,6,0" IsEnabled="False"/>
+                                <Button x:Name="NormalProjectCanvasSaveButton" Content="Save" Click="NormalProjectCanvasSave_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" Padding="12,0" IsEnabled="False"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
                 </Grid>
             </DockPanel>
 
@@ -2198,7 +2291,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.7.2" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.8.0" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Grid.Column="1" Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{StaticResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>

@@ -905,7 +905,8 @@ namespace Malx_AI
             IReadOnlyCollection<string>? mentionedMcpHandles = null,
             bool includeWebSearch = true,
             bool includeRunPython = true,
-            bool includeCalculate = true)
+            bool includeCalculate = true,
+            bool includeRunJava = false)
         {
             var tools = new List<OpenRouterToolDefinition>();
 
@@ -976,6 +977,27 @@ namespace Malx_AI
                             }
                         },
                         ["required"] = new JsonArray("expression"),
+                        ["additionalProperties"] = false
+                    }));
+            }
+
+            if (includeRunJava)
+            {
+                tools.Add(new OpenRouterToolDefinition(
+                    "run_java",
+                    "Compile and execute one package-free Java class with the installed JDK. Use only when Java execution materially validates the requested artifact or calculation.",
+                    new JsonObject
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new JsonObject
+                        {
+                            ["code"] = new JsonObject
+                            {
+                                ["type"] = "string",
+                                ["description"] = "Complete package-free Java source containing a class and main(String[] args)."
+                            }
+                        },
+                        ["required"] = new JsonArray("code"),
                         ["additionalProperties"] = false
                     }));
             }
@@ -1073,11 +1095,21 @@ namespace Malx_AI
             // heuristic for this model specifically; other (OpenRouter) models keep the tools
             // unconditionally available as before, since they haven't shown this problem.
             bool isCustomEndpoint = IsCustomEndpointModelSelected();
+            bool projectCanvasRequested = IsProjectCanvasRequested(userMsg);
             bool includeRunPython = !isCustomEndpoint
                 || LooksLikeCodeExecutionRequest(userMsg)
-                || _capabilityRegistry.ShouldUseDataTools(userMsg);
-            bool includeCalculate = !isCustomEndpoint || LooksLikeCalculationRequest(userMsg);
-            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions(mentionedMcpHandles, includeWebSearch, includeRunPython, includeCalculate);
+                || _capabilityRegistry.ShouldUseDataTools(userMsg)
+                || projectCanvasRequested;
+            bool includeCalculate = !isCustomEndpoint || LooksLikeCalculationRequest(userMsg) || projectCanvasRequested;
+            // Merely exposing the tool does not execute it. The Project Canvas instruction
+            // tells the model to call Java only when it materially validates the artifact.
+            bool includeRunJava = projectCanvasRequested;
+            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions(
+                mentionedMcpHandles,
+                includeWebSearch,
+                includeRunPython,
+                includeCalculate,
+                includeRunJava);
             var reasoningParts = new List<string>();
             int toolCallCount = 0;
             bool pythonSessionStarted = false;
@@ -1268,6 +1300,20 @@ namespace Malx_AI
                     };
                 }
 
+                if (string.Equals(normalizedName, "run_java", StringComparison.OrdinalIgnoreCase))
+                {
+                    StartToolActivityIndicator("Running Java");
+                    string code = root.TryGetProperty("code", out JsonElement codeElement)
+                        ? codeElement.GetString() ?? string.Empty
+                        : string.Empty;
+                    string result = await JavaExecutionService.ExecuteAsync(code, token);
+                    return new CloudToolExecutionResult
+                    {
+                        Name = normalizedName,
+                        Result = result
+                    };
+                }
+
                 if (_mcpConnectorService != null
                     && _cloudModeActive
                     && _mcpConnectorService.TryResolveTool(normalizedName, out McpConnectorInfo? mcpConnector)
@@ -1407,6 +1453,9 @@ namespace Malx_AI
                     toolLoopResult.ReasoningText,
                     generationStopped: false,
                     toolLoopResult.Usage);
+
+                await Dispatcher.InvokeAsync(() =>
+                    TryRouteNormalChatArtifact(userMsg, toolLoopResult.ResponseText));
 
                 ShowTransientStatus($"Tokens: {_tokenCount}  •  Mode: Cloud ({_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)})");
                 _currentStreamingMessage = null;
@@ -1556,6 +1605,9 @@ namespace Malx_AI
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Cloud or Hybrid Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))
                     systemPrompt += "\n\n" + capabilityInstruction;
+                string projectCanvasInstruction = BuildNormalChatProjectCanvasInstruction(userMsg);
+                if (!string.IsNullOrWhiteSpace(projectCanvasInstruction))
+                    systemPrompt += "\n\n" + projectCanvasInstruction;
                 string cloudModelInstruction = BuildCloudModelSystemInstruction(userMsg);
                 if (!string.IsNullOrWhiteSpace(cloudModelInstruction))
                     systemPrompt += "\n\n" + cloudModelInstruction;

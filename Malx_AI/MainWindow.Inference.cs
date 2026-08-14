@@ -3147,6 +3147,9 @@ namespace Malx_AI
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))
                     effectiveSystemPrompt += "\n\n" + capabilityInstruction;
+                string projectCanvasInstruction = BuildNormalChatProjectCanvasInstruction(userMsg);
+                if (!string.IsNullOrWhiteSpace(projectCanvasInstruction))
+                    effectiveSystemPrompt += "\n\n" + projectCanvasInstruction;
 
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.HippocampusContext))
                     effectiveSystemPrompt += "\n\n[FROM PRIOR RESEARCH SESSIONS]\n" + uiSnapshot.HippocampusContext + "\n[/FROM PRIOR RESEARCH SESSIONS]";
@@ -4294,6 +4297,16 @@ namespace Malx_AI
                             modelUserMsg += "\n\n" + preInferencePython;
                     }
 
+                    if (IsProjectCanvasRequested(userMsg)
+                        && JavaExecutionService.TryExtractExplicitCode(userMsg, out string explicitJavaCode))
+                    {
+                        StartToolActivityIndicator("Running Java");
+                        string javaResult = await JavaExecutionService.ExecuteAsync(
+                            explicitJavaCode,
+                            _cancellationTokenSource.Token);
+                        modelUserMsg += "\n\n[[JAVA RESULT]]\n" + javaResult + "\n[[END JAVA RESULT]]";
+                    }
+
                     if (sandboxPreparation.IsEligible)
                         await _pythonExecutionService.StartPersistentSessionAsync(_cancellationTokenSource.Token);
 
@@ -4374,6 +4387,8 @@ namespace Malx_AI
                         _currentStreamingMessage.ModelLabel = string.IsNullOrWhiteSpace(_nextMessageModelOverride) || _nextMessageModelOverride == "Default"
                             ? _modelName
                             : _nextMessageModelOverride;
+
+                        TryRouteNormalChatArtifact(userMsg, finalizedResponse.Answer);
 
                         var activeBranch = _branches.FirstOrDefault(b => b.Id == _activeBranchId);
                         if (activeBranch != null)

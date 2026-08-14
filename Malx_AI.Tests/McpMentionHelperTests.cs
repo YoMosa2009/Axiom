@@ -37,6 +37,20 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public void ProjectCanvasMention_IsCompleteAndCaseInsensitive()
+        {
+            string[] handles = ["ProjectCanvas"];
+
+            var spans = McpMentionHelper.FindMentions(
+                "Build a responsive dashboard @projectcanvas",
+                handles);
+
+            Assert.Single(spans);
+            Assert.True(spans[0].IsComplete);
+            Assert.Equal("ProjectCanvas", spans[0].Handle, ignoreCase: true);
+        }
+
+        [Fact]
         public void FilterConnectors_MatchesHandlePrefix()
         {
             var connectors = new[]
