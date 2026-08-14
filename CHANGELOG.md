@@ -1,5 +1,37 @@
 # Changelog
 
+## [V1.7.0] - 2026-08-13
+
+Agent modes, reusable capabilities, desktop integration, and in-app delivery release.
+
+### Workplace
+- Added Single Model mode: one agent plans, uses tools, executes, and verifies without
+  Architect, Builder, or Critic role handoffs
+- Added a Workplace header toggle for switching between Council and Single Model modes
+- Preserved tools, Project Canvas, codebase access, attachments, context controls, session
+  memory, persistence, and cloud/local execution across both modes
+
+### Skills and Plugins
+- Replaced the Normal Chat Templates and System buttons with Skills and Plugins panels
+- Added five global built-in Skills: PDF Studio, Slide Deck Studio, Document Summarizer,
+  Data Analysis, and Code Review
+- Added user-created instruction Skills with locally persisted attachment state
+- Added Web Research, Data Lab, File Intelligence, Connected Apps, and Creator Studio Plugins
+- Attached capabilities apply across Local, Cloud, Hybrid Local, Council, and Single Model modes
+
+### Models
+- Renamed Edios 1 to Edios 1.5 and moved it to Google Gemma 4 31B (free)
+- Renamed Hepha 1 to Hepha 2.5 Coder and moved it to NVIDIA Nemotron 3 Ultra (free)
+- Added model-specific prompting and tool behavior for the new cloud profiles
+
+### Desktop and updates
+- Added explicit background-operation and system-tray controls in Settings
+- Hidden tray mode suspends UI activity and releases heavy local model caches after active work
+- Replaced application, taskbar, and Normal Chat branding with the Axiom logo
+- Added stable GitHub Release checks, in-app update notifications, verified ZIP downloads,
+  safe staged replacement, automatic restart, and protected local user data
+- Added clean release packaging scripts, update manifests, release documentation, and tests
+
 ## [V1.6] - 2026-8-11
 
 Workflow, focus, and polish release: the council keeps one model for the whole task, the app
