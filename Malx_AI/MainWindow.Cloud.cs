@@ -1600,7 +1600,15 @@ namespace Malx_AI
 
             return await Task.Run(() =>
             {
-                bool thinkingEnabled = _normalThinkingModeEnabled;
+                // @ProjectCanvas asks the model to produce one complete, self-contained artifact
+                // directly -- sending OpenRouter's "reasoning" flag on top of that regularly lets
+                // the model spend its whole completion budget drafting the artifact inside the
+                // hidden reasoning channel (onToken only fires for "content" deltas, never
+                // "reasoning" ones, so IsThinkingInProgress never clears) and finish with an empty
+                // visible answer. That reproduces on every OpenRouter/custom-endpoint model as a
+                // static "Thinking" indicator that never renders anything. Skip the reasoning
+                // request for this route so the model answers directly instead.
+                bool thinkingEnabled = _normalThinkingModeEnabled && !IsProjectCanvasRequested(userMsg);
                 string systemPrompt = string.IsNullOrWhiteSpace(uiSnapshot.SystemPromptText) ? BuildDefaultAssistantSystemPrompt() : uiSnapshot.SystemPromptText.Trim();
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Cloud or Hybrid Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))

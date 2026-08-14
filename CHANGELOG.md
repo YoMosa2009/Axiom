@@ -1,5 +1,26 @@
 # Changelog
 
+## [V1.8.2] - 2026-08-14
+
+Project Canvas thinking hotfix.
+
+### Fixed
+- Fixed `@ProjectCanvas` in Normal Chat appearing to hang on "Thinking" forever with no
+  output, across Local, Hybrid Local, and Cloud modes
+- Root cause: the `@ProjectCanvas` instruction reads as a demanding one-shot authoring
+  task, which regularly pushed the automatic thinking gate (Local) or the reasoning
+  request (Cloud/Hybrid via OpenRouter) on for these prompts. With thinking on, the chat
+  bubble intentionally withholds every UI update until generation fully finishes, and a
+  model can spend its entire completion budget drafting the artifact inside its hidden
+  reasoning channel and never reach a visible answer -- reproducing as a static
+  "Thinking" indicator that renders nothing once generation stops
+- `@ProjectCanvas` requests now skip the reasoning pass in both pipelines so generation
+  streams live and the model writes the artifact directly instead of drafting it in a
+  hidden channel first
+- Reinforced the `@ProjectCanvas` system instruction to tell the model to skip silent
+  deliberation and answer directly, as a second layer of defense for models that reason
+  internally regardless of this setting
+
 ## [V1.8.1] - 2026-08-14
 
 Seamless updater shutdown hotfix.

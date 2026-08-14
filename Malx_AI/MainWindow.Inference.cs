@@ -3112,6 +3112,31 @@ namespace Malx_AI
             NormalChatUiSnapshot uiSnapshot = await CaptureNormalChatUiSnapshotAsync(userMsg);
 
             ThinkingGateDecision thinkingGate = EvaluateThinkingGate(userMsg, true);
+            if (thinkingGate.UseThinking && IsProjectCanvasRequested(userMsg))
+            {
+                // @ProjectCanvas asks the model to author one complete, self-contained artifact
+                // in a single shot -- exactly the kind of request that scores high on the
+                // complexity gate above. Running that through the reasoning pass is actively
+                // harmful here: StreamInferenceAsync only pushes live content to the chat bubble
+                // while thinkingModeEnabled is false (it intentionally withholds every update
+                // while true, see StreamInferenceAsync), so with thinking on the UI shows a
+                // static "Thinking..." indicator for the entire generation. A model drafting a
+                // whole HTML/CSS/JS document commonly spends its entire reasoning budget composing
+                // the artifact inside the hidden <think> block and never reaches a closing tag,
+                // which leaves nothing to show once generation finally stops -- reported by users
+                // as an endless "Thinking" state that never produces output. Skipping the
+                // reasoning pass for this route sends the request straight down the live-streaming
+                // path instead; local models that always emit <think> regardless of this flag are
+                // still handled correctly there via the suppressThinkLeak branch.
+                thinkingGate = new ThinkingGateDecision
+                {
+                    Score = thinkingGate.Score,
+                    UseThinking = false,
+                    UseReasoningPhaseCap = false,
+                    Decision = "ProjectCanvasBypass"
+                };
+            }
+
             await BackendLogService.LogEventAsync("ThinkingGate", $"Score:{thinkingGate.Score}\nDecision:{thinkingGate.Decision}\nToggle:Automatic\nPrompt:{userMsg}");
 
             SandboxPreparation sandboxPreparation = PrepareSandboxContext(userMsg);
