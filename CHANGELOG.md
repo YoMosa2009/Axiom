@@ -1,5 +1,22 @@
 # Changelog
 
+## [V1.8.3] - 2026-08-14
+
+Updater file-swap reliability hotfix.
+
+### Fixed
+- Fixed the in-app updater intermittently failing with "Access to the path is denied" right
+  after force-closing a slow-to-exit Axiom process, leaving the update cancelled and the
+  previous version safely reinstalled but not applied
+- Root cause: Windows can keep a just-terminated process's loaded EXE/DLL briefly locked (or
+  a real-time antivirus scanner can grab the file the instant it's released) even after the
+  updater already confirmed the process handle itself had exited, so the very next file
+  rename could hit a transient sharing violation unrelated to real permissions
+- The updater now retries the file swap with a short bounded backoff (up to ~3 seconds
+  total) before treating a locked file as a genuine failure, so a brief post-kill lock no
+  longer aborts the update; a truly stuck file still fails loudly and rolls back safely as
+  before
+
 ## [V1.8.2] - 2026-08-14
 
 Project Canvas thinking hotfix.

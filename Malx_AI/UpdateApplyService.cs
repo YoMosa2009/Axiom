@@ -337,10 +337,10 @@ namespace Malx_AI
                     TryDeleteFile(transition.BackupPath);
                     if (transition.HadOriginal)
                     {
-                        File.Move(transition.TargetPath, transition.BackupPath, overwrite: true);
+                        MoveFileWithRetry(transition.TargetPath, transition.BackupPath);
                         transition.OriginalMoved = true;
                     }
-                    File.Move(transition.PendingPath, transition.TargetPath, overwrite: true);
+                    MoveFileWithRetry(transition.PendingPath, transition.TargetPath);
                     transition.Swapped = true;
                 }
 
@@ -532,6 +532,33 @@ namespace Malx_AI
             catch
             {
                 // Update logging must never turn a successful file swap into a failed update.
+            }
+        }
+
+        // Windows can keep a just-terminated process's loaded EXE/DLL briefly locked even after
+        // WaitForExitOrTerminate already confirmed the process handle itself has exited -- the OS
+        // finishes unmapping the image asynchronously, and a real-time antivirus scanner can also
+        // grab a file the instant it is released. Either way the very next rename can throw a
+        // transient IOException/UnauthorizedAccessException that clears on its own within a second
+        // or two and has nothing to do with real permissions. Retry with a short bounded backoff
+        // before letting a genuine failure (actually locked, actually denied) propagate to the
+        // transaction's rollback path.
+        private static void MoveFileWithRetry(string sourcePath, string destinationPath)
+        {
+            const int maxAttempts = 8;
+            int delayMs = 50;
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    File.Move(sourcePath, destinationPath, overwrite: true);
+                    return;
+                }
+                catch (Exception ex) when (attempt < maxAttempts && ex is IOException or UnauthorizedAccessException)
+                {
+                    Thread.Sleep(delayMs);
+                    delayMs = Math.Min(delayMs * 2, 800);
+                }
             }
         }
 

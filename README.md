@@ -7,7 +7,7 @@ computer unless you deliberately use a cloud model or connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.8.2-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.8.3-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 <img width="1906" height="1026" alt="Axiom screenshot" src="https://github.com/user-attachments/assets/07bbb46d-1bc8-42d7-a16c-5912d2f874d8" />
