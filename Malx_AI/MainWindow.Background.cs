@@ -21,6 +21,7 @@ namespace Malx_AI
         private bool _isExplicitShutdownRequested;
         private bool _hasShownSystemTrayHint;
         private bool _isHiddenInSystemTray;
+        private bool _isUpdateShutdownRequested;
         private bool _wasCouncilPetVisibleBeforeTray;
         private int _backgroundOptimizationPending;
 
@@ -277,6 +278,45 @@ namespace Malx_AI
         {
             _isExplicitShutdownRequested = true;
             DisposeSystemTray();
+            Application.Current.Shutdown();
+        }
+
+        private async Task PrepareForUpdateShutdownAsync()
+        {
+            _isUpdateShutdownRequested = true;
+            SaveCurrentWorkplaceChat();
+            try
+            {
+                await QueueCoordinatedChatPersistenceAsync(
+                        includeChatSession: true,
+                        includeWorkspaceState: true,
+                        includeAdvancedState: true,
+                        includeKvState: false)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (TimeoutException ex)
+            {
+                await BackendLogService.LogErrorAsync("UpdateShutdown.PersistenceTimeout", ex);
+            }
+        }
+
+        private void ShutdownAxiomForUpdate()
+        {
+            _isUpdateShutdownRequested = true;
+            _isExplicitShutdownRequested = true;
+            DisposeSystemTray();
+
+            var watchdog = new Thread(() =>
+            {
+                Thread.Sleep(TimeSpan.FromSeconds(12));
+                try { NativeDecodeForensics.MarkCleanShutdown(); } catch { }
+                Environment.Exit(0);
+            })
+            {
+                IsBackground = true,
+                Name = "Axiom update shutdown watchdog"
+            };
+            watchdog.Start();
             Application.Current.Shutdown();
         }
 

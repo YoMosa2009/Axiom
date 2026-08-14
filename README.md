@@ -7,7 +7,7 @@ computer unless you deliberately use a cloud model or connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.8.0-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.8.1-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 <img width="1906" height="1026" alt="Axiom screenshot" src="https://github.com/user-attachments/assets/07bbb46d-1bc8-42d7-a16c-5912d2f874d8" />
@@ -145,6 +145,9 @@ Axiom V1.7.0 and newer checks the official stable GitHub Releases feed at startu
 newer release is available, use the in-app update notification or **Settings → General →
 Check for updates**. Axiom downloads and verifies the release package, stages it outside the
 installation directory, replaces only package-managed files after shutdown, and restarts.
+It updates the current portable installation in place rather than leaving an older app
+running beside the new version; obsolete managed files, temporary backups, completed
+downloads, and staging folders are removed after a successful restart.
 
 Settings, chats, local models, connectors, and Workplace data remain untouched. Manual ZIP
 installation remains available for first-time installation and recovery.

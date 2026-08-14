@@ -562,8 +562,21 @@ namespace Malx_AI
                 _ = InitializeProcessingModeAsync();
                 string? installedUpdateVersion = UpdateApplyService.ConsumeSuccessMarker();
                 if (!string.IsNullOrWhiteSpace(installedUpdateVersion))
+                {
                     ShowTransientStatus($"Axiom {installedUpdateVersion} was installed successfully.");
-                _ = Task.Run(UpdateApplyService.CleanupOldStagingDirectories);
+                    _ = Task.Run(async () =>
+                    {
+                        // The staged helper starts this installed copy immediately before it exits.
+                        // Give Windows time to release the helper executable, then remove every
+                        // completed download/staging directory from the configured update root.
+                        await Task.Delay(TimeSpan.FromSeconds(15));
+                        UpdateApplyService.CleanupCompletedUpdateArtifacts();
+                    });
+                }
+                else
+                {
+                    _ = Task.Run(UpdateApplyService.CleanupOldStagingDirectories);
+                }
                 _ = CheckForAppUpdateOnStartupAsync();
                 _neuronTimer.Interval = TimeSpan.FromMilliseconds(750);
                 _neuronTimer.Tick += (_, _) => UpdateNeuronMap();
@@ -1282,10 +1295,11 @@ namespace Malx_AI
                         _updateDownloadCts.Token);
 
                     UpdateBannerTitleText.Text = "Restarting to update";
-                    UpdateBannerDetailText.Text = "Axiom will reopen automatically when the update is complete.";
+                    UpdateBannerDetailText.Text = "Saving your work. Axiom will close and reopen automatically—do not relaunch it manually.";
+                    await PrepareForUpdateShutdownAsync();
                     UpdateApplyService.LaunchPreparedUpdate(prepared, Environment.ProcessId);
                     await Task.Delay(500);
-                    ShutdownAxiomCompletely();
+                    ShutdownAxiomForUpdate();
                     return;
                 }
 
@@ -4764,16 +4778,19 @@ namespace Malx_AI
                 _councilPetWindow = null;
             }
 
-            SaveCurrentWorkplaceChat();
-            SaveCurrentChat();
-            try
+            if (!_isUpdateShutdownRequested)
             {
-                QueueCoordinatedChatPersistenceAsync(includeChatSession: true, includeWorkspaceState: true, includeAdvancedState: true, includeKvState: false, waitForGateWhenBusy: false).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Shutdown persistence error: {ex}");
-                try { BackendLogService.LogErrorAsync("MainWindow.ShutdownPersistence", ex).GetAwaiter().GetResult(); } catch { }
+                SaveCurrentWorkplaceChat();
+                SaveCurrentChat();
+                try
+                {
+                    QueueCoordinatedChatPersistenceAsync(includeChatSession: true, includeWorkspaceState: true, includeAdvancedState: true, includeKvState: false, waitForGateWhenBusy: false).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Shutdown persistence error: {ex}");
+                    try { BackendLogService.LogErrorAsync("MainWindow.ShutdownPersistence", ex).GetAwaiter().GetResult(); } catch { }
+                }
             }
             base.OnClosed(e);
         }

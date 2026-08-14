@@ -31,7 +31,8 @@ namespace Malx_AI
         private const string MainExecutableFileName = "Malx_AI.exe";
         private const int MaximumArchiveEntries = 75000;
         private const long MaximumExpandedBytes = 12L * 1024 * 1024 * 1024;
-        private static readonly TimeSpan ProcessExitTimeout = TimeSpan.FromMinutes(2);
+        private static readonly TimeSpan GracefulProcessExitTimeout = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan ForcedProcessExitTimeout = TimeSpan.FromSeconds(10);
 
         internal static bool IsUpdaterInvocation(IEnumerable<string>? arguments)
             => arguments?.Any(argument => string.Equals(argument, ApplyUpdateArgument, StringComparison.OrdinalIgnoreCase)) == true;
@@ -88,6 +89,18 @@ namespace Malx_AI
             startInfo.ArgumentList.Add(ApplyUpdateArgument);
             startInfo.ArgumentList.Add("--wait-pid");
             startInfo.ArgumentList.Add(currentProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            try
+            {
+                using Process currentProcess = Process.GetProcessById(currentProcessId);
+                startInfo.ArgumentList.Add("--wait-start-utc-ticks");
+                startInfo.ArgumentList.Add(currentProcess.StartTime.ToUniversalTime().Ticks.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture));
+            }
+            catch (ArgumentException)
+            {
+                // The app exited between staging and helper launch. The PID remains sufficient
+                // for the helper's already-exited path.
+            }
             startInfo.ArgumentList.Add("--source");
             startInfo.ArgumentList.Add(update.PayloadDirectory);
             startInfo.ArgumentList.Add("--target");
@@ -117,6 +130,14 @@ namespace Malx_AI
                 string source = RequireArgument(values, "--source");
                 string target = RequireArgument(values, "--target");
                 string version = RequireArgument(values, "--version");
+                long? expectedStartTimeUtcTicks = values.TryGetValue("--wait-start-utc-ticks", out string? startTicksText)
+                    && long.TryParse(
+                        startTicksText,
+                        System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out long parsedStartTicks)
+                        ? parsedStartTicks
+                        : null;
                 source = Path.GetFullPath(source);
                 target = Path.GetFullPath(target);
                 ValidateInstallRoot(target);
@@ -130,7 +151,7 @@ namespace Malx_AI
                     throw new InvalidDataException("The staged update payload could not be revalidated.");
                 }
 
-                WaitForProcessExit(waitPid);
+                WaitForProcessExit(waitPid, target, expectedStartTimeUtcTicks);
                 ApplyPackageTransaction(source, target);
                 WriteSuccessMarker(version);
 
@@ -188,6 +209,12 @@ namespace Malx_AI
                     // A running updater may still own this directory; leave it for a later launch.
                 }
             }
+        }
+
+        internal static void CleanupCompletedUpdateArtifacts()
+        {
+            DeleteChildDirectories(UpdateStoragePaths.Staging);
+            DeleteChildDirectories(UpdateStoragePaths.Downloads);
         }
 
         private static void ExtractArchiveSafely(string zipPath, string extractRoot, CancellationToken token)
@@ -385,17 +412,41 @@ namespace Malx_AI
             }
         }
 
-        private static void WaitForProcessExit(int processId)
+        private static void WaitForProcessExit(
+            int processId,
+            string targetDirectory,
+            long? expectedStartTimeUtcTicks)
         {
             try
             {
                 using Process process = Process.GetProcessById(processId);
-                if (!process.WaitForExit((int)ProcessExitTimeout.TotalMilliseconds))
-                    throw new TimeoutException("Axiom did not close within two minutes. The update was cancelled.");
+                string expectedExecutable = Path.Combine(Path.GetFullPath(targetDirectory), MainExecutableFileName);
+                UpdateProcessGuard.WaitForExitOrTerminate(
+                    process,
+                    expectedExecutable,
+                    expectedStartTimeUtcTicks,
+                    GracefulProcessExitTimeout,
+                    ForcedProcessExitTimeout,
+                    WriteUpdateLog);
             }
             catch (ArgumentException)
             {
                 // The process already exited between launch and lookup.
+            }
+        }
+
+        private static void DeleteChildDirectories(string root)
+        {
+            if (!Directory.Exists(root))
+                return;
+
+            string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            foreach (string directory in Directory.EnumerateDirectories(fullRoot))
+            {
+                string fullDirectory = Path.GetFullPath(directory);
+                if (!fullDirectory.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                TryDeleteDirectory(fullDirectory);
             }
         }
 

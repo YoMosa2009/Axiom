@@ -1,5 +1,22 @@
 # Changelog
 
+## [V1.8.1] - 2026-08-14
+
+Seamless updater shutdown hotfix.
+
+### Fixed
+- Fixed in-app updates stopping after staging because the original Axiom process could
+  remain alive indefinitely during shutdown
+- Added a bounded pre-update state save and shutdown watchdog so future updates close
+  cleanly even when a background component does not terminate normally
+- Made the staged helper verify the exact installed executable, process ID, and start
+  time before terminating a stalled old process and continuing the requested update
+- Removed completed download and staging folders after a successful update while
+  preserving chats, settings, models, connectors, and other user data
+- Kept package replacement transactional: old managed files and temporary backups are
+  removed only after every v1.8.1 file has been staged successfully, then Axiom restarts
+  from the updated installation automatically
+
 ## [V1.8.0] - 2026-08-14
 
 Normal Chat Project Canvas release.
