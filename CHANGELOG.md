@@ -1,5 +1,14 @@
 # Changelog
 
+## [V1.7.2] - 2026-08-13
+
+Updater reliability hotfix.
+
+### Fixed
+- Closed the downloaded update file before checksum verification, preventing the
+  updater from locking its own completed `.partial` ZIP and reporting a failed download
+- Added regression coverage that opens the completed download exclusively for verification
+
 ## [V1.7.1] - 2026-08-13
 
 Cloud reliability patch.
