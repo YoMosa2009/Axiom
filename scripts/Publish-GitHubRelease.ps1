@@ -158,7 +158,7 @@ catch {
 
 if (-not $SkipTests) {
     Write-Host "Running Axiom tests..." -ForegroundColor Cyan
-    Invoke-Checked -Command "dotnet" -Arguments @("test", $testProject, "-c", "Release", "--no-restore")
+    Invoke-Checked -Command "dotnet" -Arguments @("test", $testProject, "-c", "Release")
 }
 
 Write-Host "Building clean Axiom $version package in $OutputRoot..." -ForegroundColor Cyan
