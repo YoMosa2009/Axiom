@@ -53,13 +53,16 @@ namespace Malx_AI
 
         public string GenerationStatusText => Role switch
         {
+            "agent" => "Agent generating",
             "builder" => "Builder generating",
             "architect" => "Architect generating",
             "critic" or "critic-final" => "Critic generating",
             _ => "Generating"
         };
 
-        public bool ShowGeneratingStatusInCard => IsGeneratingStatus && !string.Equals(Role, "builder", StringComparison.OrdinalIgnoreCase);
+        public bool ShowGeneratingStatusInCard => IsGeneratingStatus
+            && !string.Equals(Role, "builder", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(Role, "agent", StringComparison.OrdinalIgnoreCase);
 
         public DateTime Timestamp { get; init; } = DateTime.Now;
 
@@ -71,6 +74,7 @@ namespace Malx_AI
         public string RoleLabel => Role switch
         {
             "user" => "You",
+            "agent" => "Agent",
             "architect" => "Architect",
             "builder" => "Builder",
             "critic" => "Critic",
@@ -118,6 +122,7 @@ namespace Malx_AI
         public SolidColorBrush CardBackground => Role switch
         {
             "user" => UserCardBrush,
+            "agent" => BuilderCardBrush,
             "architect" => ArchitectCardBrush,
             "builder" => BuilderCardBrush,
             "critic" or "critic-final" => CriticCardBrush,
@@ -131,6 +136,7 @@ namespace Malx_AI
         public SolidColorBrush AccentBrush => Role switch
         {
             "user" => UserAccentBrush,
+            "agent" => BuilderAccentBrush,
             "architect" => ArchitectAccentBrush,
             "builder" => BuilderAccentBrush,
             "critic" or "critic-final" => CriticAccentBrush,

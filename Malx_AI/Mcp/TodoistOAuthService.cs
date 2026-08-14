@@ -41,14 +41,7 @@ namespace Malx_AI.Mcp
             IProgress<string>? progress = null)
         {
             if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
-            {
-                throw new InvalidOperationException(
-                    "Todoist Client ID/Secret are not configured.\n\n" +
-                    "1) Open https://app.todoist.com/app/settings/integrations/app-management\n" +
-                    "2) Create an app and set Redirect URI exactly:\n   " + RedirectUri + "\n" +
-                    "3) Put Client ID and Secret in McpOAuthConfig.BuiltInTodoistClientId/Secret\n" +
-                    "   or %LocalAppData%\\Axiom\\todoist_client_id.txt and todoist_client_secret.txt");
-            }
+                            throw new InvalidOperationException(McpOAuthConfig.BuildTodoistSetupMessage());
 
             string state = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18))
                 .TrimEnd('=').Replace('+', '-').Replace('/', '_');

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Malx_AI"
         Title="Axiom - Chat" Height="900" Width="1600" MinWidth="1040" MinHeight="640" WindowStartupLocation="CenterScreen"
-        Icon="pack://application:,,,/Assets/Malx_Logo.ico"
+        Icon="pack://application:,,,/Assets/AxiomLogo.ico"
         AllowsTransparency="False" Background="{StaticResource NotebookBackgroundBrush}" Foreground="{StaticResource NotebookTextBrush}"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
 
@@ -1228,9 +1228,9 @@
                                     Visibility="Collapsed"
                                     IsHitTestVisible="False">
                             <Image x:Name="EmptyChatLogoImage"
-                                   Width="98"
-                                   Height="98"
-                                   Margin="0,0,0,8"
+                                   Width="58"
+                                   Height="58"
+                                   Margin="0,0,0,24"
                                    Stretch="Uniform"
                                    SnapsToDevicePixels="True"
                                    UseLayoutRounding="True"
@@ -1239,9 +1239,9 @@
                                         Text="Ready when you are"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
-                                        FontSize="22"
-                                       FontWeight="Light"
-                                         Foreground="#EDE8E3"
+                                        FontSize="28"
+                                       FontWeight="SemiBold"
+                                         Foreground="{StaticResource NotebookTextBrush}"
                                        TextAlignment="Center"
                                         IsHitTestVisible="False"
                                         Visibility="Visible"/>
@@ -1421,25 +1421,113 @@
                                                 <Button Width="34" Height="34" Margin="0,0,4,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
                                                     <Path Width="14" Height="14" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
                                                 </Button>
-                                                <Button MinWidth="96" Margin="6,0,6,0" Click="OpenPromptTemplates_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Prompt templates">
+                                                <Button x:Name="SkillsButton" MinWidth="90" Margin="6,0,6,0" Click="OpenSkills_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach reusable Skills to every Axiom model and mode">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <Path Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                               StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                                              Data="M2,3.5 L12,3.5 M2,6.5 L12,6.5 M2,9.5 L8.5,9.5 M2,12.5 L6.5,12.5"/>
-                                                        <TextBlock Text="Templates" VerticalAlignment="Center"/>
+                                                              Data="M7,1 L8.3,4.7 L12,3.4 L9.8,6.7 L13,9 L9,9 L9,13 L6.7,9.8 L3.4,12 L4.7,8.3 L1,7 L4.7,5.7 L3.4,2.2 L6.7,4.2 Z"/>
+                                                        <TextBlock Text="Skills" VerticalAlignment="Center"/>
+                                                        <Border x:Name="SkillsButtonBadge" Margin="7,0,0,0" Padding="5,1" CornerRadius="7" Background="#3A3226" Visibility="Collapsed">
+                                                            <TextBlock x:Name="SkillsButtonCountText" Text="0" FontSize="9" FontWeight="SemiBold" Foreground="#D8B56B"/>
+                                                        </Border>
                                                     </StackPanel>
                                                 </Button>
-                                                <Button MinWidth="82" Click="OpenSystemPromptEditor_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="System prompt editor">
+                                                <Button x:Name="PluginsButton" MinWidth="96" Click="OpenPlugins_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach Axiom-native capability Plugins">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <Path Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                               StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                                              Data="M2,3 L12,3 M2,7 L12,7 M2,11 L12,11 M4.5,1.8 L4.5,4.2 M9,5.8 L9,8.2 M6.5,9.8 L6.5,12.2"/>
-                                                        <TextBlock Text="System" VerticalAlignment="Center"/>
+                                                              Data="M5,1 L9,1 L9,5 L13,5 L13,9 L9,9 L9,13 L5,13 L5,9 L1,9 L1,5 L5,5 Z"/>
+                                                        <TextBlock Text="Plugins" VerticalAlignment="Center"/>
+                                                        <Border x:Name="PluginsButtonBadge" Margin="7,0,0,0" Padding="5,1" CornerRadius="7" Background="#3A3226" Visibility="Collapsed">
+                                                            <TextBlock x:Name="PluginsButtonCountText" Text="0" FontSize="9" FontWeight="SemiBold" Foreground="#D8B56B"/>
+                                                        </Border>
                                                     </StackPanel>
                                                 </Button>
                                             </WrapPanel>
+
+                                            <Popup x:Name="SkillsPopup"
+                                                   Placement="Top"
+                                                   PlacementTarget="{Binding ElementName=SkillsButton}"
+                                                   AllowsTransparency="True"
+                                                   StaysOpen="False"
+                                                   PopupAnimation="Fade"
+                                                   HorizontalOffset="0"
+                                                   VerticalOffset="-10"
+                                                   Opened="SkillsPopup_Opened">
+                                                <Border x:Name="SkillsFlyoutCard" Width="500" MaxHeight="520" Padding="18" Background="#211F1D" BorderBrush="#4B4239" BorderThickness="1" CornerRadius="16" Effect="{StaticResource SoftShadow}" Opacity="1">
+                                                    <Border.RenderTransform>
+                                                        <TranslateTransform Y="0"/>
+                                                    </Border.RenderTransform>
+                                                    <Grid>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="*"/>
+                                                            <RowDefinition Height="Auto"/>
+                                                        </Grid.RowDefinitions>
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel>
+                                                                <TextBlock Text="Skills" FontSize="18" FontWeight="SemiBold" Foreground="#EDE8E3"/>
+                                                                <TextBlock x:Name="SkillsFlyoutSummaryText" Text="Reusable procedures for specialized work" Margin="0,4,0,0" FontSize="11" Foreground="#A69D92"/>
+                                                            </StackPanel>
+                                                            <Button Grid.Column="1" Width="28" Height="28" Click="CloseSkills_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Close">
+                                                                <TextBlock Text="×" FontSize="18" VerticalAlignment="Center"/>
+                                                            </Button>
+                                                        </Grid>
+                                                        <TextBlock Grid.Row="1" Margin="0,12,0,12" Text="Attach once and the Skill becomes available to Local, Cloud, Hybrid Local, Council, and Single Model modes. Axiom loads detailed instructions only when the request matches." TextWrapping="Wrap" FontSize="11" LineHeight="16" Foreground="#8A8279"/>
+                                                        <ScrollViewer Grid.Row="2" MaxHeight="360" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                            <StackPanel x:Name="SkillsListPanel"/>
+                                                        </ScrollViewer>
+                                                        <Button Grid.Row="3" Margin="0,14,0,0" Height="38" Click="CreateCustomSkill_Click" Background="#B8924A" Foreground="#171615" BorderThickness="0" FontWeight="SemiBold" Cursor="Hand" Content="＋  Create custom Skill"/>
+                                                    </Grid>
+                                                </Border>
+                                            </Popup>
+
+                                            <Popup x:Name="PluginsPopup"
+                                                   Placement="Top"
+                                                   PlacementTarget="{Binding ElementName=PluginsButton}"
+                                                   AllowsTransparency="True"
+                                                   StaysOpen="False"
+                                                   PopupAnimation="Fade"
+                                                   HorizontalOffset="0"
+                                                   VerticalOffset="-10"
+                                                   Opened="PluginsPopup_Opened">
+                                                <Border x:Name="PluginsFlyoutCard" Width="500" MaxHeight="520" Padding="18" Background="#211F1D" BorderBrush="#4B4239" BorderThickness="1" CornerRadius="16" Effect="{StaticResource SoftShadow}" Opacity="1">
+                                                    <Border.RenderTransform>
+                                                        <TranslateTransform Y="0"/>
+                                                    </Border.RenderTransform>
+                                                    <Grid>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="*"/>
+                                                        </Grid.RowDefinitions>
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel>
+                                                                <TextBlock Text="Plugins" FontSize="18" FontWeight="SemiBold" Foreground="#EDE8E3"/>
+                                                                <TextBlock x:Name="PluginsFlyoutSummaryText" Text="Capability packages built from Axiom's native tools" Margin="0,4,0,0" FontSize="11" Foreground="#A69D92"/>
+                                                            </StackPanel>
+                                                            <Button Grid.Column="1" Width="28" Height="28" Click="ClosePlugins_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Close">
+                                                                <TextBlock Text="×" FontSize="18" VerticalAlignment="Center"/>
+                                                            </Button>
+                                                        </Grid>
+                                                        <TextBlock Grid.Row="1" Margin="0,12,0,12" Text="Plugins package operating instructions with tools Axiom already owns. Actual availability still follows the selected mode, web setting, and connector configuration." TextWrapping="Wrap" FontSize="11" LineHeight="16" Foreground="#8A8279"/>
+                                                        <ScrollViewer Grid.Row="2" MaxHeight="380" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                            <StackPanel x:Name="PluginsListPanel"/>
+                                                        </ScrollViewer>
+                                                    </Grid>
+                                                </Border>
+                                            </Popup>
 
                                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,14,0">
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed">
@@ -1481,8 +1569,8 @@
                                                          </Style>
                                                      </Border.Resources>
                                                      <StackPanel Orientation="Horizontal">
-                                                         <Button x:Name="EidosModelButton" Content="Eidos 1" Click="EidosModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use the Eidos 1 cloud model" Margin="0,0,2,0"/>
-                                                         <Button x:Name="HephaModelButton" Content="Hepha 1" Click="HephaModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use the Hepha 1 cloud model"/>
+                                                         <Button x:Name="Edios15ModelButton" Content="Edios 1.5" Click="Edios15ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use Google Gemma 4 31B (free)" Margin="0,0,2,0"/>
+                                                         <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)"/>
                                                          <Button x:Name="CustomEndpointModelButton" Content="Kestral 1" Click="CustomEndpointModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
                                                      </StackPanel>
                                                  </Border>
@@ -1768,7 +1856,7 @@
                                                         Visibility="Collapsed"/>
                                          </StackPanel>
                                          <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,14,0,8"/>
-                                         <TextBlock x:Name="OpenRouterDetectedModelText" Text="Eidos 1" FontSize="11" Foreground="{StaticResource NotebookTextBrush}" TextWrapping="Wrap"/>
+                                         <TextBlock x:Name="OpenRouterDetectedModelText" Text="Edios 1.5" FontSize="11" Foreground="{StaticResource NotebookTextBrush}" TextWrapping="Wrap"/>
                                          <TextBlock x:Name="OpenRouterDetectedModelIdText" Text="General reasoning profile tuned for Axiom's tool pipeline." FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
@@ -1800,7 +1888,25 @@
                                                FontSize="10"
                                                Foreground="{StaticResource DarkSecondaryBrush}"
                                                TextWrapping="Wrap"
-                                               Margin="0,0,0,14"/>
+                                               Margin="0,0,0,10"/>
+                                    <Border Background="#171615" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="10" Padding="12,10" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <TextBlock Text="OAuth app setup" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                            <TextBlock x:Name="McpOAuthAppStatusText"
+                                                       Text=""
+                                                       FontSize="10"
+                                                       Foreground="{StaticResource DarkSecondaryBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,0,0,8"/>
+                                            <Button Content="Open OAuth app folder"
+                                                    Click="McpOpenOAuthFolderButton_Click"
+                                                    Height="30"
+                                                    MinWidth="170"
+                                                    HorizontalAlignment="Left"
+                                                    Style="{StaticResource SubtleButtonStyle}"
+                                                    ToolTip="Opens the shared folder for Google/GitHub/Todoist client id + secret files used by Connect."/>
+                                        </StackPanel>
+                                    </Border>
 
                                     <!-- Google account (Gmail + Drive) -->
                                     <Border Background="#171615" BorderBrush="#302D2A" BorderThickness="1" CornerRadius="10" Padding="12,10" Margin="0,0,0,10">
@@ -1978,6 +2084,33 @@
                                 <TextBlock Text="General" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,12"/>
                                 <Border BorderThickness="0,0,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,0,0,16">
                                     <StackPanel>
+                                        <TextBlock Text="Background &amp; system tray" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="BackgroundExecutionToggle"
+                                                  Content="Allow Axiom to continue running after its window is closed"
+                                                  IsChecked="False"
+                                                  Checked="BackgroundExecutionToggle_Changed"
+                                                  Unchecked="BackgroundExecutionToggle_Changed"
+                                                  Foreground="{StaticResource NotebookTextBrush}"
+                                                  FontSize="11"/>
+                                        <TextBlock x:Name="BackgroundExecutionStatusText"
+                                                   Text="Disabled. Closing Axiom fully stops the process."
+                                                   FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,10"/>
+                                        <CheckBox x:Name="SystemTrayToggle"
+                                                  Content="Keep Axiom in the Windows system tray"
+                                                  IsChecked="False"
+                                                  IsEnabled="False"
+                                                  Checked="SystemTrayToggle_Changed"
+                                                  Unchecked="SystemTrayToggle_Changed"
+                                                  Foreground="{StaticResource NotebookTextBrush}"
+                                                  FontSize="11"/>
+                                        <TextBlock x:Name="SystemTrayStatusText"
+                                                   Text="Enable background operation first."
+                                                   FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,16">
+                                    <StackPanel>
                                         <TextBlock Text="Workplace notifications" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
                                         <CheckBox x:Name="CouncilCompletionToastToggle"
                                                   Content="Notify me when a council run finishes while Axiom is in the background"
@@ -2001,6 +2134,24 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
                                     <StackPanel>
+                                        <TextBlock Text="Application updates" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                        <TextBlock Text="Axiom checks the official YoMosa2009/Axiom GitHub releases. New ZIP releases can be downloaded, verified, installed, and restarted from inside the app."
+                                                   FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                        <TextBlock x:Name="UpdateCheckStatusText"
+                                                   Text="Axiom will check GitHub shortly."
+                                                   FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <Button x:Name="CheckForUpdatesButton"
+                                                Content="Check for updates"
+                                                Click="CheckForUpdatesButton_Click"
+                                                Height="32"
+                                                MinWidth="150"
+                                                HorizontalAlignment="Left"
+                                                Style="{StaticResource SubtleButtonStyle}"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
+                                    <StackPanel>
                                         <TextBlock Text="Local data" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
                                         <TextBlock x:Name="AppDataProfilePathText"
                                                    Text=""
@@ -2008,18 +2159,33 @@
                                                    Foreground="{StaticResource DarkSecondaryBrush}"
                                                    TextWrapping="Wrap"
                                                    Margin="0,0,0,10"/>
-                                        <TextBlock Text="Published release builds store data separately from Visual Studio debug runs. Reset only clears the profile this build is using."
+                                        <TextBlock Text="Chats, Workplace sessions, settings, API keys, and connectors live only in this machine profile folder — never inside the published app package. Other PCs start fully empty. Debug (VS) uses Axiom-Dev; Release/published builds use Axiom (or AXIOM_DATA_DIR)."
                                                    FontSize="10"
                                                    Foreground="{StaticResource DarkSecondaryBrush}"
                                                    TextWrapping="Wrap"
                                                    Margin="0,0,0,10"/>
-                                        <Button Content="Reset all local app data…"
-                                                Click="ResetLocalAppDataButton_Click"
-                                                Height="32"
-                                                MinWidth="180"
-                                                HorizontalAlignment="Left"
-                                                Style="{StaticResource SubtleButtonStyle}"
-                                                ToolTip="Deletes chats, settings, connectors, and caches for this app profile. Restart Axiom afterward."/>
+                                        <TextBlock Text="Before shipping a build, run scripts\Publish-CleanRelease.ps1 (or Publish with FolderProfile). To preview the package as a new user on this PC, use RUN-CLEAN-SMOKE-TEST.cmd next to the published exe."
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource DarkSecondaryBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,12"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Open data folder"
+                                                    Click="OpenLocalAppDataFolderButton_Click"
+                                                    Height="32"
+                                                    MinWidth="140"
+                                                    Margin="0,0,8,0"
+                                                    HorizontalAlignment="Left"
+                                                    Style="{StaticResource SubtleButtonStyle}"
+                                                    ToolTip="Opens the active profile folder in Explorer."/>
+                                            <Button Content="Reset all local app data…"
+                                                    Click="ResetLocalAppDataButton_Click"
+                                                    Height="32"
+                                                    MinWidth="180"
+                                                    HorizontalAlignment="Left"
+                                                    Style="{StaticResource SubtleButtonStyle}"
+                                                    ToolTip="Deletes chats, Workplace sessions, settings, connectors, API keys, and caches for this app profile only. Restart Axiom afterward."/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
                                 </StackPanel>
@@ -2028,8 +2194,12 @@
 
                             <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{StaticResource NotebookBorderBrush}" Padding="0,12,0,0" Margin="0,12,0,0">
                                 <Grid>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.6.0" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                                    <Button Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{StaticResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.7.0" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <Button Grid.Column="1" Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{StaticResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>
                         </Grid>
@@ -2044,8 +2214,7 @@
                 Panel.ZIndex="9000" VerticalAlignment="Top" HorizontalAlignment="Center"
                 Margin="0,56,0,0" Visibility="Collapsed" Opacity="0"
                 Background="#26231F" BorderBrush="#B8924A" BorderThickness="1" CornerRadius="12"
-                Padding="16,10" Cursor="Hand"
-                MouseLeftButtonUp="UpdateBanner_Click">
+                Padding="16,10">
             <Border.RenderTransform>
                 <TranslateTransform Y="-24"/>
             </Border.RenderTransform>
@@ -2058,6 +2227,8 @@
                     <TextBlock x:Name="UpdateBannerTitleText" Text="Update available" FontSize="12" FontWeight="SemiBold" Foreground="#EDE8E3" FontFamily="Segoe UI"/>
                     <TextBlock x:Name="UpdateBannerDetailText" Text="" FontSize="11" Foreground="#8A8279" FontFamily="Segoe UI" Margin="0,2,0,0"/>
                 </StackPanel>
+                <Button x:Name="UpdateBannerActionButton" Content="Update now" Click="UpdateBannerActionButton_Click" Height="30" MinWidth="92" Margin="14,0,0,0"
+                        Style="{StaticResource SubtleButtonStyle}" Foreground="#EDE8E3" Cursor="Hand" VerticalAlignment="Center"/>
                 <Button x:Name="UpdateBannerCloseButton" Content="✕" Click="UpdateBannerClose_Click" Width="22" Height="22" Margin="14,0,0,0"
                         Background="Transparent" BorderBrush="Transparent" Foreground="#8A8279" FontSize="10" Cursor="Hand" VerticalAlignment="Center"
                         ToolTip="Dismiss"/>

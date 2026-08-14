@@ -312,15 +312,7 @@ namespace Malx_AI.Mcp
             string clientId = McpOAuthConfig.ResolveGitHubClientId();
             string clientSecret = McpOAuthConfig.ResolveGitHubClientSecret();
             if (string.IsNullOrWhiteSpace(clientId))
-            {
-                throw new InvalidOperationException(
-                    "GitHub OAuth is not configured for this build.\n\n" +
-                    "1) GitHub → Settings → Developer settings → OAuth Apps → New OAuth App\n" +
-                    "2) Homepage: http://127.0.0.1  Callback: http://127.0.0.1\n" +
-                    "3) Enable Device Flow on the app\n" +
-                    "4) Put Client ID (and Secret) in McpOAuthConfig.BuiltInGitHubClientId/Secret,\n" +
-                    "   or %LocalAppData%\\Axiom\\github_oauth_client_id.txt and github_oauth_client_secret.txt");
-            }
+                            throw new InvalidOperationException(McpOAuthConfig.BuildGitHubSetupMessage());
 
             McpTokenBundle tokens = await _gitHubOAuth.AuthorizeDeviceAsync(clientId, clientSecret, token, progress)
                 .ConfigureAwait(false);
@@ -385,13 +377,8 @@ namespace Malx_AI.Mcp
             if (!string.IsNullOrWhiteSpace(clientId))
                 return;
 
-            throw new InvalidOperationException(
-                "Google sign-in is not set up for this build yet.\n\n" +
-                "Axiom needs a Google Cloud Desktop OAuth client id + client secret " +
-                "so users can Connect with a single browser login.\n\n" +
-                "Put them in McpOAuthConfig.BuiltInGoogleDesktopClientId / BuiltInGoogleDesktopClientSecret, " +
-                "or in %LocalAppData%\\Axiom\\google_oauth_client_id.txt and google_oauth_client_secret.txt.");
-        }
+            throw new InvalidOperationException(McpOAuthConfig.BuildGoogleSetupMessage());
+                    }
 
         private static McpTokenBundle CloneToken(McpTokenBundle source)
         {

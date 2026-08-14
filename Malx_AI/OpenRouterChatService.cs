@@ -93,6 +93,7 @@ namespace Malx_AI
         string[] AlternativeApiModelIds,
             bool IsCodeSpecialized,
             int ApproximateContextWindowTokens,
+            int DefaultMaxCompletionTokens = 8192,
             bool IsCustomEndpoint = false)
     {
         public IEnumerable<string> AllApiModelIds
@@ -131,35 +132,27 @@ namespace Malx_AI
         [
             "python", "python 3", "main.py", "online python compiler", "python compiler", "python interpreter"
         ];
-        // Model IDs below were selected against the most popular free models being permanently
-        // rate-limited (429) or down (503) on OpenRouter's free tier. Each profile lists multiple
-        // free models as alternatives so availability resolution can pick a live one.
+        // The two selectable aliases intentionally map to exactly one requested OpenRouter model.
+        // Cross-profile fallback is handled only after a real request failure, so selecting Edios
+        // or Hepha never silently resolves to a different model during catalog discovery.
         private static readonly OpenRouterModelProfile[] SupportedModelProfiles =
         [
             new(
-                AliasId: "eidos-1",
-                AliasLabel: "Eidos 1",
-                PrimaryApiModelId: "google/gemma-4-26b-a4b-it:free",
-                AlternativeApiModelIds:
-                [
-                    "nvidia/nemotron-nano-12b-v2-vl:free",
-                    "nvidia/nemotron-3-super-120b-a12b:free",
-                    "meta-llama/llama-3.3-70b-instruct:free"
-                ],
+                AliasId: Edios15ModelId,
+                AliasLabel: Edios15ModelLabel,
+                PrimaryApiModelId: "google/gemma-4-31b-it:free",
+                AlternativeApiModelIds: [],
                 IsCodeSpecialized: false,
-                ApproximateContextWindowTokens: 131072),
+                ApproximateContextWindowTokens: 262144,
+                DefaultMaxCompletionTokens: 8192),
             new(
-                AliasId: "hepha-1",
-                AliasLabel: "Hepha 1",
-                PrimaryApiModelId: "nvidia/nemotron-3-super-120b-a12b:free",
-                AlternativeApiModelIds:
-                [
-                    "nvidia/nemotron-nano-12b-v2-vl:free",
-                    "qwen/qwen3-coder:free",
-                    "google/gemma-4-26b-a4b-it:free"
-                ],
+                AliasId: Hepha25CoderModelId,
+                AliasLabel: Hepha25CoderModelLabel,
+                PrimaryApiModelId: "nvidia/nemotron-3-ultra-550b-a55b:free",
+                AlternativeApiModelIds: [],
                 IsCodeSpecialized: true,
-                ApproximateContextWindowTokens: 131072)
+                ApproximateContextWindowTokens: 1000000,
+                DefaultMaxCompletionTokens: 16384)
         ];
         private static readonly OpenRouterModelProfile[] WorkplaceOnlyModelProfiles =
         [
@@ -169,9 +162,9 @@ namespace Malx_AI
                 PrimaryApiModelId: "poolside/laguna-m.1:free",
                 AlternativeApiModelIds:
                 [
-                    "nvidia/nemotron-3-super-120b-a12b:free",
+                    "nvidia/nemotron-3-ultra-550b-a55b:free",
+                    "google/gemma-4-31b-it:free",
                     "meta-llama/llama-3.3-70b-instruct:free",
-                    "google/gemma-4-26b-a4b-it:free"
                 ],
                 IsCodeSpecialized: true,
                 ApproximateContextWindowTokens: 262144)
@@ -270,18 +263,22 @@ namespace Malx_AI
             }
         }
 
-        public const string Eidos1ModelId = "eidos-1";
-        public const string Eidos1ModelLabel = "Eidos 1";
-        public const string Hepha1ModelId = "hepha-1";
-        public const string Hepha1ModelLabel = "Hepha 1";
+        private const string LegacyEidos1ModelId = "eidos-1";
+        private const string LegacyEidos1ApiModelId = "google/gemma-4-26b-a4b-it:free";
+        private const string LegacyHepha1ModelId = "hepha-1";
+        private const string LegacyHepha1ApiModelId = "nvidia/nemotron-3-super-120b-a12b:free";
+        public const string Edios15ModelId = "edios-1.5";
+        public const string Edios15ModelLabel = "Edios 1.5";
+        public const string Hepha25CoderModelId = "hepha-2.5-coder";
+        public const string Hepha25CoderModelLabel = "Hepha 2.5 Coder";
         public const string WorkplaceCouncilDefaultModelId = "workplace-gpt-oss-20b";
         public const string WorkplaceCouncilDefaultModelLabel = "Poolside: Laguna M.1 (free)";
         public const string CustomEndpointModelId = "custom-endpoint";
         public const string CustomEndpointModelLabel = "Kestral 1";
         // Keep in sync with the OLLAMA_CONTEXT_LENGTH the target server actually runs with.
         public const int CustomEndpointContextWindowTokens = 9216;
-        public const string DefaultModelId = Eidos1ModelId;
-        public const string DefaultModelLabel = Eidos1ModelLabel;
+        public const string DefaultModelId = Edios15ModelId;
+        public const string DefaultModelLabel = Edios15ModelLabel;
         public static string WorkplaceCouncilDisplayLabel => SupportedModelProfiles
             .Concat(WorkplaceOnlyModelProfiles)
             .FirstOrDefault(profile => string.Equals(profile.AliasId, WorkplaceCouncilDefaultModelId, StringComparison.OrdinalIgnoreCase))?.AliasLabel
@@ -432,11 +429,11 @@ namespace Malx_AI
             if (isQwen3CloudModel && !prompt.Contains("/no_think", StringComparison.Ordinal))
                 prompt = prompt + "\n/no_think";
 
-            string instruction = string.Equals(profile.AliasId, Eidos1ModelId, StringComparison.OrdinalIgnoreCase)
+            string instruction = string.Equals(profile.AliasId, Edios15ModelId, StringComparison.OrdinalIgnoreCase)
                 ? gptOssLatexInstruction
                 : string.Equals(profile.AliasId, WorkplaceCouncilDefaultModelId, StringComparison.OrdinalIgnoreCase)
                     ? qwenLatexInstruction
-                    : string.Equals(profile.AliasId, Hepha1ModelId, StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(profile.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase)
                         ? qwenLatexInstruction
                         : string.Empty;
 
@@ -797,7 +794,7 @@ namespace Malx_AI
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
             // choke point so no caller-supplied prompt can omit it.
             systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
-            const int maxCompletionTokens = 8192;
+            int maxCompletionTokens = requestedModelProfile.DefaultMaxCompletionTokens;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
             systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
@@ -958,7 +955,9 @@ namespace Malx_AI
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
             // choke point so no caller-supplied prompt can omit it.
             systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
-            int maxCompletionTokens = maxTokensOverride is int tokenLimit && tokenLimit > 0 ? tokenLimit : 8192;
+            int maxCompletionTokens = maxTokensOverride is int tokenLimit && tokenLimit > 0
+                ? tokenLimit
+                : requestedModelProfile.DefaultMaxCompletionTokens;
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
             systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
@@ -1411,7 +1410,12 @@ namespace Malx_AI
             // support the field to reject the request with an immediate "Provider returned error".
             if (thinkingEnabled && SupportsParameter(modelId, "reasoning"))
             {
-                payload["reasoning"] = new JsonObject { ["effort"] = "high" };
+                // Nemotron Ultra benefits from its high reasoning mode for coding work. Gemma's
+                // medium setting is a better latency/quality balance for its general assistant role.
+                string effort = modelId.StartsWith("google/gemma-4-31b", StringComparison.OrdinalIgnoreCase)
+                    ? "medium"
+                    : "high";
+                payload["reasoning"] = new JsonObject { ["effort"] = effort };
             }
             else if (!thinkingEnabled && SupportsParameter(modelId, "reasoning"))
             {
@@ -2398,17 +2402,16 @@ namespace Malx_AI
 
         private string GetFallbackModelId(string currentModelId, ISet<string> attemptedModelIds)
         {
-            // Each alias maps to a distinct, verified-working free model, so cascading through all
-            // three on a rate-limit/transient failure gives the request three different live models
-            // to try before giving up. (Eidos=gemma, Hepha=nemotron-super, Workplace=nemotron-nano.)
+            // Each alias maps to a distinct free model. Cascading on a rate-limit/transient failure
+            // preserves availability while keeping the user's selected model as the first attempt.
             IEnumerable<OpenRouterModelProfile> fallbackSequence = currentModelId switch
             {
-                Eidos1ModelId =>
-                    [FindModelProfile(Hepha1ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
-                Hepha1ModelId =>
-                    [FindModelProfile(Eidos1ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
+                Edios15ModelId =>
+                    [FindModelProfile(Hepha25CoderModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
+                Hepha25CoderModelId =>
+                    [FindModelProfile(Edios15ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
                 WorkplaceCouncilDefaultModelId =>
-                    [FindModelProfile(Eidos1ModelId), FindModelProfile(Hepha1ModelId)],
+                    [FindModelProfile(Edios15ModelId), FindModelProfile(Hepha25CoderModelId)],
                 // The custom endpoint is a single self-hosted model with no OpenRouter alternates --
                 // a transient failure should fail cleanly, never silently cross over to a real
                 // OpenRouter model (which could fire with a missing/invalid OpenRouter key).
@@ -2545,6 +2548,19 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(normalized))
                 return SupportedModelProfiles[0];
 
+            // Migrate persisted selections from the retired aliases/API IDs without leaving users
+            // on an unknown model after upgrading Axiom.
+            if (string.Equals(normalized, LegacyEidos1ModelId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, LegacyEidos1ApiModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = Edios15ModelId;
+            }
+            else if (string.Equals(normalized, LegacyHepha1ModelId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, LegacyHepha1ApiModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = Hepha25CoderModelId;
+            }
+
             if (string.Equals(normalized, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
             {
                 // Built on demand from runtime settings, not a static array entry -- the base URL,
@@ -2574,6 +2590,12 @@ namespace Malx_AI
 
         private static double ResolveTemperature(OpenRouterModelProfile profile, bool isCodingRequest, bool isPythonRequest)
         {
+            if (string.Equals(profile?.AliasId, Edios15ModelId, StringComparison.OrdinalIgnoreCase))
+                return isCodingRequest ? (isPythonRequest ? 0.08 : 0.14) : 0.4;
+
+            if (string.Equals(profile?.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
+                return isCodingRequest ? (isPythonRequest ? 0.06 : 0.1) : 0.2;
+
             if (profile?.IsCodeSpecialized == true)
                 return isCodingRequest ? (isPythonRequest ? 0.08 : 0.12) : 0.2;
 
@@ -2582,6 +2604,12 @@ namespace Malx_AI
 
         private static double ResolveTopP(OpenRouterModelProfile profile, bool isCodingRequest)
         {
+            if (string.Equals(profile?.AliasId, Edios15ModelId, StringComparison.OrdinalIgnoreCase))
+                return isCodingRequest ? 0.78 : 0.88;
+
+            if (string.Equals(profile?.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
+                return isCodingRequest ? 0.7 : 0.82;
+
             if (profile?.IsCodeSpecialized == true)
                 return isCodingRequest ? 0.72 : 0.82;
 

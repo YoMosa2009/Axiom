@@ -180,7 +180,9 @@ namespace Malx_AI
             string finalSystemPrompt = systemPrompt
                 .Replace(
                     AgenticPauseRule,
-                    "\n\nTOOL PREFLIGHT COMPLETE:\nDo not emit tool calls, [PAUSE:] markers, or JSON tool envelopes. Generate the requested Builder deliverable normally. Code and prose are unrestricted by the tool-decision grammar.\n",
+                    _isSingleModelMode
+                        ? "\n\nTOOL PREFLIGHT COMPLETE:\nDo not emit tool calls, [PAUSE:] markers, or JSON tool envelopes. Generate the requested final deliverable normally. Code and prose are unrestricted by the tool-decision grammar.\n"
+                        : "\n\nTOOL PREFLIGHT COMPLETE:\nDo not emit tool calls, [PAUSE:] markers, or JSON tool envelopes. Generate the requested Builder deliverable normally. Code and prose are unrestricted by the tool-decision grammar.\n",
                     StringComparison.Ordinal)
                 // The codebase read-tools addendum rides after the pause rule; strip it too so
                 // the final pass is not told to emit [PAUSE:] lines that nothing intercepts.
@@ -377,10 +379,11 @@ namespace Malx_AI
                 ? "The previous envelope was semantically invalid. Correct it. "
                 : string.Empty;
 
+            string actor = _isSingleModelMode ? "single agent" : "local Builder";
             return
-                "You are a tool router for the local Builder. " + repair +
+                $"You are a tool router for the {actor}. " + repair +
                 $"This is decision round {toolsUsed + 1}; {toolsUsed} tool(s) have already run. " +
-                "Decide whether one additional tool must run before the Builder generates its deliverable. " +
+                $"Decide whether one additional tool must run before the {actor} generates its deliverable. " +
                 "Tools retrieve evidence or calculate/execute checks; they do not write the final code. " +
                 "Choose final when the supplied context and observations are sufficient. Never repeat an equivalent call. " +
                 "Available tools: SEARCH_HIPPOCAMPUS, CALCULATE, RUN_SANDBOX, PYTHON_MATH" + codebaseToolList + webTool + ". " +
@@ -408,8 +411,10 @@ namespace Malx_AI
                 payloadExcerpt = "[earlier Builder context omitted]\n" + payloadExcerpt[^maxExcerptChars..];
 
             var payload = new StringBuilder();
-            payload.AppendLine(BuildCouncilGoalContractBlock(runContext?.GoalContract));
-            payload.AppendLine(BuildCouncilCapabilityCard(_isWebSearchEnabled, codebaseToolsEnabled: _connectedWorkspace.CodebaseEditAccessEnabled));
+            string goalContract = BuildCouncilGoalContractBlock(runContext?.GoalContract);
+            string capabilityCard = BuildCouncilCapabilityCard(_isWebSearchEnabled, codebaseToolsEnabled: _connectedWorkspace.CodebaseEditAccessEnabled);
+            payload.AppendLine(_isSingleModelMode ? AdaptSingleModelPromptText(goalContract) : goalContract);
+            payload.AppendLine(_isSingleModelMode ? AdaptSingleModelPromptText(capabilityCard) : capabilityCard);
             if (!string.IsNullOrWhiteSpace(objective))
             {
                 payload.AppendLine("[[USER OBJECTIVE]]");
@@ -417,9 +422,10 @@ namespace Malx_AI
                 payload.AppendLine("[[END USER OBJECTIVE]]");
             }
 
-            payload.AppendLine("[[BUILDER INPUT]]");
+            string inputLabel = _isSingleModelMode ? "AGENT INPUT" : "BUILDER INPUT";
+            payload.AppendLine($"[[{inputLabel}]]");
             payload.AppendLine(payloadExcerpt);
-            payload.AppendLine("[[END BUILDER INPUT]]");
+            payload.AppendLine($"[[END {inputLabel}]]");
             if (!string.IsNullOrWhiteSpace(priorToolObservations))
             {
                 payload.AppendLine("[[PRIOR TOOL OBSERVATIONS]]");

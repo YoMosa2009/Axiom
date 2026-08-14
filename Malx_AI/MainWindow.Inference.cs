@@ -3116,7 +3116,8 @@ namespace Malx_AI
 
             SandboxPreparation sandboxPreparation = PrepareSandboxContext(userMsg);
             string personaContext = await _personaMemoryService.GetRelevantContextAsync(userMsg, 150, 200);
-            string webContext = await TryBuildWebContextAsync(userMsg, false, token, uiSnapshot.ChatMessages);
+            bool capabilityWebResearch = _capabilityRegistry.ShouldUseWebResearch(userMsg);
+            string webContext = await TryBuildWebContextAsync(userMsg, capabilityWebResearch, token, uiSnapshot.ChatMessages);
 
             return await Task.Run(() =>
             {
@@ -3142,6 +3143,10 @@ namespace Malx_AI
                 string effectiveSystemPrompt = string.IsNullOrWhiteSpace(personaContext)
                     ? uiSnapshot.SystemPromptText
                     : (uiSnapshot.SystemPromptText + "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]");
+
+                string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Local");
+                if (!string.IsNullOrWhiteSpace(capabilityInstruction))
+                    effectiveSystemPrompt += "\n\n" + capabilityInstruction;
 
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.HippocampusContext))
                     effectiveSystemPrompt += "\n\n[FROM PRIOR RESEARCH SESSIONS]\n" + uiSnapshot.HippocampusContext + "\n[/FROM PRIOR RESEARCH SESSIONS]";
@@ -4470,6 +4475,8 @@ namespace Malx_AI
                 UpdateUIState(true);
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
+                if (_isHiddenInSystemTray)
+                    _ = OptimizeBackgroundResourcesAsync();
             }
 
         }

@@ -212,14 +212,14 @@ namespace Malx_AI
             return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase);
         }
 
-        private void EidosModelButton_Click(object sender, RoutedEventArgs e)
+        private void Edios15ModelButton_Click(object sender, RoutedEventArgs e)
         {
-            SelectCloudModel(OpenRouterChatService.Eidos1ModelId);
+            SelectCloudModel(OpenRouterChatService.Edios15ModelId);
         }
 
-        private void HephaModelButton_Click(object sender, RoutedEventArgs e)
+        private void Hepha25CoderModelButton_Click(object sender, RoutedEventArgs e)
         {
-            SelectCloudModel(OpenRouterChatService.Hepha1ModelId);
+            SelectCloudModel(OpenRouterChatService.Hepha25CoderModelId);
         }
 
         private void CustomEndpointModelButton_Click(object sender, RoutedEventArgs e)
@@ -419,8 +419,8 @@ namespace Malx_AI
             _localModeButton ??= FindName("LocalModeButton") as Button;
             _cloudModeButton ??= FindName("CloudModeButton") as Button;
             _hybridLocalModeButton ??= FindName("HybridLocalModeButton") as Button;
-            _eidosModelButton ??= FindName("EidosModelButton") as Button;
-            _hephaModelButton ??= FindName("HephaModelButton") as Button;
+            _edios15ModelButton ??= FindName("Edios15ModelButton") as Button;
+            _hepha25CoderModelButton ??= FindName("Hepha25CoderModelButton") as Button;
             _customEndpointModelButton ??= FindName("CustomEndpointModelButton") as Button;
 
             bool hasValidKey = _openRouterChatService.HasValidKey;
@@ -432,14 +432,14 @@ namespace Malx_AI
             bool isCloudActive = _cloudModeActive && !IsCustomEndpointModelSelected();
 
             // The header's model-indicator row shows for either cloud-ish mode, but which pill(s)
-            // appear inside it differs: Eidos/Hepha are a real picker (Cloud has two models),
+            // appear inside it differs: Edios/Hepha are a real picker (Cloud has two models),
             // Kestral 1 is just a status indicator (Hybrid Local only ever has the one).
             if (FindName("CloudModelSelectorBorder") is Border cloudSelectorBorder)
                 cloudSelectorBorder.Visibility = _cloudModeActive ? Visibility.Visible : Visibility.Collapsed;
-            if (_eidosModelButton != null)
-                _eidosModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
-            if (_hephaModelButton != null)
-                _hephaModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+            if (_edios15ModelButton != null)
+                _edios15ModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+            if (_hepha25CoderModelButton != null)
+                _hepha25CoderModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
             if (_customEndpointModelButton != null)
                 _customEndpointModelButton.Visibility = isHybridLocalActive ? Visibility.Visible : Visibility.Collapsed;
 
@@ -476,8 +476,8 @@ namespace Malx_AI
                 _cloudModeButton.BorderThickness = new Thickness(0);
             }
 
-            RefreshCloudModelSelectionUi(_eidosModelButton, OpenRouterChatService.Eidos1ModelId, hasValidKey);
-            RefreshCloudModelSelectionUi(_hephaModelButton, OpenRouterChatService.Hepha1ModelId, hasValidKey);
+            RefreshCloudModelSelectionUi(_edios15ModelButton, OpenRouterChatService.Edios15ModelId, hasValidKey);
+            RefreshCloudModelSelectionUi(_hepha25CoderModelButton, OpenRouterChatService.Hepha25CoderModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_customEndpointModelButton, OpenRouterChatService.CustomEndpointModelId, hasValidCustomEndpoint,
                 disabledHint: "Configure a custom endpoint in Settings to enable Hybrid Local");
             RefreshInferenceSettingsUi();
@@ -840,9 +840,17 @@ namespace Malx_AI
         {
             string selectedLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
 
-            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha1ModelId, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
             {
-                return "[MODEL PROFILE: HEPHA 1] You are operating in Axiom's Hepha 1 cloud profile. Prioritize code correctness, deterministic tool usage, compact structured outputs, and environment-aware solutions that work cleanly with the app's Python sandbox, web retrieval, imported documents, and persisted chat state. When tool-produced context is present, treat it as authoritative and integrate it directly without re-describing internal plumbing. Use the larger cloud context window to connect the latest user message with relevant prior turns before choosing tools or answering.";
+                return "[MODEL PROFILE: HEPHA 2.5 CODER] You are operating in Axiom's Hepha 2.5 Coder cloud profile on NVIDIA Nemotron 3 Ultra. Act as a single, repository-aware coding agent: inspect before editing, use the minimum relevant tools, preserve tool-call arguments exactly, and verify changed code before reporting completion. Prefer deterministic, implementation-first outputs and concise tool-grounded summaries. Treat tool results, imported documents, persisted chat state, and workspace evidence as authoritative. Use the large context window to connect relevant prior turns and repository context, but do not repeat stale or irrelevant material.";
+            }
+
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Edios15ModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                string ediosTaskBias = IsCodingRequest(userMsg)
+                    ? "For coding tasks, inspect relevant context, use tools deliberately, produce directly usable changes, and verify the result."
+                    : "For general tasks, reason from the supplied evidence and answer directly without unnecessary tool calls.";
+                return $"[MODEL PROFILE: EDIOS 1.5] You are operating in Axiom's Edios 1.5 cloud profile on Google Gemma 4 31B. Follow tool schemas exactly, keep tool calls focused, and treat tool outputs, imported documents, image context, web-grounding blocks, persona memory, and persisted chat state as authoritative. {ediosTaskBias} Do not expose internal chain-of-thought.";
             }
 
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
@@ -859,7 +867,10 @@ namespace Malx_AI
 
         private string BuildCloudWebSearchSystemInstruction(string userMsg, bool proactiveWebContextAttached)
         {
-            bool webSearchAvailable = proactiveWebContextAttached || _normalWebSearchEnabled || ContainsExplicitWebSearchRequest(userMsg);
+            bool webSearchAvailable = proactiveWebContextAttached
+                || _normalWebSearchEnabled
+                || ContainsExplicitWebSearchRequest(userMsg)
+                || _capabilityRegistry.ShouldUseWebResearch(userMsg);
             if (!webSearchAvailable)
             {
                 // web_search is not in the tools list this turn (see BuildCloudToolDefinitions) --
@@ -1053,14 +1064,18 @@ namespace Malx_AI
             messages.Add(new OpenRouterMessage("user", userMsg, PreserveFullText: true, ImageDataUrls: imageDataUrls));
 
             IReadOnlyList<string> mentionedMcpHandles = ResolveMentionedMcpHandles(userMsg);
-            bool includeWebSearch = _normalWebSearchEnabled || ContainsExplicitWebSearchRequest(userMsg);
+            bool includeWebSearch = _normalWebSearchEnabled
+                || ContainsExplicitWebSearchRequest(userMsg)
+                || _capabilityRegistry.ShouldUseWebResearch(userMsg);
             // Kestral 1 (self-hosted local model) has proven unreliable at judging for itself
             // whether run_python/calculate are actually warranted -- e.g. it called run_python on a
             // bare "hello" even when explicitly instructed not to. Gate those two on a lightweight
             // heuristic for this model specifically; other (OpenRouter) models keep the tools
             // unconditionally available as before, since they haven't shown this problem.
             bool isCustomEndpoint = IsCustomEndpointModelSelected();
-            bool includeRunPython = !isCustomEndpoint || LooksLikeCodeExecutionRequest(userMsg);
+            bool includeRunPython = !isCustomEndpoint
+                || LooksLikeCodeExecutionRequest(userMsg)
+                || _capabilityRegistry.ShouldUseDataTools(userMsg);
             bool includeCalculate = !isCustomEndpoint || LooksLikeCalculationRequest(userMsg);
             IReadOnlyList<OpenRouterToolDefinition> tools = BuildCloudToolDefinitions(mentionedMcpHandles, includeWebSearch, includeRunPython, includeCalculate);
             var reasoningParts = new List<string>();
@@ -1530,13 +1545,17 @@ namespace Malx_AI
             // Proactive web search — mirrors local-mode behavior so the web toggle and [web] marker
             // work identically in cloud mode. Cloud also has a web_search tool for reactive searches,
             // but proactive injection is needed when the user explicitly enables the toggle.
-            string webContext = await TryBuildWebContextAsync(userMsg, false, token, uiSnapshot.ChatMessages);
+            bool capabilityWebResearch = _capabilityRegistry.ShouldUseWebResearch(userMsg);
+            string webContext = await TryBuildWebContextAsync(userMsg, capabilityWebResearch, token, uiSnapshot.ChatMessages);
             string personaContext = await _personaMemoryService.GetRelevantContextAsync(userMsg, 150, 350, token);
 
             return await Task.Run(() =>
             {
                 bool thinkingEnabled = _normalThinkingModeEnabled;
                 string systemPrompt = string.IsNullOrWhiteSpace(uiSnapshot.SystemPromptText) ? BuildDefaultAssistantSystemPrompt() : uiSnapshot.SystemPromptText.Trim();
+                string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Cloud or Hybrid Local");
+                if (!string.IsNullOrWhiteSpace(capabilityInstruction))
+                    systemPrompt += "\n\n" + capabilityInstruction;
                 string cloudModelInstruction = BuildCloudModelSystemInstruction(userMsg);
                 if (!string.IsNullOrWhiteSpace(cloudModelInstruction))
                     systemPrompt += "\n\n" + cloudModelInstruction;

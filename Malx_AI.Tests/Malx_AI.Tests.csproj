@@ -28,5 +28,10 @@
     <Compile Include="..\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpModels.cs" Link="Production\Mcp\McpModels.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
+    <Compile Include="..\Malx_AI\UpdateReleaseParser.cs" Link="Production\UpdateReleaseParser.cs" />
+    <Compile Include="..\Malx_AI\UpdatePackageSafety.cs" Link="Production\UpdatePackageSafety.cs" />
+    <Compile Include="..\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
+    <Compile Include="..\Malx_AI\AtomicFileWriter.cs" Link="Production\AtomicFileWriter.cs" />
+    <Compile Include="..\Malx_AI\JsonPersistenceRecovery.cs" Link="Production\JsonPersistenceRecovery.cs" />
   </ItemGroup>
 </Project>

@@ -32,7 +32,7 @@ namespace Malx_AI
 {
     public partial class MainWindow : Window
     {
-        private static readonly string EmptyChatLogoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Malx_Logo2.png");
+        private static readonly string EmptyChatLogoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AxiomLogo.png");
         private LLamaWeights _model;
         private InteractiveExecutor _executor;
         private LLama.ChatSession _chatSession;
@@ -112,7 +112,7 @@ namespace Malx_AI
             {
                 using Stream stream = File.OpenRead(EmptyChatLogoPath);
                 var decoder = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                _emptyChatLogoSource = ConvertEmptyChatLogoToWhite(decoder.Frames[0]);
+                _emptyChatLogoSource = TintEmptyChatLogo(decoder.Frames[0]);
                 EmptyChatLogoImage.Source = _emptyChatLogoSource;
             }
             catch (Exception ex)
@@ -122,7 +122,7 @@ namespace Malx_AI
             }
         }
 
-        private static BitmapSource ConvertEmptyChatLogoToWhite(BitmapSource source)
+        private static BitmapSource TintEmptyChatLogo(BitmapSource source)
         {
             var formatted = source.Format == PixelFormats.Bgra32
                 ? source
@@ -132,26 +132,17 @@ namespace Malx_AI
             byte[] pixels = new byte[formatted.PixelHeight * stride];
             formatted.CopyPixels(pixels, stride, 0);
 
-            const byte backgroundThreshold = 238;
-            const byte detailThreshold = 190;
-
             for (int index = 0; index < pixels.Length; index += 4)
             {
-                byte blue = pixels[index];
-                byte green = pixels[index + 1];
-                byte red = pixels[index + 2];
                 byte alpha = pixels[index + 3];
 
                 if (alpha == 0)
                     continue;
 
-                bool nearWhiteBackground = red >= backgroundThreshold && green >= backgroundThreshold && blue >= backgroundThreshold;
-                bool logoPixel = !nearWhiteBackground && (red <= detailThreshold || green <= detailThreshold || blue <= detailThreshold);
-
-                pixels[index] = 255;
-                pixels[index + 1] = 255;
-                pixels[index + 2] = 255;
-                pixels[index + 3] = logoPixel ? alpha : (byte)0;
+                // Match NotebookTextBrush (#EDE8E3) while preserving the source alpha matte.
+                pixels[index] = 0xE3;
+                pixels[index + 1] = 0xE8;
+                pixels[index + 2] = 0xED;
             }
 
             var processed = BitmapSource.Create(
@@ -254,8 +245,8 @@ namespace Malx_AI
         private Button? _normalWebSearchToggleButton;
         private Button? _localModeButton;
         private Button? _cloudModeButton;
-        private Button? _eidosModelButton;
-        private Button? _hephaModelButton;
+        private Button? _edios15ModelButton;
+        private Button? _hepha25CoderModelButton;
         private Button? _hybridLocalModeButton;
         private Button? _customEndpointModelButton;
         private bool _isFetchingOpenRouterUsage;
@@ -448,6 +439,7 @@ namespace Malx_AI
             {
                 InitializeComponent();
                 InitializeResponsiveDesktopLayout();
+                InitializeCapabilities();
                 // Let a LOCAL council run free the Normal-Chat model before it loads its own role
                 // models — on a single GPU both cannot be resident at once (see the method).
                 WorkplaceViewControl.ReleaseHostChatModelAsync = ReleaseChatModelForCouncilAsync;
@@ -547,6 +539,9 @@ namespace Malx_AI
                     Debug.WriteLine($"Workplace MCP wiring error: {ex.Message}");
                 }
                 LoadCouncilNotificationSetting();
+                LoadBackgroundExecutionSettings();
+                if (_keepInSystemTray)
+                    InitializeSystemTray();
                 RefreshCloudModeToggleUi();
                 RefreshInferenceSettingsUi();
 
@@ -565,8 +560,10 @@ namespace Malx_AI
                 SmartCompactionToggle.IsChecked = _compactionEngine.IsEnabled;
 
                 _ = InitializeProcessingModeAsync();
-                Version appVersion = UpdateCheckService.GetCurrentVersion();
-                AppVersionLabel.Text = $"Version {appVersion.Major}.{appVersion.Minor}.{appVersion.Build}";
+                string? installedUpdateVersion = UpdateApplyService.ConsumeSuccessMarker();
+                if (!string.IsNullOrWhiteSpace(installedUpdateVersion))
+                    ShowTransientStatus($"Axiom {installedUpdateVersion} was installed successfully.");
+                _ = Task.Run(UpdateApplyService.CleanupOldStagingDirectories);
                 _ = CheckForAppUpdateOnStartupAsync();
                 _neuronTimer.Interval = TimeSpan.FromMilliseconds(750);
                 _neuronTimer.Tick += (_, _) => UpdateNeuronMap();
@@ -1097,23 +1094,82 @@ namespace Malx_AI
 
         private UpdateCheckResult? _availableUpdate;
         private bool _updateDownloadInProgress;
+        private CancellationTokenSource? _updateDownloadCts;
 
         private async Task CheckForAppUpdateOnStartupAsync()
         {
             try
             {
-                UpdateCheckResult? result = await UpdateCheckService.CheckForUpdateAsync().ConfigureAwait(false);
-                if (result == null || !result.IsNewerVersionAvailable)
-                    return;
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    AppVersionLabel.Text = $"Version {UpdateCheckService.GetCurrentVersionText()}";
+                    UpdateCheckStatusText.Text = "Checking GitHub for updates…";
+                    CheckForUpdatesButton.IsEnabled = false;
+                });
 
-                _availableUpdate = result;
-                await Dispatcher.InvokeAsync(() => ShowUpdateBanner(result));
+                UpdateCheckResult? result = await UpdateCheckService.CheckForUpdateAsync().ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() => ApplyUpdateCheckResult(result, notifyIfAvailable: true));
             }
             catch (Exception ex)
             {
                 // Offline or rate-limited startup must never surface an error for an optional check.
                 Debug.WriteLine($"Update check failed: {ex.Message}");
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    UpdateCheckStatusText.Text = "Could not check GitHub. Axiom will try again later.";
+                    CheckForUpdatesButton.IsEnabled = true;
+                });
             }
+        }
+
+        private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_updateDownloadInProgress)
+                return;
+
+            CheckForUpdatesButton.IsEnabled = false;
+            UpdateCheckStatusText.Text = "Checking GitHub for updates…";
+            try
+            {
+                UpdateCheckResult? result = await UpdateCheckService.CheckForUpdateAsync();
+                ApplyUpdateCheckResult(result, notifyIfAvailable: false);
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("ManualUpdateCheck", ex);
+                UpdateCheckStatusText.Text = "Could not reach GitHub. Check your connection and try again.";
+            }
+            finally
+            {
+                CheckForUpdatesButton.IsEnabled = true;
+            }
+        }
+
+        private void ApplyUpdateCheckResult(UpdateCheckResult? result, bool notifyIfAvailable)
+        {
+            CheckForUpdatesButton.IsEnabled = true;
+            if (result == null)
+            {
+                UpdateCheckStatusText.Text = "Could not reach GitHub. Axiom will check again next launch.";
+                return;
+            }
+
+            if (!result.IsNewerVersionAvailable)
+            {
+                _availableUpdate = null;
+                UpdateCheckStatusText.Text = $"Axiom {UpdateCheckService.GetCurrentVersionText()} is up to date.";
+                return;
+            }
+
+            _availableUpdate = result;
+            string size = result.PackageSizeBytes > 0 ? $" · {FormatFileSize(result.PackageSizeBytes)}" : string.Empty;
+            UpdateCheckStatusText.Text = result.HasPackageAsset
+                ? $"{result.LatestVersionTag} is available{size}."
+                : $"{result.LatestVersionTag} is available, but the release has no supported Windows package.";
+            ShowUpdateBanner(result);
+
+            if (notifyIfAvailable)
+                WindowsToastNotificationService.ShowUpdateAvailableIfInactive(result.LatestVersionTag);
         }
 
         private void ShowUpdateBanner(UpdateCheckResult update)
@@ -1122,9 +1178,12 @@ namespace Malx_AI
                 return;
 
             UpdateBannerTitleText.Text = $"Axiom {update.LatestVersionTag} is available";
-            UpdateBannerDetailText.Text = update.HasInstallerAsset
-                ? "Click to download and install the update. Your chats and settings are preserved."
-                : "Click to open the release page and download the new version.";
+            string size = update.PackageSizeBytes > 0 ? $" ({FormatFileSize(update.PackageSizeBytes)})" : string.Empty;
+            UpdateBannerDetailText.Text = update.HasPackageAsset
+                ? $"Download and install{size}. Chats and settings are preserved."
+                : "This release has no supported Windows package. Open its GitHub page instead.";
+            UpdateBannerActionButton.Content = update.HasPackageAsset ? "Update now" : "Open GitHub";
+            UpdateBannerActionButton.IsEnabled = true;
             UpdateBannerBorder.Visibility = Visibility.Visible;
 
             var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(280))
@@ -1169,23 +1228,64 @@ namespace Malx_AI
             HideUpdateBanner();
         }
 
-        private async void UpdateBanner_Click(object sender, MouseButtonEventArgs e)
+        private async void UpdateBannerActionButton_Click(object sender, RoutedEventArgs e)
         {
+            e.Handled = true;
             UpdateCheckResult? update = _availableUpdate;
             if (update == null || _updateDownloadInProgress)
                 return;
 
-            if (!update.HasInstallerAsset)
+            if (!update.HasPackageAsset)
             {
                 if (!string.IsNullOrWhiteSpace(update.ReleasePageUrl))
                     Process.Start(new ProcessStartInfo { FileName = update.ReleasePageUrl, UseShellExecute = true });
                 return;
             }
 
+            if (!UpdateCheckService.CanApplyUpdates)
+            {
+                MessageBox.Show(
+                    "Automatic installation is disabled in Visual Studio/Debug builds. Test it from a clean Release publish ZIP.",
+                    "Axiom updater",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
             _updateDownloadInProgress = true;
+            _updateDownloadCts?.Dispose();
+            _updateDownloadCts = new CancellationTokenSource();
             UpdateBannerCloseButton.IsEnabled = false;
+            UpdateBannerActionButton.IsEnabled = false;
             try
             {
+                if (update.PackageKind == UpdatePackageKind.Zip)
+                {
+                    UpdateBannerTitleText.Text = $"Downloading Axiom {update.LatestVersionTag}…";
+                    UpdateBannerDetailText.Text = "Starting secure download…";
+                    var zipProgress = new Progress<double>(percent =>
+                        UpdateBannerDetailText.Text = $"{percent:F0}% downloaded · {FormatFileSize(update.PackageSizeBytes)} total");
+
+                    string packagePath = await UpdateCheckService.DownloadPackageAsync(
+                        update,
+                        zipProgress,
+                        _updateDownloadCts.Token);
+
+                    UpdateBannerTitleText.Text = "Preparing update…";
+                    UpdateBannerDetailText.Text = "Verifying and staging the new Axiom files.";
+                    PreparedUpdate prepared = await UpdateApplyService.PrepareZipUpdateAsync(
+                        update,
+                        packagePath,
+                        _updateDownloadCts.Token);
+
+                    UpdateBannerTitleText.Text = "Restarting to update";
+                    UpdateBannerDetailText.Text = "Axiom will reopen automatically when the update is complete.";
+                    UpdateApplyService.LaunchPreparedUpdate(prepared, Environment.ProcessId);
+                    await Task.Delay(500);
+                    ShutdownAxiomCompletely();
+                    return;
+                }
+
                 UpdateBannerTitleText.Text = $"Downloading Axiom {update.LatestVersionTag}…";
                 UpdateBannerDetailText.Text = "Starting download…";
                 var progress = new Progress<double>(percent => UpdateBannerDetailText.Text = $"{percent:F0}% downloaded");
@@ -1201,29 +1301,43 @@ namespace Malx_AI
                 Process.Start(new ProcessStartInfo { FileName = installerPath, UseShellExecute = true });
 
                 await Task.Delay(900);
-                Application.Current.Shutdown();
+                ShutdownAxiomCompletely();
             }
             catch (Exception ex)
             {
                 await BackendLogService.LogErrorAsync("UpdateDownload", ex);
                 UpdateBannerTitleText.Text = "Update download failed";
                 UpdateBannerDetailText.Text = "Click to open the release page and download manually.";
-                // Fall back to the release page on the next click instead of retrying the download.
-                _availableUpdate = new UpdateCheckResult
-                {
-                    LatestVersionTag = update.LatestVersionTag,
-                    LatestVersion = update.LatestVersion,
-                    CurrentVersion = update.CurrentVersion,
-                    ReleasePageUrl = update.ReleasePageUrl,
-                    IsNewerVersionAvailable = true
-                };
+                // Keep the original release metadata so the user can retry a transient download
+                // or staging failure without restarting Axiom.
+                _availableUpdate = update;
+                UpdateBannerActionButton.Content = "Try again";
             }
             finally
             {
                 _updateDownloadInProgress = false;
                 if (UpdateBannerCloseButton != null)
                     UpdateBannerCloseButton.IsEnabled = true;
+                if (UpdateBannerActionButton != null)
+                    UpdateBannerActionButton.IsEnabled = true;
             }
+        }
+
+        private static string FormatFileSize(long bytes)
+        {
+            if (bytes <= 0)
+                return "unknown size";
+
+            string[] units = ["B", "KB", "MB", "GB"];
+            double value = bytes;
+            int unit = 0;
+            while (value >= 1024 && unit < units.Length - 1)
+            {
+                value /= 1024;
+                unit++;
+            }
+
+            return $"{value:0.#} {units[unit]}";
         }
 
         private void RemoveAttachmentWithAnimation(Border chip, string attachmentName)
@@ -1550,15 +1664,17 @@ namespace Malx_AI
 
         private string ResolveOtherCloudModelId(string? previousModelLabel)
         {
-            if (string.Equals(previousModelLabel, OpenRouterChatService.Eidos1ModelLabel, StringComparison.OrdinalIgnoreCase))
-                return OpenRouterChatService.Hepha1ModelId;
+            if (string.Equals(previousModelLabel, OpenRouterChatService.Edios15ModelLabel, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(previousModelLabel, "Eidos 1", StringComparison.OrdinalIgnoreCase))
+                return OpenRouterChatService.Hepha25CoderModelId;
 
-            if (string.Equals(previousModelLabel, OpenRouterChatService.Hepha1ModelLabel, StringComparison.OrdinalIgnoreCase))
-                return OpenRouterChatService.Eidos1ModelId;
+            if (string.Equals(previousModelLabel, OpenRouterChatService.Hepha25CoderModelLabel, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(previousModelLabel, "Hepha 1", StringComparison.OrdinalIgnoreCase))
+                return OpenRouterChatService.Edios15ModelId;
 
-            return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Eidos1ModelId, StringComparison.OrdinalIgnoreCase)
-                ? OpenRouterChatService.Hepha1ModelId
-                : OpenRouterChatService.Eidos1ModelId;
+            return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Edios15ModelId, StringComparison.OrdinalIgnoreCase)
+                ? OpenRouterChatService.Hepha25CoderModelId
+                : OpenRouterChatService.Edios15ModelId;
         }
 
         private void BranchMessage_Click(object sender, RoutedEventArgs e)
@@ -1677,14 +1793,38 @@ namespace Malx_AI
                 return;
 
             AppDataProfilePathText.Text =
-                $"Profile: {AppDataPaths.ProfileLabel}\nFolder: {AppDataPaths.Root}";
+                $"Profile: {AppDataPaths.ProfileLabel}\nFolder: {AppDataPaths.Root}\n" +
+                "Published packages never include this folder.";
+        }
+
+        private void OpenLocalAppDataFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Directory.CreateDirectory(AppDataPaths.Root);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{AppDataPaths.Root}\"",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Could not open the data folder:\n" + ex.Message,
+                    "Open data folder",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
         }
 
         private void ResetLocalAppDataButton_Click(object sender, RoutedEventArgs e)
         {
             MessageBoxResult confirm = MessageBox.Show(
-                "This permanently deletes chats, Workplace sessions, connectors, API keys, and caches " +
-                "for this app profile:\n\n" + AppDataPaths.Root +
+                "This permanently deletes chats, Workplace sessions, menu/settings values, connectors, API keys, and caches " +
+                "for this app profile only:\n\n" + AppDataPaths.Root +
+                "\n\nIt does not modify the installed/published app files. Other profiles (for example Axiom-Dev vs Axiom) are left alone." +
                 "\n\nAxiom will close after reset so the next launch is clean. Continue?",
                 "Reset all local app data",
                 MessageBoxButton.YesNo,
@@ -1705,12 +1845,13 @@ namespace Malx_AI
             }
 
             MessageBox.Show(
-                "Local app data was cleared. Axiom will now exit — open it again for a fresh start.",
+                "Local app data was cleared (chats, Workplace, settings/menu state, connectors, keys, caches). " +
+                "Axiom will now exit — open it again for a fresh start.",
                 "Reset complete",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
 
-            Application.Current.Shutdown();
+            ShutdownAxiomCompletely();
         }
 
         private void SettingsNavButton_Click(object sender, RoutedEventArgs e)
@@ -1782,6 +1923,8 @@ namespace Malx_AI
         {
             if (CouncilCompletionToastToggle.IsChecked == true)
                 WindowsToastNotificationService.ShowCouncilCompletionIfInactive(message);
+            if (_isHiddenInSystemTray)
+                _ = OptimizeBackgroundResourcesAsync();
         }
 
         private void AnimateSettingsPanel(bool show)
@@ -4607,6 +4750,7 @@ namespace Malx_AI
 
         protected override void OnClosed(EventArgs e)
         {
+            DisposeSystemTray();
             _openRouterChatService.TokenUsageRecorded -= OpenRouterChatService_TokenUsageRecorded;
             if (_councilPetWindow != null)
             {

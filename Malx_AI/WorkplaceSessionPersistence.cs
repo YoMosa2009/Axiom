@@ -11,6 +11,9 @@ namespace Malx_AI
         public string ProjectCanvasText { get; set; } = "";
         public bool CloudModeEnabled { get; set; }
         public bool HybridLocalCouncilSelected { get; set; }
+        public bool SingleModelMode { get; set; }
+        public uint SingleModelContextSize { get; set; } = 8192;
+        public WorkplaceCouncilModelDto SingleModel { get; set; } = new();
         public uint GlobalContextSize { get; set; } = 8192;
         public uint ArchitectContextSize { get; set; } = 8192;
         public uint BuilderContextSize { get; set; } = 8192;
