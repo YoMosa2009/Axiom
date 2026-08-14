@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,6 +50,52 @@ namespace Malx_AI
             return McpMentionHelper.GetCompleteMentionHandles(userMessage, _mcpConnectorService.GetKnownHandles());
         }
 
+        private void RefreshMcpOAuthAppStatusUi()
+        {
+            if (McpOAuthAppStatusText == null)
+                return;
+
+            try
+            {
+                Mcp.McpOAuthConfig.EnsureSharedCredentialsHydrated();
+                bool google = Mcp.McpOAuthConfig.IsGoogleAppConfigured();
+                bool github = Mcp.McpOAuthConfig.IsGitHubAppConfigured();
+                bool todoist = Mcp.McpOAuthConfig.IsTodoistAppConfigured();
+                McpOAuthAppStatusText.Text =
+                    $"Google: {(google ? "ready" : "missing client id/secret")} · " +
+                    $"GitHub: {(github ? "ready" : "missing client id")} · " +
+                    $"Todoist: {(todoist ? "ready" : "missing client id/secret")}\n" +
+                    $"Shared folder: {Mcp.McpOAuthConfig.SharedOAuthRoot}";
+            }
+            catch (Exception ex)
+            {
+                McpOAuthAppStatusText.Text = "Could not read OAuth app status: " + ex.Message;
+            }
+        }
+
+        private void McpOpenOAuthFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Mcp.McpOAuthConfig.EnsureSharedCredentialsHydrated();
+                Directory.CreateDirectory(Mcp.McpOAuthConfig.SharedOAuthRoot);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{Mcp.McpOAuthConfig.SharedOAuthRoot}\"",
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Could not open the OAuth app folder:\n" + ex.Message,
+                    "Connectors",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
         private void RefreshMcpConnectorsUi()
         {
             if (_isRefreshingMcpConnectorsUi)
@@ -66,6 +114,8 @@ namespace Malx_AI
                         ? "Click Connect — sign in with Google in your browser. Full Gmail + Drive tools (read/write/share). After app updates that add permissions, Disconnect and Connect again. Type @ in chat to mention a connector."
                         : "Connect anytime. Tools activate when Cloud Mode is on with an OpenRouter key. Type @ in chat to mention a connector.";
                 }
+
+                RefreshMcpOAuthAppStatusUi();
 
                 IReadOnlyList<McpConnectorInfo> connectors = _mcpConnectorService.GetConnectors();
                 bool googleConnected = connectors.Any(c =>
@@ -91,7 +141,9 @@ namespace Malx_AI
                     }
                     else
                     {
-                        McpGoogleAccountStatusText.Text = "Not connected — opens your browser to sign in";
+                        McpGoogleAccountStatusText.Text = McpOAuthConfig.IsGoogleAppConfigured()
+                            ? "Not connected — opens your browser to sign in"
+                            : "OAuth app credentials missing — open OAuth app folder above";
                         McpGoogleAccountStatusText.Foreground = AppBrushCache.Get("#8A8279");
                     }
                 }
@@ -107,7 +159,9 @@ namespace Malx_AI
                     }
                     else
                     {
-                        McpGitHubAccountStatusText.Text = "Not connected — opens browser device login";
+                        McpGitHubAccountStatusText.Text = McpOAuthConfig.IsGitHubAppConfigured()
+                            ? "Not connected — opens browser device login"
+                            : "OAuth app credentials missing — open OAuth app folder above";
                         McpGitHubAccountStatusText.Foreground = AppBrushCache.Get("#8A8279");
                     }
                 }
@@ -149,7 +203,9 @@ namespace Malx_AI
                     }
                     else
                     {
-                        McpTodoistAccountStatusText.Text = "Not connected — opens browser to sign in";
+                        McpTodoistAccountStatusText.Text = McpOAuthConfig.IsTodoistAppConfigured()
+                            ? "Not connected — opens browser to sign in"
+                            : "OAuth app credentials missing — open OAuth app folder above";
                         McpTodoistAccountStatusText.Foreground = AppBrushCache.Get("#8A8279");
                     }
                 }

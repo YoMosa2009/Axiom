@@ -12,8 +12,16 @@ namespace Malx_AI
     /// </summary>
     public partial class App : Application
     {
+        private static readonly bool IsUpdateHelperProcess = UpdateApplyService.IsUpdaterInvocation(
+            Environment.GetCommandLineArgs());
+
         public App()
         {
+            // The staged updater runs this executable only as a lightweight file-swap helper.
+            // Do not initialize CUDA, Python, OAuth, notifications, or app services in that mode.
+            if (IsUpdateHelperProcess)
+                return;
+
             try
             {
                 // GPU contention note: WPF renders its UI through Direct3D and WebView2 (Chromium)
@@ -36,6 +44,11 @@ namespace Malx_AI
                 // Configure native LLamaSharp backend FIRST — before any LLama types are loaded.
                 // This must happen before MainWindow, HardwareProfiler, or any ModelParams usage.
                 NativeBackendInit.Configure();
+
+                // OAuth app credentials (client id/secret) are machine-shared across Debug/Release
+                // profiles so Connectors work the same in VS and published builds.
+                try { Mcp.McpOAuthConfig.EnsureSharedCredentialsHydrated(); }
+                catch (Exception oauthEx) { Debug.WriteLine($"OAuth hydrate: {oauthEx.Message}"); }
 
                 // Initialize portable embedded Python runtime in background for sandbox tools.
                 _ = Task.Run(async () =>
@@ -78,6 +91,25 @@ namespace Malx_AI
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            if (IsUpdateHelperProcess)
+            {
+                base.OnStartup(e);
+                UpdateApplyResult result = UpdateApplyService.ApplyUpdateAndRestart(e.Args);
+                if (!result.Succeeded)
+                {
+                    MessageBox.Show(
+                        "Axiom could not finish the update. The previous installation was preserved or restored.\n\n" +
+                        result.ErrorMessage +
+                        $"\n\nDetails were written to:\n{Path.Combine(AppDataPaths.Logs, "update.log")}",
+                        "Axiom update failed",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+
+                Shutdown(result.Succeeded ? 0 : 1);
+                return;
+            }
+
             try
             {
                 _singleInstanceMutex = new Mutex(initiallyOwned: true, @"Local\Axiom_SingleInstance", out bool isFirstInstance);
@@ -104,6 +136,12 @@ namespace Malx_AI
 
         protected override void OnExit(ExitEventArgs e)
         {
+            if (IsUpdateHelperProcess)
+            {
+                base.OnExit(e);
+                return;
+            }
+
             WindowsToastNotificationService.Shutdown();
             // Reaching OnExit means a GRACEFUL shutdown — a native llama.cpp abort fail-fasts the
             // process and never runs this. So clear any in-flight decode marker now: a turn the user
@@ -121,6 +159,13 @@ namespace Malx_AI
                 // Never fail shutdown over mutex cleanup.
             }
             base.OnExit(e);
+        }
+
+        protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
+        {
+            if (this.MainWindow is Malx_AI.MainWindow mainWindow)
+                mainWindow.PrepareForSystemShutdown();
+            base.OnSessionEnding(e);
         }
 
         private static string BuildUserFacingErrorText(Exception ex, bool critical)

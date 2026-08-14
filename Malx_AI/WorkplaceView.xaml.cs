@@ -380,27 +380,30 @@ namespace Malx_AI
                 cloudModeButton.Content = _isCloudModeEnabled ? "Cloud On" : "Cloud Off";
                 cloudModeButton.Opacity = _isCloudModeEnabled ? 1.0 : 0.75;
                 cloudModeButton.ToolTip = _isCloudModeEnabled
-                    ? $"Council cloud mode enabled ({OpenRouterChatService.WorkplaceCouncilDisplayLabel})"
-                    : "Use local council models";
+                    ? $"{(_isSingleModelMode ? "Single-agent" : "Council")} cloud mode enabled ({OpenRouterChatService.WorkplaceCouncilDisplayLabel})"
+                    : _isSingleModelMode ? "Use the selected local single model" : "Use local council models";
             }
 
             bool localControlsEnabled = !_isCloudModeEnabled;
             if (FindName("LoadArchitectModelButton") is Button architectLoadButton) architectLoadButton.IsEnabled = localControlsEnabled;
             if (FindName("LoadBuilderModelButton") is Button builderLoadButton) builderLoadButton.IsEnabled = localControlsEnabled;
             if (FindName("LoadCriticModelButton") is Button criticLoadButton) criticLoadButton.IsEnabled = localControlsEnabled;
+            if (FindName("LoadSingleModelButton") is Button singleLoadButton) singleLoadButton.IsEnabled = localControlsEnabled;
             if (ArchitectFormatCombo != null) ArchitectFormatCombo.IsEnabled = localControlsEnabled;
             if (BuilderFormatCombo != null) BuilderFormatCombo.IsEnabled = localControlsEnabled;
             if (CriticFormatCombo != null) CriticFormatCombo.IsEnabled = localControlsEnabled;
+            if (SingleModelFormatCombo != null) SingleModelFormatCombo.IsEnabled = localControlsEnabled;
+            if (SingleModelContextSlider != null) SingleModelContextSlider.IsEnabled = localControlsEnabled;
 
             if (AutoOptimizeContextToggle != null)
             {
-                AutoOptimizeContextToggle.IsEnabled = localControlsEnabled;
-                AutoOptimizeContextToggle.Visibility = localControlsEnabled ? Visibility.Visible : Visibility.Collapsed;
+                AutoOptimizeContextToggle.IsEnabled = localControlsEnabled && !_isSingleModelMode;
+                AutoOptimizeContextToggle.Visibility = localControlsEnabled && !_isSingleModelMode ? Visibility.Visible : Visibility.Collapsed;
             }
 
             // ContextSlidersPanel is a named StackPanel in XAML — hide sliders in cloud mode
             if (ContextSlidersPanel != null)
-                ContextSlidersPanel.Visibility = localControlsEnabled ? Visibility.Visible : Visibility.Collapsed;
+                ContextSlidersPanel.Visibility = localControlsEnabled && !_isSingleModelMode ? Visibility.Visible : Visibility.Collapsed;
 
             // Cloud context info block: show effective context when cloud mode is on
             if (CloudContextInfoBlock != null)
@@ -413,9 +416,13 @@ namespace Malx_AI
                     string windowLabel = cloudWindow >= 1024 ? $"{cloudWindow / 1024}K" : $"{cloudWindow}";
                     string builderLabel = builderCtx >= 1024 ? $"{builderCtx / 1024}K" : $"{builderCtx}";
                     string otherLabel = otherCtx >= 1024 ? $"{otherCtx / 1024}K" : $"{otherCtx}";
-                    CloudContextInfoBlock.Text = _isHybridLocalCouncilSelected
-                        ? $"Self-hosted (Kestral 1): {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}"
-                        : $"Provider-managed: {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}";
+                    CloudContextInfoBlock.Text = _isSingleModelMode
+                        ? (_isHybridLocalCouncilSelected
+                            ? $"Self-hosted single agent (Kestral 1): {windowLabel} window"
+                            : $"Provider-managed single agent: {windowLabel} window")
+                        : _isHybridLocalCouncilSelected
+                            ? $"Self-hosted (Kestral 1): {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}"
+                            : $"Provider-managed: {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}";
                     CloudContextInfoBlock.Visibility = Visibility.Visible;
                 }
                 else
@@ -450,8 +457,12 @@ namespace Malx_AI
         private string GetCouncilDisplayName(CouncilRole role)
         {
             return _isCloudModeEnabled
-                ? $"{WorkplaceCloudRoleDisplayName} · {role}"
-                : _council[role].DisplayName;
+                ? _isSingleModelMode && role == CouncilRole.Builder
+                    ? WorkplaceCloudRoleDisplayName
+                    : $"{WorkplaceCloudRoleDisplayName} · {role}"
+                : _isSingleModelMode && role == CouncilRole.Builder
+                    ? _singleModel.DisplayName
+                    : _council[role].DisplayName;
         }
 
         private string GetCouncilStatusDescription()
@@ -459,11 +470,11 @@ namespace Malx_AI
             if (_isCloudModeEnabled)
             {
                 return CanUseCloudCouncil
-                    ? $"Cloud council · {WorkplaceCloudRoleDisplayName}"
-                    : "Cloud council unavailable · add an OpenRouter key or custom endpoint in Settings";
+                    ? $"Cloud {(_isSingleModelMode ? "agent" : "council")} · {WorkplaceCloudRoleDisplayName}"
+                    : $"Cloud {(_isSingleModelMode ? "agent" : "council")} unavailable · add an OpenRouter key or custom endpoint in Settings";
             }
 
-            return "Adaptive mode";
+            return _isSingleModelMode ? "Single agent mode" : "Adaptive mode";
         }
 
         private OpenRouterConnectionTestFailureReason ResolveCloudFailureReason(Exception ex)
@@ -510,7 +521,7 @@ namespace Malx_AI
             if (!CanUseCloudCouncil)
                 throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required for workplace cloud mode.");
 
-            string roleName = role.ToString();
+            string roleName = GetExecutionRoleDisplayName(role);
             string roleKey = roleName.ToLowerInvariant();
             LogActivity($"{roleName}: OpenRouter cloud execution started (streaming).");
 
@@ -555,7 +566,20 @@ namespace Malx_AI
                 if (!string.IsNullOrWhiteSpace(ghInstr))
                     cloudSystemPrompt += "\n\n" + ghInstr;
             }
-            if (role == CouncilRole.Builder)
+            if (role == CouncilRole.Builder && _isSingleModelMode)
+            {
+                string codebaseToolNames = _connectedWorkspace.CodebaseEditAccessEnabled
+                    ? ", read_file, search_codebase, list_files"
+                    : string.Empty;
+                string githubToolNames = _mcpConnectorService?.IsGitHubConnected == true
+                    ? ", github_* (repos/issues/PRs/files/Actions)"
+                    : string.Empty;
+                cloudSystemPrompt += "\n\n[SINGLE AGENT EXECUTION RULE]\n" +
+                    "You are the only agent for this request. Plan privately, use tools when they materially improve correctness, execute the task, verify the result, and return one final answer. " +
+                    "Available tools can include web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ". " +
+                    "Do not mention internal pipeline stages, role handoffs, or routing labels. Do not expose hidden reasoning or tool protocol text.";
+            }
+            else if (role == CouncilRole.Builder)
             {
                 string codebaseToolNames = _connectedWorkspace.CodebaseEditAccessEnabled
                     ? ", read_file, search_codebase, list_files"
@@ -583,7 +607,9 @@ namespace Malx_AI
             if (role == CouncilRole.Builder && activeRunContext?.IsWorkspaceTask == true)
             {
                 cloudSystemPrompt += "\n\n[CLOUD CODEBASE PATCH MODE]\n" +
-                    "Codebase Access is active. The Builder's final deliverable is a connected-workspace patch review, not a standalone Project Canvas artifact. " +
+                    (_isSingleModelMode
+                        ? "Codebase Access is active. The final deliverable is a connected-workspace patch review, not a standalone Project Canvas artifact. "
+                        : "Codebase Access is active. The Builder's final deliverable is a connected-workspace patch review, not a standalone Project Canvas artifact. ") +
                     "Your first visible output line must be [[AXIOM_CODEBASE_PATCH]]. " +
                     "Return only FILE/ACTION sections, SEARCH/REPLACE blocks or complete fenced file content inside those sections, [[END FILE]] markers, and [[END AXIOM_CODEBASE_PATCH]]. " +
                     "Every patch must actually CHANGE the file: a REPLACE block identical to its SEARCH block is invalid and will be rejected. " +
@@ -661,6 +687,16 @@ namespace Malx_AI
                     : context?.TaskType == CouncilTaskType.Coding
                         ? "code implementation"
                         : "direct user response";
+
+            if (_isSingleModelMode && role == CouncilRole.Builder)
+            {
+                return "You are Axiom's single agentic workplace model. Complete the user's request yourself from start to finish. " +
+                    "Plan privately, use any provided tool only when it helps inspect or verify real information, and return exactly one complete final deliverable. " +
+                    (context?.IsWorkspaceTask == true
+                        ? "For a connected-codebase change, the final response must be one valid [[AXIOM_CODEBASE_PATCH]] envelope and nothing else. "
+                        : "For coding or Canvas tasks, return complete executable source; for prose tasks, answer directly. ") +
+                    "Do not output role labels, a council handoff, hidden reasoning, tool text, or a change summary.";
+            }
 
             return role switch
             {
@@ -841,7 +877,9 @@ namespace Malx_AI
                     // the pre-tool draft as the final answer or entering a search/remake loop.
                     messages.Add(new OpenRouterMessage(
                         "user",
-                        "Use the tool result(s) above to produce the final Builder deliverable now. Do not call more tools. Do not repeat the tool payload. Integrate only claims supported by the sources/results, and state any remaining evidence gap plainly."));
+                        _isSingleModelMode
+                            ? "Use the tool result(s) above to produce the final answer now. Do not call more tools. Do not repeat the tool payload. Integrate only claims supported by the sources/results, and state any remaining evidence gap plainly."
+                            : "Use the tool result(s) above to produce the final Builder deliverable now. Do not call more tools. Do not repeat the tool payload. Integrate only claims supported by the sources/results, and state any remaining evidence gap plainly."));
                     forceNoToolsSynthesisAfterBuilderGrounding = true;
                     finalText = string.Empty;
                 }
@@ -865,7 +903,9 @@ namespace Malx_AI
                 {
                     messages.Add(new OpenRouterMessage(
                         "user",
-                        "Your previous Builder turn produced no deliverable or only a completion marker. Produce the final Builder deliverable now. Do not call tools. Do not output only 'BUILDER OUTPUT COMPLETE'."));
+                        _isSingleModelMode
+                            ? "Your previous turn produced no final answer. Produce the complete final answer now. Do not call tools and do not output a completion marker."
+                            : "Your previous Builder turn produced no deliverable or only a completion marker. Produce the final Builder deliverable now. Do not call tools. Do not output only 'BUILDER OUTPUT COMPLETE'."));
                 }
                 else if (role == CouncilRole.Critic)
                 {
@@ -1962,7 +2002,7 @@ namespace Malx_AI
             }
 
             turns.AddRange(_chatHistory
-                .Where(h => h.Role is "user" or "architect" or "builder" or "system")
+                .Where(h => h.Role is "user" or "agent" or "architect" or "builder" or "system")
                 .Where(h => !string.IsNullOrWhiteSpace(h.Content))
                 .TakeLast(10)
                 .Select(h => new ConversationSearchTurn(h.Role, h.Content)));
@@ -2375,6 +2415,10 @@ namespace Malx_AI
             _restoredIsolatedRunState = snapshot.IsRunStateIsolated;
             _isCloudModeEnabled = snapshot.CloudModeEnabled;
             _isHybridLocalCouncilSelected = snapshot.HybridLocalCouncilSelected;
+            _isSingleModelMode = snapshot.SingleModelMode;
+            _singleModelContextSize = snapshot.SingleModelContextSize <= 0
+                ? _contextSize
+                : Math.Clamp(snapshot.SingleModelContextSize, MinRoleContext, MaxRoleContext);
 
             ProjectCanvasEditor.Text = snapshot.ProjectCanvasText ?? "";
             SetCanvasHighlighting(DetectLanguage(ProjectCanvasEditor.Text));
@@ -2432,12 +2476,20 @@ namespace Malx_AI
                 _council[CouncilRole.Critic].Format = ParsePromptFormatByName(critic.Format);
             }
 
+            WorkplaceCouncilModelDto singleModel = snapshot.SingleModel ?? new WorkplaceCouncilModelDto();
+            _singleModel.ModelPath = string.IsNullOrWhiteSpace(singleModel.ModelPath) ? null : singleModel.ModelPath;
+            _singleModel.DisplayName = string.IsNullOrWhiteSpace(singleModel.DisplayName)
+                ? (IsQwen3Model(singleModel.ModelPath) ? ModelInferenceProfiles.DefaultQwen3DisplayName : "No model selected")
+                : singleModel.DisplayName;
+            _singleModel.Format = ParsePromptFormatByName(singleModel.Format);
+
             if (_autoOptimizeRoleContexts)
                 ApplyOptimizedRoleContexts();
             SyncContextControls();
 
             UpdateCouncilBlocks();
             UpdateContextInfo();
+            RefreshSingleModelModeUi();
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
             RefreshCodebaseAccessUi();
@@ -2452,6 +2504,7 @@ namespace Malx_AI
             _restoredIsolatedRunState = true;
             SessionMemoryStatusBlock.Text = "No prior run stored.";
             _contextSize = 8192;
+            _singleModelContextSize = 8192;
             _architectContextSize = 6144;
             _builderContextSize = 8192;
             _criticContextSize = 4096;
@@ -2460,6 +2513,7 @@ namespace Malx_AI
             SyncContextControls();
             _isWebSearchEnabled = true;
             _isCloudModeEnabled = false;
+            _isSingleModelMode = false;
             _connectedWorkspace = new ConnectedWorkspaceState();
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
@@ -2468,6 +2522,7 @@ namespace Malx_AI
             _lastCodebaseUndo = null;
             LoadOpenRouterKeyForWorkplace();
             RefreshWorkplaceCloudModeUi();
+            RefreshSingleModelModeUi();
             RefreshWorkplaceWebToggleUi();
             RefreshCodebaseAccessUi();
             UpdateContextInfo();
@@ -2620,6 +2675,7 @@ namespace Malx_AI
         private static readonly uint MinRoleContext = 2048;
         private static readonly uint MaxRoleContext = 32768;
         private bool _isProcessing;
+        public bool HasActiveWork => _isProcessing || _isStudySessionRunning;
         private bool _isProjectCanvasExpanded = true;
         private bool _isProjectCanvasAutoCollapsed;
         private bool _isProjectCanvasExplicitlyExpandedInCompactLayout;
@@ -2779,6 +2835,8 @@ namespace Malx_AI
         // self-hosted custom endpoint ("Kestral 1"). Independent of _isCloudModeEnabled itself,
         // which just means "not running the in-process local GGUF path."
         private bool _isHybridLocalCouncilSelected;
+        private bool _isSingleModelMode;
+        private uint _singleModelContextSize = 8192;
 
         private static readonly HashSet<string> NotificationRoles = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -3003,6 +3061,7 @@ namespace Malx_AI
             BuilderContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
             CriticContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
             LoadPersistedSession();
+            RefreshSingleModelModeUi();
             LoadAdvancedState();
             UpdateCriticSensitivityBadge();
             UpdatePerformanceAggregate();
@@ -3676,7 +3735,7 @@ namespace Malx_AI
         private int EstimateWorkplaceContextTokens()
         {
             int historyTokens = _chatHistory
-                .Where(h => h.Role is "user" or "architect" or "builder" or "critic" or "builder-patch" or "builder-revision")
+                .Where(h => h.Role is "user" or "agent" or "architect" or "builder" or "critic" or "builder-patch" or "builder-revision")
                 .Sum(h => EstimateTokenCount(h.Content));
 
             int currentInputTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
@@ -4179,6 +4238,12 @@ namespace Malx_AI
         private static string ComposeCouncilSystemPrompt(string systemPrompt, CouncilRole role, CouncilRunContext? context, int documentCharBudget)
         {
             string prompt = (systemPrompt ?? string.Empty).Trim();
+            string capabilityInstruction = AxiomCapabilityRegistry.Shared.BuildSystemInstruction(
+                context?.UserPrompt ?? string.Empty,
+                "Workplace / Council or Single Model");
+            if (!string.IsNullOrWhiteSpace(capabilityInstruction))
+                prompt = string.IsNullOrWhiteSpace(prompt) ? capabilityInstruction : prompt + "\n\n" + capabilityInstruction;
+
             if (context == null || string.IsNullOrWhiteSpace(context.DocumentContent))
                 return prompt;
 
@@ -4393,7 +4458,7 @@ namespace Malx_AI
         private void StopMessage_Click(object sender, RoutedEventArgs e)
         {
             RelayStatusBlock.Text = "Relay: Stopping...";
-            PublishCouncilPetStatus("Council", "Stopping the run.");
+            PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "Stopping the run.");
             StopButton.IsEnabled = false;
             _cancellationTokenSource?.Cancel();
         }
@@ -7178,8 +7243,11 @@ namespace Malx_AI
                 RefreshWorkplaceCloudModeUi();
                 UpdateCouncilBlocks();
                 UpdateContextInfo();
-                AppendChat("system", "Workplace cloud mode disabled. Council returned to local models.");
+                AppendChat("system", _isSingleModelMode
+                    ? "Workplace cloud mode disabled. The agent returned to the selected local model."
+                    : "Workplace cloud mode disabled. Council returned to local models.");
                 SavePersistedSession();
+                RefreshSingleModelModeUi();
                 return;
             }
 
@@ -7198,7 +7266,7 @@ namespace Malx_AI
                 cloudModeButton.Opacity = 1.0;
                 cloudModeButton.ToolTip = "Validating workplace cloud mode...";
             }
-            RelayStatusBlock.Text = "Relay: Validating cloud council...";
+            RelayStatusBlock.Text = _isSingleModelMode ? "Agent: Validating cloud model..." : "Relay: Validating cloud council...";
             try
             {
                 bool available = await _openRouterChatService.ValidateModelAvailabilityAsync(OpenRouterChatService.WorkplaceCouncilDefaultModelId);
@@ -7212,9 +7280,14 @@ namespace Malx_AI
                 RefreshWorkplaceCloudModeUi();
                 UpdateCouncilBlocks();
                 UpdateContextInfo();
-                AppendChat("system", available
-                    ? $"Workplace cloud mode enabled. Architect, Builder, and Critic now use {OpenRouterChatService.WorkplaceCouncilDisplayLabel}."
-                    : $"Workplace cloud mode enabled. {OpenRouterChatService.WorkplaceCouncilDisplayLabel} is currently unstable, so cloud runs will automatically retry and fall back if OpenRouter providers are temporarily unavailable.");
+                AppendChat("system", _isSingleModelMode
+                    ? available
+                        ? $"Workplace cloud mode enabled. The single agent now uses {OpenRouterChatService.WorkplaceCouncilDisplayLabel}."
+                        : $"Workplace cloud mode enabled. {OpenRouterChatService.WorkplaceCouncilDisplayLabel} is currently unstable, so agent runs will retry when the provider is temporarily unavailable."
+                    : available
+                        ? $"Workplace cloud mode enabled. Architect, Builder, and Critic now use {OpenRouterChatService.WorkplaceCouncilDisplayLabel}."
+                        : $"Workplace cloud mode enabled. {OpenRouterChatService.WorkplaceCouncilDisplayLabel} is currently unstable, so cloud runs will automatically retry and fall back if OpenRouter providers are temporarily unavailable.");
+                RefreshSingleModelModeUi();
                 SavePersistedSession();
             }
             catch (Exception ex)
@@ -8983,11 +9056,13 @@ namespace Malx_AI
             string criticLabel = activeRole == CouncilRole.Critic ? "Running" : criticDone ? $"Done {FormatStageDuration(_lastCriticDuration)}" : "Idle";
 
             ArchitectStageText.Text = $"Architect · {architectLabel}";
-            BuilderStageText.Text = $"Builder · {builderLabel}";
+            BuilderStageText.Text = _isSingleModelMode ? $"Agent · {builderLabel}" : $"Builder · {builderLabel}";
             CriticStageText.Text = $"Critic · {criticLabel}";
             SetBuilderGenerationStatusVisible(activeRole == CouncilRole.Builder);
 
-            if (activeRole == CouncilRole.Architect)
+            if (_isSingleModelMode && activeRole == CouncilRole.Builder)
+                PublishCouncilPetStatus("Agent", _canvasArtifact.SupportsPreview ? "Updating Project Canvas." : "Working on the answer.");
+            else if (activeRole == CouncilRole.Architect)
                 PublishCouncilPetStatus("Architect", "Planning the handoff.");
             else if (activeRole == CouncilRole.Builder)
                 PublishCouncilPetStatus("Builder", _canvasArtifact.SupportsPreview ? "Updating Project Canvas." : "Building the answer.");
@@ -11738,12 +11813,14 @@ namespace Malx_AI
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(_council[CouncilRole.Architect].ModelPath) &&
-                string.IsNullOrWhiteSpace(_council[CouncilRole.Builder].ModelPath) &&
-                string.IsNullOrWhiteSpace(_council[CouncilRole.Critic].ModelPath) &&
-                !_isCloudModeEnabled)
+            bool hasRequiredLocalModel = _isSingleModelMode
+                ? !string.IsNullOrWhiteSpace(_singleModel.ModelPath)
+                : !string.IsNullOrWhiteSpace(_council[CouncilRole.Architect].ModelPath)
+                  || !string.IsNullOrWhiteSpace(_council[CouncilRole.Builder].ModelPath)
+                  || !string.IsNullOrWhiteSpace(_council[CouncilRole.Critic].ModelPath);
+            if (!hasRequiredLocalModel && !_isCloudModeEnabled)
             {
-                AppendChat("error", "Load at least one council model.");
+                AppendChat("error", _isSingleModelMode ? "Load a single model first." : "Load at least one council model.");
                 return;
             }
 
@@ -12092,6 +12169,22 @@ namespace Malx_AI
                 string sharedVocabularySystemNote = "\n[SHARED VOCABULARY]\nUse these terms exactly as named by the user. Do not rename identifiers unless explicitly instructed.\n" + sharedVocabularySection;
                 string webSearchSystemNote = BuildCouncilWebSystemNote(contextState.WebContext, runContext.WebGroundingRequired);
                 string builderWebPauseSystemNote = BuildBuilderWebPauseSystemNote();
+
+                if (_isSingleModelMode)
+                {
+                    await ExecuteSingleModelRunAsync(
+                        runContext,
+                        contextState,
+                        knowledgePacket,
+                        finalChunks.Count > 0,
+                        sharedVocabularySection,
+                        token,
+                        activeRunIndex,
+                        refinementPass,
+                        previousFinalForDiff,
+                        refinementParentId);
+                    return;
+                }
                 // Base-state vault DISABLED: it pre-loaded shared content into each role's KV cache
                 // (via LoadState) but the per-role token-budget check (ExecuteCouncilRoleAsync) only
                 // counts system+payload, NOT those already-resident base-state tokens. The real
@@ -14321,7 +14414,7 @@ namespace Malx_AI
             catch (OperationCanceledException)
             {
                 RelayStatusBlock.Text = "Relay: Stopped";
-                PublishCouncilPetStatus("Council", "Run stopped.");
+                PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "Run stopped.");
                 UpdateStageIndicator(null, false, false, false);
                 PipelineProgressBlock.Text = string.Empty;
                 _lastCancelledRunPrompt = string.IsNullOrWhiteSpace(_submittedRunPrompt)
@@ -14336,13 +14429,13 @@ namespace Malx_AI
                 _lastRoleGeneratedTokenCounts.Clear();
                 _pipelineTokenCount = 0;
                 ResetWorkplaceTokenUsageIndicator();
-                LogActivity("Council relay stopped by user.");
-                AppendChat("system", "Relay stopped by user.");
+                LogActivity(_isSingleModelMode ? "Single agent run stopped by user." : "Council relay stopped by user.");
+                AppendChat("system", _isSingleModelMode ? "Agent run stopped by user." : "Relay stopped by user.");
             }
             catch (OpenRouterKeyExhaustedException keyExhausted)
             {
                 RelayStatusBlock.Text = "Relay: API key out of usage";
-                PublishCouncilPetStatus("Council", "API key out of usage.");
+                PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "API key out of usage.");
                 UpdateStageIndicator(null, false, false, false);
                 LogActivity($"Relay stopped: {keyExhausted.Message}");
                 await BackendLogService.LogErrorAsync("Workplace.Relay.KeyExhausted", keyExhausted);
@@ -14354,7 +14447,7 @@ namespace Malx_AI
             catch (Exception ex)
             {
                 RelayStatusBlock.Text = "Relay: Error";
-                PublishCouncilPetStatus("Council", "Something needs attention.");
+                PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "Something needs attention.");
                 UpdateStageIndicator(null, false, false, false);
                 LogActivity($"Relay error: {ex.Message}");
                 await BackendLogService.LogErrorAsync("Workplace.Relay", ex);
@@ -14365,7 +14458,7 @@ namespace Malx_AI
                 {
                     _ = ShowNonIntrusiveErrorAsync($"Pipeline error: {ex.Message}");
                 }
-                CouncilRunFinished?.Invoke("Council run failed. " + GetCompactNotificationError(ex.Message));
+                CouncilRunFinished?.Invoke((_isSingleModelMode ? "Agent run failed. " : "Council run failed. ") + GetCompactNotificationError(ex.Message));
             }
             finally
             {
@@ -16189,6 +16282,14 @@ namespace Malx_AI
                 return Math.Max(cloudCtx, MinRoleContext);
             }
 
+            if (_isSingleModelMode && role == CouncilRole.Builder)
+            {
+                uint singleContext = _singleModelContextSize;
+                if (_activeTaskComplexity == TaskComplexity.Complex)
+                    singleContext = Math.Min(MaxRoleContext, singleContext + 512);
+                return Math.Clamp(singleContext, MinRoleContext, MaxRoleContext);
+            }
+
             uint configured = role switch
             {
                 CouncilRole.Architect => _architectContextSize,
@@ -16275,7 +16376,7 @@ namespace Malx_AI
             string webDisabledNote = _isWebSearchEnabled
                 ? string.Empty
                 : "Web search is currently disabled by the user — do not attempt web lookups; state the limitation if current information would change the answer.\n";
-            return
+            string note =
                 "\n\nTOOLS AVAILABLE:\n" +
                 "You can call real tools directly when you need a current/source-backed fact, definition, explanation, comparison, number, documentation detail, or current information. Do NOT guess and do NOT fabricate numbers or source-backed facts.\n" +
                 "Available tools: " + webSearchEntry +
@@ -16295,6 +16396,10 @@ namespace Malx_AI
                 "NEVER write [PAUSE: ...] or [RESULT: ...] lines, raw tool commands, or Python code in your final visible answer.\n" +
                 "For prompts like \"what is X\" or \"what does X do to Y\", call web_search when X/Y are specific, current, obscure, technical, medical/legal/financial, or likely to have changed.\n" +
                 "Do NOT call tools for things you already know with certainty.";
+            return _isSingleModelMode
+                ? note.Replace("prior council work", "prior workplace work", StringComparison.OrdinalIgnoreCase)
+                    .Replace("current role payload", "current request context", StringComparison.OrdinalIgnoreCase)
+                : note;
         }
 
         // Instance wrapper: appends the codebase read-tools addendum only while Codebase
@@ -16428,7 +16533,11 @@ namespace Malx_AI
             bool workspacePatchTask = _connectedWorkspace.CodebaseEditAccessEnabled
                 && (_activeCouncilRunContext ?? _lastRunContext)?.IsWorkspaceTask == true;
 
-            string roleRules = role switch
+            string roleRules = _isSingleModelMode && role == CouncilRole.Builder
+                ? workspacePatchTask
+                    ? "You are the only agent. Codebase patch mode. Output exactly one complete [[AXIOM_CODEBASE_PATCH]] envelope and nothing else. Use a full-file ACTION: replace when exact edit anchors are unavailable."
+                    : "You are the only agent. Complete the latest request directly. Plan privately, use one tool pause only if required, and output only the final answer or complete source. Do not mention roles or handoffs."
+                : role switch
             {
                 CouncilRole.Architect =>
                     "ROLE: Architect. Output only a short numbered plan with 3-5 concrete steps. Do not write code. Do not repeat the user request, system text, labels, or role description.",
@@ -16462,7 +16571,7 @@ namespace Malx_AI
                 + (string.IsNullOrWhiteSpace(compactContext) ? string.Empty : "\n\nTiny-model context summary:\n" + compactContext)).Trim();
         }
 
-        private static string BuildSubOneBCouncilPayload(CouncilRole role, string userPayload, bool isWorkspaceTask = false)
+        private string BuildSubOneBCouncilPayload(CouncilRole role, string userPayload, bool isWorkspaceTask = false)
         {
             // The tool capability card only helps a model that routes tools — which a sub-1B
             // model never does (its preflight is deterministic-only). Left in the payload, the
@@ -16479,7 +16588,8 @@ namespace Malx_AI
                         + "Do not output standalone HTML/code, prose, a plan, or explanations.";
                 }
 
-                return payload + "\n\nFINAL INSTRUCTION: Produce only the " + role + " output now. Do not restate any instructions.";
+                string outputName = _isSingleModelMode && role == CouncilRole.Builder ? "final answer" : role + " output";
+                return payload + "\n\nFINAL INSTRUCTION: Produce only the " + outputName + " now. Do not restate any instructions.";
             }
 
             // Workspace patch tasks: the CONNECTED CODEBASE CONTEXT block (the current file content
@@ -16691,7 +16801,7 @@ namespace Malx_AI
                 return ReasoningParser.Parse(userPayload);
             }
 
-            if (string.IsNullOrWhiteSpace(_council[role].ModelPath))
+            if (!_isSingleModelMode && string.IsNullOrWhiteSpace(_council[role].ModelPath))
             {
                 LogActivity($"{role}: no dedicated model loaded — borrowing '{config.DisplayName}' for this stage.");
             }
@@ -16742,7 +16852,7 @@ namespace Malx_AI
 
             if (isGemma4)
             {
-                string gemmaRoleName = role.ToString();
+                string gemmaRoleName = GetExecutionRoleDisplayName(role);
                 LogActivity($"{gemmaRoleName}: Gemma 4 local CLI mode.");
 
                 if (role == CouncilRole.Builder && !internalInferenceStep)
@@ -16804,7 +16914,7 @@ namespace Malx_AI
             // later is a no-op — Apply is idempotent).
             systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
 
-            string roleName = role.ToString();
+            string roleName = GetExecutionRoleDisplayName(role);
             LogActivity($"{roleName}: Loading model '{config.DisplayName}'...");
 
             // Live streaming card: local council roles previously generated in total silence —
@@ -17611,6 +17721,9 @@ namespace Malx_AI
         // one or two models were loaded. Borrowing is cheap: the model cache is keyed by path.
         private CouncilModelConfig GetEffectiveRoleConfig(CouncilRole role)
         {
+            if (_isSingleModelMode && role == CouncilRole.Builder)
+                return _singleModel;
+
             CouncilModelConfig own = _council[role];
             if (!string.IsNullOrWhiteSpace(own.ModelPath))
                 return own;
@@ -18698,7 +18811,7 @@ namespace Malx_AI
         }
 
         private static bool IsCouncilDisplayRole(string role) =>
-            role is "architect" or "builder" or "critic" or "critic-final";
+            role is "agent" or "architect" or "builder" or "critic" or "critic-final";
 
         private void AppendChat(string role, string content)
         {
@@ -18707,6 +18820,9 @@ namespace Malx_AI
                 _ = Dispatcher.InvokeAsync(() => AppendChat(role, content), DispatcherPriority.Background);
                 return;
             }
+
+            if (_isSingleModelMode && string.Equals(role, "builder", StringComparison.OrdinalIgnoreCase))
+                role = "agent";
 
             if (IsCouncilDisplayRole(role))
                 content = SanitizeCouncilDisplayText(content);
@@ -18922,6 +19038,16 @@ namespace Malx_AI
                 ProjectCanvasText = ProjectCanvasEditor.Text,
                 CloudModeEnabled = _isCloudModeEnabled,
                 HybridLocalCouncilSelected = _isHybridLocalCouncilSelected,
+                SingleModelMode = _isSingleModelMode,
+                SingleModelContextSize = _singleModelContextSize,
+                SingleModel = new WorkplaceCouncilModelDto
+                {
+                    ModelPath = _singleModel.ModelPath ?? "",
+                    DisplayName = _singleModel.DisplayName,
+                    Format = _singleModel.Format.ToString(),
+                    UseCloud = _isCloudModeEnabled,
+                    CloudModelId = GetEffectiveCouncilModelId()
+                },
                 GlobalContextSize = _contextSize,
                 ArchitectContextSize = _architectContextSize,
                 BuilderContextSize = _builderContextSize,
@@ -19144,9 +19270,9 @@ namespace Malx_AI
             _performanceLog.Insert(0, new ModelPerformanceLogEntry
             {
                 Timestamp = DateTime.Now,
-                ArchitectModel = _council[CouncilRole.Architect].DisplayName,
-                BuilderModel = _council[CouncilRole.Builder].DisplayName,
-                CriticModel = _council[CouncilRole.Critic].DisplayName,
+                ArchitectModel = _isSingleModelMode ? "Single Agent" : _council[CouncilRole.Architect].DisplayName,
+                BuilderModel = _isSingleModelMode ? GetCouncilDisplayName(CouncilRole.Builder) : _council[CouncilRole.Builder].DisplayName,
+                CriticModel = _isSingleModelMode ? "Not used" : _council[CouncilRole.Critic].DisplayName,
                 ArchitectTokens = EstimateTokenCount(context.ArchitectOutput),
                 BuilderTokens = EstimateTokenCount(context.BuilderOutput),
                 CriticTokens = EstimateTokenCount(context.CriticReview),
@@ -19173,7 +19299,9 @@ namespace Malx_AI
             double avgFindings = _performanceLog.Average(p => p.CriticFindingCountBeforeRevision);
             double revisionRate = _performanceLog.Count(p => p.RevisionTriggered) * 100d / _performanceLog.Count;
             string topCombo = ChatAdvancedStatePersistence.GetMostFrequentModelCombo(_performanceLog);
-            PerformanceAggregateBlock.Text = $"Runs: {_performanceLog.Count} | Avg Critic findings: {avgFindings:F2} | Revision rate: {revisionRate:F1}% | Most common models: {topCombo}";
+            PerformanceAggregateBlock.Text = _isSingleModelMode
+                ? $"Runs: {_performanceLog.Count} | Avg verification findings: {avgFindings:F2} | Retry rate: {revisionRate:F1}% | Most common models: {topCombo}"
+                : $"Runs: {_performanceLog.Count} | Avg Critic findings: {avgFindings:F2} | Revision rate: {revisionRate:F1}% | Most common models: {topCombo}";
         }
 
         private void CriticSensitivityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -19204,14 +19332,19 @@ namespace Malx_AI
                 return;
             }
 
-            TaskHistoryDetailBlock.Text =
-                $"Prompt: {_activeHistorySelection.UserPrompt}\n\n" +
-                $"Objective: {_activeHistorySelection.Objective}\n\n" +
-                $"Task Type: {_activeHistorySelection.TaskType} | Complexity: {_activeHistorySelection.Complexity}\n\n" +
-                $"Architect:\n{_activeHistorySelection.ArchitectOutput}\n\n" +
-                $"Builder:\n{_activeHistorySelection.BuilderOutput}\n\n" +
-                $"Critic:\n{_activeHistorySelection.CriticFindings}\n\n" +
-                $"Final:\n{_activeHistorySelection.FinalResult}";
+            TaskHistoryDetailBlock.Text = _isSingleModelMode
+                ? $"Prompt: {_activeHistorySelection.UserPrompt}\n\n" +
+                  $"Objective: {_activeHistorySelection.Objective}\n\n" +
+                  $"Task Type: {_activeHistorySelection.TaskType} | Complexity: {_activeHistorySelection.Complexity}\n\n" +
+                  $"Agent:\n{_activeHistorySelection.BuilderOutput}\n\n" +
+                  $"Final:\n{_activeHistorySelection.FinalResult}"
+                : $"Prompt: {_activeHistorySelection.UserPrompt}\n\n" +
+                  $"Objective: {_activeHistorySelection.Objective}\n\n" +
+                  $"Task Type: {_activeHistorySelection.TaskType} | Complexity: {_activeHistorySelection.Complexity}\n\n" +
+                  $"Architect:\n{_activeHistorySelection.ArchitectOutput}\n\n" +
+                  $"Builder:\n{_activeHistorySelection.BuilderOutput}\n\n" +
+                  $"Critic:\n{_activeHistorySelection.CriticFindings}\n\n" +
+                  $"Final:\n{_activeHistorySelection.FinalResult}";
         }
 
         private void ReplayTaskHistory_Click(object sender, RoutedEventArgs e)
@@ -20425,7 +20558,9 @@ namespace Malx_AI
                 return "";
 
             var recentTurns = _chatHistory
-                .Where(h => h.Role is "user" or "architect" or "builder" or "system")
+                .Where(h => _isSingleModelMode
+                    ? h.Role is "user" or "agent" or "system"
+                    : h.Role is "user" or "architect" or "builder" or "system")
                 .TakeLast(maxTurns * 2)
                 .ToList();
 
@@ -20441,6 +20576,7 @@ namespace Malx_AI
                 string roleLabel = role switch
                 {
                     "user" => "User",
+                    "agent" => "Agent",
                     "architect" => "Architect",
                     "builder" => "Builder",
                     "system" => "Context Summary",
@@ -20453,7 +20589,9 @@ namespace Malx_AI
             }
 
             sb.AppendLine("[END RECENT CONVERSATION CONTEXT]");
-            sb.AppendLine("Your plan must address the LATEST user message above. Do not repeat or continue a plan from a prior turn unless the user explicitly asks.");
+            sb.AppendLine(_isSingleModelMode
+                ? "Answer the LATEST user message above. Use earlier turns only for relevant continuity."
+                : "Your plan must address the LATEST user message above. Do not repeat or continue a plan from a prior turn unless the user explicitly asks.");
             return sb.ToString();
         }
 

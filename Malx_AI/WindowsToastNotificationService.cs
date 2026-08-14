@@ -77,6 +77,33 @@ namespace Malx_AI
             });
         }
 
+        public static void ShowUpdateAvailableIfInactive(string versionTag)
+        {
+            if (!_registered || string.IsNullOrWhiteSpace(versionTag))
+                return;
+
+            Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                if (Application.Current.MainWindow is not Window window || IsForegroundWindow(window))
+                    return;
+
+                try
+                {
+                    AppNotification notification = new AppNotificationBuilder()
+                        .AddArgument("action", "focus-update")
+                        .AddText($"Axiom {versionTag} is available")
+                        .AddText("Open Axiom to download and install the update.")
+                        .BuildNotification();
+                    AppNotificationManager.Default.Show(notification);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Update notification failed: {ex.Message}");
+                    _ = BackendLogService.LogErrorAsync("WindowsToast.Update", ex);
+                }
+            });
+        }
+
         internal static bool IsForegroundWindow(Window window)
         {
             if (window.WindowState == WindowState.Minimized || !window.IsVisible || !window.IsActive)
@@ -95,6 +122,12 @@ namespace Malx_AI
         {
             if (Application.Current?.MainWindow is not Window window)
                 return;
+
+            if (window is MainWindow mainWindow)
+            {
+                mainWindow.RestoreFromNotification();
+                return;
+            }
 
             if (!window.IsVisible)
                 window.Show();

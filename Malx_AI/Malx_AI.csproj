@@ -11,15 +11,18 @@
     <Prefer32Bit>false</Prefer32Bit>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- Required for PublishSingleFile with Windows App SDK (embedded resources.pri). -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <WebView2EnableCsWinRTProjection>false</WebView2EnableCsWinRTProjection>
     <!-- Source of truth for the GitHub release update check: bump this for every release
          so it matches the release tag (e.g. tag v1.4.0 -> Version 1.4.0). -->
-    <Version>1.6.0</Version>
-    <ApplicationIcon>Assets\Malx_Logo.ico</ApplicationIcon>
+    <Version>1.7.0</Version>
+    <ApplicationIcon>Assets\AxiomLogo.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AvalonEdit" Version="6.3.1" />
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="LLamaSharp" Version="0.26.0" />
     <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.26.0" />
@@ -28,6 +31,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260508005" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
     <PackageReference Include="Python.Included" Version="3.13.1" />
+    <PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
     <PackageReference Include="System.Data.SQLite" Version="1.0.118.0" />
     <PackageReference Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
   </ItemGroup>
@@ -57,13 +61,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Remove="Assets\Malx_Logo.ico" />
-    <None Remove="Assets\Malx_Logo2.png" />
+    <None Remove="Assets\AxiomLogo.ico" />
+    <None Remove="Assets\AxiomLogo.png" />
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\Malx_Logo.ico" />
-    <Content Include="Assets\Malx_Logo2.png">
+    <Resource Include="Assets\AxiomLogo.ico" />
+    <Content Include="Assets\AxiomLogo.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
@@ -73,14 +77,117 @@
     <Resource Include="Assets\Logo.cs" />
   </ItemGroup>
 
-  <!-- Never ship developer/user runtime data with published zips. -->
+  <!-- Never ship developer/user runtime data with published packages. -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);ChatHistory\**;**/axiom_data.db*;**/mcp_connector_state*;**/*_client_secret.txt;**/*_client_id.txt;**/google_oauth*;**/todoist_client*;**/github_oauth*;**/workplace_session.json;**/chat_*.json;**/chats_index.json*;**/*_advanced_state.json*;**/chat_workspace_state.json*;**/smart_compaction_settings.json*;**/WebView2\**</DefaultItemExcludes>
+  </PropertyGroup>
+
   <ItemGroup>
     <Content Update="ChatHistory\**\*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
-    <Content Update="**/axiom_data.db*" CopyToPublishDirectory="Never" />
-    <Content Update="**/mcp_connector_state*" CopyToPublishDirectory="Never" />
-    <None Update="ChatHistory\**\*" CopyToPublishDirectory="Never" />
-    <None Update="**/axiom_data.db*" CopyToPublishDirectory="Never" />
-    <None Update="**/mcp_connector_state*" CopyToPublishDirectory="Never" />
+    <Content Update="**/axiom_data.db*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/mcp_connector_state*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/*_client_secret.txt" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/*_client_id.txt" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/workplace_session.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/chat_*.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/chats_index.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/*_advanced_state.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/chat_workspace_state.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/smart_compaction_settings.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <Content Update="**/WebView2\**\*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="ChatHistory\**\*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/axiom_data.db*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/mcp_connector_state*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/*_client_secret.txt" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/*_client_id.txt" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/workplace_session.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/chat_*.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/chats_index.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/*_advanced_state.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/chat_workspace_state.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/smart_compaction_settings.json*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
+    <None Update="**/WebView2\**\*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
   </ItemGroup>
+
+  <!-- Defense-in-depth: delete residual personal runtime files from the publish folder. -->
+  <Target Name="ScrubUserDataFromPublish" AfterTargets="Publish">
+    <PropertyGroup>
+      <_ScrubPublishDir>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_ScrubPublishDir>
+    </PropertyGroup>
+
+    <ItemGroup Condition="Exists('$(_ScrubPublishDir)')">
+      <_UserDataDirs Include="$(_ScrubPublishDir)ChatHistory" />
+      <_UserDataDirs Include="$(_ScrubPublishDir)WebView2" />
+      <_UserDataDirs Include="$(_ScrubPublishDir)logs" />
+      <_UserDataDirs Include="$(_ScrubPublishDir)Models" />
+      <_UserDataDirs Include="$(_ScrubPublishDir)KvStates" />
+      <_UserDataDirs Include="$(_ScrubPublishDir)CouncilKvStates" />
+      <_UserDataDirs Include="$(_ScrubPublishDir)WorkplaceExports" />
+
+      <_UserDataFiles Include="$(_ScrubPublishDir)axiom_data.db*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)mcp_connector_state*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)*_client_secret.txt" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)*_client_id.txt" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)google_oauth*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)todoist_client*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)github_oauth*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)workplace_session.json*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)chat_*.json*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)chats_index.json*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)*_advanced_state.json*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)chat_workspace_state.json*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)smart_compaction_settings.json*" />
+      <_UserDataFiles Include="$(_ScrubPublishDir)**\*.dpapi" />
+    </ItemGroup>
+
+    <Delete Files="@(_UserDataFiles)" TreatErrorsAsWarnings="true" />
+    <RemoveDir Directories="@(_UserDataDirs)" />
+
+    <!-- Percent signs must be escaped as %25 so MSBuild does not treat them as metadata. -->
+    <ItemGroup>
+      <_DataLocationLines Include="Axiom does not store chats, settings, API keys, Workplace sessions, or connector tokens inside this install folder." />
+      <_DataLocationLines Include="On first launch each user gets an empty profile under:" />
+      <_DataLocationLines Include="  %25LOCALAPPDATA%25\Axiom" />
+      <_DataLocationLines Include="Debug or Visual Studio runs use a separate profile:" />
+      <_DataLocationLines Include="  %25LOCALAPPDATA%25\Axiom-Dev" />
+      <_DataLocationLines Include="To smoke-test this package without your existing release profile, run RUN-CLEAN-SMOKE-TEST.cmd" />
+
+      <_SmokeCmdLines Include="@echo off" />
+      <_SmokeCmdLines Include="setlocal" />
+      <_SmokeCmdLines Include="rem Launches Axiom with an empty temporary profile so this machine LocalAppData Axiom data is not used." />
+      <_SmokeCmdLines Include="set &quot;AXIOM_DATA_DIR=%25TEMP%25\Axiom-CleanSmoke-%25RANDOM%25%25RANDOM%25&quot;" />
+      <_SmokeCmdLines Include="mkdir &quot;%25AXIOM_DATA_DIR%25&quot; &gt;nul 2&gt;&amp;1" />
+      <_SmokeCmdLines Include="echo Using clean profile: %25AXIOM_DATA_DIR%25" />
+      <_SmokeCmdLines Include="start &quot;&quot; &quot;%25~dp0Malx_AI.exe&quot;" />
+      <_SmokeCmdLines Include="endlocal" />
+    </ItemGroup>
+
+    <WriteLinesToFile
+      File="$(_ScrubPublishDir)DATA_LOCATION.txt"
+      Lines="@(_DataLocationLines)"
+      Overwrite="true"
+      Encoding="UTF-8" />
+    <WriteLinesToFile
+      File="$(_ScrubPublishDir)RUN-CLEAN-SMOKE-TEST.cmd"
+      Lines="@(_SmokeCmdLines)"
+      Overwrite="true"
+      Encoding="UTF-8" />
+
+    <!-- The updater only replaces files listed here. This prevents stale-file guessing and keeps
+         any unlisted local/user files out of the update transaction. -->
+    <ItemGroup>
+      <_PublishedUpdateFiles Include="$(_ScrubPublishDir)**\*"
+                             Exclude="$(_ScrubPublishDir)AXIOM_UPDATE_MANIFEST.txt" />
+      <_UpdateManifestLines Include="@(_PublishedUpdateFiles->'%(RecursiveDir)%(Filename)%(Extension)')" />
+      <_UpdateManifestLines Include="AXIOM_UPDATE_MANIFEST.txt" />
+    </ItemGroup>
+    <WriteLinesToFile
+      File="$(_ScrubPublishDir)AXIOM_UPDATE_MANIFEST.txt"
+      Lines="@(_UpdateManifestLines)"
+      Overwrite="true"
+      Encoding="UTF-8" />
+
+    <Message Importance="high" Text="Scrubbed personal runtime data from publish folder: $(_ScrubPublishDir)" />
+  </Target>
 
 </Project>

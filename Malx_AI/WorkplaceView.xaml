@@ -40,11 +40,18 @@
         <Border Grid.Column="0" Background="{StaticResource NotebookSurfaceBrush}" BorderThickness="0,0,1,0" BorderBrush="{StaticResource NotebookBorderBrush}">
             <ScrollViewer x:Name="CouncilSidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0" PreviewMouseWheel="SidebarScrollViewer_PreviewMouseWheel">
                 <StackPanel Margin="16,16,16,20">
-                    <TextBlock Text="Workplace Council" FontSize="15" FontWeight="SemiBold"/>
-                    <TextBlock Text="Configure up to three relay models" FontSize="11" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                    <DockPanel>
+                        <TextBlock x:Name="WorkplaceModeTitleText" Text="Workplace Council" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Button x:Name="SingleModelModeToggleButton" Content="Single Model: Off" Click="SingleModelModeToggleButton_Click"
+                                DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Padding="8,4"
+                                ToolTip="Switch between Council mode (Architect/Builder/Critic) and Single Model mode (one agent)"
+                                VerticalAlignment="Center" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <TextBlock x:Name="CouncilSubtitleText" Text="Configure models for Architect/Builder/Critic" FontSize="11" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                    <TextBlock x:Name="SingleModelSubtitleText" Text="One agentic model handles the whole workplace chat" FontSize="11" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,4,0,0" Visibility="Collapsed"/>
 
                     <!-- Architect -->
-                    <Border Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,16,0,0">
+                    <Border x:Name="ArchitectModelCard" Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,16,0,0">
                         <StackPanel>
                             <TextBlock Text="Architect" FontSize="11" FontWeight="SemiBold"/>
                             <TextBlock x:Name="ArchitectModelBlock" Text="No model selected" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
@@ -96,9 +103,32 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,12,0,0">
+                    <!-- Single Model -->
+                    <Border x:Name="SingleModelModelCard" Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,16,0,0" Visibility="Collapsed">
                         <StackPanel>
-                            <TextBlock Text="Role Context Controls" FontSize="11" FontWeight="SemiBold"/>
+                            <TextBlock Text="Single Model" FontSize="11" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="SingleModelModelBlock" Text="No model selected" FontSize="10" Foreground="{StaticResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
+                            <ComboBox x:Name="SingleModelFormatCombo" SelectedIndex="0" Height="28" Margin="0,0,0,8">
+                                <ComboBoxItem Content="ChatML"/>
+                                <ComboBoxItem Content="Llama 3"/>
+                                <ComboBoxItem Content="Alpaca"/>
+                                <ComboBoxItem Content="Gemma 4"/>
+                            </ComboBox>
+                            <Button x:Name="LoadSingleModelButton" Content="Load Single Model" Click="LoadSingleModel_Click" Height="32" Style="{StaticResource SubtleButtonStyle}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="SingleModelContextCard" Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,12,0,0" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock Text="Model Context" FontSize="11" FontWeight="SemiBold"/>
+                            <Slider x:Name="SingleModelContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="SingleModelContextSlider_ValueChanged"/>
+                            <TextBlock x:Name="SingleModelContextValueText" Text="8192 tokens" FontSize="10" Foreground="{StaticResource PrimaryAccentBrush}" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="CouncilContextControlsCard" Background="{StaticResource NotebookBackgroundBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock x:Name="CouncilContextControlsTitle" Text="Role Context Controls" FontSize="11" FontWeight="SemiBold"/>
                             <CheckBox x:Name="AutoOptimizeContextToggle" Content="Auto optimize (model-aware)" IsChecked="True" Margin="0,8,0,8" Checked="AutoOptimizeContextToggle_Changed" Unchecked="AutoOptimizeContextToggle_Changed"/>
 
                             <!-- Cloud mode info panel (visible only when cloud council is active) -->
@@ -385,7 +415,7 @@
                                     <RowDefinition Height="26"/>
                                     <RowDefinition Height="0"/>
                                 </Grid.RowDefinitions>
-                                <UniformGrid Grid.Row="0" Columns="3" Margin="0,0,0,4">
+                                <UniformGrid x:Name="StageIndicatorGrid" Grid.Row="0" Columns="3" Margin="0,0,0,4">
                                     <Border x:Name="ArchitectStageIndicator" Background="{StaticResource NotebookSurfaceBrush}" BorderBrush="{StaticResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="7,2" Margin="0,0,5,0">
                                         <TextBlock x:Name="ArchitectStageText" Text="Architect · Idle" FontSize="10" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource DarkSecondaryBrush}"/>
                                     </Border>
@@ -434,7 +464,7 @@
                                     BorderBrush="{StaticResource NotebookBorderBrush}"
                                     BorderThickness="1,0,0,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <Grid Width="104" Margin="0,0,12,0">
+                                    <Grid x:Name="ArchitectTokenUsageRow" Width="104" Margin="0,0,12,0">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="4"/>
@@ -445,18 +475,18 @@
                                         </DockPanel>
                                         <ProgressBar x:Name="ArchitectTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
                                     </Grid>
-                                    <Grid Width="104" Margin="0,0,12,0">
+                                    <Grid x:Name="AgentTokenUsageRow" Width="104" Margin="0,0,12,0">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="4"/>
                                         </Grid.RowDefinitions>
                                         <DockPanel Margin="0,0,0,4">
-                                            <TextBlock Text="Builder" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource DarkSecondaryBrush}"/>
+                                            <TextBlock x:Name="BuilderTokenUsageTitle" Text="Builder" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource DarkSecondaryBrush}"/>
                                             <TextBlock x:Name="BuilderTokenUsageLabel" Text="0 / 0" FontSize="10" HorizontalAlignment="Right" Foreground="{StaticResource DarkSecondaryBrush}"/>
                                         </DockPanel>
                                         <ProgressBar x:Name="BuilderTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
                                     </Grid>
-                                    <Grid Width="104">
+                                    <Grid x:Name="CriticTokenUsageRow" Width="104">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="4"/>

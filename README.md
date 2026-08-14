@@ -128,8 +128,8 @@ Use cloud mode from **Settings → Cloud AI** after inserting your OpenRouter AP
 
 ## Getting Started
 
-1. Download the latest installer from the [Releases](../../releases) page
-2. Run the installer and launch Axiom
+1. Download the latest Windows ZIP from the [Releases](../../releases) page
+2. Extract the complete folder and launch `Malx_AI.exe`
 3. Import a GGUF model using the **Import AI Model** button
 4. Start chatting
 
@@ -140,8 +140,17 @@ generate an API key, and paste it in **Settings → Cloud AI**.
 
 ## Updating
 
-Download the latest installer from the [Releases](../../releases) page and run it.
-Your settings, chat history, and workspace sessions are preserved between updates.
+Axiom 1.7 and newer checks the official GitHub releases feed at startup. When a
+new stable release is available, use the in-app **Update now** notification or
+**Settings → General → Check for updates**. Axiom downloads and verifies the
+release ZIP, stages it outside the install directory, safely replaces the
+package-managed files after shutdown, and reopens automatically.
+
+Your settings, chat history, local models, connectors, and workspace sessions
+remain under `%LOCALAPPDATA%\Axiom` and are not replaced during updates.
+
+For manual installation or recovery, download and extract the latest Windows
+ZIP from the [Releases](../../releases) page.
 
 ---
 

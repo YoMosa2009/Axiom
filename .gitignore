@@ -7,6 +7,18 @@ axiom_data.db-wal
 bin/ 
 obj/
 
+# Clean release publish output (never commit packaged builds / zips)
+artifacts/
+
+# Generated OAuth app client id/secret constants for release packaging only
+Malx_AI/Mcp/McpOAuthBuiltIns.Generated.cs
+**/oauth*.local.*
+**/*_client_secret.txt
+**/*_client_id.txt
+**/google_oauth*
+**/github_oauth*
+**/todoist_client*
+
 # Local embedding model weights (bundled into output via csproj Content include,
 # but never committed to git - too large for repo history)
 Malx_AI/EmbeddingModels/*.gguf

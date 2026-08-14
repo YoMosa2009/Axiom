@@ -37,16 +37,8 @@ namespace Malx_AI.Mcp
             IProgress<string>? progress = null,
             bool forceConsent = true)
         {
-            if (string.IsNullOrWhiteSpace(clientId))
-                throw new InvalidOperationException(
-                    "Google sign-in is not configured for this build of Axiom. " +
-                    "The app needs a Desktop OAuth client id (set AXIOM_GOOGLE_OAUTH_CLIENT_ID or embed it for release).");
-
-            if (string.IsNullOrWhiteSpace(clientSecret))
-                throw new InvalidOperationException(
-                    "Google OAuth client secret is missing. Open Google Cloud Console → APIs & Services → Credentials → " +
-                    "your Desktop OAuth client, copy the Client secret, and put it in McpOAuthConfig.BuiltInGoogleDesktopClientSecret " +
-                    "(or %LocalAppData%\\Axiom\\google_oauth_client_secret.txt).");
+            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+                throw new InvalidOperationException(McpOAuthConfig.BuildGoogleSetupMessage());
 
             if (scopes == null || scopes.Count == 0)
                 throw new ArgumentException("At least one OAuth scope is required.", nameof(scopes));
