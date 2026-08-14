@@ -175,7 +175,7 @@ $releaseNotes
 
 ## Updating
 
-Existing Axiom V1.7.0+ installations can install this release from the in-app update notification. New users can download the Windows ZIP, extract the complete folder, and run Malx_AI.exe.
+Existing Axiom V1.7.2+ installations can install this release from the in-app update notification. V1.7.0 and V1.7.1 users must manually install V1.7.2 once because those builds contain a download-verification lock defect. New users can download the Windows ZIP, extract the complete folder, and run Malx_AI.exe.
 "@
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($notesPath, $notesDocument, $utf8WithoutBom)

@@ -10,6 +10,10 @@ Updater reliability hotfix.
 - Added regression coverage that opens the completed download exclusively for verification
 - Fixed clean-checkout release automation by restoring test dependencies before packaging
 
+### Updating
+- V1.7.0 and V1.7.1 users must install V1.7.2 manually once because the affected
+  updater cannot install its own repair; in-app updates work normally from V1.7.2 onward
+
 ## [V1.7.1] - 2026-08-13
 
 Cloud reliability patch.
