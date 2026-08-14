@@ -1179,9 +1179,12 @@ namespace Malx_AI
 
             UpdateBannerTitleText.Text = $"Axiom {update.LatestVersionTag} is available";
             string size = update.PackageSizeBytes > 0 ? $" ({FormatFileSize(update.PackageSizeBytes)})" : string.Empty;
-            UpdateBannerDetailText.Text = update.HasPackageAsset
+            string installText = update.HasPackageAsset
                 ? $"Download and install{size}. Chats and settings are preserved."
                 : "This release has no supported Windows package. Open its GitHub page instead.";
+            UpdateBannerDetailText.Text = string.IsNullOrWhiteSpace(update.ReleaseSummary)
+                ? installText
+                : update.ReleaseSummary + Environment.NewLine + installText;
             UpdateBannerActionButton.Content = update.HasPackageAsset ? "Update now" : "Open GitHub";
             UpdateBannerActionButton.IsEnabled = true;
             UpdateBannerBorder.Visibility = Visibility.Visible;

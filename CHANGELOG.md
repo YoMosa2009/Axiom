@@ -1,5 +1,29 @@
 # Changelog
 
+## [V1.7.1] - 2026-08-13
+
+Cloud reliability patch.
+
+### Added
+- Added a one-command GitHub release workflow that tests, packages, generates
+  changelog-based release notes, creates the version tag/release, and uploads the ZIP
+- Added configurable updater storage through `AXIOM_UPDATE_DIR`; this development
+  computer uses `E:\Axiom-Updates` for release packages, downloads, and staging
+- Added a concise release-note summary to the in-app update notification
+- Removed unused Linux native binaries from the Windows release package and replaced
+  the unreliable PowerShell archive step with direct validated ZIP creation
+
+### Fixed
+- Removed the blocking Workplace cloud activation probe that could remain on
+  `Validating` after a provider accepted the request but never returned a body
+- Added bounded first-stream and first-content deadlines so stalled OpenRouter
+  providers automatically move through Axiom's fallback chain instead of leaving
+  Normal Chat on `Thinking`
+- Reduced idle and total stream ceilings while retaining enough time for long,
+  actively streaming coding responses
+- Fixed streamed answer text being duplicated into the hidden reasoning channel
+- Added regression coverage for plain and structured OpenRouter content separation
+
 ## [V1.7.0] - 2026-08-13
 
 Agent modes, reusable capabilities, desktop integration, and in-app delivery release.

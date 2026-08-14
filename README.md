@@ -7,7 +7,7 @@ computer unless you deliberately use a cloud model or connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.7.0-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.7.1-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 <img width="1906" height="1026" alt="Axiom screenshot" src="https://github.com/user-attachments/assets/07bbb46d-1bc8-42d7-a16c-5912d2f874d8" />
@@ -144,6 +144,10 @@ installation directory, replaces only package-managed files after shutdown, and 
 
 Settings, chats, local models, connectors, and Workplace data remain untouched. Manual ZIP
 installation remains available for first-time installation and recovery.
+
+The update notification includes a short summary generated from the GitHub Release notes.
+Set the `AXIOM_UPDATE_DIR` environment variable to an absolute folder when downloads and
+staging should be stored outside `%LOCALAPPDATA%`.
 
 Release maintainers should follow [RELEASING.md](RELEASING.md). Update ZIPs require a matching
 version tag, packaged executable version, and `AXIOM_UPDATE_MANIFEST.txt`.

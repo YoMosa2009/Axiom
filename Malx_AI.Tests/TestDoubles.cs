@@ -18,6 +18,7 @@ namespace Malx_AI
 
     public static class AppDataPaths
     {
+        public static string Root { get; } = Path.Combine(Path.GetTempPath(), "Axiom.Tests");
         public static string ChatHistory { get; } = Path.Combine(Path.GetTempPath(), "Axiom.Tests", "ChatHistory");
     }
 }

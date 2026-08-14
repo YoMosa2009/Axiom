@@ -91,6 +91,22 @@ function Remove-UserDataFromDirectory {
 	}
 }
 
+function Remove-NonWindowsRuntimeAssets {
+	param([string]$Root)
+
+	# Axiom's release target is win-x64. Some native NuGet packages copy their Linux
+	# payload beside the Windows binaries even for an RID-specific publish; those files
+	# added roughly 450 MB of unusable data to every release and update download.
+	$runtimeRoot = Join-Path $Root "runtimes"
+	if (-not (Test-Path -LiteralPath $runtimeRoot)) {
+		return
+	}
+
+	Get-ChildItem -LiteralPath $runtimeRoot -Directory -Force |
+		Where-Object { $_.Name -notlike "win-*" } |
+		Remove-Item -Recurse -Force
+}
+
 function Write-PackageHelperFiles {
 	param([string]$Root)
 
@@ -230,6 +246,8 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Scrubbing residual personal runtime files..."
 Remove-UserDataFromDirectory -Root $OutputDir
+Write-Host "Removing non-Windows native runtime assets..."
+Remove-NonWindowsRuntimeAssets -Root $OutputDir
 Write-PackageHelperFiles -Root $OutputDir
 
 Write-Host "Verifying package contains no personal data..."
@@ -258,7 +276,22 @@ if (Test-Path -LiteralPath $zipPath) {
 }
 
 Write-Host "Creating zip..."
-Compress-Archive -Path (Join-Path $OutputDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+	$OutputDir,
+	$zipPath,
+	[System.IO.Compression.CompressionLevel]::Optimal,
+	$false)
+
+$archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+try {
+	if ($archive.Entries.Count -eq 0 -or -not ($archive.Entries.FullName -contains "AXIOM_UPDATE_MANIFEST.txt")) {
+		throw "Generated ZIP is incomplete or missing AXIOM_UPDATE_MANIFEST.txt."
+	}
+}
+finally {
+	$archive.Dispose()
+}
 
 Write-Host ""
 Write-Host "Clean package ready." -ForegroundColor Green

@@ -7222,7 +7222,7 @@ namespace Malx_AI
             }
         }
 
-        private async void WorkplaceCloudModeButton_Click(object sender, RoutedEventArgs e)
+        private void WorkplaceCloudModeButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isProcessing)
             {
@@ -7258,55 +7258,21 @@ namespace Malx_AI
                 return;
             }
 
-            double sidebarOffset = CouncilSidebarScrollViewer?.VerticalOffset ?? 0;
-            if (FindName("WorkplaceCloudModeButton") is Button cloudModeButton)
-            {
-                cloudModeButton.IsEnabled = false;
-                cloudModeButton.Content = "Validating";
-                cloudModeButton.Opacity = 1.0;
-                cloudModeButton.ToolTip = "Validating workplace cloud mode...";
-            }
-            RelayStatusBlock.Text = _isSingleModelMode ? "Agent: Validating cloud model..." : "Relay: Validating cloud council...";
-            try
-            {
-                bool available = await _openRouterChatService.ValidateModelAvailabilityAsync(OpenRouterChatService.WorkplaceCouncilDefaultModelId);
-                if (!available && _openRouterChatService.LastTestFailureReason != OpenRouterConnectionTestFailureReason.ProviderUnavailable)
-                {
-                    AppendChat("error", BuildCloudModeErrorMessage(_openRouterChatService.LastTestFailureReason));
-                    return;
-                }
-
-                _isCloudModeEnabled = true;
-                RefreshWorkplaceCloudModeUi();
-                UpdateCouncilBlocks();
-                UpdateContextInfo();
-                AppendChat("system", _isSingleModelMode
-                    ? available
-                        ? $"Workplace cloud mode enabled. The single agent now uses {OpenRouterChatService.WorkplaceCouncilDisplayLabel}."
-                        : $"Workplace cloud mode enabled. {OpenRouterChatService.WorkplaceCouncilDisplayLabel} is currently unstable, so agent runs will retry when the provider is temporarily unavailable."
-                    : available
-                        ? $"Workplace cloud mode enabled. Architect, Builder, and Critic now use {OpenRouterChatService.WorkplaceCouncilDisplayLabel}."
-                        : $"Workplace cloud mode enabled. {OpenRouterChatService.WorkplaceCouncilDisplayLabel} is currently unstable, so cloud runs will automatically retry and fall back if OpenRouter providers are temporarily unavailable.");
-                RefreshSingleModelModeUi();
-                SavePersistedSession();
-            }
-            catch (Exception ex)
-            {
-                AppendChat("error", BuildCloudModeErrorMessage(ResolveCloudFailureReason(ex)));
-            }
-            finally
-            {
-                if (FindName("WorkplaceCloudModeButton") is Button cloudModeButtonFinal)
-                    cloudModeButtonFinal.IsEnabled = true;
-                RefreshWorkplaceCloudModeUi();
-                if (CouncilSidebarScrollViewer != null)
-                {
-                    _ = Dispatcher.InvokeAsync(
-                        () => CouncilSidebarScrollViewer.ScrollToVerticalOffset(sidebarOffset),
-                        DispatcherPriority.Background);
-                }
-                RelayStatusBlock.Text = "Relay: Idle";
-            }
+            // Do not send a sacrificial chat completion merely to turn Cloud on. Free providers can
+            // accept that request and then never send a response body, which previously trapped this
+            // button in "Validating" for up to the network timeout. The real run already has bounded
+            // streaming, provider fallback, and precise error reporting, so availability is checked
+            // when the user actually sends work.
+            _isCloudModeEnabled = true;
+            RefreshWorkplaceCloudModeUi();
+            UpdateCouncilBlocks();
+            UpdateContextInfo();
+            AppendChat("system", _isSingleModelMode
+                ? $"Workplace cloud mode enabled. The single agent uses {OpenRouterChatService.WorkplaceCouncilDisplayLabel}; provider availability is checked when the run starts."
+                : $"Workplace cloud mode enabled. Architect, Builder, and Critic use {OpenRouterChatService.WorkplaceCouncilDisplayLabel}; provider availability is checked when the run starts.");
+            RefreshSingleModelModeUi();
+            SavePersistedSession();
+            RelayStatusBlock.Text = "Relay: Idle";
         }
 
         private void WorkplaceHybridToggleButton_Click(object sender, RoutedEventArgs e)

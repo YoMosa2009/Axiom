@@ -92,7 +92,7 @@ namespace Malx_AI
                 safeName = update.PackageKind == UpdatePackageKind.Zip ? "AxiomUpdate.zip" : "AxiomUpdate.exe";
 
             string versionFolder = UpdateReleaseParser.FormatVersion(update.LatestVersion);
-            string downloadDirectory = Path.Combine(AppDataPaths.Root, "Updates", "downloads", versionFolder);
+            string downloadDirectory = Path.Combine(UpdateStoragePaths.Downloads, versionFolder);
             Directory.CreateDirectory(downloadDirectory);
 
             string targetPath = Path.Combine(downloadDirectory, safeName);

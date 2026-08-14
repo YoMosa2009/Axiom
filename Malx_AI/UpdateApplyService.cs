@@ -49,9 +49,7 @@ namespace Malx_AI
 
             string version = UpdateReleaseParser.FormatVersion(update.LatestVersion);
             string stagingRoot = Path.Combine(
-                AppDataPaths.Root,
-                "Updates",
-                "staging",
+                UpdateStoragePaths.Staging,
                 $"{version}-{Guid.NewGuid():N}");
             string extractRoot = Path.Combine(stagingRoot, "package");
             Directory.CreateDirectory(extractRoot);
@@ -174,7 +172,7 @@ namespace Malx_AI
 
         internal static void CleanupOldStagingDirectories()
         {
-            string stagingRoot = Path.Combine(AppDataPaths.Root, "Updates", "staging");
+            string stagingRoot = UpdateStoragePaths.Staging;
             if (!Directory.Exists(stagingRoot))
                 return;
 
@@ -468,7 +466,7 @@ namespace Malx_AI
         }
 
         private static string GetSuccessMarkerPath()
-            => Path.Combine(AppDataPaths.Root, "Updates", "last-update-success.txt");
+            => UpdateStoragePaths.SuccessMarker;
 
         private static void WriteUpdateLog(string message)
         {

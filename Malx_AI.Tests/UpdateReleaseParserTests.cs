@@ -29,6 +29,7 @@ public sealed class UpdateReleaseParserTests
         Assert.Equal("Axiom-v1.7.1-win-x64-clean.zip", result.PackageFileName);
         Assert.Equal("ABC123", result.PackageSha256);
         Assert.Equal(123, result.PackageSizeBytes);
+        Assert.Equal("Small fix", result.ReleaseSummary);
     }
 
     [Theory]
@@ -53,5 +54,23 @@ public sealed class UpdateReleaseParserTests
 
         Assert.Null(UpdateReleaseParser.Parse(draft, new Version(1, 7, 0)));
         Assert.Null(UpdateReleaseParser.Parse(prerelease, new Version(1, 7, 0)));
+    }
+
+    [Fact]
+    public void BuildReleaseSummary_StripsMarkdownAndKeepsThreeItems()
+    {
+        const string notes = """
+        ## Fixed
+        - Fixed cloud replies getting stuck on **Thinking**
+        - Removed the blocking `Validating` probe
+        - Added automatic provider fallback
+        - This fourth item is omitted
+        """;
+
+        string summary = UpdateReleaseParser.BuildReleaseSummary(notes);
+
+        Assert.Equal(
+            "Fixed cloud replies getting stuck on Thinking • Removed the blocking Validating probe • Added automatic provider fallback",
+            summary);
     }
 }

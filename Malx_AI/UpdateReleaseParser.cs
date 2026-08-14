@@ -20,6 +20,7 @@ namespace Malx_AI
         public Version CurrentVersion { get; init; } = new(0, 0, 0, 0);
         public string ReleasePageUrl { get; init; } = string.Empty;
         public string ReleaseNotes { get; init; } = string.Empty;
+        public string ReleaseSummary { get; init; } = string.Empty;
         public DateTimeOffset? PublishedAt { get; init; }
         public string PackageDownloadUrl { get; init; } = string.Empty;
         public string PackageFileName { get; init; } = string.Empty;
@@ -68,13 +69,15 @@ namespace Malx_AI
                 ? parsedPublishedAt
                 : null;
 
+            string releaseNotes = ReadString(root, "body");
             return new UpdateCheckResult
             {
                 LatestVersionTag = tag.Trim(),
                 LatestVersion = latestVersion,
                 CurrentVersion = normalizedCurrent,
                 ReleasePageUrl = ReadString(root, "html_url"),
-                ReleaseNotes = ReadString(root, "body"),
+                ReleaseNotes = releaseNotes,
+                ReleaseSummary = BuildReleaseSummary(releaseNotes),
                 PublishedAt = publishedAt,
                 PackageDownloadUrl = package?.DownloadUrl ?? string.Empty,
                 PackageFileName = package?.Name ?? string.Empty,
@@ -110,6 +113,34 @@ namespace Malx_AI
         {
             Version normalized = NormalizeVersion(version);
             return $"{normalized.Major}.{normalized.Minor}.{normalized.Build}";
+        }
+
+        internal static string BuildReleaseSummary(string? releaseNotes, int maximumLength = 260)
+        {
+            if (string.IsNullOrWhiteSpace(releaseNotes) || maximumLength < 1)
+                return string.Empty;
+
+            var items = releaseNotes
+                .Replace("\r", string.Empty, StringComparison.Ordinal)
+                .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => !line.StartsWith('#') && !line.StartsWith("```", StringComparison.Ordinal))
+                .Select(line => Regex.Replace(line, @"^[-*+]\s+", string.Empty))
+                .Select(line => Regex.Replace(line, @"\[(?<text>[^\]]+)\]\([^\)]+\)", "${text}"))
+                .Select(line => line.Replace("**", string.Empty, StringComparison.Ordinal)
+                    .Replace("__", string.Empty, StringComparison.Ordinal)
+                    .Replace("`", string.Empty, StringComparison.Ordinal)
+                    .Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToArray();
+
+            string summary = string.Join(" • ", items);
+            if (summary.Length <= maximumLength)
+                return summary;
+
+            int contentLength = Math.Max(1, maximumLength - 1);
+            return summary[..contentLength].TrimEnd() + "…";
         }
 
         private static ReleaseAsset? FindBestPackageAsset(JsonElement root)

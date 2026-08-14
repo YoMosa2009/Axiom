@@ -224,7 +224,8 @@ namespace Malx_AI
 
         static OpenRouterChatService()
         {
-            // 90s covers typical free-tier TTFT queuing without being catastrophically long on failure.
+            // Covers slow connection establishment. Once response headers arrive, the stricter
+            // streaming deadlines below take over so a provider cannot leave the UI waiting.
             Http.Timeout = TimeSpan.FromSeconds(90);
         }
 
@@ -237,15 +238,15 @@ namespace Malx_AI
         // Line-level idle: OpenRouter emits keep-alive comment lines every few seconds while a
         // provider queues, so a healthy stream is never silent for long — a long line gap means
         // the connection is dead.
-        private static readonly TimeSpan StreamFirstLineIdleTimeout = TimeSpan.FromSeconds(90);
-        private static readonly TimeSpan StreamLineIdleTimeout = TimeSpan.FromSeconds(60);
+        private static readonly TimeSpan StreamFirstLineIdleTimeout = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan StreamLineIdleTimeout = TimeSpan.FromSeconds(30);
         // Wall-clock deadline for the first meaningful delta (content/reasoning/tool call).
         // Keep-alive comments reset the line-idle timer, so a zombie provider queue that never
         // starts generating needs its own bound.
-        private static readonly TimeSpan StreamFirstContentTimeout = TimeSpan.FromSeconds(150);
+        private static readonly TimeSpan StreamFirstContentTimeout = TimeSpan.FromSeconds(45);
         // Absolute ceiling for one streamed response. Generous: a slow free-tier provider
         // streaming a long deliverable stays well under this; only a runaway/zombie stream hits it.
-        private static readonly TimeSpan StreamTotalDurationLimit = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan StreamTotalDurationLimit = TimeSpan.FromMinutes(4);
         // Non-streamed body reads after ResponseHeadersRead have the same unbounded-read exposure.
         private static readonly TimeSpan NonStreamBodyReadTimeout = TimeSpan.FromSeconds(100);
 
@@ -1145,7 +1146,7 @@ namespace Malx_AI
 
                     if (delta.TryGetProperty("content", out JsonElement contentElement))
                     {
-                        string contentDelta = ExtractContentText(contentElement, includeReasoningParts: false);
+                        string contentDelta = OpenRouterContentParts.ExtractText(contentElement, includeReasoningParts: false);
                         if (!string.IsNullOrEmpty(contentDelta))
                         {
                             // Suppress padding sentinels so "<pad>" spam never reaches the UI or the
@@ -1173,7 +1174,7 @@ namespace Malx_AI
                             }
                         }
 
-                        string reasoningFromContent = ExtractReasoningPartsFromContent(contentElement);
+                        string reasoningFromContent = OpenRouterContentParts.ExtractReasoningFromContent(contentElement);
                         if (!string.IsNullOrEmpty(reasoningFromContent))
                             reasoningBuilder.Append(reasoningFromContent);
                     }
@@ -1184,10 +1185,10 @@ namespace Malx_AI
                     // The non-streaming path dedupes whole strings via .Distinct(); replicate that here at
                     // the per-chunk level by preferring one source and only taking the other when it differs.
                     string reasoningDelta = delta.TryGetProperty("reasoning", out JsonElement reasoningElement)
-                        ? ExtractContentText(reasoningElement, includeReasoningParts: true)
+                        ? OpenRouterContentParts.ExtractText(reasoningElement, includeReasoningParts: true)
                         : string.Empty;
                     string reasoningDetailsDelta = delta.TryGetProperty("reasoning_details", out JsonElement reasoningDetailsElement)
-                        ? ExtractContentText(reasoningDetailsElement, includeReasoningParts: true)
+                        ? OpenRouterContentParts.ExtractText(reasoningDetailsElement, includeReasoningParts: true)
                         : string.Empty;
 
                     if (!string.IsNullOrEmpty(reasoningDelta))
@@ -1830,7 +1831,7 @@ namespace Malx_AI
             if (!message.TryGetProperty("content", out JsonElement content))
                 return string.Empty;
 
-            return StripPadSentinelTokens(ExtractContentText(content, includeReasoningParts: false));
+            return StripPadSentinelTokens(OpenRouterContentParts.ExtractText(content, includeReasoningParts: false));
         }
 
         private static string ExtractReasoningContent(JsonElement firstChoice, JsonElement message)
@@ -1838,19 +1839,19 @@ namespace Malx_AI
             var parts = new List<string>();
 
             if (message.TryGetProperty("reasoning", out JsonElement reasoning))
-                parts.Add(ExtractContentText(reasoning, includeReasoningParts: true));
+                parts.Add(OpenRouterContentParts.ExtractText(reasoning, includeReasoningParts: true));
 
             if (message.TryGetProperty("reasoning_details", out JsonElement reasoningDetails))
-                parts.Add(ExtractContentText(reasoningDetails, includeReasoningParts: true));
+                parts.Add(OpenRouterContentParts.ExtractText(reasoningDetails, includeReasoningParts: true));
 
             if (firstChoice.TryGetProperty("reasoning", out JsonElement choiceReasoning))
-                parts.Add(ExtractContentText(choiceReasoning, includeReasoningParts: true));
+                parts.Add(OpenRouterContentParts.ExtractText(choiceReasoning, includeReasoningParts: true));
 
             if (firstChoice.TryGetProperty("reasoning_details", out JsonElement choiceReasoningDetails))
-                parts.Add(ExtractContentText(choiceReasoningDetails, includeReasoningParts: true));
+                parts.Add(OpenRouterContentParts.ExtractText(choiceReasoningDetails, includeReasoningParts: true));
 
             if (message.TryGetProperty("content", out JsonElement content))
-                parts.Add(ExtractReasoningPartsFromContent(content));
+                parts.Add(OpenRouterContentParts.ExtractReasoningFromContent(content));
 
             return string.Join("\n\n", parts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal));
         }
@@ -1959,53 +1960,6 @@ namespace Malx_AI
             public string Id { get; set; } = string.Empty;
             public StringBuilder Name { get; } = new();
             public StringBuilder Arguments { get; } = new();
-        }
-
-        private static string ExtractContentText(JsonElement content, bool includeReasoningParts)
-        {
-            if (content.ValueKind == JsonValueKind.String)
-                return content.GetString() ?? string.Empty;
-
-            if (content.ValueKind == JsonValueKind.Array)
-            {
-                var builder = new StringBuilder();
-                foreach (JsonElement item in content.EnumerateArray())
-                {
-                    string type = item.ValueKind == JsonValueKind.Object && item.TryGetProperty("type", out JsonElement typeElement)
-                        ? typeElement.GetString() ?? string.Empty
-                        : string.Empty;
-
-                    bool isReasoningPart = type.Contains("reason", StringComparison.OrdinalIgnoreCase);
-                    if (isReasoningPart != includeReasoningParts)
-                        continue;
-
-                    if (item.TryGetProperty("text", out JsonElement textElement))
-                        builder.AppendLine(textElement.GetString() ?? string.Empty);
-                    else if (item.TryGetProperty("content", out JsonElement contentElement))
-                        builder.AppendLine(ExtractContentText(contentElement, includeReasoningParts));
-                }
-
-                return builder.ToString().Trim();
-            }
-
-            if (content.ValueKind == JsonValueKind.Object)
-            {
-                if (content.TryGetProperty("text", out JsonElement textElement))
-                    return textElement.GetString() ?? string.Empty;
-
-                if (content.TryGetProperty("content", out JsonElement nestedContent))
-                    return ExtractContentText(nestedContent, includeReasoningParts);
-
-                if (content.TryGetProperty("summary", out JsonElement summaryElement))
-                    return ExtractContentText(summaryElement, includeReasoningParts);
-            }
-
-            return string.Empty;
-        }
-
-        private static string ExtractReasoningPartsFromContent(JsonElement content)
-        {
-            return ExtractContentText(content, includeReasoningParts: true);
         }
 
         private static List<OpenRouterMessage> BuildConversation(List<OpenRouterMessage> conversationHistory, string userMessage)

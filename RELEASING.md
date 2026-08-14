@@ -3,7 +3,25 @@
 Axiom 1.7.0 and newer can update itself from stable releases in
 [`YoMosa2009/Axiom`](https://github.com/YoMosa2009/Axiom/releases).
 
+Choose and synchronize the release number using [VERSIONING.md](VERSIONING.md)
+before building a package.
+
 ## Publish a release or patch
+
+The normal release workflow is one command from a clean, synchronized `main` branch:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Publish-GitHubRelease.ps1
+```
+
+It reads the project version, runs tests, creates the clean package under
+`E:\Axiom-Updates`, extracts the matching `CHANGELOG.md` section into release notes,
+creates the GitHub tag and release, and uploads the ZIP. It also configures this Windows
+account's in-app updater to use `E:\Axiom-Updates` through `AXIOM_UPDATE_DIR`.
+
+Use `-PackageOnly` to generate and test the local ZIP and notes without publishing.
+
+### Manual fallback
 
 1. Update `<Version>` in `Malx_AI/Malx_AI.csproj`, for example `1.7.1`.
 2. Build the clean Windows package:
