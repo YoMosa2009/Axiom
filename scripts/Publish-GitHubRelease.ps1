@@ -138,8 +138,18 @@ $releaseNotes = Get-ChangelogNotes -ChangelogPath $changelogPath -Version $versi
 $targetCommit = ""
 if (-not $PackageOnly) {
     $targetCommit = Assert-ReleaseCheckout -Branch $TargetBranch -Repo $Repository
+
+    # Windows PowerShell 5.1 wraps a redirected native command's stderr in a terminating
+    # ErrorRecord under $ErrorActionPreference = "Stop", even when the command's own exit
+    # code is the expected, non-error outcome we're checking for below ("no release yet"
+    # is gh's normal not-found result here, not a script failure). Suspend the preference
+    # for just this probe so `gh` reporting "not found" doesn't abort the whole publish.
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
     & gh release view $tag --repo $Repository *> $null
-    if ($LASTEXITCODE -eq 0) {
+    $existingReleaseExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($existingReleaseExitCode -eq 0) {
         throw "GitHub Release $tag already exists. Bump the Axiom version before publishing another release."
     }
 }
