@@ -1,5 +1,20 @@
 # Changelog
 
+## [V1.8.4] - 2026-08-14
+
+Updater file-swap reliability hotfix, part 2.
+
+### Fixed
+- Fixed the in-app updater still failing with "Access to the path is denied" on some
+  machines after the V1.8.3 hotfix, because the previous retry budget (~3 seconds) was too
+  short: update.log showed the file lock clearing in under a second on one machine and
+  still being held 20+ seconds after the forced process kill on another
+- Widened the file-swap retry to a 20-second wall-clock budget with capped exponential
+  backoff, comfortably covering the slower observed case
+- The error now names the exact file that stayed locked (previously the underlying
+  .NET exception carried no path, making a real, non-transient lock impossible to
+  diagnose from the log alone)
+
 ## [V1.8.3] - 2026-08-14
 
 Updater file-swap reliability hotfix.

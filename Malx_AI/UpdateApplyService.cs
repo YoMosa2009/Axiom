@@ -535,31 +535,44 @@ namespace Malx_AI
             }
         }
 
-        // Windows can keep a just-terminated process's loaded EXE/DLL briefly locked even after
+        // Windows can keep a just-terminated process's loaded EXE/DLL locked well after
         // WaitForExitOrTerminate already confirmed the process handle itself has exited -- the OS
-        // finishes unmapping the image asynchronously, and a real-time antivirus scanner can also
-        // grab a file the instant it is released. Either way the very next rename can throw a
-        // transient IOException/UnauthorizedAccessException that clears on its own within a second
-        // or two and has nothing to do with real permissions. Retry with a short bounded backoff
-        // before letting a genuine failure (actually locked, actually denied) propagate to the
-        // transaction's rollback path.
+        // finishes unmapping the image asynchronously, and a real-time antivirus scanner routinely
+        // grabs a freshly-written or freshly-executed binary the instant it is released, for as
+        // long as its scan takes. update.log on real installs has shown this clear in under a
+        // second and, on a slower or more loaded machine, still be held 15-20+ seconds after the
+        // kill -- an earlier ~3s retry budget was not enough and the update failed outright even
+        // though the lock was purely transient. Retry on a wall-clock budget generous enough to
+        // absorb that before letting a genuine failure (actually locked forever, actually denied)
+        // propagate to the transaction's rollback path.
+        private static readonly TimeSpan MoveFileRetryBudget = TimeSpan.FromSeconds(20);
+
         private static void MoveFileWithRetry(string sourcePath, string destinationPath)
         {
-            const int maxAttempts = 8;
+            var elapsed = Stopwatch.StartNew();
             int delayMs = 50;
-            for (int attempt = 1; ; attempt++)
+            Exception? lastException = null;
+            while (elapsed.Elapsed < MoveFileRetryBudget)
             {
                 try
                 {
                     File.Move(sourcePath, destinationPath, overwrite: true);
                     return;
                 }
-                catch (Exception ex) when (attempt < maxAttempts && ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
+                    lastException = ex;
                     Thread.Sleep(delayMs);
-                    delayMs = Math.Min(delayMs * 2, 800);
+                    delayMs = Math.Min(delayMs * 2, 2000);
                 }
             }
+
+            // Name the exact file in the message -- the wrapped exception's own message never
+            // does, which made the first occurrence of this failure impossible to pin down.
+            throw new IOException(
+                $"Could not replace \"{destinationPath}\" after retrying for {elapsed.Elapsed.TotalSeconds:F0}s " +
+                "-- another process kept it open the whole time.",
+                lastException);
         }
 
         private static void TryDeleteFile(string path)
