@@ -34,6 +34,7 @@
     <Compile Include="..\Malx_AI\UpdateDownloadFile.cs" Link="Production\UpdateDownloadFile.cs" />
     <Compile Include="..\Malx_AI\UpdatePackageSafety.cs" Link="Production\UpdatePackageSafety.cs" />
     <Compile Include="..\Malx_AI\UpdateProcessGuard.cs" Link="Production\UpdateProcessGuard.cs" />
+    <Compile Include="..\Malx_AI\UpdateApplyService.cs" Link="Production\UpdateApplyService.cs" />
     <Compile Include="..\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
     <Compile Include="..\Malx_AI\OpenRouterContentParts.cs" Link="Production\OpenRouterContentParts.cs" />
     <Compile Include="..\Malx_AI\AtomicFileWriter.cs" Link="Production\AtomicFileWriter.cs" />

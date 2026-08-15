@@ -20,5 +20,6 @@ namespace Malx_AI
     {
         public static string Root { get; } = Path.Combine(Path.GetTempPath(), "Axiom.Tests");
         public static string ChatHistory { get; } = Path.Combine(Path.GetTempPath(), "Axiom.Tests", "ChatHistory");
+        public static string Logs { get; } = Path.Combine(Path.GetTempPath(), "Axiom.Tests", "Logs");
     }
 }

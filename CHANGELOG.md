@@ -1,5 +1,26 @@
 # Changelog
 
+## [V1.8.5] - 2026-08-14
+
+Updater file-swap reliability hotfix, part 3.
+
+### Fixed
+- Fixed the in-app updater still failing after the V1.8.4 hotfix, this time with:
+  `Could not replace "...\Accessibility.dll.axiom-update-old" after retrying for 21s --
+  another process kept it open the whole time.` A stock, unchanged-release-over-release
+  WPF/.NET redistributable was held open continuously by an external process (most likely
+  Windows Defender real-time scanning) for longer than any bounded retry should reasonably
+  wait
+- Root fix, not a longer timeout: the updater now compares each file's content to what's
+  already installed before touching it at all, and skips the replace entirely when they
+  already match byte-for-byte. Most files in a self-contained build (the .NET runtime,
+  WPF, WindowsAppSDK, the CUDA backend, ...) are identical release over release -- only
+  Axiom's own changed assemblies still go through the replace/retry path. This removes
+  the entire class of "an external process has this exact unchanged file open" failures
+  and makes ordinary updates noticeably faster besides
+- update.log now records how many files were replaced vs. already up to date for each
+  applied update
+
 ## [V1.8.4] - 2026-08-14
 
 Updater file-swap reliability hotfix, part 2.

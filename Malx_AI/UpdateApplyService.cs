@@ -310,6 +310,7 @@ namespace Malx_AI
             IReadOnlySet<string> oldManifest = ReadInstalledManifest(targetRoot);
             var transitions = new List<FileTransition>();
 
+            int skippedUnchanged = 0;
             try
             {
                 // Copy every source file to a temporary sibling first. No installed file changes
@@ -322,6 +323,22 @@ namespace Malx_AI
                         || !File.Exists(source))
                     {
                         throw new InvalidDataException($"Unsafe update manifest entry: {entry}");
+                    }
+
+                    // Most files in a self-contained WPF/WinAppSDK publish are stock runtime and
+                    // framework redistributables (WPF assemblies, the .NET runtime, WinAppSDK,
+                    // the CUDA backend, ...) that are byte-identical release over release --
+                    // Axiom's own patch usually touches only a handful of its own assemblies.
+                    // Never even attempting to replace a file whose content already matches
+                    // removes the entire class of "something external (AV real-time scan, a UI
+                    // Automation client walking the running app's accessibility tree, ...) has
+                    // this exact file open" failures for every file that didn't need to change,
+                    // and is a large speedup besides. Only a genuine content difference reaches
+                    // the swap loop below.
+                    if (File.Exists(target) && FilesAreIdentical(source, target))
+                    {
+                        skippedUnchanged++;
+                        continue;
                     }
 
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -356,7 +373,9 @@ namespace Malx_AI
                 foreach (FileTransition transition in transitions)
                     TryDeleteFile(transition.BackupPath);
 
-                WriteUpdateLog($"Updated Axiom to {FileVersionInfo.GetVersionInfo(Path.Combine(targetRoot, MainExecutableFileName)).ProductVersion}.");
+                WriteUpdateLog(
+                    $"Updated Axiom to {FileVersionInfo.GetVersionInfo(Path.Combine(targetRoot, MainExecutableFileName)).ProductVersion} " +
+                    $"({transitions.Count} file(s) replaced, {skippedUnchanged} already up to date).");
             }
             catch
             {
@@ -532,6 +551,51 @@ namespace Malx_AI
             catch
             {
                 // Update logging must never turn a successful file swap into a failed update.
+            }
+        }
+
+        // Byte-for-byte comparison, not a timestamp/attribute heuristic: skipping a file that
+        // actually changed would ship a stale assembly next to a mismatched app, which is a far
+        // worse failure mode than an update running a little slower. Length is checked first as
+        // a cheap rejection; only equal-length files pay for the full streamed comparison. Opens
+        // the target with FileShare.ReadWrite so a file another process is reading (or that a
+        // security scanner is mid-scan on) can still be compared instead of throwing.
+        // internal (not private): covered directly by UpdateApplyServiceTests, matching
+        // UpdateProcessGuard's precedent for unit-testable file/process helpers in this area.
+        internal static bool FilesAreIdentical(string pathA, string pathB)
+        {
+            try
+            {
+                var infoA = new FileInfo(pathA);
+                var infoB = new FileInfo(pathB);
+                if (!infoA.Exists || !infoB.Exists || infoA.Length != infoB.Length)
+                    return false;
+
+                const int bufferSize = 1 << 20; // 1 MB
+                using var streamA = new FileStream(pathA, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize, FileOptions.SequentialScan);
+                using var streamB = new FileStream(pathB, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize, FileOptions.SequentialScan);
+                byte[] bufferA = new byte[bufferSize];
+                byte[] bufferB = new byte[bufferSize];
+
+                long remaining = infoA.Length;
+                while (remaining > 0)
+                {
+                    int chunk = (int)Math.Min(bufferSize, remaining);
+                    streamA.ReadExactly(bufferA, 0, chunk);
+                    streamB.ReadExactly(bufferB, 0, chunk);
+                    if (!bufferA.AsSpan(0, chunk).SequenceEqual(bufferB.AsSpan(0, chunk)))
+                        return false;
+                    remaining -= chunk;
+                }
+
+                return true;
+            }
+            catch
+            {
+                // Any failure to compare (locked, deleted mid-check, transient I/O error, ...)
+                // means "not verified identical" -- fall through to the normal copy/replace path
+                // rather than risk silently skipping a file that might actually differ.
+                return false;
             }
         }
 
