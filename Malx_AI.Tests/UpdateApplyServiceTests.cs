@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Malx_AI;
 using Xunit;
 
@@ -90,5 +91,103 @@ public sealed class UpdateApplyServiceTests
         differsAtEnd[^1] ^= 0xFF;
         string c = dir.WriteFile("c.bin", differsAtEnd);
         Assert.False(UpdateApplyService.FilesAreIdentical(a, c));
+    }
+
+    // TerminateOtherInstancesAtPath is the fix for a failed update's auto-restart silently
+    // orphaning itself behind the single-instance dialog and then blocking every later update
+    // attempt by holding the install directory's DLLs open forever. Every real failure this
+    // session hit traced back to exactly that -- these cases confirm the path-matching that
+    // decides what gets killed is neither too broad (kills the process we were told to leave
+    // alone) nor too narrow (misses the process actually sitting at the installed path).
+    private static Process StartSleepingPowerShell(TimeSpan duration)
+    {
+        string executable = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "WindowsPowerShell", "v1.0", "powershell.exe");
+        var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            ArgumentList = { "-NoProfile", "-Command", $"Start-Sleep -Seconds {duration.TotalSeconds}" }
+        })!;
+        Thread.Sleep(250);
+        return process;
+    }
+
+    [Fact]
+    public void TerminateOtherInstancesAtPath_KillsMatchingProcessAtExpectedPath()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        using Process process = StartSleepingPowerShell(TimeSpan.FromSeconds(30));
+        try
+        {
+            Assert.False(process.HasExited);
+
+            UpdateApplyService.TerminateOtherInstancesAtPath(
+                process.MainModule!.FileName,
+                excludeProcessId: -1,
+                "powershell");
+
+            process.WaitForExit(5000);
+            Assert.True(process.HasExited);
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+    }
+
+    [Fact]
+    public void TerminateOtherInstancesAtPath_LeavesExcludedProcessIdRunning()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        using Process process = StartSleepingPowerShell(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.False(process.HasExited);
+
+            UpdateApplyService.TerminateOtherInstancesAtPath(
+                process.MainModule!.FileName,
+                excludeProcessId: process.Id,
+                "powershell");
+
+            Assert.False(process.HasExited);
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+    }
+
+    [Fact]
+    public void TerminateOtherInstancesAtPath_LeavesNonMatchingPathRunning()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        using Process process = StartSleepingPowerShell(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.False(process.HasExited);
+
+            UpdateApplyService.TerminateOtherInstancesAtPath(
+                @"C:\some\other\install\dir\Malx_AI.exe",
+                excludeProcessId: -1,
+                "powershell");
+
+            Assert.False(process.HasExited);
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
     }
 }

@@ -27,6 +27,15 @@ namespace Malx_AI
     internal static class UpdateApplyService
     {
         internal const string ApplyUpdateArgument = "--axiom-apply-update";
+        // Marks a relaunch that TryRestartInstalledCopy triggers automatically after a failed
+        // update, as opposed to a normal user double-click. App.OnStartup uses this to skip the
+        // blocking "Axiom is already running" dialog for this one relaunch attempt -- otherwise,
+        // whenever an earlier failed update's restart is still silently sitting there (its own
+        // window never brought to front, its own single-instance dialog never dismissed), this
+        // relaunch hits the same dialog and becomes one more such orphan itself. Every previous
+        // failed update on this build compounded that way -- see the matching check in
+        // App.xaml.cs's OnStartup.
+        internal const string SilentRestartArgument = "--axiom-silent-restart";
         internal const string UpdateManifestFileName = "AXIOM_UPDATE_MANIFEST.txt";
         private const string MainExecutableFileName = "Malx_AI.exe";
         private const int MaximumArchiveEntries = 75000;
@@ -436,10 +445,10 @@ namespace Malx_AI
             string targetDirectory,
             long? expectedStartTimeUtcTicks)
         {
+            string expectedExecutable = Path.Combine(Path.GetFullPath(targetDirectory), MainExecutableFileName);
             try
             {
                 using Process process = Process.GetProcessById(processId);
-                string expectedExecutable = Path.Combine(Path.GetFullPath(targetDirectory), MainExecutableFileName);
                 UpdateProcessGuard.WaitForExitOrTerminate(
                     process,
                     expectedExecutable,
@@ -451,6 +460,76 @@ namespace Malx_AI
             catch (ArgumentException)
             {
                 // The process already exited between launch and lookup.
+            }
+
+            // A failed update auto-relaunches the installed copy (TryRestartInstalledCopy); if
+            // that relaunch hit the single-instance "already running" dialog and nobody dismissed
+            // it, it never exits and still holds every DLL in the install directory open. Each
+            // subsequent failed update compounds this. WaitForExitOrTerminate above only knows
+            // about the one process id this run was launched to wait for -- sweep for and
+            // terminate any OTHER process actually running the installed executable so a backlog
+            // of earlier failures can never permanently block every later update attempt.
+            TerminateOtherInstancesAtPath(expectedExecutable, processId, Path.GetFileNameWithoutExtension(MainExecutableFileName));
+        }
+
+        // processName is a parameter (rather than always deriving it from MainExecutableFileName)
+        // specifically so UpdateApplyServiceTests can point this at a short-lived non-Axiom
+        // process and verify the path-matching/kill behavior without spawning the real app.
+        internal static void TerminateOtherInstancesAtPath(string expectedExecutable, int excludeProcessId, string processName)
+        {
+            Process[] candidates;
+            try
+            {
+                candidates = Process.GetProcessesByName(processName);
+            }
+            catch
+            {
+                return;
+            }
+
+            string normalizedExpected = Path.GetFullPath(expectedExecutable)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            foreach (Process candidate in candidates)
+            {
+                using (candidate)
+                {
+                    if (candidate.Id == excludeProcessId)
+                        continue;
+
+                    string actualPath;
+                    try
+                    {
+                        actualPath = candidate.MainModule?.FileName ?? string.Empty;
+                    }
+                    catch
+                    {
+                        // Access denied or the process exited while enumerating -- leave it be;
+                        // if it really is a stale instance it will surface again as a locked file.
+                        continue;
+                    }
+
+                    if (string.IsNullOrEmpty(actualPath)
+                        || !string.Equals(
+                            Path.GetFullPath(actualPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                            normalizedExpected,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        WriteUpdateLog($"Terminating leftover Axiom instance (PID {candidate.Id}) still running the installed executable.");
+                        candidate.Kill(entireProcessTree: true);
+                        candidate.WaitForExit((int)ForcedProcessExitTimeout.TotalMilliseconds);
+                    }
+                    catch
+                    {
+                        // Best effort -- the file-swap retry still guards against a lock this
+                        // couldn't clear.
+                    }
+                }
             }
         }
 
@@ -514,12 +593,14 @@ namespace Malx_AI
                 string executable = Path.Combine(Path.GetFullPath(target), MainExecutableFileName);
                 if (File.Exists(executable))
                 {
-                    Process.Start(new ProcessStartInfo
+                    var restartInfo = new ProcessStartInfo
                     {
                         FileName = executable,
                         WorkingDirectory = Path.GetDirectoryName(executable)!,
                         UseShellExecute = true
-                    });
+                    };
+                    restartInfo.ArgumentList.Add(SilentRestartArgument);
+                    Process.Start(restartInfo);
                 }
             }
             catch

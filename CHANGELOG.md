@@ -1,5 +1,27 @@
 # Changelog
 
+## [V1.8.6] - 2026-08-14
+
+Updater orphaned-instance fix -- the actual root cause.
+
+### Fixed
+- Found the real cause behind every update failure this cycle, including the ones the
+  V1.8.4/V1.8.5 hotfixes narrowed but didn't fully close: a failed update automatically
+  relaunches the installed copy (`TryRestartInstalledCopy`), and that relaunch always goes
+  through the normal single-instance check. If another copy from an earlier failed
+  attempt was still silently running -- its own "Axiom is already running" dialog never
+  seen or dismissed -- the new relaunch hit that same dialog and became one more orphan
+  itself, invisible and still holding the installed DLLs open. Each subsequent failed
+  update compounded this; eleven separate Axiom processes had accumulated behind the
+  scenes, several matching PIDs already logged as "did not exit" hours earlier
+- The updater's post-update relaunch is now tagged as a silent restart; if it finds Axiom
+  already running, it exits quietly instead of showing a dialog nobody may ever see or
+  dismiss
+- Before every update, the updater now sweeps for and terminates *any* process actually
+  running the installed executable, not only the one process ID it was launched to wait
+  for -- so a backlog of orphans from before this fix can't keep blocking future updates
+  either
+
 ## [V1.8.5] - 2026-08-14
 
 Updater file-swap reliability hotfix, part 3.

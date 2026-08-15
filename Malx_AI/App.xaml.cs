@@ -15,6 +15,12 @@ namespace Malx_AI
         private static readonly bool IsUpdateHelperProcess = UpdateApplyService.IsUpdaterInvocation(
             Environment.GetCommandLineArgs());
 
+        // Set only on the relaunch TryRestartInstalledCopy triggers automatically after a failed
+        // update -- see the constant's own doc comment in UpdateApplyService for why the blocking
+        // "already running" dialog must not run for this one relaunch attempt.
+        private static readonly bool IsSilentRestart = Environment.GetCommandLineArgs()
+            .Any(arg => string.Equals(arg, UpdateApplyService.SilentRestartArgument, StringComparison.OrdinalIgnoreCase));
+
         public App()
         {
             // The staged updater runs this executable only as a lightweight file-swap helper.
@@ -115,11 +121,27 @@ namespace Malx_AI
                 _singleInstanceMutex = new Mutex(initiallyOwned: true, @"Local\Axiom_SingleInstance", out bool isFirstInstance);
                 if (!isFirstInstance)
                 {
-                    MessageBox.Show(
-                        "Axiom is already running.\n\nUse the existing window — running two copies at once would overwrite each other's chats and settings.",
-                        "Axiom",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
+                    if (IsSilentRestart)
+                    {
+                        // TryRestartInstalledCopy relaunches unconditionally after a failed
+                        // update, with no way to know in advance whether the previous instance
+                        // actually finished closing. Showing this dialog here needs a user to see
+                        // and dismiss it for the process to ever exit -- if that never happens
+                        // (buried behind another window, no one at the keyboard right then), this
+                        // relaunch itself becomes exactly the kind of orphaned instance an update
+                        // then has to fight through. A real Axiom is already running either way,
+                        // so silently step aside instead.
+                        Debug.WriteLine("Silent post-update restart found Axiom already running; exiting quietly.");
+                    }
+                    else
+                    {
+                        MessageBox.Show(
+                            "Axiom is already running.\n\nUse the existing window — running two copies at once would overwrite each other's chats and settings.",
+                            "Axiom",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Information);
+                    }
+
                     Shutdown();
                     return;
                 }
