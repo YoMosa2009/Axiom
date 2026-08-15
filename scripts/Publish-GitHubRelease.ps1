@@ -168,7 +168,11 @@ catch {
 
 if (-not $SkipTests) {
     Write-Host "Running Axiom tests..." -ForegroundColor Cyan
-    Invoke-Checked -Command "dotnet" -Arguments @("test", $testProject, "-c", "Release")
+    # See the matching comment in Publish-CleanRelease.ps1: disable the shared Roslyn
+    # compiler server here too so a wedged VBCSCompiler pipe can't hang the test build.
+    Invoke-Checked -Command "dotnet" -Arguments @(
+        "test", $testProject, "-c", "Release",
+        "-p:UseSharedCompilation=false", "-nodeReuse:false")
 }
 
 Write-Host "Building clean Axiom $version package in $OutputRoot..." -ForegroundColor Cyan

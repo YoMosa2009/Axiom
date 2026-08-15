@@ -228,6 +228,14 @@ if (Test-Path -LiteralPath $generateScript) {
 Write-Host "Publishing ($Configuration / $Runtime)..."
 # Folder publish (not single-file): WinAppSDK single-file fails SxS activation
 # with SessionHandleIPCProxyStub.dll duplicate-name errors on startup.
+#
+# UseSharedCompilation=false / nodeReuse:false: some machines (seen with Visual Studio
+# holding the same project open in a live session) can wedge the Roslyn VBCSCompiler
+# named-pipe handshake -- the build server process starts, the pipe connects, a
+# compilation request is written, and the response never arrives, hanging the publish
+# indefinitely with no error. Forcing csc.exe to run as a plain one-shot process (no
+# shared server, no MSBuild node reuse) avoids that IPC path entirely. It costs a little
+# wall-clock time on a cold compile but a release publish is not the hot inner loop.
 dotnet publish $projectPath `
 	-c $Configuration `
 	-r $Runtime `
@@ -238,7 +246,9 @@ dotnet publish $projectPath `
 	-p:PublishSingleFile=false `
 	-p:PublishReadyToRun=true `
 	-p:WindowsAppSDKSelfContained=true `
-	-p:WindowsPackageType=None
+	-p:WindowsPackageType=None `
+	-p:UseSharedCompilation=false `
+	-nodeReuse:false
 
 if ($LASTEXITCODE -ne 0) {
 	throw "dotnet publish failed with exit code $LASTEXITCODE"
