@@ -139,6 +139,10 @@ When background operation or tray mode is disabled, closing the main window exit
 4. Import or install a GGUF model, configure Hybrid Local, or add an OpenRouter API key.
 5. Start a Normal Chat or open Workplace.
 
+## Feedback
+
+I'd love to hear from you! Whether you've found a bug, have a feature request, encountered an issue, or simply want to share feedback about your experience with Axiom, please reach out to me at **malxshrouds@gmail.com**. Your input helps me improve the application.
+
 ## Updating
 
 Axiom V1.7.0 and newer checks the official stable GitHub Releases feed at startup. When a
