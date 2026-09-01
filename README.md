@@ -141,7 +141,7 @@ When background operation or tray mode is disabled, closing the main window exit
 
 ## Feedback
 
-We'd love to hear from you! Whether you've found a bug, have a feature request, encountered an issue, or simply want to share feedback about your experience with Axiom, please reach out to us at **malxshrouds@gmail.com**. Your input helps us improve the application for everyone.
+I'd love to hear from you! Whether you've found a bug, have a feature request, encountered an issue, or simply want to share feedback about your experience with Axiom, please reach out to me at **malxshrouds@gmail.com**. Your input helps me improve the application.
 
 ## Updating
 
