@@ -1,6 +1,7 @@
 ﻿using System.Configuration;
 using System.Data;
 using System.Diagnostics;
+using System.Threading;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
@@ -12,6 +13,8 @@ namespace Malx_AI
     /// </summary>
     public partial class App : Application
     {
+        private static int _criticalShutdownDone;
+
         private static readonly bool IsUpdateHelperProcess = UpdateApplyService.IsUpdaterInvocation(
             Environment.GetCommandLineArgs());
 
@@ -93,7 +96,7 @@ namespace Malx_AI
         // first; whichever saves last silently clobbers the other's chats and workplace state.
         // A named mutex makes the app single-instance, with a clear message instead of quiet
         // state corruption.
-        private Mutex? _singleInstanceMutex;
+        private static Mutex? _singleInstanceMutex;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -164,13 +167,39 @@ namespace Malx_AI
                 return;
             }
 
-            WindowsToastNotificationService.Shutdown();
-            // Reaching OnExit means a GRACEFUL shutdown — a native llama.cpp abort fail-fasts the
-            // process and never runs this. So clear any in-flight decode marker now: a turn the user
-            // interrupted by simply closing the app while it was still generating must NOT be misread
-            // as a GPU crash on the next launch (that false strike would pin the model to CPU even
-            // though the GPU is healthy — see NativeDecodeForensics.MarkCleanShutdown).
-            NativeDecodeForensics.MarkCleanShutdown();
+            PerformCriticalShutdown();
+            base.OnExit(e);
+        }
+
+        /// <summary>
+        /// Work that must complete before this process dies, however it dies. Idempotent.
+        /// </summary>
+        /// <remarks>
+        /// OnExit was measured entering and never returning, so nothing important may depend on it
+        /// alone: MainWindow calls this as the window closes, and the exit watchdog is then free to
+        /// terminate a stuck process without skipping anything that mattered.
+        ///
+        /// WindowsToastNotificationService.Shutdown() is deliberately absent. Its
+        /// AppNotificationManager.Unregister() is a WinApp SDK COM call with no value at process
+        /// exit — Windows reclaims the registration when the process ends — and it is one of the
+        /// candidates for blocking shutdown in the first place.
+        /// </remarks>
+        internal static void PerformCriticalShutdown()
+        {
+            if (IsUpdateHelperProcess || Interlocked.Exchange(ref _criticalShutdownDone, 1) != 0)
+                return;
+
+            // A native llama.cpp abort fail-fasts the process and never gets here. So clear any
+            // in-flight decode marker now: a turn the user interrupted by simply closing the app
+            // while it was still generating must NOT be misread as a GPU crash on the next launch
+            // (that false strike would pin the model to CPU even though the GPU is healthy —
+            // see NativeDecodeForensics.MarkCleanShutdown).
+            try { NativeDecodeForensics.MarkCleanShutdown(); } catch { }
+
+            // The embedded CPython interpreter's threads genuinely can outlive the UI, so it is
+            // told to stop. It bounds its own wait internally.
+            try { PythonExecutionService.ShutdownRuntime(); } catch { }
+
             try
             {
                 _singleInstanceMutex?.ReleaseMutex();
@@ -180,7 +209,6 @@ namespace Malx_AI
             {
                 // Never fail shutdown over mutex cleanup.
             }
-            base.OnExit(e);
         }
 
         protected override void OnSessionEnding(SessionEndingCancelEventArgs e)

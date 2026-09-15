@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -63,6 +63,30 @@ namespace Malx_AI
             // cache hit instead of a blocking native inference per chunk on the first turn.
             LocalSemanticEmbeddingService.Shared.PrewarmInBackground(chunks.Select(chunk => chunk.Content));
             Debug.WriteLine($"DocumentRetriever: Added {chunks.Count} chunks. Total: {_chunks.Count}");
+        }
+
+        /// <summary>
+        /// Drops every chunk belonging to one file, so removing an attachment also removes it from
+        /// retrieval instead of leaving orphaned context the model can still quote.
+        /// </summary>
+        public void RemoveChunksForFile(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+                return;
+
+            int removed = _chunks.RemoveAll(c => string.Equals(c.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+            if (removed == 0)
+                return;
+
+            foreach (string key in _cachedChunkKeywords.Keys
+                .Where(key => key.StartsWith(fileName + "::", StringComparison.OrdinalIgnoreCase))
+                .ToList())
+            {
+                _cachedChunkKeywords.Remove(key);
+            }
+
+            _cachedDocumentFrequency = null;
+            Debug.WriteLine($"DocumentRetriever: Removed {removed} chunks for {fileName}. Total: {_chunks.Count}");
         }
 
         public void ClearChunks()

@@ -54,7 +54,7 @@ namespace Malx_AI
             if (!_isSidebarCollapsed && !_isSidebarAnimating)
                 SidebarColumn.Width = new GridLength(sidebarWidth);
 
-            NavigationBar.Padding = compact ? new Thickness(10, 7, 10, 7) : new Thickness(12, 8, 12, 8);
+            NavigationBar.Padding = compact ? new Thickness(12, 8, 12, 8) : new Thickness(20, 12, 20, 12);
             ChatHeaderBorder.Padding = compact ? new Thickness(20, 10, 20, 2) : new Thickness(28, 14, 28, 4);
             TokenUsagePanel.Width = compact ? 300 : wide ? 380 : 340;
             ChatDisplay.Padding = compact

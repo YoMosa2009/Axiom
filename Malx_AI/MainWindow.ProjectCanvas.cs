@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
@@ -58,8 +58,29 @@ namespace Malx_AI
                 .Count > 0;
         }
 
-        private static string BuildNormalChatProjectCanvasInstruction(string userMessage)
+        /// <summary>
+        /// The attached Skill, if any, that turns this turn into a rendered artifact. An explicit
+        /// @ProjectCanvas mention still works on its own; a Skill simply means the user does not
+        /// have to type it for work the Skill exists to render.
+        /// </summary>
+        private SkillCanvasDirective? ResolveNormalChatCanvasDirective(string userMessage)
+            => _capabilityRegistry.ResolveCanvasDirective(userMessage);
+
+        private bool ShouldRouteNormalChatToCanvas(string userMessage)
+            => IsProjectCanvasRequested(userMessage) || ResolveNormalChatCanvasDirective(userMessage) != null;
+
+        private string BuildNormalChatProjectCanvasInstruction(string userMessage, LocalModelCapabilityProfile? capability = null)
         {
+            SkillCanvasDirective? directive = ResolveNormalChatCanvasDirective(userMessage);
+            if (directive != null)
+            {
+                // A Skill's own contract is more specific than the generic canvas prompt, and the
+                // two stacked would contradict each other for small models.
+                return directive.BuildSystemInstruction(
+                    "Normal Chat",
+                    LocalModelCapabilityProfile.ResolveCanvasTier(capability));
+            }
+
             if (!IsProjectCanvasRequested(userMessage))
                 return string.Empty;
 
@@ -72,15 +93,32 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
 
         private void TryRouteNormalChatArtifact(string userMessage, string responseText)
         {
-            if (!IsProjectCanvasRequested(userMessage) || string.IsNullOrWhiteSpace(responseText))
+            if (string.IsNullOrWhiteSpace(responseText))
+                return;
+
+            SkillCanvasDirective? directive = ResolveNormalChatCanvasDirective(userMessage);
+            if (directive == null && !IsProjectCanvasRequested(userMessage))
                 return;
 
             ArtifactRenderInfo artifact = ArtifactRenderService.DetectForNormalChat(responseText);
+
+            // Small models answer in the outline format, and large ones sometimes return prose
+            // where the artifact should be. Both land here, so compose the deliverable from the
+            // structure the response does have rather than showing an empty canvas.
+            if (directive != null && (!artifact.SupportsPreview || artifact.Kind == ArtifactKind.Document)
+                && SkillArtifactComposer.TryCompose(directive.SmallModelFormat, responseText, out string composedHtml))
+            {
+                artifact = ArtifactRenderService.DetectForNormalChat(composedHtml);
+            }
+
             if (!artifact.SupportsPreview)
             {
                 NormalProjectCanvasStatusText.Text = "The response did not contain a renderable artifact.";
                 return;
             }
+
+            if (directive != null)
+                ShowTransientStatus($"{directive.SkillName} rendered the result in Project Canvas.");
 
             _normalProjectCanvasArtifact = artifact;
             _normalProjectCanvasPreviewMode = true;
@@ -97,10 +135,75 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
             _ = RenderNormalProjectCanvasAsync();
         }
 
-        private void NormalProjectCanvasOpen_Click(object sender, RoutedEventArgs e)
+        private enum ProjectCanvasToggleTarget
         {
-            SetNormalProjectCanvasExpanded(true, animated: true);
-            _ = RenderNormalProjectCanvasAsync();
+            None,
+            NormalChat,
+            Workplace
+        }
+
+        private ProjectCanvasToggleTarget _projectCanvasToggleTarget = ProjectCanvasToggleTarget.NormalChat;
+        private bool _isSyncingProjectCanvasToggle;
+
+        // Called on every tab switch: the tab-bar toggle belongs to whichever tab has a canvas.
+        private void SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget target)
+        {
+            _projectCanvasToggleTarget = target;
+            ProjectCanvasToggleButton.Visibility = target == ProjectCanvasToggleTarget.None
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            SyncProjectCanvasToggle();
+        }
+
+        // Mirrors the active tab's canvas state onto the toggle without re-triggering it.
+        private void SyncProjectCanvasToggle()
+        {
+            bool isOpen = _projectCanvasToggleTarget switch
+            {
+                ProjectCanvasToggleTarget.NormalChat => _normalProjectCanvasExpanded,
+                ProjectCanvasToggleTarget.Workplace => WorkplaceViewControl.IsProjectCanvasShown,
+                _ => false
+            };
+
+            _isSyncingProjectCanvasToggle = true;
+            try
+            {
+                ProjectCanvasToggleButton.IsChecked = isOpen;
+                ProjectCanvasToggleButton.ToolTip = isOpen ? "Hide Project Canvas" : "Show Project Canvas";
+            }
+            finally
+            {
+                _isSyncingProjectCanvasToggle = false;
+            }
+        }
+
+        private void WorkplaceView_ProjectCanvasShownChanged(object? sender, EventArgs e)
+        {
+            if (_projectCanvasToggleTarget == ProjectCanvasToggleTarget.Workplace)
+                SyncProjectCanvasToggle();
+        }
+
+        // Driven by Checked/Unchecked rather than Click so mouse, keyboard and UI Automation
+        // toggles all behave the same.
+        private void ProjectCanvasToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isSyncingProjectCanvasToggle)
+                return;
+
+            bool open = ProjectCanvasToggleButton.IsChecked == true;
+            switch (_projectCanvasToggleTarget)
+            {
+                case ProjectCanvasToggleTarget.NormalChat when open != _normalProjectCanvasExpanded:
+                    SetNormalProjectCanvasExpanded(open, animated: true);
+                    if (open)
+                        _ = RenderNormalProjectCanvasAsync();
+                    break;
+                case ProjectCanvasToggleTarget.Workplace:
+                    WorkplaceViewControl.SetProjectCanvasShown(open);
+                    break;
+            }
+
+            SyncProjectCanvasToggle();
         }
 
         private void NormalProjectCanvasClose_Click(object sender, RoutedEventArgs e)
@@ -152,12 +255,13 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
         private void SetNormalProjectCanvasExpanded(bool expanded, bool animated)
         {
             _normalProjectCanvasExpanded = expanded;
+            if (_projectCanvasToggleTarget == ProjectCanvasToggleTarget.NormalChat)
+                SyncProjectCanvasToggle();
             NormalProjectCanvasPane.BeginAnimation(WidthProperty, null);
             _normalProjectCanvasPaneAnimating = false;
 
             if (expanded)
             {
-                NormalProjectCanvasHandle.Visibility = Visibility.Collapsed;
                 NormalProjectCanvasPane.Visibility = Visibility.Visible;
                 double targetWidth = GetNormalProjectCanvasTargetWidth();
                 if (!animated)
@@ -186,7 +290,6 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
             {
                 NormalProjectCanvasPane.Width = 0;
                 NormalProjectCanvasPane.Visibility = Visibility.Collapsed;
-                NormalProjectCanvasHandle.Visibility = Visibility.Visible;
                 return;
             }
 
@@ -204,7 +307,6 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
                 NormalProjectCanvasPane.BeginAnimation(WidthProperty, null);
                 NormalProjectCanvasPane.Width = 0;
                 NormalProjectCanvasPane.Visibility = Visibility.Collapsed;
-                NormalProjectCanvasHandle.Visibility = Visibility.Visible;
             };
             NormalProjectCanvasPane.BeginAnimation(WidthProperty, closeAnimation);
         }

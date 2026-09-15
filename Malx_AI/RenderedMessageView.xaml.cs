@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
@@ -68,6 +68,10 @@ namespace Malx_AI
         private string _activeRenderCacheKey = string.Empty;
         public RenderedMessageView()
         {
+            // Bubbles are HTML documents with the palette baked in, so a theme change has to
+            // rebuild them; the render cache keys off the html itself and misses automatically.
+            AppTheme.Changed += OnAppThemeChanged;
+            Unloaded += (_, _) => AppTheme.Changed -= OnAppThemeChanged;
             InitializeComponent();
             ResetRenderSurface();
             Loaded += RenderedMessageView_Loaded;
@@ -142,6 +146,27 @@ namespace Malx_AI
                 else if (v._initialized)
                     v.Render();
             }
+        }
+
+        private void OnAppThemeChanged(object? sender, EventArgs e)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                try
+                {
+                    Browser.DefaultBackgroundColor = System.Drawing.Color.FromArgb(
+                        AppTheme.Color(p => p.Surface).R,
+                        AppTheme.Color(p => p.Surface).G,
+                        AppTheme.Color(p => p.Surface).B);
+                }
+                catch (Exception)
+                {
+                    // The browser may not be created yet; the next render picks the colour up.
+                }
+
+                _lastRenderedHtml = string.Empty;
+                Render();
+            });
         }
 
         private void Render()

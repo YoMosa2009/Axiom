@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -57,18 +57,30 @@ namespace Malx_AI
 
         private const int MaxCloudVisionImagesPerTurn = 4;
 
-        private List<string> BuildCloudImageDataUrls(IReadOnlyList<ChatDocumentAttachment> chatDocuments)
+        /// <summary>
+        /// The images sent with this turn, kept in attach order. Order matters: the user says
+        /// "the 2nd attached image", so image 2 in the payload must be the second image attached,
+        /// not the second-newest. When more images are attached than one turn allows, the most
+        /// recent ones are kept — still in attach order.
+        /// </summary>
+        private List<ChatDocumentAttachment> SelectCloudVisionAttachments(IReadOnlyList<ChatDocumentAttachment> chatDocuments)
         {
             if (!_openRouterChatService.SupportsImageInput(_selectedOpenRouterModelId))
-                return new List<string>();
+                return new List<ChatDocumentAttachment>();
 
-            return (chatDocuments ?? [])
+            List<ChatDocumentAttachment> images = (chatDocuments ?? [])
                 .Where(doc => doc.IsImage && !string.IsNullOrWhiteSpace(doc.Base64Data) && !string.IsNullOrWhiteSpace(doc.MimeType))
-                .OrderByDescending(doc => doc.ImportedAt)
-                .Take(MaxCloudVisionImagesPerTurn)
+                .ToList();
+
+            return images.Count <= MaxCloudVisionImagesPerTurn
+                ? images
+                : images.Skip(images.Count - MaxCloudVisionImagesPerTurn).ToList();
+        }
+
+        private List<string> BuildCloudImageDataUrls(IReadOnlyList<ChatDocumentAttachment> chatDocuments)
+            => SelectCloudVisionAttachments(chatDocuments)
                 .Select(doc => $"data:{doc.MimeType};base64,{doc.Base64Data}")
                 .ToList();
-        }
 
         private bool HasVisionAttachmentForCloudTurn()
         {
@@ -140,8 +152,10 @@ namespace Malx_AI
                 string baseUrl = _database?.GetSetting(DatabaseService.CustomEndpointBaseUrlSettingKey) ?? string.Empty;
                 string modelId = _database?.GetSetting(DatabaseService.CustomEndpointModelIdSettingKey) ?? string.Empty;
                 string apiKey = _database?.LoadCustomEndpointApiKey() ?? string.Empty;
+                int? contextWindow = TryReadPersistedCustomEndpointContextWindow(_database);
+                bool? supportsVision = TryReadPersistedCustomEndpointVision(_database);
 
-                _openRouterChatService.SetCustomEndpoint(baseUrl, apiKey, modelId);
+                _openRouterChatService.SetCustomEndpoint(baseUrl, apiKey, modelId, contextWindow, supportsVision);
                 // Additive: never clobber a true already set by LoadStoredOpenRouterApiKey, which
                 // runs first in the startup sequence.
                 _cloudModeActive = _cloudModeActive || _openRouterChatService.HasValidCustomEndpoint;
@@ -353,6 +367,8 @@ namespace Malx_AI
             try
             {
                 isValid = await _openRouterChatService.TestCustomEndpointConnectionAsync();
+                if (isValid)
+                    PersistCustomEndpointMetadata();
             }
             finally
             {
@@ -387,6 +403,8 @@ namespace Malx_AI
 
             _database?.SaveSetting(DatabaseService.CustomEndpointBaseUrlSettingKey, string.Empty);
             _database?.SaveSetting(DatabaseService.CustomEndpointModelIdSettingKey, string.Empty);
+            _database?.SaveSetting(DatabaseService.CustomEndpointContextWindowSettingKey, string.Empty);
+            _database?.SaveSetting(DatabaseService.CustomEndpointSupportsVisionSettingKey, string.Empty);
             _database?.SaveCustomEndpointApiKey(string.Empty);
             _openRouterChatService.SetCustomEndpoint(string.Empty, string.Empty, string.Empty);
 
@@ -404,13 +422,88 @@ namespace Malx_AI
             UpdateHeaderDisplay();
         }
 
+        private void PersistCustomEndpointMetadata()
+        {
+            try
+            {
+                // Persisting the fallback would make an unverified guess look like discovered
+                // metadata on the next launch, which then suppresses the probe entirely.
+                if (_openRouterChatService.CustomEndpointContextWindowIsAdvertised)
+                {
+                    _database?.SaveSetting(
+                        DatabaseService.CustomEndpointContextWindowSettingKey,
+                        _openRouterChatService.CustomEndpointResolvedContextWindowTokens.ToString());
+                }
+                else
+                {
+                    _database?.SaveSetting(DatabaseService.CustomEndpointContextWindowSettingKey, string.Empty);
+                }
+                _database?.SaveSetting(
+                    DatabaseService.CustomEndpointSupportsVisionSettingKey,
+                    _openRouterChatService.CustomEndpointResolvedSupportsImageInput ? "1" : "0");
+            }
+            catch (Exception ex)
+            {
+                _ = BackendLogService.LogErrorAsync("MainWindow.PersistCustomEndpointMetadata", ex);
+            }
+        }
+
+        private static int? TryReadPersistedCustomEndpointContextWindow(DatabaseService? database)
+        {
+            if (database == null)
+                return null;
+
+            string stored = database.GetSetting(DatabaseService.CustomEndpointContextWindowSettingKey);
+            if (int.TryParse(stored, out int tokens) && tokens >= 2048)
+                return CustomEndpointMetadataParser.ClampContextWindow(tokens);
+
+            return null;
+        }
+
+        private static bool? TryReadPersistedCustomEndpointVision(DatabaseService? database)
+        {
+            if (database == null)
+                return null;
+
+            string stored = database.GetSetting(DatabaseService.CustomEndpointSupportsVisionSettingKey);
+            if (string.Equals(stored, "1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(stored, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(stored, "0", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(stored, "false", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return null;
+        }
+
         private void SetCustomEndpointValidationStatus(bool isValid)
         {
             if (CustomEndpointStatusText == null)
                 return;
 
-            CustomEndpointStatusText.Text = isValid ? "Valid" : "Could not reach endpoint, check URL/key/model";
-            CustomEndpointStatusText.Foreground = AppBrushCache.Get(isValid ? "#22C55E" : "#FF3B3B");
+            if (!isValid)
+            {
+                CustomEndpointStatusText.Text = "Could not reach endpoint, check URL/key/model";
+                CustomEndpointStatusText.Foreground = AppTheme.Brush(p => p.Danger);
+                CustomEndpointStatusText.Visibility = Visibility.Visible;
+                return;
+            }
+
+            // Say plainly whether the context window came from the server or from the fallback.
+            // A silently wrong window does not fail cleanly -- it stalls generation or kills the
+            // model runner mid-stream -- so it must never be something the user has to guess at.
+            int window = _openRouterChatService.CustomEndpointResolvedContextWindowTokens;
+            bool advertised = _openRouterChatService.CustomEndpointContextWindowIsAdvertised;
+            string vision = _openRouterChatService.CustomEndpointResolvedSupportsImageInput ? "vision" : "text only";
+            CustomEndpointStatusText.Text = advertised
+                ? $"Valid — {window:N0} token context reported by server, {vision}"
+                : $"Valid — server did not report a context window; using {window:N0}, {vision}";
+            CustomEndpointStatusText.Foreground = AppTheme.Brush(advertised ? "#22C55E" : "#E0A030");
             CustomEndpointStatusText.Visibility = Visibility.Visible;
         }
 
@@ -446,8 +539,8 @@ namespace Malx_AI
             if (_localModeButton != null)
             {
                 bool isSelected = !_cloudModeActive;
-                _localModeButton.Background = AppBrushCache.Get(isSelected ? "#B8924A" : "Transparent");
-                _localModeButton.Foreground = AppBrushCache.Get(isSelected ? "#EDE8E3" : "#8A8279");
+                _localModeButton.Background = AppTheme.Brush(isSelected ? "#2A241B" : "Transparent");
+                _localModeButton.Foreground = AppTheme.Brush(isSelected ? "#F5D591" : "#B0A89F");
                 _localModeButton.BorderBrush = Brushes.Transparent;
                 _localModeButton.BorderThickness = new Thickness(0);
             }
@@ -458,8 +551,8 @@ namespace Malx_AI
                 _hybridLocalModeButton.ToolTip = hasValidCustomEndpoint
                     ? "Send compute to your self-hosted inference server"
                     : "Configure a custom endpoint in Settings to enable Hybrid Local";
-                _hybridLocalModeButton.Background = AppBrushCache.Get(isHybridLocalActive ? "#B8924A" : "Transparent");
-                _hybridLocalModeButton.Foreground = AppBrushCache.Get(isHybridLocalActive ? "#EDE8E3" : "#8A8279");
+                _hybridLocalModeButton.Background = AppTheme.Brush(isHybridLocalActive ? "#2A241B" : "Transparent");
+                _hybridLocalModeButton.Foreground = AppTheme.Brush(isHybridLocalActive ? "#F5D591" : "#B0A89F");
                 _hybridLocalModeButton.BorderBrush = Brushes.Transparent;
                 _hybridLocalModeButton.BorderThickness = new Thickness(0);
             }
@@ -470,8 +563,8 @@ namespace Malx_AI
                 _cloudModeButton.ToolTip = hasValidKey
                     ? "Use OpenRouter cloud inference"
                     : "Add an OpenRouter API key in Settings to enable cloud mode";
-                _cloudModeButton.Background = AppBrushCache.Get(isCloudActive ? "#B8924A" : "Transparent");
-                _cloudModeButton.Foreground = AppBrushCache.Get(isCloudActive ? "#EDE8E3" : "#8A8279");
+                _cloudModeButton.Background = AppTheme.Brush(isCloudActive ? "#2A241B" : "Transparent");
+                _cloudModeButton.Foreground = AppTheme.Brush(isCloudActive ? "#F5D591" : "#B0A89F");
                 _cloudModeButton.BorderBrush = Brushes.Transparent;
                 _cloudModeButton.BorderThickness = new Thickness(0);
             }
@@ -500,8 +593,8 @@ namespace Malx_AI
             bool isSelected = string.Equals(_selectedOpenRouterModelId, modelId, StringComparison.OrdinalIgnoreCase);
             bool isAvailable = hasValidKey && _openRouterChatService.IsSelectableModelAvailable(modelId);
             button.IsEnabled = hasValidKey;
-            button.Background = AppBrushCache.Get(isSelected ? "#B8924A" : "Transparent");
-            button.Foreground = AppBrushCache.Get(isSelected ? "#EDE8E3" : "#8A8279");
+            button.Background = AppTheme.Brush(isSelected ? "#2A241B" : "Transparent");
+            button.Foreground = AppTheme.Brush(isSelected ? "#F5D591" : "#B0A89F");
             button.BorderBrush = Brushes.Transparent;
             button.BorderThickness = new Thickness(0);
             button.Opacity = isAvailable || !hasValidKey ? 1.0 : 0.45;
@@ -521,7 +614,7 @@ namespace Malx_AI
             {
                 OpenRouterKeyStatusText.Text = string.Empty;
                 OpenRouterKeyStatusText.Visibility = Visibility.Collapsed;
-                OpenRouterKeyStatusText.Foreground = AppBrushCache.Get("#8A8279");
+                OpenRouterKeyStatusText.Foreground = AppTheme.Brush(p => p.TextMuted);
             }
         }
 
@@ -760,7 +853,7 @@ namespace Malx_AI
                     OpenRouterConnectionTestFailureReason.NetworkError => "Connection failed, check your network",
                     _ => "Test failed, check logs"
                 };
-            OpenRouterKeyStatusText.Foreground = AppBrushCache.Get(isValid ? "#22C55E" : "#FF3B3B");
+            OpenRouterKeyStatusText.Foreground = AppTheme.Brush(isValid ? "#22C55E" : "#FF3B3B");
             OpenRouterKeyStatusText.Visibility = Visibility.Visible;
         }
 
@@ -1095,7 +1188,7 @@ namespace Malx_AI
             // heuristic for this model specifically; other (OpenRouter) models keep the tools
             // unconditionally available as before, since they haven't shown this problem.
             bool isCustomEndpoint = IsCustomEndpointModelSelected();
-            bool projectCanvasRequested = IsProjectCanvasRequested(userMsg);
+            bool projectCanvasRequested = ShouldRouteNormalChatToCanvas(userMsg);
             bool includeRunPython = !isCustomEndpoint
                 || LooksLikeCodeExecutionRequest(userMsg)
                 || _capabilityRegistry.ShouldUseDataTools(userMsg)
@@ -1114,9 +1207,10 @@ namespace Malx_AI
             int toolCallCount = 0;
             bool pythonSessionStarted = false;
 
+            int toolLoopLimit = EffortPolicy.ScaleToolBudget(CloudToolLoopIterationLimit, capability: null);
             try
             {
-                for (int iteration = 0; iteration < CloudToolLoopIterationLimit; iteration++)
+                for (int iteration = 0; iteration < toolLoopLimit; iteration++)
                 {
                     OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
                         messages,
@@ -1163,7 +1257,7 @@ namespace Malx_AI
                 // synthesize an answer from the evidence already in the conversation.
                 await BackendLogService.LogEventAsync(
                     "CloudToolLoopBudgetExhausted",
-                    $"ToolCalls:{toolCallCount}\nIterationLimit:{CloudToolLoopIterationLimit}\nForcing final no-tools synthesis pass.");
+                    $"ToolCalls:{toolCallCount}\nIterationLimit:{toolLoopLimit}\nForcing final no-tools synthesis pass.");
 
                 OpenRouterChatResponse finalResponse = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
@@ -1543,7 +1637,9 @@ namespace Malx_AI
                     cleanedResponse = AppendGenerationStoppedLabel(cleanedResponse);
 
                 _currentStreamingMessage.FinalizeStreamingContent(string.IsNullOrWhiteSpace(cleanedResponse)
-                    ? EmptyStrippedResponseInlineHtml
+                    ? string.IsNullOrWhiteSpace(reasoningText)
+                        ? EmptyStrippedResponseNotice
+                        : ReasoningOnlyResponseNotice
                     : cleanedResponse);
                 _currentStreamingMessage.ThinkingContent = CleanCloudReasoningForDisplay(reasoningText);
                 _currentStreamingMessage.ThinkingHeaderText = !string.IsNullOrWhiteSpace(reasoningText) ? "View reasoning" : "Thinking";
@@ -1608,8 +1704,9 @@ namespace Malx_AI
                 // visible answer. That reproduces on every OpenRouter/custom-endpoint model as a
                 // static "Thinking" indicator that never renders anything. Skip the reasoning
                 // request for this route so the model answers directly instead.
-                bool thinkingEnabled = _normalThinkingModeEnabled && !IsProjectCanvasRequested(userMsg);
+                bool thinkingEnabled = EffortPolicy.RequestsReasoning(_normalThinkingModeEnabled) && !ShouldRouteNormalChatToCanvas(userMsg);
                 string systemPrompt = string.IsNullOrWhiteSpace(uiSnapshot.SystemPromptText) ? BuildDefaultAssistantSystemPrompt() : uiSnapshot.SystemPromptText.Trim();
+                systemPrompt = AppendSystemInstruction(systemPrompt, EffortPolicy.BuildSystemInstruction());
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Cloud or Hybrid Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))
                     systemPrompt += "\n\n" + capabilityInstruction;
@@ -1642,6 +1739,13 @@ namespace Malx_AI
 
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.AttachedDocumentMemory))
                     systemPrompt += "\n\n" + uiSnapshot.AttachedDocumentMemory;
+
+                // Tell the model which supplied image is which, so "the 2nd attached image"
+                // lands on the same picture the user is looking at in the preview tray.
+                string visionOrderNote = AttachmentReferenceResolver.BuildVisionOrderNote(
+                    SelectCloudVisionAttachments(uiSnapshot.ChatDocuments).Select(doc => doc.Name));
+                if (!string.IsNullOrWhiteSpace(visionOrderNote))
+                    systemPrompt += "\n\n" + visionOrderNote;
 
                 string codingInstruction = BuildCloudCodingSystemInstruction(userMsg);
                 if (!string.IsNullOrWhiteSpace(codingInstruction))
@@ -1753,12 +1857,15 @@ namespace Malx_AI
 
         private void RefreshNormalWebToggleUi()
         {
-            _normalWebSearchToggleButton ??= FindName("NormalWebSearchToggleButton") as Button;
+            _normalWebSearchToggleButton ??= FindName("NormalWebSearchToggleButton")
+                as System.Windows.Controls.Primitives.ToggleButton;
 
             if (_normalWebSearchToggleButton == null)
                 return;
 
-            _normalWebSearchToggleButton.Opacity = _normalWebSearchEnabled ? 1.0 : 0.45;
+            // Checked state carries the on/off look; dimming the whole control used to grey the
+            // label out as if the button were disabled.
+            _normalWebSearchToggleButton.IsChecked = _normalWebSearchEnabled;
             _normalWebSearchToggleButton.ToolTip = _normalWebSearchEnabled
                 ? "Normal chat web search enabled"
                 : "Normal chat web search disabled";

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -83,6 +83,8 @@ namespace Malx_AI
             public string ModelPath { get; init; } = string.Empty;
             public bool ChatDocumentsHaveTextContent { get; init; }
             public string AttachedDocumentMemory { get; init; } = string.Empty;
+            /// <summary>Resolution of phrases like "the 3rd attached image" for this turn.</summary>
+            public string AttachmentReferenceNote { get; init; } = string.Empty;
             public string DocumentContext { get; init; } = string.Empty;
             public bool HasVisionAttachmentForCloudTurn { get; init; }
             public int ContextSize { get; init; }
@@ -792,6 +794,7 @@ namespace Malx_AI
             catch { }
 
             int added = 0;
+            _queuedVisionImageNames.Clear();
             foreach (var doc in _chatDocuments.Where(d => d.IsImage && !string.IsNullOrWhiteSpace(d.Base64Data)))
             {
                 try
@@ -801,6 +804,7 @@ namespace Malx_AI
                     if (embed != null)
                     {
                         _executor.Embeds.Add(embed);
+                        _queuedVisionImageNames.Add(doc.Name);
                         added++;
                     }
                 }
@@ -814,9 +818,19 @@ namespace Malx_AI
             return added;
         }
 
+        // Images actually handed to the current turn, in attach order — the order note names them
+        // so a positional reference lands on the right embed.
+        private readonly List<string> _queuedVisionImageNames = new();
+
         // One "<image>" tag per embed — the executor replaces it with the native media marker.
         private static string PrependImageMarkers(string userText, int imageCount)
             => LocalVisionSupport.PrependImageMarkers(userText, imageCount);
+
+        private string AppendLocalVisionOrderNote(string userText)
+        {
+            string note = AttachmentReferenceResolver.BuildVisionOrderNote(_queuedVisionImageNames);
+            return string.IsNullOrEmpty(note) ? userText : note + "\n\n" + userText;
+        }
 
         private void RebuildChatSession()
         {
@@ -2365,7 +2379,7 @@ namespace Malx_AI
             if (isStrictChatMl || isGemma4)
             {
                 int queuedImages = AttachPendingImageEmbedsToExecutor();
-                string visionUserMsg = PrependImageMarkers(modelUserMsg, queuedImages);
+                string visionUserMsg = PrependImageMarkers(AppendLocalVisionOrderNote(modelUserMsg), queuedImages);
 
                 List<(string Role, string Content)> promptHistoryTurns = isGemma4
                     ? BuildGemma4HistoryTurns(selectedHistoryMessages)
@@ -2433,7 +2447,7 @@ namespace Malx_AI
                 ?? (!useIsolatedWebTurn && !string.IsNullOrWhiteSpace(personaContext)
                     ? "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]\n\n" + modelUserMsg
                     : modelUserMsg);
-            var message = new ChatHistory.Message(AuthorRole.User, PrependImageMarkers(sessionUserText, sessionQueuedImages));
+            var message = new ChatHistory.Message(AuthorRole.User, PrependImageMarkers(AppendLocalVisionOrderNote(sessionUserText), sessionQueuedImages));
 
             if (_chatSession != null && _chatSession.History.Messages.Count > 0)
             {
@@ -3112,7 +3126,7 @@ namespace Malx_AI
             NormalChatUiSnapshot uiSnapshot = await CaptureNormalChatUiSnapshotAsync(userMsg);
 
             ThinkingGateDecision thinkingGate = EvaluateThinkingGate(userMsg, true);
-            if (thinkingGate.UseThinking && IsProjectCanvasRequested(userMsg))
+            if (thinkingGate.UseThinking && ShouldRouteNormalChatToCanvas(userMsg))
             {
                 // @ProjectCanvas asks the model to author one complete, self-contained artifact
                 // in a single shot -- exactly the kind of request that scores high on the
@@ -3153,6 +3167,8 @@ namespace Malx_AI
                 bool useSubOneBMode = localCapability.IsSubOneB;
                 if (useSubOneBMode)
                     thinkingModeEnabled = false;
+                else if (!ShouldRouteNormalChatToCanvas(userMsg) && EffortPolicy.RequestsReasoning(userEnabled: false))
+                    thinkingModeEnabled = true;
 
                 if (useSubOneBMode && hasWebContext)
                 {
@@ -3168,11 +3184,12 @@ namespace Malx_AI
                 string effectiveSystemPrompt = string.IsNullOrWhiteSpace(personaContext)
                     ? uiSnapshot.SystemPromptText
                     : (uiSnapshot.SystemPromptText + "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]");
+                effectiveSystemPrompt = AppendSystemInstruction(effectiveSystemPrompt, EffortPolicy.BuildSystemInstruction());
 
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))
                     effectiveSystemPrompt += "\n\n" + capabilityInstruction;
-                string projectCanvasInstruction = BuildNormalChatProjectCanvasInstruction(userMsg);
+                string projectCanvasInstruction = BuildNormalChatProjectCanvasInstruction(userMsg, localCapability);
                 if (!string.IsNullOrWhiteSpace(projectCanvasInstruction))
                     effectiveSystemPrompt += "\n\n" + projectCanvasInstruction;
 
@@ -3258,6 +3275,10 @@ namespace Malx_AI
                 int maxGenerationTokens = ComputeLocalMaxGenerationTokens(GetLoadedLocalContextSize(), documentAttached);
                 if (useSubOneBMode)
                     maxGenerationTokens = Math.Min(maxGenerationTokens, documentAttached ? 768 : 512);
+                maxGenerationTokens = EffortPolicy.ScaleGenerationTokens(
+                    maxGenerationTokens,
+                    localCapability,
+                    Math.Max(512, GetLoadedLocalContextSize() / 3));
 
                 InferenceParams inferenceParams = IsQwen3Model(uiSnapshot.ModelName)
                     ? ModelInferenceProfiles.CreateQwen3InferenceParams(thinkingModeEnabled, maxGenerationTokens, antiPrompts)
@@ -3302,13 +3323,26 @@ namespace Malx_AI
                         + "\n\n--- End of attached document content ---\n\n"
                         + "Question: " + modelUserMsg;
                 }
+
+                // Placed last, next to the generation point: the nearest instruction is the one a
+                // small local model follows most reliably.
+                if (!string.IsNullOrWhiteSpace(uiSnapshot.AttachmentReferenceNote))
+                    modelUserMsg = modelUserMsg + "\n\n" + uiSnapshot.AttachmentReferenceNote;
                 if (useSubOneBMode)
                     modelUserMsg = BuildSubOneBNormalChatUserTurn(modelUserMsg);
 
                 return new NormalChatRequestContext
                 {
                     SystemPrompt = uiSnapshot.SystemPromptText,
-                    ThinkingGate = thinkingGate,
+                    ThinkingGate = new ThinkingGateDecision
+                    {
+                        Score = thinkingGate.Score,
+                        UseThinking = thinkingModeEnabled,
+                        UseReasoningPhaseCap = thinkingModeEnabled,
+                        Decision = thinkingModeEnabled == thinkingGate.UseThinking
+                            ? thinkingGate.Decision
+                            : "Effort" + EffortPolicy.DisplayName(EffortPolicy.Current).Replace(" ", string.Empty, StringComparison.Ordinal)
+                    },
                     SandboxPreparation = sandboxPreparation,
                     PersonaContext = personaContext,
                     WebContext = webContext,
@@ -3337,7 +3371,10 @@ namespace Malx_AI
                     ModelName = _modelName,
                     ModelPath = _activeModelParams?.ModelPath ?? _database?.GetUserFact("last_model_path") ?? string.Empty,
                     ChatDocumentsHaveTextContent = _chatDocuments.Any(doc => doc.HasTextContent),
-                    AttachedDocumentMemory = BuildAttachedDocumentMemoryBlock(),
+                    AttachedDocumentMemory = BuildAttachedDocumentMemoryBlock(userMsg),
+                    AttachmentReferenceNote = AttachmentReferenceResolver.BuildResolutionBlock(
+                        userMsg,
+                        BuildChatAttachmentIndex(_chatDocuments)),
                     DocumentContext = BuildPersistentDocumentContextBlock(userMsg, isCloudMode),
                     HasVisionAttachmentForCloudTurn = HasVisionAttachmentForCloudTurn(),
                     // Local and cloud draw from different models' context windows -- using the
@@ -4107,7 +4144,7 @@ namespace Malx_AI
             var scaleAnim = new DoubleAnimation
             {
                 Duration = TimeSpan.FromMilliseconds(160),
-                To = targetScale,
+                To = 1.0,
                 EasingFunction = ease
             };
 
@@ -4145,11 +4182,11 @@ namespace Malx_AI
             if (FindName("InputContainerBorder") is Border inputBorder)
             {
                 inputBorder.VerticalAlignment = _chatMessages.Count == 0 ? VerticalAlignment.Center : VerticalAlignment.Bottom;
-                inputBorder.Width = _chatMessages.Count == 0 ? 1080 : double.NaN;
-                inputBorder.MaxWidth = _chatMessages.Count == 0 ? 1080 : 1220;
-                inputBorder.HorizontalAlignment = _chatMessages.Count == 0 ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+                inputBorder.Width = double.NaN;
+                inputBorder.MaxWidth = 900;
+                inputBorder.HorizontalAlignment = HorizontalAlignment.Stretch;
                 inputBorder.Margin = _chatMessages.Count == 0
-                    ? new Thickness(24, 0, 24, 118)
+                    ? new Thickness(24, 0, 24, 24)
                     : new Thickness(24, 0, 24, 28);
             }
         }
@@ -4405,7 +4442,9 @@ namespace Malx_AI
                         }
 
                         _currentStreamingMessage.FinalizeStreamingContent(finalizedResponse.EmptyAfterStrip
-                            ? EmptyStrippedResponseInlineHtml
+                            ? finalizedResponse.Parsed.HasThinking
+                                ? ReasoningOnlyResponseNotice
+                                : EmptyStrippedResponseNotice
                             : finalizedResponse.Answer);
                         _currentStreamingMessage.ThinkingContent = finalizedResponse.Parsed.HasThinking ? finalizedResponse.Parsed.ThinkingContent : string.Empty;
                         _currentStreamingMessage.IsStreaming = false;

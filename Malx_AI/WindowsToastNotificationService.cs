@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -35,14 +36,35 @@ namespace Malx_AI
             if (!_registered)
                 return;
 
+            // Bounded on purpose. Unregister() is a WinApp SDK COM call and was measured blocking
+            // application exit indefinitely: it is the first thing App.OnExit does, so a hang here
+            // stops WPF's shutdown from ever completing and leaves a windowless process behind.
+            // Losing the unregister is harmless — the process is going away regardless.
             try
             {
-                AppNotificationManager.Default.NotificationInvoked -= NotificationInvoked;
-                AppNotificationManager.Default.Unregister();
+                var unregister = new Thread(() =>
+                {
+                    try
+                    {
+                        AppNotificationManager.Default.NotificationInvoked -= NotificationInvoked;
+                        AppNotificationManager.Default.Unregister();
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Windows notification shutdown failed: {ex.Message}");
+                    }
+                })
+                {
+                    IsBackground = true,
+                    Name = "ToastNotificationShutdown"
+                };
+                unregister.SetApartmentState(ApartmentState.MTA);
+                unregister.Start();
+                unregister.Join(TimeSpan.FromSeconds(2));
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Windows notification shutdown failed: {ex.Message}");
+                Debug.WriteLine($"Windows notification shutdown could not start: {ex.Message}");
             }
             finally
             {

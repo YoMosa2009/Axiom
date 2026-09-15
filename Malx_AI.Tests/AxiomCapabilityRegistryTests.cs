@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace Malx_AI.Tests;
 
@@ -49,7 +49,7 @@ public sealed class AxiomCapabilityRegistryTests : IDisposable
         string unrelated = registry.BuildSystemInstruction("Hello there", "Normal Chat / Local");
         string relevant = registry.BuildSystemInstruction("Create a PDF report from this attachment", "Normal Chat / Cloud");
 
-        Assert.Contains("PDF Studio: Design polished", unrelated);
+        Assert.Contains("PDF Studio: Lays out print-ready", unrelated);
         Assert.DoesNotContain("<skill name=\"PDF Studio\">", unrelated);
         Assert.Contains("<skill name=\"PDF Studio\">", relevant);
         Assert.Contains("Never claim", relevant, StringComparison.OrdinalIgnoreCase);

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -70,10 +70,10 @@ namespace Malx_AI
         // model is reloaded when the user returns to the chat view.
         private bool _chatModelReleasedForCouncil = false;
         private bool _isViewTransitionAnimating = false;
-        private bool _isHistorySectionExpanded = true;
-        private bool _isHistorySectionAnimating = false;
         private bool _isSidebarAnimating = false;
         private bool _isSidebarCollapsed = false;
+        private bool _isWorkplaceSidebarCollapsed = false;
+        private bool _isWorkplaceTabActive = false;
         private bool _useGemma4LocalCliMode = false;
         private string _gemma4ModelPath = "";
         private readonly PersonaMemoryService _personaMemoryService = new();
@@ -97,8 +97,9 @@ namespace Malx_AI
         private int _currentWorkplaceChatId = -1;
         private Button _activeWorkplaceButton = null;
 
+        // Hexes written in code are default-palette tokens; AppTheme maps them to the active theme.
         private static SolidColorBrush BrushFromHex(string hex)
-            => AppBrushCache.Get(hex);
+            => AppTheme.Brush(hex);
 
         private void LoadEmptyChatLogo()
         {
@@ -242,7 +243,7 @@ namespace Malx_AI
         private int _activeToolIndicatorGlyphPhase;
         private bool _loadedPersistedWorkplaceChats;
         private Button? _normalThinkingToggleButton;
-        private Button? _normalWebSearchToggleButton;
+        private System.Windows.Controls.Primitives.ToggleButton? _normalWebSearchToggleButton;
         private Button? _localModeButton;
         private Button? _cloudModeButton;
         private Button? _edios15ModelButton;
@@ -374,7 +375,13 @@ namespace Malx_AI
         private static readonly Regex PiRegex = new(@"\bpi\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex NumericOnlyLineRegex = new(@"^(?<value>-?\d+(?:\.\d+)?(?:[eE][\+\-]?\d+)?)$", RegexOptions.Compiled);
         private static readonly Regex NumericWithOptionalLabelRegex = new(@"^(?:(?<label>[^:=]+?)\s*[:=]\s*)?(?<value>-?\d+(?:\.\d+)?(?:[eE][\+\-]?\d+)?)(?<suffix>\s*[%A-Za-z/]+)?$", RegexOptions.Compiled);
-        private const string EmptyStrippedResponseInlineHtml = "<span style=\"color: #9CA3AF;\">The model did not produce a response for this input.</span>";
+        // Plain text on purpose: a message bubble only switches to HTML rendering when its text
+        // looks like markdown, so an HTML placeholder was displayed literally, tags included.
+        private const string EmptyStrippedResponseNotice = "The model did not produce a response for this input.";
+
+        // Shown when the model streamed reasoning but no answer -- usually the whole token budget
+        // went to thinking. Naming that is far more actionable than "no response".
+        private const string ReasoningOnlyResponseNotice = "The model spent this turn on reasoning and returned no answer. Open \u201CView reasoning\u201D to see it, or turn Thinking off (or raise the response limit) and try again.";
         private const string LocalMathLatexInstruction = "When writing mathematical expressions, use LaTeX notation. Use single dollar signs for inline math and double dollar signs for standalone equations on their own line.";
 
         private static readonly string[] EmptyChatGreetings =
@@ -438,6 +445,9 @@ namespace Malx_AI
             try
             {
                 InitializeComponent();
+                // The native caption is not WPF's to paint, so a dark app otherwise sits under a
+                // bright system title bar.
+                WindowTitleBarTheme.Apply(this);
                 InitializeResponsiveDesktopLayout();
                 InitializeCapabilities();
                 // Let a LOCAL council run free the Normal-Chat model before it loads its own role
@@ -480,6 +490,9 @@ namespace Malx_AI
                 {
                     LoadThemePreference();
                     InitializeTheme();
+                    // Palette selection runs after the legacy dark/light setup so the saved
+                    // palette is what ends up on screen.
+                    InitializeThemeSelector();
                 }
                 catch (Exception ex)
                 {
@@ -583,6 +596,7 @@ namespace Malx_AI
                 _toolActivityTimer.Interval = TimeSpan.FromMilliseconds(500);
                 _toolActivityTimer.Tick += ToolActivityTimer_Tick;
                 _chatMessages.CollectionChanged += ChatMessages_CollectionChanged;
+                WorkplaceViewControl.ProjectCanvasShownChanged += WorkplaceView_ProjectCanvasShownChanged;
             }
             catch (Exception ex)
             {
@@ -591,14 +605,61 @@ namespace Malx_AI
             }
         }
 
-        private void SidebarCollapseToggle_Click(object sender, RoutedEventArgs e)
+        // Sidebar collapse is a Workplace-only affordance (button beside the tabs, or Ctrl+B).
+        // The choice is remembered for Workplace; every other tab always shows the sidebar.
+        protected override void OnPreviewKeyDown(KeyEventArgs e)
         {
-            if (_isSidebarAnimating)
+            if (e.Key == Key.B && Keyboard.Modifiers == ModifierKeys.Control && _isWorkplaceTabActive)
+            {
+                ToggleWorkplaceSidebar();
+                e.Handled = true;
+                return;
+            }
+
+            base.OnPreviewKeyDown(e);
+        }
+
+        private void SidebarCollapseButton_Click(object sender, RoutedEventArgs e)
+            => ToggleWorkplaceSidebar();
+
+        private void ToggleWorkplaceSidebar()
+        {
+            _isWorkplaceSidebarCollapsed = !_isSidebarCollapsed;
+            SetSidebarCollapsed(_isWorkplaceSidebarCollapsed, animated: true);
+        }
+
+        // Called on every tab switch.
+        private void SetWorkplaceTabActive(bool active)
+        {
+            _isWorkplaceTabActive = active;
+            SidebarCollapseButton.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+            SetSidebarCollapsed(active && _isWorkplaceSidebarCollapsed, animated: true);
+        }
+
+        private void SetSidebarCollapsed(bool collapse, bool animated)
+        {
+            if (collapse == _isSidebarCollapsed)
                 return;
 
-            _isSidebarCollapsed = !_isSidebarCollapsed;
-            AnimateSidebar(_isSidebarCollapsed);
-            SidebarCollapseButton.Content = _isSidebarCollapsed ? "▸" : "◂";
+            _isSidebarCollapsed = collapse;
+            ((ScaleTransform)SidebarCollapseGlyph.RenderTransform).ScaleX = collapse ? -1 : 1;
+            SidebarCollapseButton.ToolTip = collapse ? "Show sidebar (Ctrl+B)" : "Hide sidebar (Ctrl+B)";
+
+            if (animated && !_isSidebarAnimating)
+            {
+                AnimateSidebar(collapse);
+                return;
+            }
+
+            // Instant path, also used to interrupt an in-flight animation.
+            SidebarBorder.BeginAnimation(UIElement.OpacityProperty, null);
+            if (SidebarBorder.RenderTransform is TranslateTransform slide)
+                slide.BeginAnimation(TranslateTransform.XProperty, null);
+            SidebarBorder.RenderTransform = new TranslateTransform(0, 0);
+            SidebarBorder.Opacity = 1;
+            SidebarBorder.Visibility = collapse ? Visibility.Collapsed : Visibility.Visible;
+            SidebarColumn.Width = new GridLength(collapse ? 0 : GetResponsiveSidebarWidth());
+            _isSidebarAnimating = false;
         }
 
         private void AnimateSidebar(bool collapse)
@@ -633,7 +694,8 @@ namespace Malx_AI
 
             opacityAnim.Completed += (_, _) =>
             {
-                if (collapse)
+                // Skip if an instant change superseded this animation mid-flight.
+                if (collapse && _isSidebarCollapsed)
                 {
                     SidebarBorder.Visibility = Visibility.Collapsed;
                     SidebarColumn.Width = new GridLength(0);
@@ -734,20 +796,25 @@ namespace Malx_AI
             return retriever;
         }
 
-        private string BuildAttachedDocumentMemoryBlock()
+        private string BuildAttachedDocumentMemoryBlock(string? currentUserMessage = null)
         {
             if (_chatDocuments.Count == 0)
                 return string.Empty;
 
             // Compact per-document manifest. Always injected while documents are attached, so the
             // model can identify every file (name, type, size) even when the full content does not
-            // fit the current turn's document budget.
+            // fit the current turn's document budget. Entries are numbered in attach order because
+            // the user refers to them by position ("the 3rd attached image").
+            IReadOnlyList<AttachmentReferenceEntry> index = BuildChatAttachmentIndex();
             var builder = new StringBuilder();
             builder.Append("[ATTACHED DOCUMENT MEMORY] The following files are attached to this chat and remain persistent conversation context for follow-up questions:");
-            foreach (ChatDocumentAttachment doc in _chatDocuments.Take(12))
+            for (int i = 0; i < _chatDocuments.Count && i < Math.Min(12, index.Count); i++)
             {
-                builder.Append("\n- ").Append(doc.Name)
-                    .Append(" (").Append(GetAttachmentKindLabel(doc))
+                ChatDocumentAttachment doc = _chatDocuments[i];
+                AttachmentReferenceEntry entry = index[i];
+                builder.Append("\n- ").Append(entry.Number).Append(". ").Append(doc.Name)
+                    .Append(" (").Append(entry.KindLabel)
+                    .Append(", ").Append(entry.PositionLabel)
                     .Append(", ").Append(FormatAttachmentSize(doc.FileSizeBytes));
                 if (!doc.IsImage && doc.HasTextContent)
                     builder.Append($", ~{Math.Max(1, doc.Content.Length / 6):N0} words");
@@ -768,6 +835,14 @@ namespace Malx_AI
                 builder.Append(" Image attachments are provided to you directly in this chat — analyze them when relevant.");
             else if (hasImages)
                 builder.Append(" Image attachments cannot be analyzed by the current model (no vision support); only their file names are known to you. Say so if asked about image content.");
+
+            builder.Append("\nThe numbering above is authoritative: \"the first attached image\" is the first image in that list, \"attachment 2\" is number 2, and so on. Never renumber or reorder them.");
+
+            // Positional references are resolved here rather than left to the model, so a tiny
+            // local model maps "the 3rd attached image" to the same file a large cloud model does.
+            string resolution = AttachmentReferenceResolver.BuildResolutionBlock(currentUserMessage, index);
+            if (!string.IsNullOrEmpty(resolution))
+                builder.Append("\n\n").Append(resolution);
 
             return builder.ToString();
         }
@@ -974,8 +1049,10 @@ namespace Malx_AI
         }
 
         /// <summary>
-        /// Rebuilds the attachment chip tray under the Normal Chat input box.
-        /// Chips named in <paramref name="animateNames"/> get an entrance animation.
+        /// Rebuilds the attachment preview tray above the Normal Chat prompt box. Chips named in
+        /// <paramref name="animateNames"/> get an entrance animation. Each chip carries the same
+        /// number the model is told about, so "the 2nd attached image" means the same thing to
+        /// the user and to the model.
         /// </summary>
         private void RefreshAttachmentTray(IReadOnlyCollection<string>? animateNames = null)
         {
@@ -986,124 +1063,51 @@ namespace Malx_AI
 
             // Only attachments that have not been sent yet appear in the input tray; once a
             // message is sent its chips clear, though the document stays in conversation context.
-            var pendingDocuments = _chatDocuments.Where(doc => doc.IsPending).ToList();
-            if (pendingDocuments.Count == 0)
+            IReadOnlyList<AttachmentReferenceEntry> index = BuildChatAttachmentIndex();
+            var pending = new List<(ChatDocumentAttachment Document, AttachmentReferenceEntry Entry)>();
+            for (int i = 0; i < _chatDocuments.Count && i < index.Count; i++)
+            {
+                if (_chatDocuments[i].IsPending)
+                    pending.Add((_chatDocuments[i], index[i]));
+            }
+
+            if (pending.Count == 0)
             {
                 AttachmentTrayPanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
             AttachmentTrayPanel.Visibility = Visibility.Visible;
-            foreach (ChatDocumentAttachment doc in pendingDocuments)
+            foreach ((ChatDocumentAttachment document, AttachmentReferenceEntry entry) in pending)
             {
-                bool animate = animateNames?.Contains(doc.Name, StringComparer.OrdinalIgnoreCase) == true;
-                AttachmentTrayPanel.Children.Add(BuildAttachmentChip(doc, animate));
+                bool animate = animateNames?.Contains(document.Name, StringComparer.OrdinalIgnoreCase) == true;
+                string attachmentName = document.Name;
+                var item = new AttachmentPreviewItem
+                {
+                    Number = entry.Number,
+                    Name = entry.Name,
+                    KindLabel = entry.KindLabel,
+                    SizeLabel = FormatAttachmentSize(document.FileSizeBytes),
+                    IsImage = document.IsImage,
+                    Base64Data = document.Base64Data,
+                    PositionLabel = entry.PositionLabel,
+                    TotalCount = index.Count
+                };
+
+                FrameworkElement? chip = null;
+                chip = AttachmentPreviewChip.Build(item, () => RemoveAttachmentWithAnimation(chip!, attachmentName), animate);
+                AttachmentTrayPanel.Children.Add(chip);
             }
         }
 
-        private Border BuildAttachmentChip(ChatDocumentAttachment doc, bool animate)
-        {
-            string kindLabel = GetAttachmentKindLabel(doc);
-            var chip = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x27, 0x24)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x3A, 0x36, 0x31)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10, 6, 8, 6),
-                Margin = new Thickness(0, 4, 8, 4),
-                RenderTransform = new TranslateTransform(),
-                ToolTip = $"{doc.Name} — {kindLabel}, {FormatAttachmentSize(doc.FileSizeBytes)}"
-            };
+        /// <summary>Numbered view of every file attached to this chat, in attach order.</summary>
+        private IReadOnlyList<AttachmentReferenceEntry> BuildChatAttachmentIndex()
+            => BuildChatAttachmentIndex(_chatDocuments);
 
-            var layout = new StackPanel { Orientation = Orientation.Horizontal };
-            layout.Children.Add(new TextBlock
-            {
-                Text = GetAttachmentGlyph(doc),
-                FontSize = 16,
-                Margin = new Thickness(0, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-
-            var textColumn = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            textColumn.Children.Add(new TextBlock
-            {
-                Text = doc.Name,
-                FontSize = 12,
-                FontWeight = FontWeights.Medium,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xE8, 0xE3)),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth = 190
-            });
-            textColumn.Children.Add(new TextBlock
-            {
-                Text = $"{kindLabel} • {FormatAttachmentSize(doc.FileSizeBytes)}",
-                FontSize = 10,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x82, 0x79))
-            });
-            layout.Children.Add(textColumn);
-
-            var removeButton = new Button
-            {
-                Content = "✕",
-                FontSize = 9,
-                Width = 20,
-                Height = 20,
-                Margin = new Thickness(8, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Background = Brushes.Transparent,
-                BorderBrush = Brushes.Transparent,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x82, 0x79)),
-                Cursor = Cursors.Hand,
-                ToolTip = $"Remove {doc.Name} from this chat"
-            };
-            string attachmentName = doc.Name;
-            removeButton.Click += (_, _) => RemoveAttachmentWithAnimation(chip, attachmentName);
-            layout.Children.Add(removeButton);
-
-            chip.Child = layout;
-
-            if (animate)
-            {
-                chip.Opacity = 0;
-                ((TranslateTransform)chip.RenderTransform).Y = 12;
-                chip.Loaded += (_, _) => AnimateAttachmentChipEntrance(chip);
-            }
-
-            return chip;
-        }
-
-        private static string GetAttachmentGlyph(ChatDocumentAttachment doc)
-        {
-            if (doc.IsImage)
-                return "🖼";
-
-            return GetAttachmentKindLabel(doc) switch
-            {
-                "PDF document" => "📕",
-                "word-processing document" => "📄",
-                "spreadsheet" => "📊",
-                "presentation" => "📽",
-                "e-book" => "📚",
-                "Jupyter notebook" => "📓",
-                _ => "📃"
-            };
-        }
-
-        private static void AnimateAttachmentChipEntrance(Border chip)
-        {
-            var fade = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(240))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
-            var rise = new DoubleAnimation(12, 0, TimeSpan.FromMilliseconds(300))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
-
-            chip.BeginAnimation(OpacityProperty, fade);
-            ((TranslateTransform)chip.RenderTransform).BeginAnimation(TranslateTransform.YProperty, rise);
-        }
+        private static IReadOnlyList<AttachmentReferenceEntry> BuildChatAttachmentIndex(
+            IReadOnlyList<ChatDocumentAttachment>? documents)
+            => AttachmentReferenceResolver.BuildIndex(
+                (documents ?? []).Select(doc => (doc.Name, doc.IsImage, GetAttachmentKindLabel(doc))));
 
         private UpdateCheckResult? _availableUpdate;
         private bool _updateDownloadInProgress;
@@ -1357,7 +1361,7 @@ namespace Malx_AI
             return $"{value:0.#} {units[unit]}";
         }
 
-        private void RemoveAttachmentWithAnimation(Border chip, string attachmentName)
+        private void RemoveAttachmentWithAnimation(FrameworkElement chip, string attachmentName)
         {
             var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(160))
             {
@@ -1376,7 +1380,8 @@ namespace Malx_AI
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
             };
             chip.BeginAnimation(OpacityProperty, fade);
-            ((TranslateTransform)chip.RenderTransform).BeginAnimation(TranslateTransform.YProperty, sink);
+            if (chip.RenderTransform is TranslateTransform slide)
+                slide.BeginAnimation(TranslateTransform.YProperty, sink);
         }
 
         private void OpenPromptTemplates_Click(object sender, RoutedEventArgs e)
@@ -1757,7 +1762,7 @@ namespace Malx_AI
                 {
                     _database.SaveSetting("theme", "dark");
                 }
-                this.Background = new SolidColorBrush((Color)this.Resources["DarkBackground"]);
+                this.Background = (Brush)Application.Current.Resources["NotebookBackgroundBrush"];
                 // Theme toggle button removed from UI
             }
             catch (Exception ex)
@@ -1775,7 +1780,7 @@ namespace Malx_AI
                 {
                     _database.SaveSetting("theme", "light");
                 }
-                this.Background = new SolidColorBrush((Color)this.Resources["DarkBackground"]);
+                this.Background = (Brush)Application.Current.Resources["NotebookBackgroundBrush"];
                 // Theme toggle button removed from UI
             }
             catch (Exception ex)
@@ -1906,8 +1911,8 @@ namespace Malx_AI
         {
             if (button == null)
                 return;
-            button.Background = AppBrushCache.Get(selected ? "#B8924A" : "Transparent");
-            button.Foreground = AppBrushCache.Get(selected ? "#EDE8E3" : "#8A8279");
+            button.Background = AppTheme.Brush(selected ? "#2A241B" : "Transparent");
+            button.Foreground = AppTheme.Brush(selected ? "#F5D591" : "#B0A89F");
             button.BorderBrush = Brushes.Transparent;
             button.BorderThickness = new Thickness(0);
         }
@@ -2079,61 +2084,6 @@ namespace Malx_AI
                     : Visibility.Collapsed;
 
             UpdateNormalChatChrome();
-        }
-
-        private void SidebarHistoryToggle_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isHistorySectionAnimating)
-                return;
-
-            _isHistorySectionExpanded = !_isHistorySectionExpanded;
-            AnimateSidebarHistorySection(_isHistorySectionExpanded);
-        }
-
-        private void AnimateSidebarHistorySection(bool expand)
-        {
-            _isHistorySectionAnimating = true;
-
-            if (expand)
-            {
-                ChatHistorySectionContainer.Visibility = Visibility.Visible;
-                HistorySectionToggle.Content = "▾ Recents";
-            }
-            else
-            {
-                HistorySectionToggle.Content = "▸ Recents";
-            }
-
-            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-
-            var maxHeightAnim = new DoubleAnimation
-            {
-                Duration = TimeSpan.FromMilliseconds(180),
-                From = expand ? 0 : 500,
-                To = expand ? 500 : 0,
-                EasingFunction = ease
-            };
-
-            var opacityAnim = new DoubleAnimation
-            {
-                Duration = TimeSpan.FromMilliseconds(150),
-                From = expand ? 0 : 1,
-                To = expand ? 1 : 0,
-                EasingFunction = ease
-            };
-
-            opacityAnim.Completed += (_, _) =>
-            {
-                if (!expand)
-                {
-                    ChatHistorySectionContainer.Visibility = Visibility.Collapsed;
-                }
-
-                _isHistorySectionAnimating = false;
-            };
-
-            ChatHistorySectionContainer.BeginAnimation(FrameworkElement.MaxHeightProperty, maxHeightAnim);
-            ChatHistorySectionContainer.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
         }
 
         private void WorkplaceSidebarHistoryToggle_Click(object sender, RoutedEventArgs e)
@@ -2406,8 +2356,8 @@ namespace Malx_AI
                     _activeChatButton.BorderThickness = new Thickness(1);
                 }
 
-                button.Background = AppBrushCache.Get("#B8924A");
-                button.BorderBrush = AppBrushCache.Get("#302D2A");
+                button.Background = AppTheme.Brush(p => p.AccentSoft);
+                button.BorderBrush = AppTheme.Brush(p => p.Accent);
                 button.BorderThickness = new Thickness(1);
 
                 _activeChatButton = button;
@@ -3122,7 +3072,7 @@ namespace Malx_AI
             var border = new SolidColorBrush(Color.FromRgb(0x30, 0x2D, 0x2A));
             var fg = new SolidColorBrush(Color.FromRgb(0xED, 0xE8, 0xE3));
             var secondary = new SolidColorBrush(Color.FromRgb(0x8A, 0x82, 0x79));
-            var accent = new SolidColorBrush(Color.FromRgb(0xB8, 0x92, 0x4A));
+            SolidColorBrush accent = AppTheme.Brush(p => p.Accent);
 
             var window = new Window
             {
@@ -4290,8 +4240,11 @@ namespace Malx_AI
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             SetNormalChatSidebarActionsVisible(true);
-            HistorySectionToggle.Visibility = Visibility.Visible;
-            ChatHistorySectionContainer.Visibility = _isHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+            SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.NormalChat);
+            // Attachments are global, so a change made on the other tab has to show here.
+            RefreshCapabilityUi();
+            SetWorkplaceTabActive(false);
+            ChatHistorySectionContainer.Visibility = Visibility.Visible;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
             WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
 
@@ -4317,7 +4270,9 @@ namespace Malx_AI
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             SetNormalChatSidebarActionsVisible(false);
-            HistorySectionToggle.Visibility = Visibility.Collapsed;
+            SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.Workplace);
+            WorkplaceViewControl.RefreshCapabilityCounts();
+            SetWorkplaceTabActive(true);
             ChatHistorySectionContainer.Visibility = Visibility.Collapsed;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Visible;
             WorkplaceHistorySectionContainer.Visibility = _isWorkplaceHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
@@ -4345,8 +4300,9 @@ namespace Malx_AI
             PersonaTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             SetNormalChatSidebarActionsVisible(false);
-            HistorySectionToggle.Visibility = Visibility.Visible;
-            ChatHistorySectionContainer.Visibility = _isHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+            SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.None);
+            SetWorkplaceTabActive(false);
+            ChatHistorySectionContainer.Visibility = Visibility.Visible;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
             WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
         }
@@ -4367,8 +4323,9 @@ namespace Malx_AI
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             NeuronTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
             SetNormalChatSidebarActionsVisible(false);
-            HistorySectionToggle.Visibility = Visibility.Visible;
-            ChatHistorySectionContainer.Visibility = _isHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+            SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.None);
+            SetWorkplaceTabActive(false);
+            ChatHistorySectionContainer.Visibility = Visibility.Visible;
             WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
             WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
 
@@ -4793,6 +4750,107 @@ namespace Malx_AI
                 }
             }
             base.OnClosed(e);
+
+            // Reaching OnClosed means this really is a close: OnClosing already cancelled and
+            // returned if Axiom was meant to hide in the tray instead. So from here the process
+            // MUST end, and two things previously stopped that.
+            ShutdownRemainingWindows();
+            // Armed before the cleanup below, not after, so the deadline covers that cleanup too
+            // rather than starting only once it finishes. The critical work writes its clean-exit
+            // marker first and takes well under the deadline.
+            StartExitWatchdog();
+            // Done here rather than left to App.OnExit, which was measured entering and never
+            // returning. With this complete, a forced exit skips nothing that matters.
+            App.PerformCriticalShutdown();
+        }
+
+        /// <summary>
+        /// Closes every window other than this one so WPF's OnLastWindowClose can fire.
+        /// </summary>
+        /// <remarks>
+        /// A window that was only hidden still counts as open, and any secondary window left
+        /// behind — the Computer Use HUD or pointer overlay, the council pet — keeps a windowless
+        /// process running with nothing on screen to close.
+        /// </remarks>
+        private void ShutdownRemainingWindows()
+        {
+            try
+            {
+                foreach (Window window in Application.Current?.Windows.OfType<Window>().ToArray() ?? [])
+                {
+                    if (ReferenceEquals(window, this))
+                        continue;
+                    try { window.Close(); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Window cleanup on shutdown failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Guarantees the process terminates after the window closes.
+        /// </summary>
+        /// <remarks>
+        /// Graceful shutdown gets a full grace period first; this only fires if something still
+        /// holds the process afterwards. An orphaned Axiom is not a cosmetic problem — it holds
+        /// its own executable open, which blocks builds and is the documented cause of the update
+        /// failures this app has already had to work around. The forced exit is logged so the
+        /// underlying leak stays visible rather than being papered over.
+        /// </remarks>
+        private static void StartExitWatchdog()
+        {
+            var watchdog = new Thread(() =>
+            {
+                Thread.Sleep(TimeSpan.FromSeconds(3));
+                try
+                {
+                    BackendLogService.LogEventAsync("MainWindow.ExitWatchdog",
+                        "The process was still alive 3s after the main window closed; forcing exit to avoid an orphaned instance.")
+                        .GetAwaiter().GetResult();
+                }
+                catch
+                {
+                }
+
+                // Environment.Exit runs finalizers and ProcessExit handlers, and was measured
+                // hanging exactly like the shutdown it is meant to rescue. Arm the hard kill on a
+                // SEPARATE thread first, so a hung Exit cannot take the rescue down with it.
+                StartTerminationBackstop();
+                Environment.Exit(0);
+            })
+            {
+                // Background, so a normal exit simply takes this thread with it and the watchdog
+                // never runs. It can only ever fire when the process was not going to exit.
+                IsBackground = true,
+                Name = "AxiomExitWatchdog",
+                Priority = ThreadPriority.BelowNormal
+            };
+            watchdog.Start();
+        }
+
+        /// <summary>
+        /// Terminates the process outright if the graceful exit above is still stuck.
+        /// </summary>
+        /// <remarks>
+        /// Kill() runs no finalizers and no ProcessExit handlers, which is the point: everything
+        /// gentler has already been tried and measured to hang. All shutdown persistence completed
+        /// in OnClosed long before this can fire, so there is nothing left to flush.
+        /// </remarks>
+        private static void StartTerminationBackstop()
+        {
+            var backstop = new Thread(() =>
+            {
+                Thread.Sleep(TimeSpan.FromSeconds(2));
+                try { Process.GetCurrentProcess().Kill(); } catch { }
+            })
+            {
+                IsBackground = true,
+                Name = "AxiomTerminationBackstop",
+                Priority = ThreadPriority.BelowNormal
+            };
+            backstop.Start();
         }
     }
 }

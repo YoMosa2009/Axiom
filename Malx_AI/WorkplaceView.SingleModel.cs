@@ -94,7 +94,6 @@ namespace Malx_AI
             Visibility councilVisibility = _isSingleModelMode ? Visibility.Collapsed : Visibility.Visible;
             Visibility singleVisibility = _isSingleModelMode ? Visibility.Visible : Visibility.Collapsed;
 
-            WorkplaceModeTitleText.Text = _isSingleModelMode ? "Workplace Agent" : "Workplace Council";
             SingleModelModeToggleButton.Content = _isSingleModelMode ? "Single Model: On" : "Single Model: Off";
             SingleModelModeToggleButton.Opacity = _isSingleModelMode ? 1.0 : 0.72;
             CouncilSubtitleText.Visibility = councilVisibility;
@@ -121,16 +120,11 @@ namespace Malx_AI
             SingleModelContextSlider.Value = _singleModelContextSize;
             SingleModelContextValueText.Text = $"{_singleModelContextSize} tokens";
 
-            StageIndicatorGrid.Columns = _isSingleModelMode ? 1 : 3;
-            ArchitectStageIndicator.Visibility = councilVisibility;
-            CriticStageIndicator.Visibility = councilVisibility;
-            BuilderStageText.Text = _isSingleModelMode ? "Agent · Idle" : "Builder · Idle";
-            BuilderGenerationStatusText.Text = _isSingleModelMode ? "Agent generating" : "Builder generating";
-
             ArchitectTokenUsageRow.Visibility = councilVisibility;
             CriticTokenUsageRow.Visibility = councilVisibility;
             BuilderTokenUsageTitle.Text = _isSingleModelMode ? "Agent" : "Builder";
-            AgentTokenUsageRow.Margin = _isSingleModelMode ? new Thickness(0) : new Thickness(0, 0, 12, 0);
+            AgentTokenUsageRow.Margin = _isSingleModelMode ? new Thickness(0) : new Thickness(0, 0, 14, 0);
+            UpdateHeaderMeterPlacement();
 
             SendButton.Content = _isSingleModelMode ? "Run Agent" : "Run Council";
             CanvasSubtitleBlock.Text = _isSingleModelMode ? "Agent output rendered here." : "Builder output rendered here.";

@@ -1,0 +1,32 @@
+<Window x:Class="Malx_AI.ComputerUse.ComputerUsePointerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Computer Use Pointer"
+        Width="36"
+        Height="44"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Focusable="False"
+        IsHitTestVisible="False">
+    <Canvas IsHitTestVisible="False">
+        <Path Stroke="#28180B"
+              StrokeThickness="2.4"
+              StrokeLineJoin="Round"
+              Fill="#C86B1A"
+              Data="M 3,2 L 3,35 L 12,26 L 19,41 L 26,37 L 19,23 L 33,23 Z">
+            <Path.Effect>
+                <DropShadowEffect Color="#000000" BlurRadius="8" ShadowDepth="1" Opacity="0.45"/>
+            </Path.Effect>
+        </Path>
+        <Path Stroke="#FFC36B"
+              StrokeThickness="1"
+              StrokeLineJoin="Round"
+              Fill="#F0A23A"
+              Data="M 6,7 L 6,29 L 13,22 L 20,35 L 22,34 L 16,19 L 28,19 Z"/>
+    </Canvas>
+</Window>

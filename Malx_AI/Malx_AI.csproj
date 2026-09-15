@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Prefer32Bit>false</Prefer32Bit>
@@ -16,9 +17,17 @@
     <WebView2EnableCsWinRTProjection>false</WebView2EnableCsWinRTProjection>
     <!-- Source of truth for the GitHub release update check: bump this for every release
          so it matches the release tag (e.g. tag v1.4.0 -> Version 1.4.0). -->
-    <Version>1.8.6</Version>
+    <Version>1.9.1</Version>
     <ApplicationIcon>Assets\AxiomLogo.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Input and overlay internals are exercised by a smoke harness that drives them for real:
+         a drag either produces a press-move-release an application receives, or it does not, and
+         that cannot be established by unit tests over pure logic. Harness only; no product code
+         depends on this. -->
+    <InternalsVisibleTo Include="ComputerUseHudSmoke" />
+  </ItemGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
@@ -34,6 +43,13 @@
     <PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
     <PackageReference Include="System.Data.SQLite" Version="1.0.118.0" />
     <PackageReference Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Drawing.Imaging" />
+    <Using Remove="System.Windows.Forms" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -123,6 +123,10 @@ namespace Malx_AI
         public event Action<OpenRouterTokenUsage>? TokenUsageRecorded;
 
         private static readonly HttpClient Http = new();
+        private static readonly HttpClient CustomEndpointHttp = new()
+        {
+            Timeout = TimeSpan.FromMinutes(8)
+        };
         private static readonly string[] CodingRequestSignals =
         [
             "write", "code", "script", "function", "program", "generate", "build", "create", "implement",
@@ -215,6 +219,11 @@ namespace Malx_AI
         private string _customEndpointBaseUrl = string.Empty;
         private string _customEndpointApiKey = string.Empty;
         private string _customEndpointModelId = string.Empty;
+        private int _customEndpointContextWindowTokens = CustomEndpointContextWindowTokens;
+        private bool _customEndpointSupportsImageInput;
+        private bool _customEndpointMetadataLoaded;
+        private bool _customEndpointMetadataProbed;
+        private bool _customEndpointContextWindowAdvertised;
         private List<(string Id, string Label, bool IsFree)> _availableModels = new();
         private readonly Dictionary<string, HashSet<string>> _modelSupportedParameters = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _imageInputModelIds = new(StringComparer.OrdinalIgnoreCase);
@@ -239,11 +248,14 @@ namespace Malx_AI
         // provider queues, so a healthy stream is never silent for long — a long line gap means
         // the connection is dead.
         private static readonly TimeSpan StreamFirstLineIdleTimeout = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan CustomEndpointStreamFirstLineIdleTimeout = TimeSpan.FromSeconds(90);
         private static readonly TimeSpan StreamLineIdleTimeout = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan CustomEndpointStreamLineIdleTimeout = TimeSpan.FromSeconds(90);
         // Wall-clock deadline for the first meaningful delta (content/reasoning/tool call).
         // Keep-alive comments reset the line-idle timer, so a zombie provider queue that never
         // starts generating needs its own bound.
         private static readonly TimeSpan StreamFirstContentTimeout = TimeSpan.FromSeconds(45);
+        private static readonly TimeSpan CustomEndpointStreamFirstContentTimeout = TimeSpan.FromSeconds(180);
         // Absolute ceiling for one streamed response. Generous: a slow free-tier provider
         // streaming a long deliverable stays well under this; only a runaway/zombie stream hits it.
         private static readonly TimeSpan StreamTotalDurationLimit = TimeSpan.FromMinutes(4);
@@ -276,8 +288,15 @@ namespace Malx_AI
         public const string WorkplaceCouncilDefaultModelLabel = "Poolside: Laguna M.1 (free)";
         public const string CustomEndpointModelId = "custom-endpoint";
         public const string CustomEndpointModelLabel = "Kestral 1";
-        // Keep in sync with the OLLAMA_CONTEXT_LENGTH the target server actually runs with.
-        public const int CustomEndpointContextWindowTokens = 9216;
+        // Used only when the server does not advertise a window of its own. It must stay
+        // conservative: an OpenAI-compatible local server (Ollama is the common one) exposes no
+        // serving-time window at all, and its real one is a few thousand tokens regardless of what
+        // the model was trained for. Over-declaring does not fail cleanly — it produces context
+        // thrashing, multi-minute stalls, or a runner that dies mid-stream ("model runner has
+        // unexpectedly stopped"). Under-declaring only costs some conversation history, so an
+        // unverified endpoint gets this figure and is upgraded the moment the server reports one.
+        public const int CustomEndpointContextWindowTokens = 8192;
+        public const int CustomEndpointDefaultMaxCompletionTokens = 4096;
         public const string DefaultModelId = Edios15ModelId;
         public const string DefaultModelLabel = Edios15ModelLabel;
         public static string WorkplaceCouncilDisplayLabel => SupportedModelProfiles
@@ -458,17 +477,67 @@ namespace Malx_AI
 
         public bool HasValidKey => !string.IsNullOrWhiteSpace(_apiKey) && _apiKey.Length > 10;
 
-        public void SetCustomEndpoint(string baseUrl, string apiKey, string modelId)
+        public void SetCustomEndpoint(string baseUrl, string apiKey, string modelId, int? contextWindowTokens = null, bool? supportsImageInput = null)
         {
-            _customEndpointBaseUrl = (baseUrl ?? string.Empty).Trim();
-            _customEndpointApiKey = (apiKey ?? string.Empty).Trim();
-            _customEndpointModelId = (modelId ?? string.Empty).Trim();
+            string nextBaseUrl = (baseUrl ?? string.Empty).Trim();
+            string nextApiKey = (apiKey ?? string.Empty).Trim();
+            string nextModelId = (modelId ?? string.Empty).Trim();
+            bool identityChanged = !string.Equals(_customEndpointBaseUrl, nextBaseUrl, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(_customEndpointApiKey, nextApiKey, StringComparison.Ordinal)
+                || !string.Equals(_customEndpointModelId, nextModelId, StringComparison.OrdinalIgnoreCase);
+
+            _customEndpointBaseUrl = nextBaseUrl;
+            _customEndpointApiKey = nextApiKey;
+            _customEndpointModelId = nextModelId;
+
+            if (identityChanged)
+            {
+                _customEndpointMetadataLoaded = false;
+                _customEndpointMetadataProbed = false;
+                _customEndpointContextWindowAdvertised = false;
+                _customEndpointContextWindowTokens = CustomEndpointContextWindowTokens;
+                _customEndpointSupportsImageInput = CustomEndpointMetadataParser.LooksLikeVisionModel(nextModelId);
+            }
+
+            // Only a window the server actually reported is ever persisted, so anything restored
+            // here is advertised evidence rather than a previous session's guess.
+            if (contextWindowTokens is int persistedWindow && persistedWindow >= 2048)
+            {
+                _customEndpointContextWindowTokens = CustomEndpointMetadataParser.ClampContextWindow(persistedWindow);
+                _customEndpointContextWindowAdvertised = true;
+                _customEndpointMetadataLoaded = true;
+            }
+
+            if (supportsImageInput.HasValue)
+            {
+                _customEndpointSupportsImageInput = supportsImageInput.Value
+                    || CustomEndpointMetadataParser.LooksLikeVisionModel(nextModelId);
+                _customEndpointMetadataLoaded = true;
+            }
+            else if (!_customEndpointMetadataLoaded)
+            {
+                _customEndpointSupportsImageInput = CustomEndpointMetadataParser.LooksLikeVisionModel(nextModelId);
+            }
         }
+
+        public string CustomEndpointConfiguredModelId => _customEndpointModelId;
+        public int CustomEndpointResolvedContextWindowTokens =>
+            Math.Max(2048, _customEndpointContextWindowTokens);
+
+        /// <summary>
+        /// True when <see cref="CustomEndpointResolvedContextWindowTokens"/> came from the server
+        /// itself rather than from the conservative fallback. Callers that cache the window across
+        /// sessions must persist it only when this is true, or an unverified guess hardens into
+        /// stored truth and the endpoint is never re-probed.
+        /// </summary>
+        public bool CustomEndpointContextWindowIsAdvertised => _customEndpointContextWindowAdvertised;
+        public bool CustomEndpointResolvedSupportsImageInput =>
+            _customEndpointSupportsImageInput || CustomEndpointMetadataParser.LooksLikeVisionModel(_customEndpointModelId);
 
         public bool HasValidCustomEndpoint =>
             !string.IsNullOrWhiteSpace(_customEndpointBaseUrl)
             && Uri.TryCreate(_customEndpointBaseUrl, UriKind.Absolute, out Uri? parsedUrl)
-            && parsedUrl.Scheme == Uri.UriSchemeHttps
+            && (parsedUrl.Scheme == Uri.UriSchemeHttps || parsedUrl.Scheme == Uri.UriSchemeHttp)
             && !string.IsNullOrWhiteSpace(_customEndpointApiKey)
             && !string.IsNullOrWhiteSpace(_customEndpointModelId);
 
@@ -481,6 +550,7 @@ namespace Malx_AI
 
             try
             {
+                await RefreshCustomEndpointMetadataAsync(cancellationToken, force: true);
                 using var request = new HttpRequestMessage(HttpMethod.Post, CustomEndpointChatCompletionsUrl)
                 {
                     Content = new StringContent(
@@ -496,7 +566,7 @@ namespace Malx_AI
                 };
                 ApplyCustomEndpointHeaders(request);
 
-                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                using var response = await CustomEndpointHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 return response.StatusCode == HttpStatusCode.OK;
             }
             catch (HttpRequestException ex)
@@ -508,6 +578,186 @@ namespace Malx_AI
             {
                 await BackendLogService.LogErrorAsync("CustomEndpointTestFailed", ex);
                 return false;
+            }
+        }
+
+        // A local inference server almost never states its serving-time context window on the
+        // OpenAI-compatible surface -- that surface has no field for it. The real figure lives on
+        // the server own API, one level above /v1. These are probed in descending order of how
+        // well each answer predicts what the server will actually accept, and the first endpoint
+        // that yields a window wins: a running-model report beats a configured ceiling, which
+        // beats a catalog entry, which beats the architecture trained capacity.
+        private sealed record CustomEndpointProbe(
+            HttpMethod Method,
+            string Url,
+            string Server,
+            bool SendModelBody = false,
+            bool ScalarContextResponse = false);
+
+        // Any single probe must be cheap to lose. The shared client timeout is sized for
+        // generation, so an endpoint that accepts the connection and then never answers would
+        // otherwise stall startup for minutes.
+        private static readonly TimeSpan CustomEndpointProbeTimeout = TimeSpan.FromSeconds(6);
+
+        private IReadOnlyList<CustomEndpointProbe> BuildCustomEndpointProbes()
+        {
+            string baseRoot = _customEndpointBaseUrl.TrimEnd('/');
+            string serverRoot = baseRoot;
+            foreach (string suffix in new[] { "/v1", "/api/v0", "/openai/v1", "/openai" })
+            {
+                if (serverRoot.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    serverRoot = serverRoot[..^suffix.Length].TrimEnd('/');
+                    break;
+                }
+            }
+
+            var probes = new List<CustomEndpointProbe>
+            {
+                // Ollama: the only endpoint that reports the window a model is loaded with.
+                new(HttpMethod.Get, serverRoot + "/api/ps", "Ollama running models"),
+                // LM Studio: reports loaded_context_length alongside the model ceiling.
+                new(HttpMethod.Get, serverRoot + "/api/v0/models", "LM Studio catalog"),
+                // llama.cpp / KoboldCpp: default_generation_settings.n_ctx is the served window.
+                new(HttpMethod.Get, serverRoot + "/props", "llama.cpp props"),
+                new(HttpMethod.Get, baseRoot + "/props", "llama.cpp props"),
+                new(HttpMethod.Get, serverRoot + "/api/v1/config/max_context_length", "KoboldCpp config", ScalarContextResponse: true),
+                // TabbyAPI / ExLlama: the loaded model max_seq_len.
+                new(HttpMethod.Get, baseRoot + "/model", "TabbyAPI model"),
+                new(HttpMethod.Get, serverRoot + "/v1/internal/model/info", "text-generation-webui"),
+                // OpenAI-compatible catalogs. vLLM and friends put max_model_len here.
+                new(HttpMethod.Get, baseRoot + "/models", "OpenAI-compatible catalog"),
+                new(HttpMethod.Get, serverRoot + "/v1/models", "OpenAI-compatible catalog"),
+                // Ollama model card. Its context_length is the TRAINED capacity, so this is last
+                // -- it is a real answer only when nothing above reported anything.
+                new(HttpMethod.Post, serverRoot + "/api/show", "Ollama model card", SendModelBody: true)
+            };
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return probes.Where(probe => seen.Add(probe.Method + " " + probe.Url)).ToList();
+        }
+
+        public async Task RefreshCustomEndpointMetadataAsync(CancellationToken cancellationToken = default, bool force = false)
+        {
+            if (!HasValidCustomEndpoint)
+                return;
+            // Gate on having ASKED, not on having succeeded. A server that reports nothing usable
+            // would otherwise be re-probed across every endpoint on every single request.
+            if (_customEndpointMetadataProbed && !force)
+                return;
+
+            _customEndpointMetadataProbed = true;
+            var attempts = new List<string>();
+            int consecutiveTransportFailures = 0;
+            try
+            {
+                foreach (CustomEndpointProbe probe in BuildCustomEndpointProbes())
+                {
+                    CustomEndpointMetadata metadata;
+                    try
+                    {
+                        using var probeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        probeCancellation.CancelAfter(CustomEndpointProbeTimeout);
+                        using var request = new HttpRequestMessage(probe.Method, probe.Url);
+                        ApplyCustomEndpointHeaders(request);
+                        if (probe.SendModelBody)
+                        {
+                            request.Content = new StringContent(
+                                new JsonObject { ["model"] = _customEndpointModelId, ["name"] = _customEndpointModelId }
+                                    .ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                                Encoding.UTF8,
+                                "application/json");
+                        }
+
+                        using var response = await CustomEndpointHttp.SendAsync(
+                            request, HttpCompletionOption.ResponseHeadersRead, probeCancellation.Token);
+                        consecutiveTransportFailures = 0;
+                        if (response.StatusCode != HttpStatusCode.OK)
+                        {
+                            attempts.Add($"{probe.Url} -> {(int)response.StatusCode}");
+                            continue;
+                        }
+
+                        string body = await ReadBodyWithTimeoutAsync(response, probeCancellation.Token);
+                        metadata = CustomEndpointMetadataParser.Parse(body, _customEndpointModelId);
+                        if (metadata.ContextWindowTokens == null
+                            && probe.ScalarContextResponse
+                            && CustomEndpointMetadataParser.TryParseScalarContextWindow(body, out int scalarWindow))
+                        {
+                            metadata = metadata with { ContextWindowTokens = scalarWindow };
+                        }
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        // One unreachable path says nothing about the next; every server in the
+                        // list answers 404 or refuses on paths belonging to a different server.
+                        attempts.Add($"{probe.Url} -> {ex.GetType().Name}");
+                        // An HTTP status — even 404 — proves the host is answering, and the next
+                        // probe will be just as quick. Repeated transport-level failures mean it is
+                        // not, and walking the rest of the list would cost one timeout per entry.
+                        if (++consecutiveTransportFailures >= 3)
+                        {
+                            attempts.Add("Stopped probing: the endpoint host is not responding.");
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    if (metadata.ContextWindowTokens == null && metadata.SupportsImageInput == null)
+                    {
+                        attempts.Add($"{probe.Url} -> no metadata");
+                        continue;
+                    }
+
+                    ApplyCustomEndpointMetadata(metadata);
+                    attempts.Add($"{probe.Url} -> context:{metadata.ContextWindowTokens?.ToString() ?? "none"};"
+                        + $" vision:{metadata.SupportsImageInput?.ToString() ?? "unknown"} [{probe.Server}]");
+                    if (metadata.ContextWindowTokens != null)
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("CustomEndpointMetadataRefreshFailed", ex);
+            }
+
+            // Always leave a record of what was asked and what came back. When a server is not
+            // covered by the probe list, this log is the whole diagnosis and needs no access to
+            // the server itself.
+            await BackendLogService.LogEventAsync("CustomEndpointMetadata",
+                $"Model:{_customEndpointModelId}; resolved window:{CustomEndpointResolvedContextWindowTokens}"
+                + $" ({(CustomEndpointContextWindowIsAdvertised ? "advertised by server" : "NOT advertised - conservative fallback in use")});"
+                + $" vision:{CustomEndpointResolvedSupportsImageInput}"
+                + Environment.NewLine
+                + string.Join(Environment.NewLine, attempts)).ConfigureAwait(false);
+        }
+
+        private void ApplyCustomEndpointMetadata(CustomEndpointMetadata metadata)
+        {
+            if (metadata.ContextWindowTokens is int window && window >= 2048)
+            {
+                _customEndpointContextWindowTokens = CustomEndpointMetadataParser.ClampContextWindow(window);
+                _customEndpointContextWindowAdvertised = true;
+            }
+
+            bool visionFromName = CustomEndpointMetadataParser.LooksLikeVisionModel(_customEndpointModelId)
+                || CustomEndpointMetadataParser.LooksLikeVisionModel(metadata.MatchedModelId);
+            _customEndpointSupportsImageInput = metadata.SupportsImageInput == true || visionFromName;
+            _customEndpointMetadataLoaded = true;
+
+            if (!string.IsNullOrWhiteSpace(metadata.MatchedModelId)
+                && CustomEndpointMetadataParser.LooksLikeVisionModel(metadata.MatchedModelId)
+                && _imageInputModelIds.Add(CustomEndpointModelId))
+            {
+                _imageInputModelIds.Add(metadata.MatchedModelId);
+            }
+
+            if (_customEndpointSupportsImageInput)
+            {
+                _imageInputModelIds.Add(CustomEndpointModelId);
+                if (!string.IsNullOrWhiteSpace(_customEndpointModelId))
+                    _imageInputModelIds.Add(_customEndpointModelId);
             }
         }
 
@@ -688,7 +938,8 @@ namespace Malx_AI
             CancellationToken cancellationToken = default,
             int? maxTokensOverride = null,
             IReadOnlyList<string>? stopSequences = null,
-            bool allowModelFallback = true)
+            bool allowModelFallback = true,
+            bool requireCompleteResponse = false)
         {
             return await SendMessageStreamInternalAsync(
                 messages,
@@ -702,7 +953,8 @@ namespace Malx_AI
                 null,
                 maxTokensOverride,
                 stopSequences,
-                allowModelFallback: allowModelFallback);
+                allowModelFallback: allowModelFallback,
+                requireCompleteResponse: requireCompleteResponse);
         }
 
         public async Task<bool> ValidateModelAvailabilityAsync(string modelId, CancellationToken cancellationToken = default)
@@ -789,7 +1041,9 @@ namespace Malx_AI
                 throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required.");
 
             OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
-            if (!requestedModelProfile.IsCustomEndpoint && _availableModels.Count == 0)
+            if (requestedModelProfile.IsCustomEndpoint)
+                await RefreshCustomEndpointMetadataAsync(cancellationToken);
+            else if (_availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
@@ -801,8 +1055,8 @@ namespace Malx_AI
             systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
             messages = TrimConversationHistory(
                 messages,
-                ConversationHistoryMessageLimit,
-                ConversationHistoryCharacterBudget,
+                GetConversationHistoryMessageLimit(requestedModelProfile),
+                GetConversationHistoryCharacterBudget(requestedModelProfile),
                 promptTokenBudget,
                 systemPrompt);
             int estimatedPromptTokens = EstimateRequestPromptTokens(messages, systemPrompt, tools);
@@ -818,6 +1072,7 @@ namespace Malx_AI
 
             HttpStatusCode finalStatusCode = HttpStatusCode.OK;
             string responseBody = string.Empty;
+            HttpClient httpClient = requestedModelProfile.IsCustomEndpoint ? CustomEndpointHttp : Http;
             for (int retryAttempt = 0; ; retryAttempt++)
             {
                 using var request = BuildChatRequest(
@@ -831,7 +1086,7 @@ namespace Malx_AI
                     tools,
                     isCustomEndpoint: requestedModelProfile.IsCustomEndpoint);
 
-                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 finalStatusCode = response.StatusCode;
                 responseBody = await ReadBodyWithTimeoutAsync(response, cancellationToken);
 
@@ -931,6 +1186,49 @@ namespace Malx_AI
             }
         }
 
+        private bool TryParseNonStreamedChatResponse(
+            string responseBody,
+            int estimatedPromptTokens,
+            OpenRouterModelProfile requestedModelProfile,
+            out OpenRouterChatResponse parsed)
+        {
+            parsed = new OpenRouterChatResponse(string.Empty, string.Empty, Array.Empty<OpenRouterToolCall>());
+            if (string.IsNullOrWhiteSpace(responseBody))
+                return false;
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(responseBody);
+                JsonElement root = document.RootElement;
+                OpenRouterTokenUsage? usage = OpenRouterTokenUsageParser.TryParse(root);
+                RecordTokenUsage(usage, estimatedPromptTokens);
+                if (root.TryGetProperty("choices", out JsonElement choices)
+                    && choices.ValueKind == JsonValueKind.Array
+                    && choices.GetArrayLength() > 0)
+                {
+                    JsonElement firstChoice = choices[0];
+                    if (firstChoice.TryGetProperty("message", out JsonElement message))
+                    {
+                        SetDetectedModel(requestedModelProfile.AliasId, requestedModelProfile.AliasLabel);
+                        parsed = new OpenRouterChatResponse(
+                            ExtractMessageContent(message),
+                            ExtractReasoningContent(firstChoice, message),
+                            ExtractToolCalls(message),
+                            usage);
+                        return !string.IsNullOrWhiteSpace(parsed.Text)
+                            || parsed.ToolCalls.Count > 0
+                            || !string.IsNullOrWhiteSpace(parsed.Reasoning);
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+
+            return false;
+        }
+
         private async Task<OpenRouterChatResponse> SendMessageStreamInternalAsync(
             List<OpenRouterMessage> messages,
             string systemPrompt,
@@ -944,13 +1242,16 @@ namespace Malx_AI
             int? maxTokensOverride = null,
             IReadOnlyList<string>? stopSequences = null,
             bool allowModelFallback = true,
-            int sameModelStreamRetries = 0)
+            int sameModelStreamRetries = 0,
+            bool requireCompleteResponse = false)
         {
             if (!HasAnyValidCloudCredential)
                 throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required.");
 
             OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
-            if (!requestedModelProfile.IsCustomEndpoint && _availableModels.Count == 0)
+            if (requestedModelProfile.IsCustomEndpoint)
+                await RefreshCustomEndpointMetadataAsync(cancellationToken);
+            else if (_availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
@@ -964,8 +1265,8 @@ namespace Malx_AI
             systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
             messages = TrimConversationHistory(
                 messages,
-                ConversationHistoryMessageLimit,
-                ConversationHistoryCharacterBudget,
+                GetConversationHistoryMessageLimit(requestedModelProfile),
+                GetConversationHistoryCharacterBudget(requestedModelProfile),
                 promptTokenBudget,
                 systemPrompt);
             int estimatedPromptTokens = EstimateRequestPromptTokens(messages, systemPrompt, tools);
@@ -979,6 +1280,7 @@ namespace Malx_AI
             double temperature = ResolveTemperature(requestedModelProfile, isCodingRequest, isPythonRequest);
             double topP = ResolveTopP(requestedModelProfile, isCodingRequest);
 
+            HttpClient httpClient = requestedModelProfile.IsCustomEndpoint ? CustomEndpointHttp : Http;
             HttpResponseMessage? response = null;
             for (int retryAttempt = 0; ; retryAttempt++)
             {
@@ -996,7 +1298,7 @@ namespace Malx_AI
                     stopSequences,
                     isCustomEndpoint: requestedModelProfile.IsCustomEndpoint);
 
-                response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
                     break;
 
@@ -1059,6 +1361,7 @@ namespace Malx_AI
             bool padDegenerationDetected = false;
             bool streamStalled = false;
             string providerStreamError = string.Empty;
+            string firstStreamLineSample = string.Empty;
             OpenRouterTokenUsage? usage = null;
 
             try
@@ -1071,12 +1374,21 @@ namespace Malx_AI
                 DateTime streamStartUtc = DateTime.UtcNow;
                 bool firstLineReceived = false;
                 bool anyDeltaReceived = false;
+                TimeSpan firstLineIdle = requestedModelProfile.IsCustomEndpoint
+                    ? CustomEndpointStreamFirstLineIdleTimeout
+                    : StreamFirstLineIdleTimeout;
+                TimeSpan lineIdle = requestedModelProfile.IsCustomEndpoint
+                    ? CustomEndpointStreamLineIdleTimeout
+                    : StreamLineIdleTimeout;
+                TimeSpan firstContentTimeout = requestedModelProfile.IsCustomEndpoint
+                    ? CustomEndpointStreamFirstContentTimeout
+                    : StreamFirstContentTimeout;
 
                 while (true)
                 {
                     TimeSpan streamElapsed = DateTime.UtcNow - streamStartUtc;
                     if (streamElapsed > StreamTotalDurationLimit
-                        || (!anyDeltaReceived && streamElapsed > StreamFirstContentTimeout))
+                        || (!anyDeltaReceived && streamElapsed > firstContentTimeout))
                     {
                         streamStalled = true;
                         break;
@@ -1085,7 +1397,7 @@ namespace Malx_AI
                     string? line;
                     try
                     {
-                        idleCts.CancelAfter(firstLineReceived ? StreamLineIdleTimeout : StreamFirstLineIdleTimeout);
+                        idleCts.CancelAfter(firstLineReceived ? lineIdle : firstLineIdle);
                         line = await reader.ReadLineAsync(idleCts.Token);
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -1099,10 +1411,51 @@ namespace Malx_AI
                         break;
 
                     firstLineReceived = true;
-                    if (string.IsNullOrWhiteSpace(line) || !line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrWhiteSpace(line))
                         continue;
 
-                    string payload = line[5..].Trim();
+                    // Kept for diagnostics: if the stream ends with nothing usable, the log needs to
+                    // show the shape the server sent rather than just "empty".
+                    if (firstStreamLineSample.Length == 0)
+                        firstStreamLineSample = Truncate(line, 220);
+
+                    string payload;
+                    if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        payload = line[5..].Trim();
+                    }
+                    else if (requestedModelProfile.IsCustomEndpoint
+                        && OllamaStreamChunkConverter.TryConvertLine(line, out string nativeChunk))
+                    {
+                        // Not every OpenAI-compatible server streams Server-Sent Events. Ollama and
+                        // the gateways in front of it answer with newline-delimited JSON in their
+                        // own field names; normalising the line here keeps one parsing path below.
+                        // Without this the loop skipped every line, waited out the whole response
+                        // and ended the turn with an empty message.
+                        payload = nativeChunk;
+                    }
+                    else if (requestedModelProfile.IsCustomEndpoint)
+                    {
+                        // Not a chunk at all: some servers ignore stream:true and answer with a
+                        // single JSON body, which may be pretty-printed across several lines.
+                        string remainder = await reader.ReadToEndAsync(cancellationToken);
+                        string jsonBody = string.IsNullOrWhiteSpace(remainder)
+                            ? line
+                            : line + Environment.NewLine + remainder;
+                        if (TryParseNonStreamedChatResponse(jsonBody, estimatedPromptTokens, requestedModelProfile, out OpenRouterChatResponse parsedJsonResponse))
+                        {
+                            if (!string.IsNullOrEmpty(parsedJsonResponse.Text))
+                                onToken?.Invoke(parsedJsonResponse.Text);
+                            return parsedJsonResponse;
+                        }
+
+                        continue;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
                     if (string.Equals(payload, "[DONE]", StringComparison.Ordinal))
                         break;
 
@@ -1141,7 +1494,13 @@ namespace Malx_AI
                     if (!firstChoice.TryGetProperty("delta", out JsonElement delta)
                         || delta.ValueKind != JsonValueKind.Object)
                     {
-                        continue;
+                        // Some self-hosted servers stream the whole message object per chunk rather
+                        // than an incremental delta. The field layout is the same either way.
+                        if (!firstChoice.TryGetProperty("message", out delta)
+                            || delta.ValueKind != JsonValueKind.Object)
+                        {
+                            continue;
+                        }
                     }
 
                     if (delta.TryGetProperty("content", out JsonElement contentElement))
@@ -1184,9 +1543,16 @@ namespace Malx_AI
                     // double-counts every token and produces interleaved garbage ("WeWe need toneed to").
                     // The non-streaming path dedupes whole strings via .Distinct(); replicate that here at
                     // the per-chunk level by preferring one source and only taking the other when it differs.
+                    // "reasoning" is OpenRouter's name for it. Self-hosted stacks use
+                    // "reasoning_content" (vLLM, DeepSeek-style) or "thinking" (Ollama); a model
+                    // that spends its whole budget thinking otherwise looks like an empty answer.
                     string reasoningDelta = delta.TryGetProperty("reasoning", out JsonElement reasoningElement)
                         ? OpenRouterContentParts.ExtractText(reasoningElement, includeReasoningParts: true)
-                        : string.Empty;
+                        : delta.TryGetProperty("reasoning_content", out JsonElement reasoningContentElement)
+                            ? OpenRouterContentParts.ExtractText(reasoningContentElement, includeReasoningParts: true)
+                            : delta.TryGetProperty("thinking", out JsonElement thinkingElement)
+                                ? OpenRouterContentParts.ExtractText(thinkingElement, includeReasoningParts: true)
+                                : string.Empty;
                     string reasoningDetailsDelta = delta.TryGetProperty("reasoning_details", out JsonElement reasoningDetailsElement)
                         ? OpenRouterContentParts.ExtractText(reasoningDetailsElement, includeReasoningParts: true)
                         : string.Empty;
@@ -1211,11 +1577,19 @@ namespace Malx_AI
                 // mid-stream provider error, or a stream that completed with nothing at all. While
                 // no usable answer has been shown to the user, switch to the next model in the
                 // fallback chain instead of surfacing an empty message or a frozen turn.
+                // Action/verification callers cannot use partial JSON or silently retry with a
+                // stale screenshot. Surface interruptions before the generic chat recovery path.
+                if (requireCompleteResponse && (streamStalled || providerStreamError.Length > 0 || padDegenerationDetected))
+                    throw new HttpRequestException(providerStreamError.Length > 0
+                        ? $"Model provider interrupted the response: {Truncate(providerStreamError, 300)}"
+                        : "Model provider returned a stalled or invalid stream.");
                 bool noUsableContent = textBuilder.Length < 40 && toolCallAccumulators.Count == 0;
                 bool emptyCompletion = textBuilder.Length == 0
                     && toolCallAccumulators.Count == 0
                     && reasoningBuilder.Length == 0
                     && (stopSequences == null || stopSequences.Count == 0);
+                if (requireCompleteResponse && emptyCompletion)
+                    throw new HttpRequestException("Model provider returned an empty response.");
                 if (noUsableContent && (padDegenerationDetected || streamStalled || providerStreamError.Length > 0 || emptyCompletion))
                 {
                     string failureKind = padDegenerationDetected ? "PadDegeneration"
@@ -1230,7 +1604,7 @@ namespace Malx_AI
                         // otherwise fail loudly for the caller's own retry logic.
                         await BackendLogService.LogEventAsync(
                             "OpenRouterStreamDegeneration",
-                            $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:disabled\nSameModelRetry:{sameModelStreamRetries}");
+                            $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:disabled\nSameModelRetry:{sameModelStreamRetries}\nFirstLine:{firstStreamLineSample}");
                         if (sameModelStreamRetries < 1)
                         {
                             return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, allowModelFallback: false, sameModelStreamRetries: sameModelStreamRetries + 1);
@@ -1247,7 +1621,7 @@ namespace Malx_AI
                         string fallbackModelId = GetFallbackModelId(requestedModelProfile.AliasId, attemptedModelIds);
                         await BackendLogService.LogEventAsync(
                             "OpenRouterStreamDegeneration",
-                            $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}");
+                            $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}\nFirstLine:{firstStreamLineSample}");
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
                             return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
 
@@ -1411,11 +1785,9 @@ namespace Malx_AI
             // support the field to reject the request with an immediate "Provider returned error".
             if (thinkingEnabled && SupportsParameter(modelId, "reasoning"))
             {
-                // Nemotron Ultra benefits from its high reasoning mode for coding work. Gemma's
-                // medium setting is a better latency/quality balance for its general assistant role.
-                string effort = modelId.StartsWith("google/gemma-4-31b", StringComparison.OrdinalIgnoreCase)
-                    ? "medium"
-                    : "high";
+                // Provider effort is a hint, not a universal capability. Only attach it after
+                // capability metadata confirms the reasoning parameter is accepted.
+                string effort = EffortPolicy.CloudReasoningEffort(EffortPolicy.Current);
                 payload["reasoning"] = new JsonObject { ["effort"] = effort };
             }
             else if (!thinkingEnabled && SupportsParameter(modelId, "reasoning"))
@@ -1692,6 +2064,24 @@ namespace Malx_AI
             }
         }
 
+        private static int GetConversationHistoryMessageLimit(OpenRouterModelProfile profile)
+        {
+            if (!profile.IsCustomEndpoint)
+                return ConversationHistoryMessageLimit;
+
+            int window = Math.Max(4096, profile.ApproximateContextWindowTokens);
+            return window >= 65536 ? 48 : ConversationHistoryMessageLimit;
+        }
+
+        private static int GetConversationHistoryCharacterBudget(OpenRouterModelProfile profile)
+        {
+            if (!profile.IsCustomEndpoint)
+                return ConversationHistoryCharacterBudget;
+
+            int window = Math.Max(4096, profile.ApproximateContextWindowTokens);
+            return Math.Clamp(window * 3, ConversationHistoryCharacterBudget, 400000);
+        }
+
         private List<OpenRouterMessage> TrimConversationHistory(
             List<OpenRouterMessage> conversationHistory,
             int maxMessages,
@@ -1840,6 +2230,13 @@ namespace Malx_AI
 
             if (message.TryGetProperty("reasoning", out JsonElement reasoning))
                 parts.Add(OpenRouterContentParts.ExtractText(reasoning, includeReasoningParts: true));
+
+            // Self-hosted servers name the same field "reasoning_content" or "thinking".
+            if (message.TryGetProperty("reasoning_content", out JsonElement reasoningContent))
+                parts.Add(OpenRouterContentParts.ExtractText(reasoningContent, includeReasoningParts: true));
+
+            if (message.TryGetProperty("thinking", out JsonElement thinking))
+                parts.Add(OpenRouterContentParts.ExtractText(thinking, includeReasoningParts: true));
 
             if (message.TryGetProperty("reasoning_details", out JsonElement reasoningDetails))
                 parts.Add(OpenRouterContentParts.ExtractText(reasoningDetails, includeReasoningParts: true));
@@ -2234,16 +2631,28 @@ namespace Malx_AI
         /// image input modality on OpenRouter. Used to decide whether image attachments are
         /// actually transmitted — and whether the system prompt may claim they are visible.
         /// </summary>
+        public bool HasImageInputCatalog =>
+            _imageInputModelIds.Count > 0 || CustomEndpointResolvedSupportsImageInput;
+
         public bool SupportsImageInput(string modelId)
         {
+            string normalized = (modelId ?? string.Empty).Trim();
+            OpenRouterModelProfile profile = FindModelProfile(normalized);
+            if (profile?.IsCustomEndpoint == true)
+            {
+                return CustomEndpointResolvedSupportsImageInput
+                    || _imageInputModelIds.Contains(CustomEndpointModelId)
+                    || (!string.IsNullOrWhiteSpace(_customEndpointModelId) && _imageInputModelIds.Contains(_customEndpointModelId))
+                    || CustomEndpointMetadataParser.LooksLikeVisionModel(_customEndpointModelId)
+                    || CustomEndpointMetadataParser.LooksLikeVisionModel(normalized);
+            }
+
             if (_imageInputModelIds.Count == 0)
                 return false;
 
-            string normalized = (modelId ?? string.Empty).Trim();
             if (_imageInputModelIds.Contains(normalized))
                 return true;
 
-            OpenRouterModelProfile profile = FindModelProfile(normalized);
             return profile != null && profile.AllApiModelIds.Any(_imageInputModelIds.Contains);
         }
 
@@ -2259,8 +2668,9 @@ namespace Malx_AI
             }
 
             string normalizedModelId = (modelId ?? string.Empty).Trim();
-            if (!string.IsNullOrEmpty(_customEndpointModelId)
-                && string.Equals(normalizedModelId, _customEndpointModelId, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(normalizedModelId, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrEmpty(_customEndpointModelId)
+                    && string.Equals(normalizedModelId, _customEndpointModelId, StringComparison.OrdinalIgnoreCase)))
             {
                 // Untested field against arbitrary OpenAI-compatible servers -- omit it rather than
                 // assume support. temperature/top_p/tools/tool_choice are left enabled as normal.
@@ -2515,23 +2925,23 @@ namespace Malx_AI
                 normalized = Hepha25CoderModelId;
             }
 
-            if (string.Equals(normalized, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(normalized, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(_customEndpointModelId)
+                    && string.Equals(normalized, _customEndpointModelId, StringComparison.OrdinalIgnoreCase)))
             {
                 // Built on demand from runtime settings, not a static array entry -- the base URL,
                 // model, and key can change at any time via Settings, unlike the fixed OpenRouter
                 // aliases below.
                 return new OpenRouterModelProfile(
                     AliasId: CustomEndpointModelId,
-                    AliasLabel: CustomEndpointModelLabel,
+                    AliasLabel: string.IsNullOrWhiteSpace(_customEndpointModelId)
+                        ? CustomEndpointModelLabel
+                        : $"{CustomEndpointModelLabel} ({_customEndpointModelId})",
                     PrimaryApiModelId: _customEndpointModelId,
                     AlternativeApiModelIds: [],
                     IsCodeSpecialized: true,
-                    // Must not exceed the server's actual context window -- GetPromptTokenBudget
-                    // sizes the prompt/history sent to this figure, and a larger declared window
-                    // than the server can really attend to causes severe slowdowns (context
-                    // overflow/thrashing) or hangs, not a clean error. Keep in sync with whatever
-                    // OLLAMA_CONTEXT_LENGTH (or equivalent) the target server is actually running.
-                    ApproximateContextWindowTokens: CustomEndpointContextWindowTokens,
+                    ApproximateContextWindowTokens: CustomEndpointResolvedContextWindowTokens,
+                    DefaultMaxCompletionTokens: CustomEndpointDefaultMaxCompletionTokens,
                     IsCustomEndpoint: true);
             }
 

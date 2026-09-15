@@ -16,6 +16,8 @@ namespace Malx_AI
         // own separate OpenRouterChatService instance rather than duplicating these literal strings.
         public const string CustomEndpointBaseUrlSettingKey = "custom_endpoint_base_url";
         public const string CustomEndpointModelIdSettingKey = "custom_endpoint_model_id";
+        public const string CustomEndpointContextWindowSettingKey = "custom_endpoint_context_window";
+        public const string CustomEndpointSupportsVisionSettingKey = "custom_endpoint_supports_vision";
         private readonly SQLiteConnection _connection;
         private readonly object _gate = new();
         private bool _isInitialized;

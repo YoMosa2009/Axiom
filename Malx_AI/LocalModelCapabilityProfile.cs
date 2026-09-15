@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.RegularExpressions;
 
@@ -52,6 +52,18 @@ namespace Malx_AI
         public string Evidence { get; init; } = string.Empty;
 
         public bool IsSubOneB => SizeClass == LocalModelSizeClass.SubOneB;
+
+        /// <summary>
+        /// How much artifact authoring this model can be trusted with when a Skill renders into
+        /// Project Canvas. Unknown size means unmeasured, not small: never handicap a model whose
+        /// weights could not be read.
+        /// </summary>
+        public static SkillCanvasTier ResolveCanvasTier(LocalModelCapabilityProfile? capability) => capability?.SizeClass switch
+        {
+            LocalModelSizeClass.SubOneB => SkillCanvasTier.Micro,
+            LocalModelSizeClass.OneToFourB => SkillCanvasTier.Compact,
+            _ => SkillCanvasTier.Full
+        };
 
         /// <summary>
         /// True for 1B–4B models: strong enough for the full pipeline, but they lose the thread

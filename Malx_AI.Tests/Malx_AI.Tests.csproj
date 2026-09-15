@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -29,6 +29,27 @@
     <Compile Include="..\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpModels.cs" Link="Production\Mcp\McpModels.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
+    <Compile Include="..\Malx_AI\LocalVisionSupport.cs" Link="Production\LocalVisionSupport.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseModels.cs" Link="Production\ComputerUse\ComputerUseModels.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseLogFormatting.cs" Link="Production\ComputerUse\ComputerUseLogFormatting.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseTargetId.cs" Link="Production\ComputerUse\ComputerUseTargetId.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseSessionController.State.cs" Link="Production\ComputerUse\ComputerUseSessionController.State.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseVisualAssessment.cs" Link="Production\ComputerUse\ComputerUseVisualAssessment.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseTaskContract.cs" Link="Production\ComputerUse\ComputerUseTaskContract.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUsePlanning.cs" Link="Production\ComputerUse\ComputerUsePlanning.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseInference.cs" Link="Production\ComputerUse\ComputerUseInference.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseImageGeometry.cs" Link="Production\ComputerUse\ComputerUseImageGeometry.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseExecutionLedger.cs" Link="Production\ComputerUse\ComputerUseExecutionLedger.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseApplicationVerification.cs" Link="Production\ComputerUse\ComputerUseApplicationVerification.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseBrowserVerification.cs" Link="Production\ComputerUse\ComputerUseBrowserVerification.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseTrustedNavigation.cs" Link="Production\ComputerUse\ComputerUseTrustedNavigation.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseGoalAnalysis.cs" Link="Production\ComputerUse\ComputerUseGoalAnalysis.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseObservationEvidence.cs" Link="Production\ComputerUse\ComputerUseObservationEvidence.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseCoordinateMapper.cs" Link="Production\ComputerUse\ComputerUseCoordinateMapper.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseMention.cs" Link="Production\ComputerUse\ComputerUseMention.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseCapability.cs" Link="Production\ComputerUse\ComputerUseCapability.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseActionParser.cs" Link="Production\ComputerUse\ComputerUseActionParser.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseSafety.cs" Link="Production\ComputerUse\ComputerUseSafety.cs" />
     <Compile Include="..\Malx_AI\UpdateReleaseParser.cs" Link="Production\UpdateReleaseParser.cs" />
     <Compile Include="..\Malx_AI\UpdateStoragePaths.cs" Link="Production\UpdateStoragePaths.cs" />
     <Compile Include="..\Malx_AI\UpdateDownloadFile.cs" Link="Production\UpdateDownloadFile.cs" />
@@ -37,9 +58,16 @@
     <Compile Include="..\Malx_AI\UpdateApplyService.cs" Link="Production\UpdateApplyService.cs" />
     <Compile Include="..\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
     <Compile Include="..\Malx_AI\OpenRouterContentParts.cs" Link="Production\OpenRouterContentParts.cs" />
+    <Compile Include="..\Malx_AI\CustomEndpointMetadataParser.cs" Link="Production\CustomEndpointMetadataParser.cs" />
     <Compile Include="..\Malx_AI\AtomicFileWriter.cs" Link="Production\AtomicFileWriter.cs" />
     <Compile Include="..\Malx_AI\ArtifactRenderService.cs" Link="Production\ArtifactRenderService.cs" />
     <Compile Include="..\Malx_AI\JavaExecutionService.cs" Link="Production\JavaExecutionService.cs" />
     <Compile Include="..\Malx_AI\JsonPersistenceRecovery.cs" Link="Production\JsonPersistenceRecovery.cs" />
+    <Compile Include="..\Malx_AI\AttachmentReferenceResolver.cs" Link="Production\AttachmentReferenceResolver.cs" />
+    <Compile Include="..\Malx_AI\OllamaStreamChunkConverter.cs" Link="Production\OllamaStreamChunkConverter.cs" />
+    <Compile Include="..\Malx_AI\SkillCanvasDirective.cs" Link="Production\SkillCanvasDirective.cs" />
+    <Compile Include="..\Malx_AI\SkillArtifactComposer.cs" Link="Production\SkillArtifactComposer.cs" />
+    <Compile Include="..\Malx_AI\LocalModelCapabilityProfile.cs" Link="Production\LocalModelCapabilityProfile.cs" />
+    <Compile Include="..\Malx_AI\GgufMetadataReader.cs" Link="Production\GgufMetadataReader.cs" />
   </ItemGroup>
 </Project>

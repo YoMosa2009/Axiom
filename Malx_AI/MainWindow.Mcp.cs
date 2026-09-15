@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -137,14 +137,14 @@ namespace Malx_AI
                         McpGoogleAccountStatusText.Text = string.IsNullOrWhiteSpace(googleAccount)
                             ? "Connected"
                             : $"Connected as {googleAccount}";
-                        McpGoogleAccountStatusText.Foreground = AppBrushCache.Get("#B8924A");
+                        McpGoogleAccountStatusText.Foreground = AppTheme.Brush(p => p.Accent);
                     }
                     else
                     {
                         McpGoogleAccountStatusText.Text = McpOAuthConfig.IsGoogleAppConfigured()
                             ? "Not connected — opens your browser to sign in"
                             : "OAuth app credentials missing — open OAuth app folder above";
-                        McpGoogleAccountStatusText.Foreground = AppBrushCache.Get("#8A8279");
+                        McpGoogleAccountStatusText.Foreground = AppTheme.Brush(p => p.TextMuted);
                     }
                 }
 
@@ -155,14 +155,14 @@ namespace Malx_AI
                         McpGitHubAccountStatusText.Text = string.IsNullOrWhiteSpace(githubAccount)
                             ? "Connected"
                             : $"Connected as {githubAccount}";
-                        McpGitHubAccountStatusText.Foreground = AppBrushCache.Get("#B8924A");
+                        McpGitHubAccountStatusText.Foreground = AppTheme.Brush(p => p.Accent);
                     }
                     else
                     {
                         McpGitHubAccountStatusText.Text = McpOAuthConfig.IsGitHubAppConfigured()
                             ? "Not connected — opens browser device login"
                             : "OAuth app credentials missing — open OAuth app folder above";
-                        McpGitHubAccountStatusText.Foreground = AppBrushCache.Get("#8A8279");
+                        McpGitHubAccountStatusText.Foreground = AppTheme.Brush(p => p.TextMuted);
                     }
                 }
 
@@ -199,14 +199,14 @@ namespace Malx_AI
                         McpTodoistAccountStatusText.Text = string.IsNullOrWhiteSpace(todoistAccount)
                             ? "Connected"
                             : $"Connected as {todoistAccount}";
-                        McpTodoistAccountStatusText.Foreground = AppBrushCache.Get("#B8924A");
+                        McpTodoistAccountStatusText.Foreground = AppTheme.Brush(p => p.Accent);
                     }
                     else
                     {
                         McpTodoistAccountStatusText.Text = McpOAuthConfig.IsTodoistAppConfigured()
                             ? "Not connected — opens browser to sign in"
                             : "OAuth app credentials missing — open OAuth app folder above";
-                        McpTodoistAccountStatusText.Foreground = AppBrushCache.Get("#8A8279");
+                        McpTodoistAccountStatusText.Foreground = AppTheme.Brush(p => p.TextMuted);
                     }
                 }
 
@@ -237,7 +237,7 @@ namespace Malx_AI
                 if (McpDropboxAccountStatusText != null && !McpFeatureFlags.DropboxConnectorEnabled)
                 {
                     McpDropboxAccountStatusText.Text = "Coming soon — pending Dropbox review";
-                    McpDropboxAccountStatusText.Foreground = AppBrushCache.Get("#8A8279");
+                    McpDropboxAccountStatusText.Foreground = AppTheme.Brush(p => p.TextMuted);
                 }
 
                 McpConnectorsPanel.Children.Clear();
@@ -254,8 +254,8 @@ namespace Malx_AI
         {
             var card = new Border
             {
-                Background = AppBrushCache.Get("#171615"),
-                BorderBrush = AppBrushCache.Get(connector.IsConnected ? "#3A3226" : "#302D2A"),
+                Background = AppTheme.Brush(p => p.Background),
+                BorderBrush = AppTheme.Brush(connector.IsConnected ? "#3A3226" : "#302D2A"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(12, 10, 12, 10),
@@ -272,8 +272,8 @@ namespace Malx_AI
                 Width = 36,
                 Height = 36,
                 CornerRadius = new CornerRadius(8),
-                Background = AppBrushCache.Get("#211F1D"),
-                BorderBrush = AppBrushCache.Get(connector.IsConnected ? "#B8924A" : "#302D2A"),
+                Background = AppTheme.Brush(p => p.Surface),
+                BorderBrush = AppTheme.Brush(connector.IsConnected ? "#B8924A" : "#302D2A"),
                 BorderThickness = new Thickness(1),
                 Margin = new Thickness(0, 0, 10, 0),
                 Child = new TextBlock
@@ -292,7 +292,7 @@ namespace Malx_AI
                 Text = connector.DisplayName,
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = AppBrushCache.Get("#EDE8E3")
+                Foreground = AppTheme.Brush(p => p.Text)
             });
             textStack.Children.Add(new TextBlock
             {
@@ -300,7 +300,7 @@ namespace Malx_AI
                     ? $"Ready · @{connector.Handle}"
                     : $"{connector.Description} · @{connector.Handle}",
                 FontSize = 10,
-                Foreground = AppBrushCache.Get(connector.IsConnected ? "#B8924A" : "#8A8279"),
+                Foreground = AppTheme.Brush(connector.IsConnected ? "#B8924A" : "#8A8279"),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 2, 0, 0)
             });
@@ -311,7 +311,7 @@ namespace Malx_AI
                 Text = connector.IsConnected ? "Connected" : "—",
                 FontSize = 11,
                 FontWeight = FontWeights.Medium,
-                Foreground = AppBrushCache.Get(connector.IsConnected ? "#B8924A" : "#8A8279"),
+                Foreground = AppTheme.Brush(connector.IsConnected ? "#B8924A" : "#8A8279"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(10, 0, 0, 0)
             };
@@ -726,7 +726,7 @@ namespace Malx_AI
             bool hasComplete = mentions.Any(m => m.IsComplete);
             if (!hasComplete || string.IsNullOrEmpty(text))
             {
-                InputBox.Foreground = AppBrushCache.Get("#EDE8E3");
+                InputBox.Foreground = AppTheme.Brush(p => p.Text);
                 InputBoxMentionOverlay.Inlines.Clear();
                 InputBoxMentionOverlay.Visibility = Visibility.Collapsed;
                 return;
@@ -738,8 +738,8 @@ namespace Malx_AI
 
             var completeSpans = mentions.Where(m => m.IsComplete).OrderBy(m => m.Start).ToList();
             int cursor = 0;
-            Brush normal = AppBrushCache.Get("#EDE8E3");
-            Brush gold = AppBrushCache.Get("#B8924A");
+            Brush normal = AppTheme.Brush(p => p.Text);
+            Brush gold = AppTheme.Brush(p => p.Accent);
 
             foreach (McpMentionSpan span in completeSpans)
             {

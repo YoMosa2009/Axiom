@@ -45,6 +45,8 @@ namespace Malx_AI
             // budget from this model's actual routing history.
             bool deterministicOnly = builderCapability?.IsSubOneB == true;
             int modelChosenToolBudget = builderCapability?.MaxModelChosenPreflightTools ?? MaxBuilderPreflightTools;
+            int maxPreflightTools = EffortPolicy.ScaleToolBudget(MaxBuilderPreflightTools, builderCapability);
+            modelChosenToolBudget = Math.Min(maxPreflightTools, EffortPolicy.ScaleToolBudget(modelChosenToolBudget, builderCapability));
             string builderModelPath = GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty;
 
             if ((deterministicOnly || builderCapability?.IsCompactClass == true)
@@ -78,9 +80,9 @@ namespace Malx_AI
 
                 Grammar grammar = CreateBuilderToolDecisionGrammar();
                 int modelChosenCalls = 0;
-                for (int round = 0; round <= MaxBuilderPreflightTools; round++)
+                for (int round = 0; round < maxPreflightTools; round++)
                 {
-                    if (usedToolCalls.Count >= MaxBuilderPreflightTools || modelChosenCalls >= modelChosenToolBudget)
+                    if (usedToolCalls.Count >= maxPreflightTools || modelChosenCalls >= modelChosenToolBudget)
                         break;
 
                     BuilderToolDecision? decision = null;

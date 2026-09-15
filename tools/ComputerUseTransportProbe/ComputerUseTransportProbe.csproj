@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <AxiomAssemblyPath Condition="'$(AxiomAssemblyPath)' == ''">../../Malx_AI/bin/ComputerUseFix/Malx_AI.dll</AxiomAssemblyPath>
+  </PropertyGroup>
+  <ItemGroup><Reference Include="Malx_AI"><HintPath>$(AxiomAssemblyPath)</HintPath></Reference></ItemGroup>
+</Project>

@@ -34,20 +34,35 @@ namespace Malx_AI
 
             if (_isHybridLocalCouncilSelected)
             {
-                // Real OpenRouter windows are 131072-262144 tokens; Kestral 1's real window
-                // (CustomEndpointContextWindowTokens) is a small fraction of that. Reserving the
-                // same generous output caps used below would leave little or no room for input --
-                // these compact caps still allow a real answer while leaving most of the window free.
+                int window = _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId());
+                if (window <= 16384)
+                {
+                    return role switch
+                    {
+                        CouncilRole.Builder when artifact || complex => 1536,
+                        CouncilRole.Builder when taskType is CouncilTaskType.Coding or CouncilTaskType.Document or CouncilTaskType.Research => 1536,
+                        CouncilRole.Builder => 1024,
+                        CouncilRole.Architect when complex => 768,
+                        CouncilRole.Architect => 512,
+                        CouncilRole.Critic when complex || artifact => 512,
+                        CouncilRole.Critic => 384,
+                        _ => 512
+                    };
+                }
+
+                int builderCap = Math.Clamp(window / 16, 2048, 8192);
+                int architectCap = Math.Clamp(window / 32, 1024, 4096);
+                int criticCap = Math.Clamp(window / 48, 768, 3072);
                 return role switch
                 {
-                    CouncilRole.Builder when artifact || complex => 1536,
-                    CouncilRole.Builder when taskType is CouncilTaskType.Coding or CouncilTaskType.Document or CouncilTaskType.Research => 1536,
-                    CouncilRole.Builder => 1024,
-                    CouncilRole.Architect when complex => 768,
-                    CouncilRole.Architect => 512,
-                    CouncilRole.Critic when complex || artifact => 512,
-                    CouncilRole.Critic => 384,
-                    _ => 512
+                    CouncilRole.Builder when artifact || complex => builderCap,
+                    CouncilRole.Builder when taskType is CouncilTaskType.Coding or CouncilTaskType.Document or CouncilTaskType.Research => builderCap,
+                    CouncilRole.Builder => Math.Max(1536, builderCap * 3 / 4),
+                    CouncilRole.Architect when complex => architectCap,
+                    CouncilRole.Architect => Math.Max(768, architectCap * 3 / 4),
+                    CouncilRole.Critic when complex || artifact => criticCap,
+                    CouncilRole.Critic => Math.Max(512, criticCap * 3 / 4),
+                    _ => architectCap
                 };
             }
 
@@ -72,8 +87,11 @@ namespace Malx_AI
             // counterproductive, advice for Hybrid Local's much smaller real window. This note is
             // appended on every role's every turn, so this is the single highest-impact place to
             // correct that assumption (more surface area than the Builder-only execution rule).
+            int hybridWindow = _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId());
             string windowGuidance = context?.IsHybridLocalExecution == true
-                ? "You are running on a self-hosted local model with a SMALL context window -- do not assume you can hold everything in view at once. Keep your own output focused and avoid re-deriving or restating large blocks of prior content unless directly needed to answer. "
+                ? (hybridWindow >= 65536
+                    ? "You are running on a self-hosted local model. Use the available context as a structured workspace and keep the final answer complete. "
+                    : "You are running on a self-hosted local model with a SMALL context window -- do not assume you can hold everything in view at once. Keep your own output focused and avoid re-deriving or restating large blocks of prior content unless directly needed to answer. ")
                 : "Use the larger context window as a structured workspace, not as permission to blend every passage together. ";
 
             if (_isSingleModelMode && role == CouncilRole.Builder)

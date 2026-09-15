@@ -105,6 +105,40 @@ def axiom_now_iso():
             }
         }
 
+        /// <summary>
+        /// Releases the embedded CPython runtime. Safe to call when Python was never started.
+        /// </summary>
+        /// <remarks>
+        /// PythonEngine.Initialize() starts a real CPython interpreter inside this process, with
+        /// its own threads. Without a matching Shutdown() those threads keep the process alive
+        /// after every window has closed, leaving an invisible Axiom holding its own executable
+        /// open — which blocks the next build and, worse, the next update.
+        /// </remarks>
+        public static void ShutdownRuntime()
+        {
+            if (!_pythonEngineInitialized)
+                return;
+
+            _pythonEngineInitialized = false;
+            _pythonReady = false;
+
+            // Bounded on purpose. PythonEngine.Shutdown() blocks until every Python thread yields
+            // the GIL, and a sandbox script still running never will — so waiting on it turns
+            // application exit itself into the hang. Give it a moment on a background thread and
+            // move on regardless; MainWindow's watchdog guarantees the process ends either way.
+            var shutdown = new Thread(() =>
+            {
+                try { PythonEngine.Shutdown(); }
+                catch (Exception ex) { Debug.WriteLine($"Python runtime shutdown error: {ex.Message}"); }
+            })
+            {
+                IsBackground = true,
+                Name = "PythonRuntimeShutdown"
+            };
+            shutdown.Start();
+            shutdown.Join(TimeSpan.FromSeconds(2));
+        }
+
         public async Task StartPersistentSessionAsync(CancellationToken token = default)
         {
             await InitializeAsync(token).ConfigureAwait(false);

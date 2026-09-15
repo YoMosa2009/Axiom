@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -31,6 +31,7 @@ using System.Windows.Threading;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Rendering;
 using Malx_AI.Mcp;
+using Malx_AI.ComputerUse;
 
 namespace Malx_AI
 {
@@ -139,12 +140,12 @@ namespace Malx_AI
                     GitHubAccountStatusBlock.Text = string.IsNullOrWhiteSpace(label)
                         ? "GitHub: connected — full github_* tools available to cloud council"
                         : $"GitHub: connected as {label} — full github_* tools available";
-                    GitHubAccountStatusBlock.Foreground = AppBrushCache.Get("#B8924A");
+                    GitHubAccountStatusBlock.Foreground = AppTheme.Brush(p => p.Accent);
                 }
                 else
                 {
                     GitHubAccountStatusBlock.Text = "GitHub: not connected — connect for private clones + issues/PRs/API tools";
-                    GitHubAccountStatusBlock.Foreground = AppBrushCache.Get("#8A8279");
+                    GitHubAccountStatusBlock.Foreground = AppTheme.Brush(p => p.TextMuted);
                 }
             }
 
@@ -416,12 +417,15 @@ namespace Malx_AI
                     string windowLabel = cloudWindow >= 1024 ? $"{cloudWindow / 1024}K" : $"{cloudWindow}";
                     string builderLabel = builderCtx >= 1024 ? $"{builderCtx / 1024}K" : $"{builderCtx}";
                     string otherLabel = otherCtx >= 1024 ? $"{otherCtx / 1024}K" : $"{otherCtx}";
+                    string hybridModel = string.IsNullOrWhiteSpace(_openRouterChatService.CustomEndpointConfiguredModelId)
+                        ? "Kestral 1"
+                        : $"Kestral 1 / {_openRouterChatService.CustomEndpointConfiguredModelId}";
                     CloudContextInfoBlock.Text = _isSingleModelMode
                         ? (_isHybridLocalCouncilSelected
-                            ? $"Self-hosted single agent (Kestral 1): {windowLabel} window"
+                            ? $"Self-hosted single agent ({hybridModel}): {windowLabel} window"
                             : $"Provider-managed single agent: {windowLabel} window")
                         : _isHybridLocalCouncilSelected
-                            ? $"Self-hosted (Kestral 1): {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}"
+                            ? $"Self-hosted ({hybridModel}): {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}"
                             : $"Provider-managed: {windowLabel} window · Builder {builderLabel} · Architect & Critic {otherLabel}";
                     CloudContextInfoBlock.Visibility = Visibility.Visible;
                 }
@@ -558,25 +562,26 @@ namespace Malx_AI
                 .Replace("except through WEB_SEARCH", "except through the web_search tool", StringComparison.Ordinal);
             CouncilRunContext? activeRunContext = _activeCouncilRunContext ?? _lastRunContext;
             cloudSystemPrompt += BuildCloudCouncilIntelligenceNote(role, activeRunContext);
-            if (_mcpConnectorService?.IsGitHubConnected == true)
+            if (_mcpConnectorService?.IsAnyConnected() == true)
             {
-                string ghInstr = _mcpConnectorService.BuildSystemInstruction(
-                    mentionedHandles: Array.Empty<string>(),
-                    cloudModeActive: true);
-                if (!string.IsNullOrWhiteSpace(ghInstr))
-                    cloudSystemPrompt += "\n\n" + ghInstr;
+                IReadOnlyList<string> mentionedHandles = McpMentionHelper.GetCompleteMentionHandles(
+                    activeRunContext?.UserPrompt ?? string.Empty,
+                    _mcpConnectorService.GetKnownHandles());
+                string connectorInstruction = _mcpConnectorService.BuildSystemInstruction(mentionedHandles, cloudModeActive: true);
+                if (!string.IsNullOrWhiteSpace(connectorInstruction))
+                    cloudSystemPrompt += "\n\n" + connectorInstruction;
             }
             if (role == CouncilRole.Builder && _isSingleModelMode)
             {
                 string codebaseToolNames = _connectedWorkspace.CodebaseEditAccessEnabled
                     ? ", read_file, search_codebase, list_files"
                     : string.Empty;
-                string githubToolNames = _mcpConnectorService?.IsGitHubConnected == true
-                    ? ", github_* (repos/issues/PRs/files/Actions)"
+                string connectorToolNames = _mcpConnectorService?.IsAnyConnected() == true
+                    ? ", connected @mention tools"
                     : string.Empty;
                 cloudSystemPrompt += "\n\n[SINGLE AGENT EXECUTION RULE]\n" +
                     "You are the only agent for this request. Plan privately, use tools when they materially improve correctness, execute the task, verify the result, and return one final answer. " +
-                    "Available tools can include web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ". " +
+                    "Available tools can include web_search, run_python, calculate, search_session_memory" + codebaseToolNames + connectorToolNames + ". " +
                     "Do not mention internal pipeline stages, role handoffs, or routing labels. Do not expose hidden reasoning or tool protocol text.";
             }
             else if (role == CouncilRole.Builder)
@@ -584,8 +589,8 @@ namespace Malx_AI
                 string codebaseToolNames = _connectedWorkspace.CodebaseEditAccessEnabled
                     ? ", read_file, search_codebase, list_files"
                     : string.Empty;
-                string githubToolNames = _mcpConnectorService?.IsGitHubConnected == true
-                    ? ", github_* (repos/issues/PRs/files/Actions)"
+                string connectorToolNames = _mcpConnectorService?.IsAnyConnected() == true
+                    ? ", connected @mention tools"
                     : string.Empty;
                 // Kestral 1 has proven overeager about tool use even when explicitly told not to
                 // bother for trivial cases -- this variant drops the "whenever you need... never
@@ -594,10 +599,10 @@ namespace Malx_AI
                 // it needs) as the primary defense rather than prompt persuasion alone.
                 cloudSystemPrompt += _isHybridLocalCouncilSelected
                     ? "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
-                        "You are a smaller, self-hosted model with a small context window. Only call a tool (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ") when the deliverable genuinely requires a fact, computation, or lookup you cannot already answer correctly yourself -- do not call one out of habit on every turn. " +
+                        "You are a smaller, self-hosted model with a small context window. Only call a tool (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + connectorToolNames + ") when the deliverable genuinely requires a fact, computation, or lookup you cannot already answer correctly yourself -- do not call one out of habit on every turn. " +
                         "If you do call tools, gather what you need first, then produce EXACTLY ONE final Builder deliverable that incorporates those results, and stop calling tools once you begin writing it."
                     : "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
-                        "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + githubToolNames + ") BEFORE you write your deliverable, " +
+                        "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + connectorToolNames + ") BEFORE you write your deliverable, " +
                         "whenever you need a real fact, number, computation, conversion, or current detail. Never guess or fabricate values you could verify with a tool. " +
                         "If proactive web evidence is partial, off-topic, or missing the user's named entities, call a narrower web_search before writing the final deliverable instead of treating the mismatched evidence as a reason to refuse the whole answer. " +
                         "For stable non-current background context, you may use the prompt, council plan, project knowledge, session memory, or general knowledge when not contradicted by source evidence. " +
@@ -617,7 +622,7 @@ namespace Malx_AI
                     "Do not output analysis, chain-of-thought, approach notes, raw HTML outside the envelope, markdown explanations, or claims that files were changed.";
             }
 
-            if (_isHybridLocalCouncilSelected)
+            if (_isHybridLocalCouncilSelected && _computerUseTurnImages == null)
                 cloudSystemPrompt = BuildHybridLocalCouncilSystemPrompt(role, activeRunContext);
 
             string adaptedSystemPrompt = _openRouterChatService.BuildSystemPromptForModel(
@@ -645,7 +650,9 @@ namespace Malx_AI
             bool includeCalculate = !_isHybridLocalCouncilSelected
                 || (activeRunContext?.IsCalculationTask ?? false)
                 || LooksLikeCalculationRequest(runTurnSignalText);
-            IReadOnlyList<OpenRouterToolDefinition> tools = BuildCouncilCloudToolDefinitions(includeRunPython, includeCalculate);
+            IReadOnlyList<OpenRouterToolDefinition> tools = _computerUseTurnImages != null
+                ? Array.Empty<OpenRouterToolDefinition>()
+                : BuildCouncilCloudToolDefinitions(includeRunPython, includeCalculate);
 
             // Bounded retry around transient free-tier rate limits. When every fallback model is 429,
             // the service throws OpenRouterRateLimitedException; rather than killing the whole relay we
@@ -749,17 +756,20 @@ namespace Malx_AI
             int toolCallCount = 0;
             IReadOnlyList<string> stopSequences = BuildCloudCouncilRoleStopSequences(role);
             int maxTokens = ResolveCloudCouncilRoleMaxTokens(role, _activeCouncilRunContext ?? _lastRunContext);
+            int cloudToolLoopLimit = EffortPolicy.ScaleToolBudget(CloudCouncilToolLoopIterationLimit, capability: null);
+            int cloudToolExecutionLimit = EffortPolicy.ScaleToolBudget(CloudCouncilToolExecutionLimit, capability: null);
+            bool cloudReasoningEnabled = EffortPolicy.RequestsReasoning(userEnabled: false);
             bool forceNoToolsSynthesisAfterBuilderGrounding = false;
             int executedToolCount = 0;
             var executedToolSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            for (int iteration = 0; iteration < CloudCouncilToolLoopIterationLimit; iteration++)
+            for (int iteration = 0; iteration < cloudToolLoopLimit; iteration++)
             {
                 // Fresh buffer per iteration so intermediate (tool-call) turns don't leave stale
                 // partial text on the card before the final answer streams in.
                 var textBuilder = new StringBuilder();
                 IReadOnlyList<OpenRouterToolDefinition>? toolsForThisPass = forceNoToolsSynthesisAfterBuilderGrounding
-                    || executedToolCount >= CloudCouncilToolExecutionLimit
+                    || executedToolCount >= cloudToolExecutionLimit
                     ? null
                     : tools;
                 var streamThrottle = Stopwatch.StartNew();
@@ -767,7 +777,7 @@ namespace Malx_AI
                 OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
                     adaptedSystemPrompt,
-                    false,
+                    cloudReasoningEnabled,
                     GetEffectiveCouncilModelId(),
                     toolsForThisPass,
                     onToken: t =>
@@ -854,11 +864,11 @@ namespace Malx_AI
                         continue;
                     }
 
-                    if (executedToolCount >= CloudCouncilToolExecutionLimit)
+                    if (executedToolCount >= cloudToolExecutionLimit)
                     {
                         messages.Add(new OpenRouterMessage(
                             "tool",
-                            $"Cloud tool execution budget exhausted ({CloudCouncilToolExecutionLimit}). Use existing observations and produce the final role output.",
+                            $"Cloud tool execution budget exhausted ({cloudToolExecutionLimit}). Use existing observations and produce the final role output.",
                             nonNullToolCall.Id));
                         continue;
                     }
@@ -867,7 +877,7 @@ namespace Malx_AI
                     UpdateCloudCouncilToolStatus(nonNullToolCall, executedToolCount);
                     string toolResult = await ExecuteCouncilCloudToolAsync(nonNullToolCall, messages, token);
                     messages.Add(new OpenRouterMessage("tool", BuildCouncilCloudToolResultMessage(toolResult, nonNullToolCall.Name), nonNullToolCall.Id));
-                    UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, CloudCouncilToolExecutionLimit)}/{CloudCouncilToolExecutionLimit} tools used");
+                    UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, cloudToolExecutionLimit)}/{cloudToolExecutionLimit} tools used");
                 }
 
                 if (builderHasFinalizingGroundingToolCall)
@@ -919,7 +929,7 @@ namespace Malx_AI
                 OpenRouterChatResponse forcedFinal = await _openRouterChatService.SendConversationStreamAsync(
                     messages,
                     adaptedSystemPrompt,
-                    false,
+                    cloudReasoningEnabled,
                     GetEffectiveCouncilModelId(),
                     null,
                     onToken: t =>
@@ -1195,19 +1205,12 @@ namespace Malx_AI
                     ["additionalProperties"] = false
                 }));
 
-            // Full GitHub API surface when the user connected GitHub (Settings or Workplace).
-            if (_mcpConnectorService?.IsGitHubConnected == true)
+            // Expose every connected connector's tool surface.  The same definitions are used by
+            // both the single-agent execution path and each role in the three-role council.
+            if (_mcpConnectorService?.IsAnyConnected() == true)
             {
                 foreach (McpToolDefinition mcpTool in _mcpConnectorService.GetActiveTools(null))
-                {
-                    if (!mcpTool.Name.StartsWith("github_", StringComparison.OrdinalIgnoreCase))
-                        continue;
                     defs.Add(new OpenRouterToolDefinition(mcpTool.Name, mcpTool.Description, mcpTool.ParametersSchema));
-                }
-
-                string? ghUser = _mcpConnectorService.GetGitHubAccountLabel();
-                // Instruction is injected via system prompt in ExecuteCouncilRoleCloudAsync when tools are listed.
-                _ = ghUser;
             }
 
             if (_connectedWorkspace.CodebaseEditAccessEnabled)
@@ -1433,7 +1436,6 @@ namespace Malx_AI
                 }
 
                 if (_mcpConnectorService != null
-                    && name.StartsWith("github_", StringComparison.OrdinalIgnoreCase)
                     && _mcpConnectorService.TryResolveTool(name, out _))
                 {
                     McpToolExecutionResult mcpResult = await _mcpConnectorService
@@ -1562,6 +1564,8 @@ namespace Malx_AI
         {
             public string UserPrompt { get; init; } = "";
             public string Objective { get; init; } = "";
+            /// <summary>Numbered attachment list plus any resolved positional reference.</summary>
+            public string AttachmentIndexBlock { get; init; } = "";
             public string CalculatorContext { get; set; } = "";
             public bool CalculatorUsed { get; set; }
             public CouncilTaskType TaskType { get; init; }
@@ -2492,6 +2496,8 @@ namespace Malx_AI
             RefreshSingleModelModeUi();
             RefreshWorkplaceCloudModeUi();
             RefreshWorkplaceWebToggleUi();
+            if (_isCloudModeEnabled && _isHybridLocalCouncilSelected)
+                _ = RefreshHybridLocalMetadataAsync();
             RefreshCodebaseAccessUi();
             UpdateSessionHippocampusIndicator();
             UpdatePerformanceAggregate();
@@ -2563,7 +2569,8 @@ namespace Malx_AI
             if (role != CouncilRole.Builder)
                 return new OpenRouterMessage("user", payload, PreserveFullText: true);
 
-            List<DocumentInfo> images = _documents
+            IEnumerable<DocumentInfo> visionSource = _computerUseTurnImages ?? _documents.ToList();
+            List<DocumentInfo> images = visionSource
                 .Where(document => document.IsImage
                     && !string.IsNullOrWhiteSpace(document.MimeType)
                     && !string.IsNullOrWhiteSpace(document.Base64Data))
@@ -2583,6 +2590,9 @@ namespace Malx_AI
                 .Select(image => LocalVisionSupport.BuildImageDataUrl(image.MimeType, image.Base64Data))
                 .ToList();
             LogActivity($"Builder: attached {imageDataUrls.Count} image(s) to the cloud vision payload.");
+            string visionOrderNote = AttachmentReferenceResolver.BuildVisionOrderNote(images.Select(image => image.Name));
+            if (!string.IsNullOrWhiteSpace(visionOrderNote))
+                payload = visionOrderNote + "\n\n" + payload;
             return new OpenRouterMessage(
                 "user",
                 payload,
@@ -2677,6 +2687,7 @@ namespace Malx_AI
         private bool _isProcessing;
         public bool HasActiveWork => _isProcessing || _isStudySessionRunning;
         private bool _isProjectCanvasExpanded = true;
+        private bool _isProjectCanvasShown = true;
         private bool _isProjectCanvasAutoCollapsed;
         private bool _isProjectCanvasExplicitlyExpandedInCompactLayout;
         private bool _isCodeOutputExpanded = true;
@@ -2714,6 +2725,7 @@ namespace Malx_AI
         private static readonly Regex ModelParamBillionsRegex = new(@"(\d+(?:\.\d+)?)\s*[bB]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const string ProjectCanvasManualTrigger = "@ProjectCanvas";
         private static readonly Regex ProjectCanvasManualTriggerRegex = new(@"(?<![A-Za-z0-9_])@ProjectCanvas(?![A-Za-z0-9_])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex WorkplaceAtMentionRegex = new(@"(?<![A-Za-z0-9_])@[A-Za-z][A-Za-z0-9_]*(?![A-Za-z0-9_])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex ArchitectNumberedStepRegex = new(@"^\s*\d{1,3}[\.|\)]\s+", RegexOptions.Compiled);
         private static readonly string[] SandboxUnitWords =
         [
@@ -2987,7 +2999,18 @@ namespace Malx_AI
                 string baseUrl = database.GetSetting(DatabaseService.CustomEndpointBaseUrlSettingKey);
                 string modelId = database.GetSetting(DatabaseService.CustomEndpointModelIdSettingKey);
                 string apiKey = database.LoadCustomEndpointApiKey() ?? string.Empty;
-                _openRouterChatService.SetCustomEndpoint(baseUrl, apiKey, modelId);
+                int? contextWindow = null;
+                if (int.TryParse(database.GetSetting(DatabaseService.CustomEndpointContextWindowSettingKey), out int tokens) && tokens >= 2048)
+                    contextWindow = CustomEndpointMetadataParser.ClampContextWindow(tokens);
+                string visionStored = database.GetSetting(DatabaseService.CustomEndpointSupportsVisionSettingKey);
+                bool? supportsVision = string.Equals(visionStored, "1", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(visionStored, "true", StringComparison.OrdinalIgnoreCase)
+                    ? true
+                    : string.Equals(visionStored, "0", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(visionStored, "false", StringComparison.OrdinalIgnoreCase)
+                        ? false
+                        : null;
+                _openRouterChatService.SetCustomEndpoint(baseUrl, apiKey, modelId, contextWindow, supportsVision);
             }
             catch
             {
@@ -3013,7 +3036,12 @@ namespace Malx_AI
         {
             InitializeComponent();
             QueryInput.TextArea.TextView.LineTransformers.Add(new ProjectCanvasMentionColorizer());
-            QueryInput.TextChanged += (_, _) => UpdateWorkplaceTokenUsageIndicator();
+            QueryInput.TextChanged += (_, _) =>
+            {
+                UpdateWorkplaceTokenUsageIndicator();
+                UpdateWorkplaceMentionPopup();
+            };
+            QueryInput.TextArea.PreviewKeyDown += WorkplaceQueryInput_PreviewKeyDown;
             Directory.CreateDirectory(CouncilKvStateFolder);
             LoadOpenRouterKeyForWorkplace();
             LoadCustomEndpointForWorkplace();
@@ -3023,6 +3051,9 @@ namespace Malx_AI
             _council[CouncilRole.Critic] = new CouncilModelConfig();
 
             DocumentListBox.ItemsSource = _documents;
+            // One hook keeps the composer preview tray in step with every path that loads or
+            // clears documents (drop zone, browse dialog, session restore, clear).
+            _documents.CollectionChanged += (_, _) => RefreshWorkplaceAttachmentTray();
             ConceptCloudItemsControl.ItemsSource = _conceptTags;
             ChatCardsList.ItemsSource = _renderedChatCards;
             _chatCards.CollectionChanged += ChatCards_CollectionChanged;
@@ -3077,6 +3108,7 @@ namespace Malx_AI
             RefreshWorkplaceWebToggleUi();
             RefreshCodebaseAccessUi();
             RefreshCouncilPetToggleUi();
+            InitializeWorkplaceCapabilities();
             UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
             SizeChanged += (_, _) => ApplyDesktopLayout(ActualWidth);
@@ -3090,10 +3122,10 @@ namespace Malx_AI
             protected override void ColorizeLine(DocumentLine line)
             {
                 string text = CurrentContext.Document.GetText(line);
-                foreach (Match match in ProjectCanvasManualTriggerRegex.Matches(text))
+                foreach (Match match in WorkplaceAtMentionRegex.Matches(text))
                 {
                     int startOffset = line.Offset + match.Index;
-                    int endOffset = startOffset + ProjectCanvasManualTrigger.Length;
+                    int endOffset = startOffset + match.Length;
                     ChangeLinePart(startOffset, endOffset, element =>
                     {
                         element.TextRunProperties.SetForegroundBrush(MentionBrush);
@@ -3108,7 +3140,32 @@ namespace Malx_AI
             RefreshCanvasArtifactUi();
         }
 
+        /// <summary>True while the Project Canvas pane is shown (or animating open).</summary>
+        internal bool IsProjectCanvasShown => _isProjectCanvasShown;
+
+        /// <summary>Raised whenever the pane is shown or hidden, including auto-collapse on narrow
+        /// windows, so the main window's canvas toggle can mirror it.</summary>
+        internal event EventHandler? ProjectCanvasShownChanged;
+
+        internal void SetProjectCanvasShown(bool show)
+        {
+            if (show != _isProjectCanvasShown)
+                ToggleProjectCanvas();
+        }
+
+        private void SetProjectCanvasShownState(bool shown)
+        {
+            if (_isProjectCanvasShown == shown)
+                return;
+
+            _isProjectCanvasShown = shown;
+            ProjectCanvasShownChanged?.Invoke(this, EventArgs.Empty);
+        }
+
         private void ProjectCanvasToggleButton_Click(object sender, RoutedEventArgs e)
+            => ToggleProjectCanvas();
+
+        private void ToggleProjectCanvas()
         {
             if (_isProjectCanvasAutoCollapsed)
             {
@@ -3152,33 +3209,38 @@ namespace Malx_AI
                 }
             }
 
-            double canvasWidth = ProjectCanvasPane.Visibility == Visibility.Visible
-                ? ProjectCanvasPane.ActualWidth > 0 ? ProjectCanvasPane.ActualWidth : GetResponsiveProjectCanvasWidth()
-                : ProjectCanvasCollapsedHandle.Visibility == Visibility.Visible ? 36 : 0;
-            double centerWidth = Math.Max(0, availableWidth - CouncilSidebarColumn.Width.Value - canvasWidth);
-            double inputWidth = InputAreaContainer.ActualWidth > 0 ? InputAreaContainer.ActualWidth : centerWidth;
-            bool canvasVisible = ProjectCanvasPane.Visibility == Visibility.Visible;
-            bool stackRunSummary = inputWidth < 940 || (canvasVisible && inputWidth < 1040);
-
-            Grid.SetRow(WorkplaceTokenUsagePanel, stackRunSummary ? 1 : 0);
-            Grid.SetColumn(WorkplaceTokenUsagePanel, stackRunSummary ? 0 : 1);
-            Grid.SetColumnSpan(WorkplaceTokenUsagePanel, stackRunSummary ? 2 : 1);
-            WorkplaceTokenUsagePanel.Margin = stackRunSummary
-                ? new Thickness(0, 8, 0, 0)
-                : new Thickness(14, 0, 0, 0);
-            WorkplaceTokenUsagePanel.Padding = stackRunSummary
-                ? new Thickness(0, 8, 0, 0)
-                : new Thickness(14, 1, 0, 1);
-            WorkplaceTokenUsagePanel.BorderThickness = stackRunSummary
-                ? new Thickness(0, 1, 0, 0)
-                : new Thickness(1, 0, 0, 0);
-
-            StageActionsPanel.HorizontalAlignment = stackRunSummary ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-            StageActionsPanel.MaxWidth = stackRunSummary ? double.PositiveInfinity : 460;
-            InputAreaContainer.Padding = centerWidth < 650
-                ? new Thickness(12, 10, 12, 10)
-                : new Thickness(24, 12, 24, 12);
             UpdateCanvasHeaderLayout();
+        }
+
+        // Room the title and status line need before the meters may share their row.
+        private const double HeaderStatusMinWidth = 320;
+        private const double HeaderMeterRowWidth = 104;
+        private const double HeaderMeterRowGap = 14;
+
+        private void WorkplaceHeaderBorder_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (e.WidthChanged)
+                UpdateHeaderMeterPlacement();
+        }
+
+        private void UpdateHeaderMeterPlacement()
+        {
+            double available = WorkplaceHeaderBorder.ActualWidth
+                - WorkplaceHeaderBorder.Padding.Left
+                - WorkplaceHeaderBorder.Padding.Right;
+            if (available <= 0)
+                return;
+
+            int meterCount = _isSingleModelMode ? 1 : 3;
+            double metersWidth = meterCount * HeaderMeterRowWidth + (meterCount - 1) * HeaderMeterRowGap;
+            // 20 margin + 16 padding + 1 divider around the meters when they sit on the right.
+            bool stack = available < HeaderStatusMinWidth + metersWidth + 37;
+
+            DockPanel.SetDock(WorkplaceTokenUsagePanel, stack ? Dock.Bottom : Dock.Right);
+            WorkplaceTokenUsagePanel.HorizontalAlignment = stack ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
+            WorkplaceTokenUsagePanel.Margin = stack ? new Thickness(0, 8, 0, 2) : new Thickness(20, 0, 0, 0);
+            WorkplaceTokenUsagePanel.Padding = stack ? new Thickness(0) : new Thickness(16, 2, 0, 2);
+            WorkplaceTokenUsagePanel.BorderThickness = stack ? new Thickness(0) : new Thickness(1, 0, 0, 0);
         }
 
         private void SetProjectCanvasVisibilityInstant(bool visible)
@@ -3188,7 +3250,7 @@ namespace Malx_AI
             ProjectCanvasPane.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             ProjectCanvasPane.Opacity = visible ? 1 : 0;
             ProjectCanvasPane.Width = visible ? GetResponsiveProjectCanvasWidth() : 0;
-            ProjectCanvasCollapsedHandle.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
+            SetProjectCanvasShownState(visible);
             ProjectCanvasToggleButton.Content = visible ? "›" : "‹";
             ProjectCanvasToggleButton.ToolTip = visible ? "Hide project canvas" : "Show project canvas";
         }
@@ -3306,10 +3368,10 @@ namespace Malx_AI
         {
             var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
             double targetWidth = expand ? GetResponsiveProjectCanvasWidth() : 0;
+            SetProjectCanvasShownState(expand);
 
             if (expand)
             {
-                ProjectCanvasCollapsedHandle.Visibility = Visibility.Collapsed;
                 ProjectCanvasPane.Visibility = Visibility.Visible;
                 ProjectCanvasToggleButton.Content = "›";
                 ProjectCanvasToggleButton.ToolTip = "Hide project canvas";
@@ -3334,7 +3396,6 @@ namespace Malx_AI
                 if (!expand)
                 {
                     ProjectCanvasPane.Visibility = Visibility.Collapsed;
-                    ProjectCanvasCollapsedHandle.Visibility = Visibility.Visible;
                     ProjectCanvasToggleButton.Content = "‹";
                     ProjectCanvasToggleButton.ToolTip = "Show project canvas";
                 }
@@ -4235,7 +4296,7 @@ namespace Malx_AI
             return (int)(ctxTokens * fraction * AvgCharsPerToken);
         }
 
-        private static string ComposeCouncilSystemPrompt(string systemPrompt, CouncilRole role, CouncilRunContext? context, int documentCharBudget)
+        private string ComposeCouncilSystemPrompt(string systemPrompt, CouncilRole role, CouncilRunContext? context, int documentCharBudget)
         {
             string prompt = (systemPrompt ?? string.Empty).Trim();
             string capabilityInstruction = AxiomCapabilityRegistry.Shared.BuildSystemInstruction(
@@ -4243,6 +4304,27 @@ namespace Malx_AI
                 "Workplace / Council or Single Model");
             if (!string.IsNullOrWhiteSpace(capabilityInstruction))
                 prompt = string.IsNullOrWhiteSpace(prompt) ? capabilityInstruction : prompt + "\n\n" + capabilityInstruction;
+
+            // Only the Builder writes the Project Canvas, so only the Builder is told to produce a
+            // renderable artifact; the Architect and Critic keep reasoning about it in prose.
+            if (role == CouncilRole.Builder)
+            {
+                SkillCanvasDirective? canvasDirective = AxiomCapabilityRegistry.Shared.ResolveCanvasDirective(context?.UserPrompt ?? string.Empty);
+                if (canvasDirective != null)
+                {
+                    string canvasInstruction = canvasDirective.BuildSystemInstruction("Workplace Builder", ResolveBuilderCanvasTier());
+                    prompt = string.IsNullOrWhiteSpace(prompt) ? canvasInstruction : prompt + "\n\n" + canvasInstruction;
+                }
+            }
+
+            // The attachment index goes to every role even when no text was extracted: an
+            // image-only workplace still needs "the 2nd attached image" to mean something.
+            if (!string.IsNullOrWhiteSpace(context?.AttachmentIndexBlock))
+            {
+                prompt = string.IsNullOrWhiteSpace(prompt)
+                    ? context!.AttachmentIndexBlock
+                    : prompt + "\n\n" + context!.AttachmentIndexBlock;
+            }
 
             if (context == null || string.IsNullOrWhiteSpace(context.DocumentContent))
                 return prompt;
@@ -7308,11 +7390,49 @@ namespace Malx_AI
             }
 
             _isHybridLocalCouncilSelected = true;
+            _isCloudModeEnabled = true;
+            _ = RefreshHybridLocalMetadataAsync();
             RefreshWorkplaceCloudModeUi();
             UpdateCouncilBlocks();
             UpdateContextInfo();
             AppendChat("system", "Workplace cloud mode now uses Kestral 1 (your self-hosted endpoint) for Architect, Builder, and Critic.");
             SavePersistedSession();
+        }
+
+        private async Task RefreshHybridLocalMetadataAsync()
+        {
+            try
+            {
+                LoadCustomEndpointForWorkplace();
+                await _openRouterChatService.RefreshCustomEndpointMetadataAsync(CancellationToken.None, force: true);
+                try
+                {
+                    using var database = new DatabaseService();
+                    // Only an advertised window is cached; see PersistCustomEndpointMetadata.
+                    database.SaveSetting(
+                        DatabaseService.CustomEndpointContextWindowSettingKey,
+                        _openRouterChatService.CustomEndpointContextWindowIsAdvertised
+                            ? _openRouterChatService.CustomEndpointResolvedContextWindowTokens.ToString()
+                            : string.Empty);
+                    database.SaveSetting(
+                        DatabaseService.CustomEndpointSupportsVisionSettingKey,
+                        _openRouterChatService.CustomEndpointResolvedSupportsImageInput ? "1" : "0");
+                }
+                catch
+                {
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    RefreshWorkplaceCloudModeUi();
+                    UpdateContextInfo();
+                    UpdateCouncilBlocks();
+                });
+            }
+            catch (Exception ex)
+            {
+                await BackendLogService.LogErrorAsync("Workplace.HybridLocalMetadata", ex);
+            }
         }
 
         private async Task<string> ExecuteWebSearchAsync(string query, CancellationToken token)
@@ -7416,6 +7536,9 @@ namespace Malx_AI
 
         private void QueryInput_KeyDown(object sender, KeyEventArgs e)
         {
+            if (WorkplaceMentionPopup?.IsOpen == true)
+                return;
+
             if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) != ModifierKeys.Shift)
             {
                 e.Handled = true;
@@ -9013,19 +9136,8 @@ namespace Malx_AI
             }
             _activeStageRole = activeRole;
 
-            ApplyStageVisual(ArchitectStageIndicator, activeRole == CouncilRole.Architect, architectDone);
-            ApplyStageVisual(BuilderStageIndicator, activeRole == CouncilRole.Builder, builderDone);
-            ApplyStageVisual(CriticStageIndicator, activeRole == CouncilRole.Critic, criticDone);
-
-            string architectLabel = activeRole == CouncilRole.Architect ? "Running" : architectDone ? $"Done {FormatStageDuration(_lastArchitectDuration)}" : "Idle";
-            string builderLabel = activeRole == CouncilRole.Builder ? "Running" : builderDone ? $"Done {FormatStageDuration(_lastBuilderDuration)}" : "Idle";
-            string criticLabel = activeRole == CouncilRole.Critic ? "Running" : criticDone ? $"Done {FormatStageDuration(_lastCriticDuration)}" : "Idle";
-
-            ArchitectStageText.Text = $"Architect · {architectLabel}";
-            BuilderStageText.Text = _isSingleModelMode ? $"Agent · {builderLabel}" : $"Builder · {builderLabel}";
-            CriticStageText.Text = $"Critic · {criticLabel}";
-            SetBuilderGenerationStatusVisible(activeRole == CouncilRole.Builder);
-
+            // Stage progress is surfaced by the header Relay line and the Council Bit; there is
+            // no separate stage-pill row in the composer anymore.
             if (_isSingleModelMode && activeRole == CouncilRole.Builder)
                 PublishCouncilPetStatus("Agent", _canvasArtifact.SupportsPreview ? "Updating Project Canvas." : "Working on the answer.");
             else if (activeRole == CouncilRole.Architect)
@@ -9036,41 +9148,6 @@ namespace Malx_AI
                 PublishCouncilPetStatus("Critic", "Checking the result.");
             else if (architectDone && builderDone && criticDone)
                 PublishCouncilPetStatus("Council", "Run complete.");
-        }
-
-        private void SetBuilderGenerationStatusVisible(bool isVisible)
-        {
-            if (BuilderGenerationStatusText == null || BuilderStageText == null)
-                return;
-
-            BuilderGenerationStatusText.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
-            BuilderStageText.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
-        }
-
-        private static string FormatStageDuration(double seconds)
-        {
-            if (seconds <= 0) return "";
-            return seconds < 60 ? $"({seconds:F0}s)" : $"({seconds / 60:F1}m)";
-        }
-
-        private static void ApplyStageVisual(Border border, bool isActive, bool isDone)
-        {
-            if (isActive)
-            {
-                border.Background = AppBrushCache.Get(Color.FromRgb(255, 59, 59));
-                border.BorderBrush = AppBrushCache.Get(Color.FromRgb(255, 59, 59));
-                return;
-            }
-
-            if (isDone)
-            {
-                border.Background = AppBrushCache.Get(Color.FromRgb(48, 48, 46));
-                border.BorderBrush = AppBrushCache.Get(Color.FromRgb(64, 68, 75));
-                return;
-            }
-
-            border.Background = AppBrushCache.Get(Color.FromRgb(38, 38, 36));
-            border.BorderBrush = AppBrushCache.Get(Color.FromRgb(58, 58, 56));
         }
 
         private static string BuildPipelineStateHeader(string architectSummary, string builderSummary)
@@ -11792,11 +11869,26 @@ namespace Malx_AI
 
             if (_isCloudModeEnabled)
             {
-                LoadOpenRouterKeyForWorkplace();
-                if (!_openRouterChatService.HasValidKey)
+                if (_isHybridLocalCouncilSelected)
                 {
-                    AppendChat("error", "Workplace cloud mode needs a valid OpenRouter API key in Settings.");
-                    return;
+                    LoadCustomEndpointForWorkplace();
+                    if (!_openRouterChatService.HasValidCustomEndpoint)
+                    {
+                        AppendChat("error", "Hybrid Local needs a custom endpoint configured in Settings.");
+                        _isProcessing = false;
+                        SendButton.IsEnabled = true;
+                        StopButton.IsEnabled = false;
+                        return;
+                    }
+                }
+                else
+                {
+                    LoadOpenRouterKeyForWorkplace();
+                    if (!_openRouterChatService.HasValidKey)
+                    {
+                        AppendChat("error", "Workplace cloud mode needs a valid OpenRouter API key in Settings.");
+                        return;
+                    }
                 }
             }
 
@@ -11846,6 +11938,12 @@ namespace Malx_AI
             AppendChat("user", userQuery);
             _chatHistory.Add(("user", userQuery));
             UpdateWorkplaceTokenUsageIndicator();
+
+            if (ComputerUseMention.IsInvoked(userQuery))
+            {
+                await RunComputerUseSessionFromChatAsync(userQuery);
+                return;
+            }
 
             // On a single GPU the Normal-Chat model and the council role models compete for the
             // same VRAM/RAM. Loading role models on top of a still-resident chat model is the
@@ -11946,6 +12044,7 @@ namespace Malx_AI
             {
                 UserPrompt = userQuery,
                 Objective = objective,
+                AttachmentIndexBlock = BuildWorkplaceAttachmentIndexBlock(userQuery),
                 CalculatorContext = calculatorContext,
                 CalculatorUsed = !string.IsNullOrWhiteSpace(calculatorContext),
                 TaskType = taskType,
@@ -12329,7 +12428,6 @@ namespace Malx_AI
                         architectMeta.RequiredReformatRetry = true;
                         architectMeta.SchemaValidationPasses = 2;
                         runContext.ArchitectDriftCorrected = true;
-                        ArchitectStageText.Text = "Architect · Retried";
                         LogActivity("Architect output violated contract or role boundary. Re-running once with correction...");
                         string loopBreak = IsRepetitionLoop(architectOutput, previousArchitectOutput)
                             ? "Previous output repeated a prior attempt. You must produce different output and follow the contract exactly."
@@ -12644,7 +12742,6 @@ namespace Malx_AI
                     if (!builderContractOk)
                     {
                         runContext.BuilderDriftCorrected = true;
-                        BuilderStageText.Text = "Builder · Retried";
 
                         string loopBreak = IsRepetitionLoop(builderOutput, previousBuilderOutput)
                             ? "LOOP BREAK: your previous response repeated a prior output. Produce a materially different implementation."
@@ -13642,7 +13739,6 @@ namespace Malx_AI
 
                     if (!criticContractOk)
                     {
-                        CriticStageText.Text = "Critic · Retried";
                         string loopBreak = IsRepetitionLoop(criticOutput, previousCriticOutput)
                             ? "LOOP BREAK: your previous response repeated prior output. Produce a different, specific review." : "";
                         string previousCriticForRetry = criticReasoningLeak
@@ -13858,7 +13954,6 @@ namespace Malx_AI
                             runContext.RevisionTriggered = true;
                             RevisionNoticeBlock.Visibility = Visibility.Visible;
                             LogActivity("Minor issues detected — running targeted patch (not full rewrite).");
-                            BuilderStageText.Text = "Builder · Patched";
                             AppendChat("system", "Critic found minor issues. Running targeted patch...");
                             PipelineProgressBlock.Text = "Repair pass: Builder is patching Critic findings.";
 
@@ -14060,7 +14155,6 @@ namespace Malx_AI
                             // Full rewrite for 3+ issues or escalated patch failure
                             runContext.RevisionTriggered = true;
                             RevisionNoticeBlock.Visibility = Visibility.Visible;
-                            BuilderStageText.Text = "Builder · Revised";
                             LogActivity("Multiple issues detected — initiating full revision.");
                             AppendChat("system", "Critic found multiple issues. Sending back to Builder for full revision...");
                             PipelineProgressBlock.Text = "Repair pass: Builder is revising after Critic findings.";
@@ -16750,6 +16844,9 @@ namespace Malx_AI
             bool internalInferenceStep = false)
         {
             if (!internalInferenceStep)
+                systemPrompt = systemPrompt.TrimEnd() + "\n\n" + EffortPolicy.BuildSystemInstruction();
+
+            if (!internalInferenceStep)
                 RecordCouncilRolePromptUsage(role, systemPrompt, userPayload);
 
             if (_isCloudModeEnabled)
@@ -17116,12 +17213,13 @@ namespace Malx_AI
                 : plan.Parameters.GpuLayerCount;
             NativeDecodeForensics.SetActiveModel(config.ModelPath!, loadedGpuLayers > 0, loadedGpuLayers);
 
-            List<DocumentInfo> builderImages = role == CouncilRole.Builder && !internalInferenceStep
-                ? _documents
-                    .Where(document => document.IsImage && !string.IsNullOrWhiteSpace(document.Base64Data))
-                    .Take(MaxCouncilVisionImagesPerTurn)
-                    .ToList()
-                : [];
+            List<DocumentInfo> builderImages = _computerUseTurnImages
+                ?? (role == CouncilRole.Builder && !internalInferenceStep
+                    ? _documents
+                        .Where(document => document.IsImage && !string.IsNullOrWhiteSpace(document.Base64Data))
+                        .Take(MaxCouncilVisionImagesPerTurn)
+                        .ToList()
+                    : []);
             if (builderImages.Count > 0)
             {
                 visionProjector = await TryLoadBuilderVisionProjectorAsync(
@@ -17143,6 +17241,14 @@ namespace Malx_AI
             {
                 userPayload += "\n\n" + LocalVisionSupport.BuildUnavailableNote(builderImages.Count - queuedVisionImages);
                 LogActivity($"Builder: {builderImages.Count - queuedVisionImages} image attachment(s) unavailable to the local model.");
+            }
+
+            if (queuedVisionImages > 0)
+            {
+                string localVisionOrder = AttachmentReferenceResolver.BuildVisionOrderNote(
+                    builderImages.Take(queuedVisionImages).Select(image => image.Name));
+                if (!string.IsNullOrWhiteSpace(localVisionOrder))
+                    userPayload = localVisionOrder + "\n\n" + userPayload;
             }
 
             // Use ChatSession + PromptTemplateTransformer so the model's native chat
@@ -17266,6 +17372,7 @@ namespace Malx_AI
                     : role == CouncilRole.Builder ? 3072 : 1536;
             }
             int maxGenTokens = Math.Clamp(availableForGeneration, minGenTokens, roleGenerationCap + reasoningHeadroom);
+            maxGenTokens = EffortPolicy.ScaleGenerationTokens(maxGenTokens, localCapability, availableForGeneration);
             // The stream runaway guard must scale with the budget: a reasoning model legitimately
             // streams thinking + a full deliverable, and a flat 30k-char cut truncated valid
             // envelopes mid-file.
@@ -17351,7 +17458,8 @@ namespace Malx_AI
                 // Size-scaled pause budget: each pause is a full tool round-trip plus a
                 // regeneration — small models that pause repeatedly burn their whole token
                 // budget on tool plumbing and never finish the deliverable.
-                _agenticPauseEngine.MaxPausesPerTurn = useSubOneBMode ? 1 : localCapability.IsCompactClass ? 2 : 3;
+                int basePauseBudget = useSubOneBMode ? 1 : localCapability.IsCompactClass ? 2 : 3;
+                _agenticPauseEngine.MaxPausesPerTurn = EffortPolicy.ScaleToolBudget(basePauseBudget, localCapability);
 
                 if (strictChatMl)
                 {
@@ -18164,6 +18272,16 @@ namespace Malx_AI
         private void RefreshCanvasArtifact(string builderOutput, string? sandboxOutput)
         {
             _canvasArtifact = ArtifactRenderService.DetectForCanvas(builderOutput, sandboxOutput);
+
+            // A Skill that promised a rendered deliverable gets it built here when the Builder
+            // returned an outline instead of a finished document, which is the norm on small models.
+            SkillCanvasDirective? canvasDirective = ResolveWorkplaceCanvasDirective();
+            if (canvasDirective != null
+                && (!_canvasArtifact.SupportsPreview || _canvasArtifact.Kind == ArtifactKind.Document)
+                && SkillArtifactComposer.TryCompose(canvasDirective.SmallModelFormat, builderOutput, out string composedArtifact))
+            {
+                _canvasArtifact = ArtifactRenderService.DetectForCanvas(composedArtifact, sandboxOutput: null);
+            }
             // Default a renderable artifact straight to preview mode. Doing this BEFORE the UI
             // refresh guarantees the preview host (and its WebView2) is visible/realized at the
             // moment we navigate, which was the root cause of the intermittent blank canvas.
@@ -20649,8 +20767,6 @@ namespace Malx_AI
 
             try
             {
-                BuilderStageText.Text = "Builder · Re-run";
-                SetBuilderGenerationStatusVisible(true);
                 RelayStatusBlock.Text = "Relay: Builder re-run...";
 
                 string objectiveClause = string.IsNullOrWhiteSpace(_lastRunContext.Objective)
@@ -20795,7 +20911,6 @@ namespace Malx_AI
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
                 RelayStatusBlock.Text = "Relay: Idle";
-                SetBuilderGenerationStatusVisible(false);
             }
         }
 
@@ -20826,7 +20941,6 @@ namespace Malx_AI
 
             try
             {
-                CriticStageText.Text = "Critic · Re-run";
                 RelayStatusBlock.Text = "Relay: Critic re-run...";
 
                 string objectiveClause = string.IsNullOrWhiteSpace(_lastRunContext.Objective)

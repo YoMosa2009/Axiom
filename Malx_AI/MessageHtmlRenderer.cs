@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System;
 using System.IO;
 using System.Linq;
@@ -42,6 +42,33 @@ namespace Malx_AI
             "meta",
             "base"
         ];
+
+        // The CSS below is written in the default palette. Rather than templating every rule, the
+        // finished document is recoloured from the active theme: the default hexes act as the
+        // tokens. With the default theme selected this is a no-op.
+        private static readonly (string DefaultHex, Func<AppThemePalette, string> Slot)[] ThemedDocumentColors =
+        [
+            ("#EDE8E3", p => p.Text),
+            ("#211F1D", p => p.Surface),
+            ("#171615", p => p.Background),
+            ("#302D2A", p => p.Border),
+            ("#8A8279", p => p.TextMuted),
+            ("#B8924A", p => p.Accent),
+            ("#FF3B3B", p => p.Danger)
+        ];
+
+        private static string ApplyThemePalette(string html)
+        {
+            AppThemePalette palette = AppTheme.Current;
+            foreach ((string defaultHex, Func<AppThemePalette, string> slot) in ThemedDocumentColors)
+            {
+                string themed = slot(palette);
+                if (!string.Equals(themed, defaultHex, StringComparison.OrdinalIgnoreCase))
+                    html = html.Replace(defaultHex, themed, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return html;
+        }
 
         public static string BuildHtml(string markdown)
         {
