@@ -2,6 +2,8 @@
 
 The interface should feel like a quiet technical notebook: warm, legible, and useful under sustained work. Preserve Axiom's charcoal, parchment, and gold palette and the existing feature names.
 
+Since V1.9.1 that palette is one theme among several rather than a set of fixed hex values. Colours come from the named roles in `AppTheme` — background, surface, border, text, accent, and so on — which every theme fills in. Write new UI against those roles via `DynamicResource`, never against a literal hex, so a theme change repaints it. Axiom Dark remains the default and the look this document describes; "gold" below means the accent role, which another theme is free to render differently.
+
 ## References
 
 - [Geist's Anthropic identity case study](https://geist.co/work/anthropic): the studio describes pairing technical craft with human character, combining sans and serif typography, and creating a warm color system for both marketing and product UI. Axiom applies that general approach through its existing Georgia/Segoe UI pairing and its own colors.

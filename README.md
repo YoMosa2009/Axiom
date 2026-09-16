@@ -1,214 +1,259 @@
+<div align="center">
+
 # Axiom
 
-A free, local-first AI assistant and agentic workspace for Windows. Axiom supports
-on-device GGUF models, self-hosted OpenAI-compatible endpoints, and optional cloud
-models through OpenRouter. Local conversations and application data remain on your
-computer unless you deliberately use a cloud model or connected service.
+**A free, local-first AI assistant and agentic workspace for Windows.**
+
+Run GGUF models on your own hardware, point Axiom at a self-hosted endpoint, or use
+cloud models with your own key. Your chats, models, and data stay on your computer
+unless you deliberately reach out to a cloud model or a connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.8.6-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.9.1-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
-<img width="1906" height="1026" alt="Axiom screenshot" src="https://github.com/user-attachments/assets/07bbb46d-1bc8-42d7-a16c-5912d2f874d8" />
+[Download](../../releases) · [Getting started](#getting-started) · [Feedback](#feedback)
 
-## Highlights
+</div>
 
-- Three inference paths: local GGUF, Hybrid Local through a self-hosted endpoint,
-  and optional OpenRouter cloud models
-- Normal Chat with tool use, attachments, vision input, persistent conversations,
-  web research, code execution, math, and artifact rendering
-- Workplace Council mode with Architect, Builder, and Critic stages
-- Workplace Single Model mode for one agent that plans, uses tools, executes, and
-  verifies without role handoffs
-- Global Skills and Plugins that attach once and apply across Local, Cloud, Hybrid
-  Local, Council, and Single Model modes
-- In-app updates from stable GitHub Releases starting with V1.7.0
-- Optional low-resource system-tray operation with explicit background controls
-- Local persistence for settings, chats, connectors, models, and Workplace state
+![Axiom Chat](docs/images/chat.png)
 
-## Chat and Workplace
+---
 
-### Normal Chat
+## Three ways to run a model
 
-- Import and run GGUF models through LLamaSharp, with model-aware context and tool
-  routing for small and large local models
-- Use Edios 1.5 or Hepha 2.5 Coder through OpenRouter with your own API key
-- Connect to a self-hosted OpenAI-compatible endpoint through Hybrid Local mode
-- Attach documents, spreadsheets, presentations, e-books, notebooks, source code,
-  subtitles, and common image formats
-- Run Python, calculate expressions and unit conversions, and search the web when
-  the selected mode exposes those tools; Java execution is available for explicit
-  Java tasks in Project Canvas and supported Workplace flows
-- Type `@ProjectCanvas` or select **Project Canvas** from the `@` menu to render a
-  completed Markdown, SVG, HTML, or interactive JavaScript artifact in a responsive
-  right-hand canvas across Local, Hybrid Local, and Cloud modes
-- Render Markdown and LaTeX stably while scrolling through long conversations
-- Preserve chat history, persona memory, and document retrieval context locally
+Axiom treats all three as first-class. Attachments, Skills, tools, Project Canvas, and
+memory behave the same way regardless of which one is selected.
 
-### Workplace
+| | Runs on | You need | Good for |
+|---|---|---|---|
+| **Local** | Your GPU/CPU via llama.cpp | A GGUF model | Full privacy, offline work, no per-token cost |
+| **Hybrid Local** | Your own server | An OpenAI-compatible endpoint | Your own hardware, accessed from anywhere |
+| **Cloud** | OpenRouter | Your own API key | Frontier-class models when you want them |
 
-**Council mode** uses a three-stage pipeline:
+Axiom adapts to the model it is given. It measures a local model's parameter count and
+scales context budgets, tool routing, and prompt complexity accordingly — so a 0.5B
+model and a 70B model both produce usable results instead of the small one collapsing.
 
-1. Architect plans the task.
-2. Builder creates the implementation or deliverable.
-3. Critic reviews the result and can route it back for a targeted patch or revision.
+---
 
-**Single Model mode** replaces those role handoffs with one agent. The agent receives
-the same Workplace context and can use the applicable tools, connected workspace,
-Project Canvas, attachments, and session memory while planning and validating its own
-result. The mode can be switched directly from the Workplace header when no run is active.
+## Chat
 
-Workplace also includes persistent sessions, study/document preprocessing, codebase
-access, diff-aware review, task history, context controls, live activity, completion
-notifications, and an offline Project Canvas for self-contained HTML and SVG output.
+The everyday surface: one conversation, one model, every tool available.
 
-## Skills and Plugins
+- **Attachments with previews** — drop in documents, spreadsheets, presentations,
+  e-books, notebooks, source code, subtitles, or images and see a thumbnail of each one
+  above the composer before you send.
+- **Positional references** — say *"in the 3rd attached image"* or *"the first PDF"* and
+  Axiom resolves which attachment you mean, on every model size.
+- **Tools** — Python sandbox, calculator, web search, and Java execution, exposed
+  according to the selected mode.
+- **Project Canvas** — type `@ProjectCanvas` to render the answer as a live artifact in
+  a resizable side pane: HTML, SVG, Markdown, or interactive JavaScript.
+- **Effort control** — dial reasoning, generation, and tool budgets up or down per turn.
+- Markdown and LaTeX that stay stable while you scroll, plus local chat history, persona
+  memory, and document retrieval.
 
-The Normal Chat composer includes animated **Skills** and **Plugins** panels. Attached
-capabilities are stored locally and apply globally instead of being tied to one chat,
-model, or inference mode.
+## Workplace
 
-Built-in Skills:
+A multi-agent workspace for work that takes more than one pass.
 
-- PDF Studio
-- Slide Deck Studio
-- Document Summarizer
-- Data Analysis
-- Code Review
+![Axiom Workplace](docs/images/workplace.png)
 
-Users can also create their own instruction-based Skills. Custom Skills provide reusable
-procedures and activation terms; they do not execute arbitrary scripts.
+**Council mode** runs three roles in sequence:
 
-Built-in Plugins package capabilities already provided by Axiom:
+1. **Architect** plans the task.
+2. **Builder** produces the deliverable.
+3. **Critic** reviews it and can send it back for a targeted revision.
 
-- Web Research
-- Data Lab
-- File Intelligence
-- Connected Apps
-- Creator Studio
+**Single Model mode** collapses those handoffs into one agent that plans, uses tools,
+executes, and verifies its own result. Switch between them from the Workplace header
+whenever a run isn't active.
 
-Plugins never grant capabilities that the current model or host does not expose. Connected
-Apps use only the MCP connectors configured in Settings.
+Also in Workplace: persistent sessions, study and document preprocessing, connected
+codebase access with diff-aware review, task history, per-role context controls, live
+activity, completion notifications, and the Project Canvas the Builder writes into.
+
+## Computer Use
+
+Type `@ComputerUse` followed by a goal in the Workplace composer and Axiom will drive the
+desktop directly — screen capture, planning, mouse and keyboard, and verification that
+the action actually landed.
+
+```
+@ComputerUse open Notepad and type hello
+```
+
+It needs a **vision-capable model** (a cloud vision model, or a local GGUF with a
+projector). Axiom probes the active model first and tells you plainly why a run can't
+start rather than failing halfway through. Sessions run in a dedicated window with a
+visible pointer overlay, an action log, and safety checks on navigation and target
+selection.
+
+## Skills
+
+Skills are reusable procedures you attach once. They apply everywhere — Local, Cloud,
+Hybrid Local, Council, and Single Model — instead of being tied to one chat.
+
+![Skills panel](docs/images/skills.png)
+
+The important part is what a Skill *delivers*. Some answer in chat. Others produce a
+rendered artifact in Project Canvas:
+
+| Skill | Delivers |
+|---|---|
+| **Slide Deck Studio** | A navigable slide deck — 16:9 stages, arrow-key navigation, speaker notes |
+| **PDF Studio** | A print-ready document with a proper `@media print` layout |
+| **Data Analysis** | A charted report with inline SVG charts and the figures beneath them |
+| **Document Summarizer** | A traceable summary in chat |
+| **Code Review** | A review in chat |
+
+Ask for a slide deck with Slide Deck Studio attached and you get an actual deck, not a
+description of one — no `@ProjectCanvas` needed.
+
+**This works on small models too.** A sub-4B model can't author a correct self-contained
+HTML document, so Axiom doesn't ask it to. Below that threshold the model supplies a short
+structured outline and *Axiom builds the artifact itself*. Above it, the model authors the
+artifact directly. Either way the deliverable is the same.
+
+You can also write your own Skills — a name, a procedure, activation terms, and whether it
+renders or answers in chat. Custom Skills are instructions, not scripts; they never
+execute arbitrary code.
+
+## Plugins
+
+Plugins package capabilities Axiom already has, so a model uses them consistently:
+**Web Research**, **Data Lab**, **File Intelligence**, **Connected Apps**, and
+**Creator Studio**.
+
+A Plugin never grants a capability the current model or host doesn't actually expose.
+Connected Apps uses only the MCP connectors you configured in Settings.
+
+## Themes
+
+Settings → General switches the whole app between themes. The change applies instantly —
+no restart — and is remembered.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/settings-general.png" alt="Theme picker in Settings"></td>
+<td width="50%"><img src="docs/images/theme-gruvbox.png" alt="Gruvbox Dark theme"></td>
+</tr>
+<tr>
+<td align="center"><em>Axiom Dark (default)</em></td>
+<td align="center"><em>Gruvbox Dark</em></td>
+</tr>
+</table>
+
+Theming reaches every surface: both chats, dialogs, the Effort picker, rendered chat
+bubbles, and the native Windows title bar.
+
+## Neuron
+
+A live map of what Axiom is doing — active sessions, tool usage, and activity across
+Chat, Workplace, Documents, Study, and Calculator.
+
+![Neuron live neural map](docs/images/neuron.png)
+
+---
 
 ## Models
 
-Local mode accepts compatible GGUF models and includes in-app model installation. Cloud
-mode uses OpenRouter and your own API key.
+Local mode accepts any compatible GGUF and can install one for you. Cloud mode uses
+OpenRouter with your own key.
 
-| Axiom profile | Primary model | Intended use |
+| Axiom profile | Model | Intended use |
 |---|---|---|
-| **Edios 1.5** | Google Gemma 4 31B (free) | General chat, reasoning, documents, and tool use |
-| **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Repository-aware coding and implementation |
-| **Workplace cloud default** | Poolside Laguna M.1 (free) | Council or Single Model Workplace tasks |
-| **Kestral 1** | User-configured self-hosted endpoint | Hybrid Local inference |
+| **Edios 1.5** | Google Gemma 4 31B (free) | General chat, reasoning, documents, tool use |
+| **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Repository-aware coding |
+| **Workplace cloud default** | Poolside Laguna M.1 (free) | Council and Single Model runs |
+| **Kestral 1** | Your self-hosted endpoint | Hybrid Local inference |
 
-Cloud availability, quotas, and model routing depend on OpenRouter and its providers.
-Axiom reports exhausted keys and transient rate limits rather than silently presenting
-them as successful responses.
+Cloud availability and routing depend on OpenRouter and its providers. Axiom reports
+exhausted keys and rate limits directly instead of dressing them up as answers.
 
 ## Tools, memory, and privacy
 
-- **Calculator:** scientific expressions and common unit conversions
-- **Python sandbox:** persistent Python session, bounded execution, and chart capture
-- **Java sandbox:** compile and run Java code for supported Workplace tasks
-- **Web search:** multi-source querying, deduplication, trust scoring, and synthesis
-- **Codebase access:** inspect and patch an explicitly connected workspace, with validation
-- **Session memory:** in-session episodic context for Workplace roles and study sessions
-- **Persona memory:** persistent user preferences and context stored locally
-- **Smart context compaction:** preserves important requirements as conversations grow
+| | |
+|---|---|
+| **Calculator** | Scientific expressions and unit conversions |
+| **Python sandbox** | Persistent session, bounded execution, chart capture |
+| **Java sandbox** | Compile and run Java for supported Workplace tasks |
+| **Web search** | Multi-source querying, deduplication, trust scoring, synthesis |
+| **Codebase access** | Inspect and patch an explicitly connected workspace, with validation |
+| **Session memory** | In-session episodic context for Workplace roles and study sessions |
+| **Persona memory** | Persistent preferences stored locally |
+| **Context compaction** | Keeps important requirements intact as conversations grow |
 
-User data is stored under `%LOCALAPPDATA%\Axiom`; Visual Studio/debug runs use the separate
-`%LOCALAPPDATA%\Axiom-Dev` profile. Axiom does not place chats, API keys, connector tokens,
-local models, or Workplace sessions inside release packages.
+Your data lives in `%LOCALAPPDATA%\Axiom`; debug runs use a separate `%LOCALAPPDATA%\Axiom-Dev`
+profile. Chats, API keys, connector tokens, local models, and Workplace sessions are never
+placed inside release packages.
 
 ## Background and system tray
 
-Settings includes separate controls for background operation and the system tray. When both
-are enabled, closing the window hides Axiom in the tray instead of ending active work. Axiom
-stops UI activity while hidden and releases heavy local model caches after active work finishes.
-Use **Exit Axiom** from the tray menu to stop the process completely.
+Settings has separate switches for background operation and the system tray. With both on,
+closing the window hides Axiom in the tray instead of ending work in progress; Axiom stops
+UI activity while hidden and releases heavy model caches once work finishes. **Exit Axiom**
+in the tray menu stops the process completely. With either switch off, closing the window
+exits normally.
 
-When background operation or tray mode is disabled, closing the main window exits normally.
+---
 
 ## Getting started
 
-1. Download the latest Windows ZIP from the [Releases](../../releases) page.
-2. Extract the complete folder; do not run the executable from inside the ZIP.
+1. Download the latest Windows ZIP from [Releases](../../releases).
+2. Extract the **whole folder** — don't run the executable from inside the ZIP.
 3. Launch `Malx_AI.exe`.
-4. Import or install a GGUF model, configure Hybrid Local, or add an OpenRouter API key.
-5. Start a Normal Chat or open Workplace.
-
-## Feedback
-
-I'd love to hear from you! Whether you've found a bug, have a feature request, encountered an issue, or simply want to share feedback about your experience with Axiom, please reach out to me at **malxshrouds@gmail.com**. Your input helps me improve the application.
+4. Import or install a GGUF model, configure Hybrid Local, or add an OpenRouter key.
+5. Open Chat, or head to Workplace.
 
 ## Updating
 
-Axiom V1.7.0 and newer checks the official stable GitHub Releases feed at startup. When a
-newer release is available, use the in-app update notification or **Settings → General →
-Check for updates**. Axiom downloads and verifies the release package, stages it outside the
-installation directory, replaces only package-managed files after shutdown, and restarts.
-It updates the current portable installation in place rather than leaving an older app
-running beside the new version; obsolete managed files, temporary backups, completed
-downloads, and staging folders are removed after a successful restart.
+V1.7.0 and newer check the stable GitHub Releases feed at startup. Use the in-app
+notification or **Settings → General → Check for updates**. Axiom downloads and verifies
+the package, stages it outside the install directory, replaces only package-managed files
+after shutdown, and restarts in place. Obsolete files, backups, and staging folders are
+cleaned up afterwards.
 
-Settings, chats, local models, connectors, and Workplace data remain untouched. Manual ZIP
-installation remains available for first-time installation and recovery.
+Settings, chats, local models, connectors, and Workplace data are left untouched. Manual
+ZIP installation still works for first-time setup and recovery.
 
-The update notification includes a short summary generated from the GitHub Release notes.
-Set the `AXIOM_UPDATE_DIR` environment variable to an absolute folder when downloads and
-staging should be stored outside `%LOCALAPPDATA%`.
-
-Release maintainers should follow [RELEASING.md](RELEASING.md). Update ZIPs require a matching
-version tag, packaged executable version, and `AXIOM_UPDATE_MANIFEST.txt`.
+Set `AXIOM_UPDATE_DIR` to an absolute path to stage downloads outside `%LOCALAPPDATA%`.
+Maintainers: see [RELEASING.md](RELEASING.md) — update ZIPs need a matching version tag,
+packaged executable version, and `AXIOM_UPDATE_MANIFEST.txt`.
 
 ## System requirements
 
 | | |
 |---|---|
-| OS | Windows 10 or Windows 11 (64-bit) |
-| RAM | 4 GB minimum; 16 GB recommended for local models |
-| CPU | Modern x64 CPU |
-| GPU | Optional NVIDIA CUDA acceleration |
-| Runtime | Self-contained Windows release; .NET 10 SDK required for development |
+| **OS** | Windows 10 or 11 (64-bit) |
+| **RAM** | 4 GB minimum; 16 GB recommended for local models |
+| **CPU** | Modern x64 |
+| **GPU** | Optional NVIDIA CUDA acceleration |
+| **Runtime** | Self-contained release; .NET 10 SDK only for development |
 
 ## Built with
 
-- C#, WPF, and .NET 10
-- LLamaSharp / llama.cpp with CUDA 12 support
-- Python.Included
-- Markdig and KaTeX
-- HtmlAgilityPack
-- AvalonEdit
-- UglyToad.PdfPig
-- SQLite
-- WebView2
+C# · WPF · .NET 10 · LLamaSharp / llama.cpp (CUDA 12) · Python.Included · Markdig · KaTeX ·
+HtmlAgilityPack · AvalonEdit · UglyToad.PdfPig · SQLite · WebView2
 
-## Screenshots
+---
 
-**Neuron — Live Neural Map**
+## Feedback
 
-A real-time visual map of active sessions, tool usage, and AI activity across Chat,
-Workplace, Documents, Study, and Calculator.
-
-<img width="1907" height="995" alt="Neuron tab showing live neural map with connected nodes for Chat, Workplace, Documents, Study, and Calculator" src="https://github.com/user-attachments/assets/99db5dac-67c9-4aac-9415-bb9a30c4f0b7" />
-
-**Workplace Council Mode**
-
-<img width="1886" height="986" alt="Axiom Workplace showing council roles, project canvas, and live activity panel" src="https://github.com/user-attachments/assets/5a58cc02-dc01-440b-a145-b32844e675f8" />
+I'd love to hear from you. Bug, feature request, or just how it's going — reach me at
+**malxshrouds@gmail.com**. Your input genuinely shapes what gets built next.
 
 ## License
 
-CC BY-NC-ND 4.0 — see [LICENSE](LICENSE) for details.
+CC BY-NC-ND 4.0 — see [LICENSE](LICENSE).
 
-The source code is publicly viewable, but it may not be redistributed, modified, or used
+The source is publicly viewable, but it may not be redistributed, modified, or used
 commercially without explicit permission from the author.
 
 ## Author
 
 Built by [YoMosa2009](https://github.com/YoMosa2009)
 
-- [MalxLabs.work](https://malxlabs.work)
-- [MalxInference.work](https://malxinference.work/)
-- [Axiominference.work](https://axiominference.work/)
+[MalxLabs.work](https://malxlabs.work) · [MalxInference.work](https://malxinference.work/) · [Axiominference.work](https://axiominference.work/)

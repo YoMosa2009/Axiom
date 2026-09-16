@@ -1,4 +1,55 @@
-# Changelog
+﻿# Changelog
+
+## [V1.9.1] - 2026-09-14
+
+Computer Use, app theming, attachment previews, and Skills that produce real deliverables.
+
+### Added
+- **Computer Use.** Type `@ComputerUse` with a goal in the Workplace composer and Axiom
+  drives the desktop: screen capture, planning, mouse and keyboard input, and verification
+  that each action actually landed. Runs in a dedicated session window with a pointer
+  overlay and an action log, with safety checks on navigation and target selection.
+  Requires a vision-capable model; Axiom probes the active model first and explains why a
+  run cannot start instead of failing partway through
+- **App themes.** Settings -> General switches the whole application between Axiom Dark
+  and Gruvbox Dark. The change applies instantly with no restart and is remembered across
+  sessions. Covers both chats, dialogs, the Effort picker, rendered chat bubbles, and the
+  native Windows title bar
+- **Attachment previews.** Uploaded files and images now show a thumbnail chip above the
+  composer in both Normal Chat and Workplace, so you can see what you attached before
+  sending
+- **Positional attachment references.** "In the 3rd attached image" or "the first PDF" now
+  resolves to the right attachment, on every model size and inference mode
+- **Skills deliver rendered artifacts.** Slide Deck Studio, PDF Studio, and Data Analysis
+  now produce a real deck, print-ready document, or charted report in the Project Canvas;
+  Document Summarizer and Code Review answer in chat. Each Skill carries an explicit
+  purpose and explicit limits
+- Skills route to the Project Canvas automatically when an attached rendering Skill matches
+  the request, with no `@ProjectCanvas` needed. Deliverable terms are narrower than
+  activation terms, so a one-number question still gets a one-number answer
+- Skills work below 4B parameters: a model too small to author correct HTML supplies a
+  short structured outline instead and Axiom composes the artifact itself. The authoring
+  contract is sized from the model's measured parameter count (sub-1B / 1-4B / 4B+), and
+  cloud and unmeasured models get the full contract
+- A Skills button in the Workplace composer. Attachments stay global across both chats,
+  and the Builder receives the canvas contract at its own model tier
+- Custom Skills can declare a rendered deliverable rather than only a chat answer
+- Effort control for reasoning, generation, and tool budgets
+
+### Fixed
+- Hybrid Local endpoints that stream newline-delimited JSON (Ollama-compatible servers)
+  returned "The model did not produce a response for this input." The stream parser only
+  understood SSE `data:` framing and silently discarded every NDJSON chunk
+- Reasoning models that emit `reasoning_content` or `thinking` instead of `reasoning` now
+  stream correctly, and a `message` payload is accepted where `delta` is expected
+
+### Changed
+- Normal Chat: removed the sidebar-collapse control and the Recents header, replaced the
+  right-edge Project Canvas rail with a toggle in the tab bar, and modernised the Web,
+  Stop, and Send buttons
+- Workplace: removed the stage bar, moved the context meters into the header, flattened the
+  composer into a single card with more room for the prompt, and added a Workplace-only
+  control to collapse the chat pane
 
 ## [V1.8.6] - 2026-08-14
 
