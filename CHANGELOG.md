@@ -1,5 +1,22 @@
 ﻿# Changelog
 
+## [V1.9.2] - 2026-09-18
+
+### Added
+- **Durable Project Knowledge Base.** Workplace can retain any number of files or an entire
+  folder with the current project. Files are copied into project-owned storage, restored after
+  restart, and can be managed or removed individually from the Project Knowledge Base screen.
+- **Hybrid project retrieval.** Project Knowledge uses lexical, BM25, optional local semantic,
+  reciprocal-rank fusion, and diversity ranking to supply cited passages within each model's
+  context budget across local, hybrid, and cloud execution.
+
+### Changed
+- **OTA release versioning.** The running app version, GitHub release tag, package name, and
+  in-app update notification now align on `v1.9.2` through the release pipeline's single
+  `.csproj` version source.
+- Removed the separate Council Session Memory / Study Session feature; Project Knowledge is now
+  the durable project-scoped reference system.
+
 ## [V1.9.1] - 2026-09-14
 
 Computer Use, app theming, attachment previews, and Skills that produce real deliverables.
