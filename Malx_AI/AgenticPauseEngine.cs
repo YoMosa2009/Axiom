@@ -31,7 +31,7 @@ namespace Malx_AI
         public int MaxPausesPerTurn { get; set; } = DefaultMaxPausesPerTurn;
 
         // ── Tool names ────────────────────────────────────────────────────────
-        private const string ToolHippocampus = "SEARCH_HIPPOCAMPUS";
+        private const string ToolProjectKnowledge = "SEARCH_PROJECT_KNOWLEDGE";
         private const string ToolCalculate   = "CALCULATE";
         private const string ToolSandbox     = "RUN_SANDBOX";
         private const string ToolWebSearch   = "WEB_SEARCH";
@@ -41,7 +41,7 @@ namespace Malx_AI
         private const string ToolListFiles   = "LIST_FILES";
 
         // ── Injected backend callbacks ────────────────────────────────────────
-        private readonly SessionHippocampus _hippocampus;
+        private readonly Func<string, string> _projectKnowledgeSearch;
         private readonly Func<string, string, Task<string>> _sandboxExecute;
         private readonly Func<string, CancellationToken, Task<string>> _webSearchExecute;
         private readonly Func<string, CancellationToken, Task<string>> _pythonMathExecute;
@@ -55,7 +55,7 @@ namespace Malx_AI
         private int _pauseCount;
 
         public AgenticPauseEngine(
-            SessionHippocampus hippocampus,
+            Func<string, string> projectKnowledgeSearch,
             Func<string, string, Task<string>> sandboxExecute,
             Func<string, CancellationToken, Task<string>> webSearchExecute,
             Func<string, CancellationToken, Task<string>> pythonMathExecute,
@@ -63,7 +63,7 @@ namespace Malx_AI
             Action<string> activityLogger,
             Action<string> onStatusUpdate)
         {
-            _hippocampus    = hippocampus ?? throw new ArgumentNullException(nameof(hippocampus));
+            _projectKnowledgeSearch = projectKnowledgeSearch ?? throw new ArgumentNullException(nameof(projectKnowledgeSearch));
             _sandboxExecute = sandboxExecute ?? throw new ArgumentNullException(nameof(sandboxExecute));
             _webSearchExecute = webSearchExecute ?? throw new ArgumentNullException(nameof(webSearchExecute));
             _pythonMathExecute = pythonMathExecute ?? throw new ArgumentNullException(nameof(pythonMathExecute));
@@ -446,8 +446,8 @@ namespace Malx_AI
 
             try
             {
-                if (cmd.Tool == ToolHippocampus)
-                    return RouteHippocampus(cmd.Query);
+                if (cmd.Tool == ToolProjectKnowledge)
+                    return RouteProjectKnowledge(cmd.Query);
 
                 if (cmd.Tool == ToolCalculate)
                     return RouteCalculate(cmd.Query);
@@ -493,19 +493,16 @@ namespace Malx_AI
                 "[END RESULT]";
         }
 
-        private ToolDispatchResult RouteHippocampus(string query)
+        private ToolDispatchResult RouteProjectKnowledge(string query)
         {
-            var entries = _hippocampus.Query(query, 4);
-            if (entries.Count == 0)
+            string result = _projectKnowledgeSearch(query);
+            if (string.IsNullOrWhiteSpace(result))
             {
-                _ = BackendLogService.LogEventAsync("ToolFailReadOnly", $"Tool:Hippocampus\nQuery:{query}\nStatus:No relevant knowledge found");
-                return ToolDispatchResult.Fail("No relevant knowledge found in session hippocampus.");
+                _ = BackendLogService.LogEventAsync("ToolFailReadOnly", $"Tool:ProjectKnowledge\nQuery:{query}\nStatus:No relevant project knowledge found");
+                return ToolDispatchResult.Fail("No relevant project knowledge was found.");
             }
 
-            var sb = new StringBuilder();
-            foreach (var entry in entries)
-                sb.AppendLine(entry.Content.Trim());
-            return ToolDispatchResult.Ok(sb.ToString().Trim());
+            return ToolDispatchResult.Ok(result);
         }
 
         private static ToolDispatchResult RouteCalculate(string query)
@@ -677,7 +674,7 @@ namespace Malx_AI
         {
             string toolLabel = cmd.Tool switch
             {
-                ToolHippocampus => $"Searching memory — \"{Truncate(cmd.Query, 48)}\"",
+                ToolProjectKnowledge => $"Searching project knowledge — \"{Truncate(cmd.Query, 48)}\"",
                 ToolCalculate   => $"Calculating: {Truncate(cmd.Query, 48)}",
                 ToolSandbox     => $"Running sandbox: {Truncate(cmd.Query, 48)}",
                 ToolWebSearch   => $"Searching the web for '{Truncate(cmd.Query, 48)}'...",

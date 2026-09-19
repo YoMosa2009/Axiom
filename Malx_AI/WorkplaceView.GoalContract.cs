@@ -23,7 +23,7 @@ namespace Malx_AI
             CouncilRunContext context,
             PreFlightDecomposition decomposition,
             bool webSearchEnabled,
-            int sessionMemoryEntries)
+            int projectKnowledgeEntries)
         {
             string goal = NormalizeContractText(string.IsNullOrWhiteSpace(context.Objective)
                 ? context.UserPrompt
@@ -149,7 +149,7 @@ namespace Malx_AI
                         : "Workplace chat") +
                 $". {canvasState} {documentState} " +
                 $"{workspaceState} " +
-                $"Session memory: {sessionMemoryEntries} indexed entries. Web search: {(webSearchEnabled ? "enabled" : "disabled")}.";
+                $"Project knowledge: {projectKnowledgeEntries} retained file(s). Web search: {(webSearchEnabled ? "enabled" : "disabled")}.";
 
             return new CouncilGoalContract
             {
@@ -187,7 +187,7 @@ namespace Malx_AI
             var body = new StringBuilder();
             if (cloudExecution)
             {
-                body.AppendLine("search_session_memory | input: a focused topic or identifier | returns: relevant prior-session facts and plans.");
+                body.AppendLine("search_project_knowledge | input: a focused topic or identifier | returns: durable, cited passages from project files.");
                 body.AppendLine("calculate | input: one arithmetic or unit-conversion expression | returns: a checked numeric result.");
                 body.AppendLine("run_python | input: small Python using print() | returns: execution output for numeric/data verification; no package installation.");
                 if (codebaseToolsEnabled)
@@ -206,7 +206,7 @@ namespace Malx_AI
                 return BuildLabeledBlock("CAPABILITY MAP", body.ToString().Trim());
             }
 
-            body.AppendLine("SEARCH_HIPPOCAMPUS | input: a focused topic or identifier | returns: relevant prior-session facts/plans | use for continuity; it does not search files or the web.");
+            body.AppendLine("SEARCH_PROJECT_KNOWLEDGE | input: a focused topic or identifier | returns: durable, cited passages from attached project files; it does not search the web.");
             body.AppendLine("CALCULATE | input: one arithmetic or unit-conversion expression | returns: a checked numeric result | use for simple calculations only.");
             body.AppendLine("PYTHON_MATH | input: small Python using print() | returns: execution output | use for multi-step numeric/data verification; no package installation.");
             body.AppendLine("RUN_SANDBOX | input: a complete small code snippet | returns: compiler/runtime output | use to test a concrete hypothesis, not to create the deliverable or edit Canvas.");
@@ -273,25 +273,5 @@ namespace Malx_AI
             return matches >= requiredMatches;
         }
 
-        private void WriteGoalContractSessionMemory(CouncilGoalContract? contract, int sessionRunIndex)
-        {
-            if (contract == null || string.IsNullOrWhiteSpace(contract.Goal))
-                return;
-
-            var memory = new StringBuilder();
-            memory.AppendLine("Completed goal: " + NormalizeContractText(contract.Goal, 260));
-            if (contract.Requirements.Count > 0)
-                memory.AppendLine("Delivered requirements: " + string.Join(" | ", contract.Requirements.Take(5).Select(item => NormalizeContractText(item, 100))));
-
-            _sessionHippocampus.Write(new SessionHippocampusEntry
-            {
-                Content = BuildCappedMemoryContent(memory.ToString(), 180),
-                Source = SessionHippocampusSource.BuilderOutput,
-                Tag = SessionHippocampusTag.Summary,
-                Priority = 3,
-                Timestamp = DateTime.Now,
-                SessionRunIndex = sessionRunIndex
-            });
-        }
     }
 }

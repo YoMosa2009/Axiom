@@ -93,7 +93,6 @@ namespace Malx_AI
             public List<ChatMessage> ChatMessages { get; init; } = new();
             public List<ChatDocumentAttachment> ChatDocuments { get; init; } = new();
             public Guid? CurrentStreamingMessageId { get; init; }
-            public string HippocampusContext { get; init; } = string.Empty;
         }
 
         private static class Gemma4Formatter
@@ -3193,9 +3192,6 @@ namespace Malx_AI
                 if (!string.IsNullOrWhiteSpace(projectCanvasInstruction))
                     effectiveSystemPrompt += "\n\n" + projectCanvasInstruction;
 
-                if (!string.IsNullOrWhiteSpace(uiSnapshot.HippocampusContext))
-                    effectiveSystemPrompt += "\n\n[FROM PRIOR RESEARCH SESSIONS]\n" + uiSnapshot.HippocampusContext + "\n[/FROM PRIOR RESEARCH SESSIONS]";
-
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.AttachedDocumentMemory))
                     effectiveSystemPrompt += "\n\n" + uiSnapshot.AttachedDocumentMemory;
 
@@ -3397,24 +3393,8 @@ namespace Malx_AI
                         FileSizeBytes = d.FileSizeBytes,
                         ImportedAt = d.ImportedAt
                     }).ToList(),
-                    HippocampusContext = BuildHippocampusContextForNormalChat(userMsg)
                 };
             }, System.Windows.Threading.DispatcherPriority.Background);
-        }
-
-        private string BuildHippocampusContextForNormalChat(string query)
-        {
-            try
-            {
-                var entries = WorkplaceViewControl?.QueryHippocampus(query, 3);
-                if (entries == null || entries.Count == 0)
-                    return string.Empty;
-                return SessionHippocampus.BuildPromptContext(entries, 240);
-            }
-            catch
-            {
-                return string.Empty;
-            }
         }
 
         private void DisposeInferenceResources(bool clearModel)

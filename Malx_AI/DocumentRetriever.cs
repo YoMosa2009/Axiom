@@ -14,7 +14,9 @@ namespace Malx_AI
         // ChunkIds restart at 0 for every file, so cache keys must include the file name
         // or chunks from different documents overwrite each other's keyword sets.
         private readonly Dictionary<string, HashSet<string>> _cachedChunkKeywords = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, int>> _cachedChunkTermFrequencies = new(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, int>? _cachedDocumentFrequency;
+        private const double ReciprocalRankFusionK = 60d;
         private static readonly Dictionary<string, string[]> SemanticAliases = new(StringComparer.OrdinalIgnoreCase)
         {
             ["bug"] = ["error", "issue", "failure", "problem"],
@@ -54,8 +56,12 @@ namespace Malx_AI
             foreach (var chunk in chunks)
             {
                 string key = GetChunkKey(chunk);
-                if (!_cachedChunkKeywords.ContainsKey(key))
-                    _cachedChunkKeywords[key] = ExtractKeywords(chunk.Content).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (_cachedChunkKeywords.ContainsKey(key))
+                    continue;
+
+                Dictionary<string, int> frequencies = ExtractKeywordFrequencies(chunk.Content);
+                _cachedChunkTermFrequencies[key] = frequencies;
+                _cachedChunkKeywords[key] = frequencies.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             }
             _cachedDocumentFrequency = null;
 
@@ -83,6 +89,7 @@ namespace Malx_AI
                 .ToList())
             {
                 _cachedChunkKeywords.Remove(key);
+                _cachedChunkTermFrequencies.Remove(key);
             }
 
             _cachedDocumentFrequency = null;
@@ -93,6 +100,7 @@ namespace Malx_AI
         {
             _chunks.Clear();
             _cachedChunkKeywords.Clear();
+            _cachedChunkTermFrequencies.Clear();
             _cachedDocumentFrequency = null;
             Debug.WriteLine("DocumentRetriever: Cleared all chunks");
         }
@@ -146,7 +154,7 @@ namespace Malx_AI
         {
             Debug.WriteLine($"RetrieveRelevantChunks: Query='{query}', Available chunks={_chunks.Count}, maxChunks={maxChunks}");
 
-            if (_chunks.Count == 0)
+            if (_chunks.Count == 0 || maxChunks <= 0)
             {
                 Debug.WriteLine("RetrieveRelevantChunks: No chunks available");
                 return new List<DocumentChunk>();
@@ -160,7 +168,12 @@ namespace Malx_AI
                 return allowFallback ? _chunks.Take(maxChunks).ToList() : new List<DocumentChunk>();
             }
 
-            var exactQueryTerms = ExtractKeywords(query);
+            var candidates = _chunks
+                .Where(chunk => !string.IsNullOrWhiteSpace(chunk.Content))
+                .ToList();
+            var exactQueryTerms = ExtractKeywords(query)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             var expandedQueryTerms = ExpandSemanticTerms(exactQueryTerms);
             var queryTrigrams = BuildCharacterTrigrams(query);
             var documentFrequency = GetOrBuildDocumentFrequencyMap();
@@ -174,72 +187,195 @@ namespace Malx_AI
                 return allowFallback ? _chunks.Take(maxChunks).ToList() : new List<DocumentChunk>();
             }
 
-            bool semanticAvailable = LocalSemanticEmbeddingService.Shared.IsAvailable;
-
-            // Score each chunk based on semantic similarity plus keyword overlap.
-            var scoredChunks = _chunks
-                .Select(chunk => new
-                {
-                    Chunk = chunk,
-                    Score = CalculateRelevanceScore(
-                        chunk, query, exactQueryTerms, expandedQueryTerms, queryTrigrams, documentFrequency, _chunks.Count,
-                        _cachedChunkKeywords.TryGetValue(GetChunkKey(chunk), out var kw) ? kw : null),
-                    SemanticScore = semanticAvailable && LocalSemanticEmbeddingService.Shared.TryGetSimilarity(query, chunk.Content, out double sim)
-                        ? sim
-                        : 0
-                })
-                .Select(x => new
-                {
-                    x.Chunk,
-                    CombinedScore = x.Score + (int)Math.Round(Math.Max(0, x.SemanticScore - 0.20) * 90),
-                    x.Score,
-                    x.SemanticScore
-                })
-                .OrderByDescending(x => x.CombinedScore)
+            // Three independent rankers cover different failure modes.  BM25 protects exact names,
+            // identifiers and values; the lexical/character scorer tolerates spelling and wording
+            // changes; optional local embeddings provide semantic recall without sending project data
+            // to a cloud service.  Reciprocal-rank fusion is deliberately scale-free, so no scorer
+            // can swamp the others merely because its numerical range is larger.
+            var bm25Ranking = RankByBm25(candidates, exactQueryTerms, documentFrequency);
+            var lexicalRanking = candidates
+                .Select(chunk => new ScoredChunk(
+                    chunk,
+                    CalculateRelevanceScore(
+                        chunk, query, exactQueryTerms, expandedQueryTerms, queryTrigrams, documentFrequency, candidates.Count,
+                        _cachedChunkKeywords.TryGetValue(GetChunkKey(chunk), out var keywords) ? keywords : null)))
+                .Where(item => item.Score > 0)
+                .OrderByDescending(item => item.Score)
                 .ToList();
 
-            // Log scoring results
-            var topScored = scoredChunks.Take(3).ToList();
-            foreach (var scored in topScored)
+            var semanticRanking = new List<ScoredChunk>();
+            if (LocalSemanticEmbeddingService.Shared.IsAvailable)
             {
-                Debug.WriteLine($"  Chunk {scored.Chunk.ChunkId} ({scored.Chunk.FileName}): Score={scored.CombinedScore} lexical={scored.Score} semantic={scored.SemanticScore:0.000}");
+                foreach (DocumentChunk chunk in candidates)
+                {
+                    if (LocalSemanticEmbeddingService.Shared.TryGetSimilarity(query, chunk.Content, out double similarity)
+                        && similarity > 0.12)
+                    {
+                        semanticRanking.Add(new ScoredChunk(chunk, similarity));
+                    }
+                }
+                semanticRanking = semanticRanking.OrderByDescending(item => item.Score).ToList();
             }
 
-            int topScore = scoredChunks.FirstOrDefault()?.CombinedScore ?? 0;
-            if (topScore <= 0)
+            var fused = new Dictionary<string, FusedChunk>(StringComparer.OrdinalIgnoreCase);
+            AddReciprocalRankScores(fused, bm25Ranking, 1.15);
+            AddReciprocalRankScores(fused, lexicalRanking, 0.90);
+            AddReciprocalRankScores(fused, semanticRanking, 1.00);
+
+            if (fused.Count == 0)
             {
                 Debug.WriteLine(allowFallback
-                    ? "RetrieveRelevantChunks: No relevant chunks found, using fallback context"
-                    : "RetrieveRelevantChunks: No relevant chunks found, returning no chunks");
+                    ? "RetrieveRelevantChunks: No ranker produced evidence; using broad fallback coverage."
+                    : "RetrieveRelevantChunks: No ranker produced evidence; returning no chunks.");
                 return allowFallback ? GetFallbackChunks(maxChunks) : new List<DocumentChunk>();
             }
 
-            // Keep only meaningfully relevant chunks to reduce context pollution.
-            int minScoreThreshold = Math.Max(2, topScore / 4);
-            var result = scoredChunks
-                .Where(x => x.CombinedScore >= minScoreThreshold)
-                .Take(maxChunks)
-                .Select(x => x.Chunk)
+            var fusedRanking = fused.Values
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.Chunk.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.Chunk.ChunkId)
                 .ToList();
+            List<DocumentChunk> result = SelectDiversifiedChunks(fusedRanking, maxChunks);
 
-            if (result.Count == 0)
+            foreach (FusedChunk item in fusedRanking.Take(3))
             {
-                if (!allowFallback)
+                Debug.WriteLine($"  RRF {item.Chunk.ChunkId} ({item.Chunk.FileName}): score={item.Score:0.0000}, routes={item.RouteCount}");
+            }
+            Debug.WriteLine($"RetrieveRelevantChunks: Returning {result.Count} diversified chunks from {fusedRanking.Count} ranked candidates.");
+            return result;
+        }
+
+        private sealed record ScoredChunk(DocumentChunk Chunk, double Score);
+
+        private sealed class FusedChunk
+        {
+            public FusedChunk(DocumentChunk chunk) => Chunk = chunk;
+            public DocumentChunk Chunk { get; }
+            public double Score { get; set; }
+            public int RouteCount { get; set; }
+        }
+
+        private List<ScoredChunk> RankByBm25(
+            IReadOnlyCollection<DocumentChunk> candidates,
+            IReadOnlyCollection<string> queryTerms,
+            IReadOnlyDictionary<string, int> documentFrequency)
+        {
+            if (queryTerms.Count == 0 || candidates.Count == 0)
+                return new List<ScoredChunk>();
+
+            double averageLength = Math.Max(1d, candidates.Average(chunk => GetChunkTermFrequencies(chunk).Values.Sum()));
+            const double k1 = 1.2;
+            const double b = 0.75;
+            int totalDocuments = candidates.Count;
+            var ranked = new List<ScoredChunk>();
+
+            foreach (DocumentChunk chunk in candidates)
+            {
+                Dictionary<string, int> termFrequencies = GetChunkTermFrequencies(chunk);
+                int length = Math.Max(1, termFrequencies.Values.Sum());
+                double score = 0;
+
+                foreach (string term in queryTerms)
                 {
-                    Debug.WriteLine("RetrieveRelevantChunks: Threshold filtered all chunks, returning no chunks");
-                    return new List<DocumentChunk>();
+                    if (!termFrequencies.TryGetValue(term, out int termFrequency) || termFrequency == 0)
+                        continue;
+
+                    int documentCount = documentFrequency.TryGetValue(term, out int df) ? df : 0;
+                    double idf = Math.Log(1d + (totalDocuments - documentCount + 0.5d) / (documentCount + 0.5d));
+                    double denominator = termFrequency + k1 * (1d - b + b * length / averageLength);
+                    score += idf * termFrequency * (k1 + 1d) / denominator;
                 }
 
-                Debug.WriteLine("RetrieveRelevantChunks: Threshold filtered all chunks, using top scored chunk only");
-                result = scoredChunks
-                    .Where(x => x.CombinedScore > 0)
-                    .Take(1)
-                    .Select(x => x.Chunk)
-                    .ToList();
+                if (!string.IsNullOrWhiteSpace(chunk.FileName))
+                {
+                    string fileStem = NormalizeWord(Path.GetFileNameWithoutExtension(chunk.FileName));
+                    if (queryTerms.Any(term => fileStem.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                        score += 0.85d;
+                }
+
+                if (score > 0)
+                    ranked.Add(new ScoredChunk(chunk, score));
             }
 
-            Debug.WriteLine($"RetrieveRelevantChunks: Returning {result.Count} chunks");
-            return result;
+            return ranked.OrderByDescending(item => item.Score).ToList();
+        }
+
+        private static void AddReciprocalRankScores(
+            IDictionary<string, FusedChunk> fused,
+            IReadOnlyList<ScoredChunk> ranking,
+            double weight)
+        {
+            for (int index = 0; index < ranking.Count; index++)
+            {
+                ScoredChunk item = ranking[index];
+                string key = GetChunkKey(item.Chunk);
+                if (!fused.TryGetValue(key, out FusedChunk? fusedItem))
+                {
+                    fusedItem = new FusedChunk(item.Chunk);
+                    fused[key] = fusedItem;
+                }
+
+                fusedItem.Score += weight / (ReciprocalRankFusionK + index + 1d);
+                fusedItem.RouteCount++;
+            }
+        }
+
+        private List<DocumentChunk> SelectDiversifiedChunks(IReadOnlyList<FusedChunk> ranking, int maxChunks)
+        {
+            var selected = new List<DocumentChunk>();
+            foreach (FusedChunk candidate in ranking)
+            {
+                double redundancy = selected.Count == 0
+                    ? 0
+                    : selected.Max(existing => CalculateLexicalOverlap(candidate.Chunk, existing));
+                bool isAdjacentToSelected = selected.Any(existing =>
+                    string.Equals(existing.FileName, candidate.Chunk.FileName, StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs(existing.ChunkId - candidate.Chunk.ChunkId) <= 1);
+
+                // MMR-style diversity prevents the common failure where a 15-chunk packet contains
+                // fifteen overlapping paragraphs from one file.  Adjacent chunks remain allowed when
+                // they are genuinely strong: they carry the context needed for a boundary-spanning fact.
+                double adjustedScore = candidate.Score - redundancy * (isAdjacentToSelected ? 0.006d : 0.014d);
+                if (adjustedScore <= 0 && selected.Count > 0)
+                    continue;
+
+                selected.Add(candidate.Chunk);
+                if (selected.Count >= maxChunks)
+                    break;
+            }
+
+            return selected;
+        }
+
+        private Dictionary<string, int> GetChunkTermFrequencies(DocumentChunk chunk)
+        {
+            string key = GetChunkKey(chunk);
+            if (_cachedChunkTermFrequencies.TryGetValue(key, out Dictionary<string, int>? frequencies))
+                return frequencies;
+
+            frequencies = ExtractKeywordFrequencies(chunk.Content);
+            _cachedChunkTermFrequencies[key] = frequencies;
+            _cachedChunkKeywords[key] = frequencies.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return frequencies;
+        }
+
+        private static Dictionary<string, int> ExtractKeywordFrequencies(string? text)
+        {
+            var frequencies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (string keyword in ExtractKeywords(text ?? string.Empty))
+                frequencies[keyword] = frequencies.TryGetValue(keyword, out int count) ? count + 1 : 1;
+            return frequencies;
+        }
+
+        private static double CalculateLexicalOverlap(DocumentChunk left, DocumentChunk right)
+        {
+            HashSet<string> leftTerms = ExtractKeywords(left.Content).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> rightTerms = ExtractKeywords(right.Content).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (leftTerms.Count == 0 || rightTerms.Count == 0)
+                return 0;
+
+            int intersection = leftTerms.Intersect(rightTerms, StringComparer.OrdinalIgnoreCase).Count();
+            return intersection / (double)(leftTerms.Count + rightTerms.Count - intersection);
         }
 
         private List<DocumentChunk> GetFallbackChunks(int maxChunks)

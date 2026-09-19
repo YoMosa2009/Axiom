@@ -193,49 +193,26 @@
 
                     <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
 
-                    <!-- Knowledge Base -->
-                    <TextBlock Text="Project Knowledge Base" FontSize="12" FontWeight="SemiBold"/>
+                    <!-- Project Knowledge Base -->
+                    <DockPanel LastChildFill="False">
+                        <TextBlock Text="Project Knowledge Base" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Button x:Name="ProjectKnowledgeBaseButton" Content="Manage" Click="OpenProjectKnowledgeBase_Click" DockPanel.Dock="Right"
+                                Style="{StaticResource SubtleButtonStyle}" Padding="8,3" FontSize="10"
+                                ToolTip="View, add, or remove files kept with this Workplace project"/>
+                    </DockPanel>
+                    <TextBlock x:Name="ProjectKnowledgeBaseSummaryBlock" Text="No project files yet." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
                     <Border x:Name="DropZone" Background="{DynamicResource NotebookBackgroundBrush}" BorderThickness="1" BorderBrush="{DynamicResource NotebookBorderBrush}"
                             CornerRadius="12" Padding="16" Margin="0,12,0,12" AllowDrop="True"
                             Drop="DropZone_Drop" DragOver="DropZone_DragOver">
                         <StackPanel>
-                            <TextBlock Text="Drop PDF/TXT files here" FontSize="11" Foreground="{DynamicResource PrimaryAccentBrush}" FontWeight="SemiBold"/>
-                            <TextBlock Text="or use + Add Document" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                            <TextBlock Text="Drop files or a project folder here" FontSize="11" Foreground="{DynamicResource PrimaryAccentBrush}" FontWeight="SemiBold"/>
+                            <TextBlock Text="Axiom keeps a project-owned copy and indexes extractable content." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
-                    <Button Content="+ Add Document" Click="BrowseFiles_Click" Height="34" Style="{StaticResource PremiumButtonStyle}"/>
-
-                    <TextBlock Text="Loaded Documents" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontWeight="SemiBold" Margin="0,16,0,6"/>
-                    <ListBox x:Name="DocumentListBox" Background="Transparent" BorderThickness="0" MaxHeight="200">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Border Background="{DynamicResource NotebookBackgroundBrush}" CornerRadius="12" Padding="10" Margin="0,4" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Name}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
-                                        <TextBlock Text="{Binding Info}" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0"/>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <Button Content="Clear Documents" Click="ClearDocuments_Click" Height="30" Margin="0,8,0,0" Style="{StaticResource SubtleButtonStyle}"/>
-
-                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
-
-                    <!-- Session Memory -->
-                    <TextBlock Text="Council Session Memory" FontSize="12" FontWeight="SemiBold"/>
-                    <TextBlock x:Name="SessionMemoryStatusBlock" Text="No prior run stored." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,8"/>
-                    <Button Content="Clear Session Memory" Click="ClearSessionMemory_Click" Height="30" Style="{StaticResource SubtleButtonStyle}"/>
-
-                    <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,10,0,0">
-                        <StackPanel>
-                            <TextBlock Text="Session Hippocampus" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
-                            <TextBlock x:Name="HippocampusLineOneBlock" Text="No prior knowledge loaded." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
-                            <TextBlock x:Name="HippocampusLineTwoBlock" Text="" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0"/>
-                        </StackPanel>
-                    </Border>
-
-                    <Button x:Name="StudySessionButton" Content="Start Study Session" Click="StudySessionButton_Click" Height="34" Margin="0,10,0,0" Style="{StaticResource PremiumButtonStyle}" FontWeight="SemiBold"/>
+                    <UniformGrid Columns="2">
+                        <Button Content="+ Add files" Click="BrowseFiles_Click" Height="34" Margin="0,0,4,0" Style="{StaticResource PremiumButtonStyle}"/>
+                        <Button Content="+ Add folder" Click="BrowseProjectFolder_Click" Height="34" Margin="4,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
+                    </UniformGrid>
 
                     <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
 
@@ -420,28 +397,6 @@
                     <TextBlock x:Name="CouncilConfidenceText" Text="Confidence: Moderate" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center"/>
                     <Button x:Name="RefineButton" DockPanel.Dock="Right" Content="Refine" Click="RefineButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="10,2" FontSize="10" Margin="8,0,0,0" Visibility="Collapsed" HorizontalAlignment="Right"/>
                 </DockPanel>
-            </Border>
-
-            <Border x:Name="StudySessionNotificationBar" DockPanel.Dock="Top" Visibility="Collapsed" Padding="20,12" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1">
-                <StackPanel>
-                    <TextBlock x:Name="StudySessionStatusText" Text="Study Session in progress..." FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryAccentBrush}"/>
-                    <TextBlock x:Name="StudySessionDetailText" Text="AI models are processing loaded documents. Chat will be restored after completion." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
-                    <Grid Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <ProgressBar x:Name="StudySessionProgressBar" Height="8" Minimum="0" Maximum="100" Value="0"/>
-                        <TextBlock x:Name="StudySessionProgressLabel" Grid.Column="1" Text="0%" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center"/>
-                    </Grid>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <TextBlock Text="Phase:" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                        <TextBlock x:Name="StudySessionPhaseText" Text="Idle" FontSize="10" Foreground="{DynamicResource NotebookTextBrush}" Margin="4,0,0,0"/>
-                        <TextBlock Text="  •  " FontSize="10" Foreground="{DynamicResource NotebookBorderBrush}"/>
-                        <TextBlock Text="Entries:" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                        <TextBlock x:Name="StudySessionEntryCountText" Text="0" FontSize="10" Foreground="{DynamicResource NotebookTextBrush}" Margin="4,0,0,0"/>
-                    </StackPanel>
-                </StackPanel>
             </Border>
 
             <!-- Composer: one flat card (no box-in-a-box) with a tighter radius. Prompt on top,
@@ -875,5 +830,70 @@
                 </Border>
             </Grid>
         </Border>
+
+        <!-- Project-scoped attachment manager.  It intentionally lives above the workspace grid so
+             it behaves as a focused screen rather than another narrow sidebar list. -->
+        <Popup x:Name="ProjectKnowledgeBasePopup" Placement="Center" PlacementTarget="{Binding ElementName=ProjectKnowledgeBaseButton}"
+               StaysOpen="True" AllowsTransparency="True" PopupAnimation="Fade">
+            <Border Width="720" Height="520" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"
+                    BorderThickness="1" CornerRadius="14" Padding="18">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0">
+                        <StackPanel>
+                            <TextBlock Text="Project Knowledge Base" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ProjectKnowledgeBaseDialogSummaryBlock" Text="Files are retained with this Workplace project." FontSize="11"
+                                       Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <Button Content="×" Click="CloseProjectKnowledgeBase_Click" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Width="28" Height="28" FontSize="16" Style="{StaticResource SubtleButtonStyle}" ToolTip="Close"/>
+                    </Grid>
+
+                    <DockPanel Grid.Row="1" Margin="0,16,0,12" LastChildFill="False">
+                        <Button Content="+ Files" Click="BrowseFiles_Click" Padding="12,5" Margin="0,0,8,0" Style="{StaticResource PremiumButtonStyle}"/>
+                        <Button Content="+ Folder" Click="BrowseProjectFolder_Click" Padding="12,5" Style="{StaticResource SubtleButtonStyle}"/>
+                        <TextBlock Text="All file types are retained; unsupported binaries remain attached as metadata." DockPanel.Dock="Right"
+                                   FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center" TextWrapping="Wrap" Width="290" TextAlignment="Right"/>
+                    </DockPanel>
+
+                    <Border Grid.Row="2" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10">
+                        <ListBox x:Name="ProjectKnowledgeDocumentListBox" Background="Transparent" BorderThickness="0" Padding="8">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="42"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="28"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="34" Height="34" CornerRadius="6" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" VerticalAlignment="Top">
+                                                <TextBlock Text="{Binding Type}" FontSize="8" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="3,0"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Margin="8,0,8,0">
+                                                <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding RelativePath}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                                <TextBlock Text="{Binding Info}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="2" Content="×" Tag="{Binding}" Click="RemoveProjectKnowledgeDocument_Click" Width="24" Height="24" Padding="0"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Top" Style="{StaticResource SubtleButtonStyle}" ToolTip="Remove this file from the project"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+
+                    <TextBlock Grid.Row="3" Text="Retrieved passages are cited by file and chunk in the model context." FontSize="10"
+                               Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,12,0,0"/>
+                </Grid>
+            </Border>
+        </Popup>
     </Grid>
 </UserControl>

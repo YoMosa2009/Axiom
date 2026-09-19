@@ -143,7 +143,7 @@ namespace Malx_AI
                 "Never expose hidden reasoning, scratch work, tool protocol text, or a plan unless the user explicitly asks for a plan. " +
                 "For code, return complete executable source. For ordinary questions, answer directly. " +
                 "The Project Canvas is offline, so HTML/SVG artifacts must be self-contained with inline CSS/JavaScript and no external URLs, CDNs, fonts, images, or libraries. " +
-                "Use attached documents, retrieved knowledge, session memory, calculator results, web evidence, and connected-workspace context as authoritative only for what they actually contain." +
+                "Use attached documents, retrieved project knowledge, calculator results, web evidence, and connected-workspace context as authoritative only for what they actually contain." +
                 AgenticPauseRule;
 
             if (_connectedWorkspace.CodebaseEditAccessEnabled)
@@ -206,9 +206,6 @@ namespace Malx_AI
                 payload.AppendLine(AdaptSingleModelPromptText(state.TaskContract.Trim()));
 
             payload.AppendLine(BuildRecentConversationContext(CanUseCloudCouncil ? 10 : 4, CanUseCloudCouncil ? 1600 : 900));
-            string priorKnowledge = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(context.UserPrompt, 4));
-            if (!string.IsNullOrWhiteSpace(priorKnowledge))
-                payload.AppendLine(priorKnowledge);
             if (!string.IsNullOrWhiteSpace(sharedVocabularySection))
                 payload.AppendLine(sharedVocabularySection);
 
@@ -328,9 +325,6 @@ namespace Malx_AI
             runContext.PipelineMetadata.Add(new StageMetadata { StageName = "Single Agent" });
             contextState.BuilderOutput = output;
 
-            if (runContext.TaskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
-                WriteBuilderSessionMemory(output, activeRunIndex);
-
             bool routedToCanvas = false;
             if (!patchCaptured && !runContext.IsWorkspaceTask && (runContext.TaskType == CouncilTaskType.Coding
                 || runContext.BuilderProducedCode
@@ -397,17 +391,6 @@ namespace Malx_AI
             if (runContext.IsArtifactCanvasRequest && routedToCanvas)
                 ReconcileArtifactValidationState(runContext, ProjectCanvasEditor.Text);
 
-            _sessionMemory = new SessionMemoryState
-            {
-                ArchitectPlan = string.Empty,
-                BuilderOutput = runContext.TaskType == CouncilTaskType.Coding ? string.Empty : output,
-                CriticSummary = string.Empty,
-                TaskDescription = runContext.UserPrompt.Length > 200 ? runContext.UserPrompt[..200] : runContext.UserPrompt,
-                TaskType = runContext.TaskType
-            };
-            WriteGoalContractSessionMemory(runContext.GoalContract, activeRunIndex);
-            SessionMemoryStatusBlock.Text = $"Prior agent run stored ({DateTime.Now:HH:mm})";
-
             _lastRunContext = runContext;
             _lastFinalOutput = finalOutputForCheck;
             if (refinementPass)
@@ -418,7 +401,6 @@ namespace Malx_AI
             AddTaskHistoryEntry(runContext, _lastFinalOutput, verificationFailures.Count, refinementParentId);
             AddPerformanceLogEntry(runContext, verificationFailures.Count);
 
-            _sessionHippocampus.Consolidate();
             _completedCouncilRunCount++;
             _submittedRunPrompt = string.Empty;
             _lastCancelledRunPrompt = string.Empty;

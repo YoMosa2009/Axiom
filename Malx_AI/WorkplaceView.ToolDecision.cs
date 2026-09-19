@@ -388,7 +388,7 @@ namespace Malx_AI
                 $"Decide whether one additional tool must run before the {actor} generates its deliverable. " +
                 "Tools retrieve evidence or calculate/execute checks; they do not write the final code. " +
                 "Choose final when the supplied context and observations are sufficient. Never repeat an equivalent call. " +
-                "Available tools: SEARCH_HIPPOCAMPUS, CALCULATE, RUN_SANDBOX, PYTHON_MATH" + codebaseToolList + webTool + ". " +
+                "Available tools: SEARCH_PROJECT_KNOWLEDGE, CALCULATE, RUN_SANDBOX, PYTHON_MATH" + codebaseToolList + webTool + ". " +
                 codebaseToolGuidance +
                 "Use RUN_SANDBOX only to check a small supplied snippet, not to generate an application. " +
                 "No tool can edit files, install packages, operate the UI, or modify Project Canvas. " +
@@ -447,7 +447,7 @@ namespace Malx_AI
             var tools = new List<string>
             {
                 "NONE",
-                "SEARCH_HIPPOCAMPUS",
+                "SEARCH_PROJECT_KNOWLEDGE",
                 "CALCULATE",
                 "RUN_SANDBOX",
                 "PYTHON_MATH"
@@ -510,7 +510,7 @@ namespace Malx_AI
 
                 var allowedTools = new HashSet<string>(StringComparer.Ordinal)
                 {
-                    "SEARCH_HIPPOCAMPUS", "CALCULATE", "RUN_SANDBOX", "PYTHON_MATH"
+                    "SEARCH_PROJECT_KNOWLEDGE", "CALCULATE", "RUN_SANDBOX", "PYTHON_MATH"
                 };
                 if (_connectedWorkspace.CodebaseEditAccessEnabled)
                 {

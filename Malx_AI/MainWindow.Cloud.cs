@@ -1730,10 +1730,6 @@ namespace Malx_AI
                 if (!string.IsNullOrWhiteSpace(mcpInstruction))
                     systemPrompt += "\n\n" + mcpInstruction;
 
-                // Inject hippocampus context (prior research sessions) into the cloud system prompt
-                if (!string.IsNullOrWhiteSpace(uiSnapshot.HippocampusContext))
-                    systemPrompt += "\n\n[FROM PRIOR RESEARCH SESSIONS]\n" + uiSnapshot.HippocampusContext + "\n[/FROM PRIOR RESEARCH SESSIONS]";
-
                 if (!string.IsNullOrWhiteSpace(personaContext))
                     systemPrompt += "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]";
 

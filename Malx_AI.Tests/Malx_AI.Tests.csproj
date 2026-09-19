@@ -19,7 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Malx_AI\SessionHippocampus.cs" Link="Production\SessionHippocampus.cs" />
+    <Compile Include="..\Malx_AI\DocumentChunker.cs" Link="Production\DocumentChunker.cs" />
+    <Compile Include="..\Malx_AI\DocumentRetriever.cs" Link="Production\DocumentRetriever.cs" />
     <Compile Include="..\Malx_AI\WebSearchService.cs" Link="Production\WebSearchService.cs" />
     <Compile Include="..\Malx_AI\ReasoningParser.cs" Link="Production\ReasoningParser.cs" />
     <Compile Include="..\Malx_AI\MarkdownParser.cs" Link="Production\MarkdownParser.cs" />

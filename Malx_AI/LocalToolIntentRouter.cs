@@ -21,7 +21,7 @@ namespace Malx_AI
         public const string ToolPythonMath = "PYTHON_MATH";
         public const string ToolRunSandbox = "RUN_SANDBOX";
         public const string ToolWebSearch = "WEB_SEARCH";
-        public const string ToolHippocampus = "SEARCH_HIPPOCAMPUS";
+        public const string ToolProjectKnowledge = "SEARCH_PROJECT_KNOWLEDGE";
         public const string ToolReadFile = "READ_FILE";
         public const string ToolSearchCodebase = "SEARCH_CODEBASE";
         public const string ToolListFiles = "LIST_FILES";
@@ -78,8 +78,8 @@ namespace Malx_AI
             @"\b(find|where|locate|search)\b[^\n]{0,60}?(?:(?<q>[`'""])(?<sym>[A-Za-z_][A-Za-z0-9_]{2,})\k<q>|\b(?:function|method|class|symbol|variable|definition\s+of)\s+(?<sym>[A-Za-z_][A-Za-z0-9_]{2,}))",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        private static readonly Regex SessionMemoryIntentRegex = new(
-            @"\b(last|previous|earlier|prior)\s+(session|chat|conversation)\b|do\s+you\s+remember|we\s+(talked|discussed|worked\s+on|built|made)\b[^\n]{0,30}\b(earlier|before|previously|last\s+time)\b",
+        private static readonly Regex ProjectKnowledgeIntentRegex = new(
+            @"\b(in|from|according\s+to|search|look\s+through|check)\b[^\n]{0,40}\b(project\s+(?:knowledge|files|documents)|knowledge\s+base|attached\s+(?:file|document)|uploaded\s+(?:file|document))\b",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly Regex FencedCodeRegex = new(
@@ -155,9 +155,9 @@ namespace Malx_AI
                 }
             }
 
-            if (SessionMemoryIntentRegex.IsMatch(objective))
+            if (ProjectKnowledgeIntentRegex.IsMatch(objective))
             {
-                intent = new ToolIntent(ToolHippocampus, objective, "session-memory intent");
+                intent = new ToolIntent(ToolProjectKnowledge, objective, "project-knowledge intent");
                 return true;
             }
 
@@ -262,7 +262,7 @@ namespace Malx_AI
 
                     break;
 
-                case ToolHippocampus:
+                case ToolProjectKnowledge:
                 case ToolSearchCodebase:
                     if (!SharesContentToken(normalizedQuery, context, 3))
                     {
@@ -418,12 +418,10 @@ namespace Malx_AI
             ["PYTHON"] = ToolPythonMath,
             ["RUN_PYTHON"] = ToolPythonMath,
             ["RUNPYTHON"] = ToolPythonMath,
-            ["SEARCH_HIPPOCAMPUS"] = ToolHippocampus,
-            ["HIPPOCAMPUS"] = ToolHippocampus,
-            ["SEARCH_MEMORY"] = ToolHippocampus,
-            ["SEARCHMEMORY"] = ToolHippocampus,
-            ["MEMORY"] = ToolHippocampus,
-            ["RECALL"] = ToolHippocampus,
+            ["SEARCH_PROJECT_KNOWLEDGE"] = ToolProjectKnowledge,
+            ["SEARCHPROJECTKNOWLEDGE"] = ToolProjectKnowledge,
+            ["SEARCH_KNOWLEDGE"] = ToolProjectKnowledge,
+            ["SEARCHKNOWLEDGE"] = ToolProjectKnowledge,
             ["RUN_SANDBOX"] = ToolRunSandbox,
             ["RUNSANDBOX"] = ToolRunSandbox,
             ["SANDBOX"] = ToolRunSandbox,
@@ -561,7 +559,7 @@ namespace Malx_AI
 
         private static readonly string[] AllToolNames =
         {
-            ToolHippocampus, ToolCalculate, ToolRunSandbox, ToolPythonMath,
+            ToolProjectKnowledge, ToolCalculate, ToolRunSandbox, ToolPythonMath,
             ToolWebSearch, ToolReadFile, ToolSearchCodebase, ToolListFiles
         };
 

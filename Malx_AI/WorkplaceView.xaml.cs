@@ -531,7 +531,7 @@ namespace Malx_AI
 
             // Create a streaming placeholder card so tokens appear in the UI in real-time.
             // If a previous card exists for this role (retry scenario), remove it first.
-            // Internal pipeline steps (summarizer, study session, python auto-retry) pass
+            // Internal pipeline steps (summarizer and python auto-retry) pass
             // showLiveCard=false so they never surface a visible card for hidden work.
             var streamingCard = new WorkplaceChatMessage { Role = roleKey };
             if (showLiveCard)
@@ -581,7 +581,7 @@ namespace Malx_AI
                     : string.Empty;
                 cloudSystemPrompt += "\n\n[SINGLE AGENT EXECUTION RULE]\n" +
                     "You are the only agent for this request. Plan privately, use tools when they materially improve correctness, execute the task, verify the result, and return one final answer. " +
-                    "Available tools can include web_search, run_python, calculate, search_session_memory" + codebaseToolNames + connectorToolNames + ". " +
+                    "Available tools can include web_search, run_python, calculate, search_project_knowledge" + codebaseToolNames + connectorToolNames + ". " +
                     "Do not mention internal pipeline stages, role handoffs, or routing labels. Do not expose hidden reasoning or tool protocol text.";
             }
             else if (role == CouncilRole.Builder)
@@ -599,13 +599,13 @@ namespace Malx_AI
                 // it needs) as the primary defense rather than prompt persuasion alone.
                 cloudSystemPrompt += _isHybridLocalCouncilSelected
                     ? "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
-                        "You are a smaller, self-hosted model with a small context window. Only call a tool (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + connectorToolNames + ") when the deliverable genuinely requires a fact, computation, or lookup you cannot already answer correctly yourself -- do not call one out of habit on every turn. " +
+                        "You are a smaller, self-hosted model with a small context window. Only call a tool (web_search, run_python, calculate, search_project_knowledge" + codebaseToolNames + connectorToolNames + ") when the deliverable genuinely requires a fact, computation, or lookup you cannot already answer correctly yourself -- do not call one out of habit on every turn. " +
                         "If you do call tools, gather what you need first, then produce EXACTLY ONE final Builder deliverable that incorporates those results, and stop calling tools once you begin writing it."
                     : "\n\n[CLOUD BUILDER EXECUTION RULE]\n" +
-                        "You MAY call the provided tools (web_search, run_python, calculate, search_session_memory" + codebaseToolNames + connectorToolNames + ") BEFORE you write your deliverable, " +
+                        "You MAY call the provided tools (web_search, run_python, calculate, search_project_knowledge" + codebaseToolNames + connectorToolNames + ") BEFORE you write your deliverable, " +
                         "whenever you need a real fact, number, computation, conversion, or current detail. Never guess or fabricate values you could verify with a tool. " +
                         "If proactive web evidence is partial, off-topic, or missing the user's named entities, call a narrower web_search before writing the final deliverable instead of treating the mismatched evidence as a reason to refuse the whole answer. " +
-                        "For stable non-current background context, you may use the prompt, council plan, project knowledge, session memory, or general knowledge when not contradicted by source evidence. " +
+                        "For stable non-current background context, you may use the prompt, council plan, project knowledge, or general knowledge when not contradicted by source evidence. " +
                         "Gather every tool result you need first, then produce EXACTLY ONE final Builder deliverable that already incorporates those results. " +
                         "Once you begin writing the final deliverable, stop calling tools — do not restart, revise, repeat, or continue after it is complete.";
             }
@@ -1038,7 +1038,7 @@ namespace Malx_AI
                 "web_search" => "Searching the web" + detail,
                 "run_python" => "Running Python sandbox",
                 "calculate" => "Calculating" + detail,
-                "search_session_memory" => "Searching session memory" + detail,
+                "search_project_knowledge" => "Searching project knowledge" + detail,
                 "read_file" => "Reading code file" + detail,
                 "search_codebase" => "Searching codebase" + detail,
                 "list_files" => "Listing code files" + detail,
@@ -1185,11 +1185,11 @@ namespace Malx_AI
                     }));
             }
 
-            // Mirrors the local SEARCH_HIPPOCAMPUS pause tool so cloud roles can recall facts,
-            // prior plans, and outputs stored earlier in the session on demand (offline-safe).
+            // Mirrors the local SEARCH_PROJECT_KNOWLEDGE pause tool so cloud roles can retrieve
+            // durable, cited project files without sending the whole knowledge base in every prompt.
             defs.Add(new OpenRouterToolDefinition(
-                "search_session_memory",
-                "Search this workplace session's stored memory (prior plans, builder outputs, study notes, recorded facts) and return the most relevant entries.",
+                "search_project_knowledge",
+                "Search the durable project knowledge base and return the most relevant cited passages.",
                 new JsonObject
                 {
                     ["type"] = "object",
@@ -1198,7 +1198,7 @@ namespace Malx_AI
                         ["query"] = new JsonObject
                         {
                             ["type"] = "string",
-                            ["description"] = "What to look up in session memory."
+                                ["description"] = "What to look up in the attached project files."
                         }
                     },
                     ["required"] = new JsonArray("query"),
@@ -1376,20 +1376,12 @@ namespace Malx_AI
                     return string.IsNullOrWhiteSpace(data) ? "No web results were found." : data;
                 }
 
-                if (string.Equals(name, "search_session_memory", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(name, "search_project_knowledge", StringComparison.OrdinalIgnoreCase))
                 {
-                    string memoryQuery = root.TryGetProperty("query", out JsonElement mq) ? mq.GetString() ?? string.Empty : string.Empty;
-                    if (string.IsNullOrWhiteSpace(memoryQuery))
-                        return "No memory query was provided.";
-                    var memoryEntries = _sessionHippocampus.Query(memoryQuery, 4);
-                    if (memoryEntries.Count == 0)
-                        return "No relevant entries were found in session memory.";
-                    // Labeled context (source/tag/priority) instead of bare content lines, so the
-                    // model can weigh studied references against prior role outputs.
-                    string labeled = SessionHippocampus.BuildPromptContext(memoryEntries, maxTokens: 480);
-                    return string.IsNullOrWhiteSpace(labeled)
-                        ? "No relevant entries were found in session memory."
-                        : labeled;
+                    string knowledgeQuery = root.TryGetProperty("query", out JsonElement mq) ? mq.GetString() ?? string.Empty : string.Empty;
+                    return string.IsNullOrWhiteSpace(knowledgeQuery)
+                        ? "No project-knowledge query was provided."
+                        : SearchProjectKnowledgeForTool(knowledgeQuery);
                 }
 
                 if (string.Equals(name, "run_python", StringComparison.OrdinalIgnoreCase))
@@ -1698,15 +1690,6 @@ namespace Malx_AI
             public int TurnAge { get; init; }
             public bool IsCurrentTurn { get; init; }
             public bool IsCurrentPreflight { get; init; }
-        }
-
-        private sealed class SessionMemoryState
-        {
-            public string ArchitectPlan { get; set; } = "";
-            public string BuilderOutput { get; set; } = "";
-            public string CriticSummary { get; set; } = "";
-            public string TaskDescription { get; set; } = "";
-            public CouncilTaskType TaskType { get; set; }
         }
 
         private sealed class ContextStateObject
@@ -2272,16 +2255,12 @@ namespace Malx_AI
                 _conceptTags.Clear();
                 _taskHistory.Clear();
                 _performanceLog.Clear();
-                _sessionHippocampus.Clear(true);
                 _completedCouncilRunCount = 0;
-                _studySessionProcessedDocumentCount = 0;
-                _studySessionDomainDefinitionCount = 0;
                 _documentContextEngaged = false;
                 _documentRetriever.ClearChunks();
                 _semanticMemory.Clear();
                 _nextPromptPriorityChunks.Clear();
                 _nextPromptPriorityConcept = null;
-                _sessionMemory = null;
                 _connectedWorkspace = new ConnectedWorkspaceState();
                 _hasPendingCodebaseChanges = false;
                 _pendingCodebasePatch = null;
@@ -2306,18 +2285,10 @@ namespace Malx_AI
             _unreadNotificationCount = 0;
             NotificationBadge.Visibility = Visibility.Collapsed;
             NotificationBadgeText.Text = "0";
-            StudySessionNotificationBar.Visibility = Visibility.Collapsed;
-            StudySessionProgressBar.Value = 0;
-            StudySessionProgressLabel.Text = "0%";
-            StudySessionPhaseText.Text = "Idle";
-            StudySessionEntryCountText.Text = "0";
-
             UpdateTaskTypeBadge(CouncilTaskType.General);
             UpdateStageIndicator(null, false, false, false);
             ClearCanvasDiff();
             UpdatePerformanceAggregate();
-            UpdateSessionHippocampusIndicator();
-
             if (resetCanvas)
             {
                 ProjectCanvasEditor.Text = "// Builder output appears here\n";
@@ -2361,14 +2332,20 @@ namespace Malx_AI
             {
                 _documents.Add(new DocumentInfo
                 {
+                    Id = string.IsNullOrWhiteSpace(doc.Id) ? Guid.NewGuid().ToString("N") : doc.Id,
                     Name = doc.Name,
                     FilePath = doc.FilePath,
+                    OriginalPath = doc.OriginalPath,
+                    RelativePath = doc.RelativePath,
+                    RetrievalKey = doc.RetrievalKey,
                     Type = doc.Type,
                     Info = doc.Info,
                     ChunkCount = doc.ChunkCount,
                     MimeType = doc.MimeType,
                     Base64Data = doc.Base64Data,
-                    IsImage = doc.IsImage
+                    IsImage = doc.IsImage,
+                    FileSizeBytes = doc.FileSizeBytes,
+                    IndexStatus = doc.IndexStatus
                 });
             }
 
@@ -2423,6 +2400,9 @@ namespace Malx_AI
             _singleModelContextSize = snapshot.SingleModelContextSize <= 0
                 ? _contextSize
                 : Math.Clamp(snapshot.SingleModelContextSize, MinRoleContext, MaxRoleContext);
+            _projectKnowledgeBaseId = string.IsNullOrWhiteSpace(snapshot.ProjectKnowledgeBaseId)
+                ? Guid.NewGuid().ToString("N")
+                : snapshot.ProjectKnowledgeBaseId;
 
             ProjectCanvasEditor.Text = snapshot.ProjectCanvasText ?? "";
             SetCanvasHighlighting(DetectLanguage(ProjectCanvasEditor.Text));
@@ -2450,8 +2430,7 @@ namespace Malx_AI
             SyncContextControls();
 
             RestoreWorkspaceCollections(snapshot);
-            _sessionHippocampus.Restore(snapshot.HippocampusEntries ?? [], snapshot.StudySessionCompleted);
-            _studySessionProcessedDocumentCount = Math.Max(0, snapshot.StudySessionProcessedDocumentCount);
+            _knowledgeIndexReadyTask = RebuildProjectKnowledgeIndexAsync();
             _completedCouncilRunCount = Math.Max(0, snapshot.CompletedCouncilRunCount);
 
             var councilModels = snapshot.CouncilModels ?? new Dictionary<string, WorkplaceCouncilModelDto>(StringComparer.OrdinalIgnoreCase);
@@ -2499,16 +2478,18 @@ namespace Malx_AI
             if (_isCloudModeEnabled && _isHybridLocalCouncilSelected)
                 _ = RefreshHybridLocalMetadataAsync();
             RefreshCodebaseAccessUi();
-            UpdateSessionHippocampusIndicator();
             UpdatePerformanceAggregate();
             UpdateWorkplaceTokenUsageIndicator();
         }
 
         public void ResetWorkspaceSession()
         {
+            string oldProjectKnowledgeBaseId = _projectKnowledgeBaseId;
             ResetWorkspaceTransientState(clearSessionCollections: true, resetCanvas: true);
             _restoredIsolatedRunState = true;
-            SessionMemoryStatusBlock.Text = "No prior run stored.";
+            ProjectKnowledgeStorage.RemoveProject(oldProjectKnowledgeBaseId);
+            _projectKnowledgeBaseId = Guid.NewGuid().ToString("N");
+            _knowledgeIndexReadyTask = Task.CompletedTask;
             _contextSize = 8192;
             _singleModelContextSize = 8192;
             _architectContextSize = 6144;
@@ -2532,16 +2513,8 @@ namespace Malx_AI
             RefreshWorkplaceWebToggleUi();
             RefreshCodebaseAccessUi();
             UpdateContextInfo();
-            UpdateSessionHippocampusIndicator();
             UpdateWorkplaceTokenUsageIndicator();
             SavePersistedSession();
-        }
-
-        public IReadOnlyList<SessionHippocampusEntry> QueryHippocampus(string query, int maxResults = 3)
-        {
-            if (string.IsNullOrWhiteSpace(query) || maxResults <= 0)
-                return Array.Empty<SessionHippocampusEntry>();
-            return _sessionHippocampus.Query(query, maxResults);
         }
 
         public sealed class ConceptTagViewModel
@@ -2553,14 +2526,20 @@ namespace Malx_AI
 
         public class DocumentInfo
         {
+            public string Id { get; set; } = "";
             public string Name { get; set; } = "";
             public string FilePath { get; set; } = "";
+            public string OriginalPath { get; set; } = "";
+            public string RelativePath { get; set; } = "";
+            public string RetrievalKey { get; set; } = "";
             public string Type { get; set; } = "";
             public string Info { get; set; } = "";
             public int ChunkCount { get; set; }
             public string MimeType { get; set; } = "";
             public string Base64Data { get; set; } = "";
             public bool IsImage { get; set; }
+            public long FileSizeBytes { get; set; }
+            public string IndexStatus { get; set; } = "";
         }
 
         private OpenRouterMessage BuildCloudCouncilInitialUserMessage(CouncilRole role, string? userPayload)
@@ -2600,30 +2579,6 @@ namespace Malx_AI
                 ImageDataUrls: imageDataUrls);
         }
 
-        private sealed class StudyChunk
-        {
-            public string DocumentName { get; set; } = "";
-            public int ChunkIndex { get; set; }
-            public string Content { get; set; } = "";
-            public int TokenEstimate { get; set; }
-        }
-
-        private sealed class StudyChunkResult
-        {
-            public string Summary { get; set; } = "";
-            public List<string> Concepts { get; set; } = new();
-            public List<(string Question, string Answer)> QuestionAnswers { get; set; } = new();
-        }
-
-        private sealed class StudySessionProgressEventArgs : EventArgs
-        {
-            public string PhaseName { get; init; } = "";
-            public int Current { get; init; }
-            public int Total { get; init; }
-            public int EntriesWritten { get; init; }
-            public string Message { get; init; } = "";
-        }
-
         private enum CriticSensitivityLevel
         {
             Standard,
@@ -2634,6 +2589,11 @@ namespace Malx_AI
         private readonly DocumentRetriever _documentRetriever = new();
         private readonly SemanticProjectMemory _semanticMemory = new();
         private readonly ObservableCollection<DocumentInfo> _documents = new();
+        // Each saved Workplace session owns a stable directory under AppData.  The snapshot records
+        // only this ID and document metadata; the original user paths are never required at retrieval
+        // time, which keeps a project usable after its source files are moved or deleted.
+        private string _projectKnowledgeBaseId = Guid.NewGuid().ToString("N");
+        private Task _knowledgeIndexReadyTask = Task.CompletedTask;
         // Sticky document grounding: once a turn has used the attached document(s), later turns keep
         // grounding in them even when the follow-up doesn't name the file or use a doc keyword
         // ("what about the budget section?", "tell me more about that"). Reset when documents are
@@ -2685,7 +2645,7 @@ namespace Malx_AI
         private static readonly uint MinRoleContext = 2048;
         private static readonly uint MaxRoleContext = 32768;
         private bool _isProcessing;
-        public bool HasActiveWork => _isProcessing || _isStudySessionRunning;
+        public bool HasActiveWork => _isProcessing;
         private bool _isProjectCanvasExpanded = true;
         private bool _isProjectCanvasShown = true;
         private bool _isProjectCanvasAutoCollapsed;
@@ -2695,7 +2655,6 @@ namespace Malx_AI
         private const int ContextCompressionThreshold = 3000;
         private const double AvgCharsPerToken = 4.0;
         private readonly List<(string Role, string Content)> _chatHistory = new();
-        private SessionMemoryState? _sessionMemory;
         private const string SegmentCompletionMarker = "// @@SEGMENT_COMPLETE@@";
         private const string ArchitectCompletionMarker = "ARCHITECT PLAN COMPLETE";
         private const string BuilderCompletionMarker = "BUILDER OUTPUT COMPLETE";
@@ -2704,7 +2663,7 @@ namespace Malx_AI
         private const int MaxBuilderRetryAttempts = 2;
         private const int SandboxEligibilityThreshold = 4;
         // Cloud council native tool-calling guards (mirrors the Normal Chat cloud loop limits).
-        // 6 rounds: with four advertised tools (web, python, calculator, session memory) a role can
+        // 6 rounds: with four advertised tools (web, Python, calculator, project knowledge) a role can
         // legitimately need a research → compute → verify chain; the forced no-tools synthesis pass
         // still guarantees usable output if the budget is exhausted.
         private const int CloudCouncilToolLoopIterationLimit = 6;
@@ -2785,7 +2744,6 @@ namespace Malx_AI
         private readonly System.Windows.Threading.DispatcherTimer _progressTimer = new();
         private readonly Stopwatch _pipelineStopwatch = new();
         private readonly WorkplaceSessionPersistence _workplacePersistence = new();
-        private readonly SessionHippocampus _sessionHippocampus = new();
         private readonly SemaphoreSlim _stateSaveGate = new(1, 1);
         private readonly SemaphoreSlim _notificationGate = new(1, 1);
         private int _stateSaveRequested;
@@ -2816,12 +2774,6 @@ namespace Malx_AI
         private double _lastArchitectDuration;
         private double _lastBuilderDuration;
         private double _lastCriticDuration;
-        private bool _isStudySessionRunning;
-        private bool _studySessionCancelRequested;
-        private CancellationTokenSource? _studySessionCts;
-        private int _studySessionProcessedDocumentCount;
-        private int _studySessionDomainDefinitionCount;
-        private event EventHandler<StudySessionProgressEventArgs>? StudySessionProgress;
         private readonly WorkspaceAdvancedStatePersistence _advancedStatePersistence = new();
         private readonly ObservableCollection<CouncilTaskHistoryEntry> _taskHistory = new();
         private readonly ObservableCollection<ModelPerformanceLogEntry> _performanceLog = new();
@@ -3050,10 +3002,14 @@ namespace Malx_AI
             _council[CouncilRole.Builder] = new CouncilModelConfig();
             _council[CouncilRole.Critic] = new CouncilModelConfig();
 
-            DocumentListBox.ItemsSource = _documents;
-            // One hook keeps the composer preview tray in step with every path that loads or
-            // clears documents (drop zone, browse dialog, session restore, clear).
-            _documents.CollectionChanged += (_, _) => RefreshWorkplaceAttachmentTray();
+            ProjectKnowledgeDocumentListBox.ItemsSource = _documents;
+            // One hook keeps both the composer preview tray and the project-level manager in step
+            // with every path that imports, restores, or removes durable knowledge-base files.
+            _documents.CollectionChanged += (_, _) =>
+            {
+                RefreshWorkplaceAttachmentTray();
+                UpdateProjectKnowledgeBaseSummary();
+            };
             ConceptCloudItemsControl.ItemsSource = _conceptTags;
             ChatCardsList.ItemsSource = _renderedChatCards;
             _chatCards.CollectionChanged += ChatCards_CollectionChanged;
@@ -3064,15 +3020,9 @@ namespace Malx_AI
 
             _progressTimer.Interval = TimeSpan.FromSeconds(1);
             _progressTimer.Tick += ProgressTimer_Tick;
-            _sessionHippocampus.StoreChanged += SessionHippocampus_StoreChanged;
-            StudySessionProgress += StudySessionProgress_Progressed;
             Unloaded += (_, _) =>
             {
                 SavePersistedSession();
-                _studySessionCts?.Cancel();
-                _sessionHippocampus.Clear(true);
-                _sessionHippocampus.StoreChanged -= SessionHippocampus_StoreChanged;
-                StudySessionProgress -= StudySessionProgress_Progressed;
                 DisposeModelCache();
             };
 
@@ -3085,7 +3035,6 @@ namespace Malx_AI
             UpdateTaskTypeBadge(CouncilTaskType.General);
             UpdateStageIndicator(null, false, false, false);
             UpdateContextPressureLabel(0, (int)_contextSize, false);
-            UpdateSessionHippocampusIndicator();
             ApplyOptimizedRoleContexts();
             SyncContextControls();
             ArchitectContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
@@ -3097,7 +3046,7 @@ namespace Malx_AI
             UpdateCriticSensitivityBadge();
             UpdatePerformanceAggregate();
             _agenticPauseEngine = new AgenticPauseEngine(
-                _sessionHippocampus,
+                SearchProjectKnowledgeForTool,
                 (code, lang) => ExecuteCodeSandboxAsync(code, lang),
                 (query, ct) => ExecuteWebSearchAsync(query, ct),
                 (code, ct) => ExecutePythonMathAsync(code, ct),
@@ -3975,60 +3924,6 @@ namespace Malx_AI
             CriticModelBlock.Text = GetCouncilDisplayName(CouncilRole.Critic);
         }
 
-        private void SessionHippocampus_StoreChanged(object? sender, EventArgs e)
-        {
-            Dispatcher.Invoke(UpdateSessionHippocampusIndicator);
-        }
-
-        private void UpdateSessionHippocampusIndicator()
-        {
-            var metadata = _sessionHippocampus.GetMetadata();
-            int studyEntries = metadata.SourceCounts.TryGetValue(SessionHippocampusSource.StudySession, out int s) ? s : 0;
-            int councilEntries = (metadata.SourceCounts.TryGetValue(SessionHippocampusSource.ArchitectOutput, out int a) ? a : 0)
-                + (metadata.SourceCounts.TryGetValue(SessionHippocampusSource.BuilderOutput, out int b) ? b : 0)
-                + (metadata.SourceCounts.TryGetValue(SessionHippocampusSource.CriticOutput, out int c) ? c : 0);
-
-            if (studyEntries == 0 && councilEntries == 0)
-            {
-                HippocampusLineOneBlock.Text = "No prior knowledge loaded.";
-                HippocampusLineTwoBlock.Text = "";
-                return;
-            }
-
-            var lines = new List<string>();
-            if (studyEntries > 0)
-            {
-                int docs = Math.Max(1, _studySessionProcessedDocumentCount);
-                lines.Add($"Studied material available · {docs} document(s) · {studyEntries} memory item(s)");
-            }
-
-            if (councilEntries > 0)
-            {
-                lines.Add($"Session memory active · {_completedCouncilRunCount} completed run(s) · {councilEntries} pattern(s)");
-            }
-
-            HippocampusLineOneBlock.Text = lines.Count > 0 ? lines[0] : "No prior knowledge loaded.";
-            HippocampusLineTwoBlock.Text = lines.Count > 1 ? lines[1] : "";
-        }
-
-        private async Task HideStudySessionNotificationBarAsync(int delayMs = 2200)
-        {
-            if (delayMs > 0)
-            {
-                await Task.Delay(delayMs);
-            }
-
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (_isStudySessionRunning)
-                {
-                    return;
-                }
-
-                StudySessionNotificationBar.Visibility = Visibility.Collapsed;
-            }, DispatcherPriority.Background);
-        }
-
         private void DropZone_DragOver(object sender, DragEventArgs e)
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -4055,7 +3950,7 @@ namespace Malx_AI
         {
             var dialog = new OpenFileDialog
             {
-                Filter = "All Supported (*.pdf;*.docx;*.xlsx;*.rtf;*.txt;*.md;code;data)|*.pdf;*.docx;*.xlsx;*.rtf;*.txt;*.md;*.markdown;*.cs;*.py;*.js;*.ts;*.jsx;*.tsx;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.html;*.htm;*.css;*.csv;*.tsv;*.log;*.ini;*.sql;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh;*.tex;*.srt;*.vtt|PDF Files (*.pdf)|*.pdf|Office Documents (*.docx;*.xlsx;*.rtf)|*.docx;*.xlsx;*.rtf|Text Files (*.txt;*.md)|*.txt;*.md|Code Files (*.cs;*.py;*.js;*.ts;*.css;*.html)|*.cs;*.py;*.js;*.ts;*.css;*.html|Data Files (*.json;*.xml;*.yaml;*.yml;*.csv;*.tsv)|*.json;*.xml;*.yaml;*.yml;*.csv;*.tsv|All files (*.*)|*.*",
+                Filter = "All files (*.*)|*.*",
                 Multiselect = true
             };
 
@@ -4065,22 +3960,45 @@ namespace Malx_AI
             }
         }
 
+        private void BrowseProjectFolder_Click(object sender, RoutedEventArgs e)
+        {
+            using var dialog = new System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "Choose a folder to retain in this Workplace project's knowledge base",
+                UseDescriptionForTitle = true,
+                ShowNewFolderButton = false
+            };
+
+            if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK
+                && !string.IsNullOrWhiteSpace(dialog.SelectedPath))
+            {
+                ProcessFilesAsync([dialog.SelectedPath]);
+            }
+        }
+
         private async void ProcessFilesAsync(string[] filePaths)
         {
+            IReadOnlyList<ProjectKnowledgeSourceFile> sourceFiles = ProjectKnowledgeStorage.ExpandDroppedPaths(filePaths);
+            if (sourceFiles.Count == 0)
+            {
+                AppendChat("warning", "No readable files were found in the selected item.");
+                return;
+            }
+
             SendButton.IsEnabled = false;
-            AppendChat("system", "Processing files...");
-            LogActivity("Parsing project assets in background...");
+            AppendChat("system", $"Adding {sourceFiles.Count} file(s) to this project knowledge base...");
+            LogActivity($"Staging {sourceFiles.Count} project knowledge-base file(s) in background...");
 
             try
             {
-                foreach (var filePath in filePaths)
+                foreach (ProjectKnowledgeSourceFile source in sourceFiles)
                 {
-                    await ProcessSingleFileAsync(filePath);
+                    await ProcessSingleFileAsync(source);
                 }
 
                 await RefreshConceptCloudAsync();
-                AppendChat("system", $"✓ Loaded {_documents.Count} document(s)");
-                LogActivity($"Indexed {_documents.Count} documents.");
+                AppendChat("system", $"✓ Project knowledge base now contains {_documents.Count} file(s)");
+                LogActivity($"Indexed project knowledge base: {_documents.Count} file(s).");
                 UpdateContextInfo();
                 SavePersistedSession();
             }
@@ -4098,107 +4016,108 @@ namespace Malx_AI
             }
         }
 
-        private async Task ProcessSingleFileAsync(string filePath)
+        private async Task ProcessSingleFileAsync(ProjectKnowledgeSourceFile source)
         {
-            if (!File.Exists(filePath))
+            if (!File.Exists(source.SourcePath))
             {
-                AppendChat("error", $"File not found: {filePath}");
+                AppendChat("error", $"File not found: {source.SourcePath}");
                 return;
             }
 
-            string fileName = Path.GetFileName(filePath);
-            string extension = Path.GetExtension(filePath).ToLowerInvariant();
-            string? extractedText;
-
-            AppendChat("system", $"Reading: {fileName}...");
-
-            if (extension == ".pdf")
+            string storedPath;
+            try
             {
-                try
-                {
-                    extractedText = await PdfExtractor.ExtractTextFromPdfAsync(filePath);
-                }
-                catch (Exception ex)
-                {
-                    AppendChat("warning", $"PDF extraction failed: {ex.Message}");
-                    if (ex is OutOfMemoryException || ex is IOException)
-                    {
-                        _ = ShowNonIntrusiveErrorAsync($"Document read error: {ex.Message}");
-                    }
-                    return;
-                }
+                storedPath = await ProjectKnowledgeStorage.CopyIntoProjectAsync(
+                    _projectKnowledgeBaseId,
+                    source.SourcePath,
+                    source.RelativePath);
             }
-            else if (IsPlainTextExtension(extension))
+            catch (Exception ex)
             {
-                extractedText = await Task.Run(() =>
-                {
-                    try
-                    {
-                        return File.ReadAllText(filePath, Encoding.UTF8);
-                    }
-                    catch
-                    {
-                        return File.ReadAllText(filePath, Encoding.Default);
-                    }
-                });
-            }
-            else
-            {
-                // docx/xlsx/rtf/tsv and unknown-but-textual files go through the shared importer.
-                try
-                {
-                    ChatAttachmentImportResult imported = await ChatAttachmentImportService.ImportAsync(filePath);
-                    if (imported.Attachment.IsImage)
-                    {
-                        _documents.Add(new DocumentInfo
-                        {
-                            Name = fileName,
-                            FilePath = filePath,
-                            Type = "IMAGE",
-                            Info = $"Image attachment - {Math.Max(0, imported.Attachment.FileSizeBytes) / 1024d:N0} KB",
-                            MimeType = imported.Attachment.MimeType,
-                            Base64Data = imported.Attachment.Base64Data,
-                            IsImage = true
-                        });
-                        AppendChat("system", $"Image attached for Builder vision: {fileName}");
-                        return;
-                    }
-
-                    extractedText = imported.Attachment.Content;
-                }
-                catch (Exception ex)
-                {
-                    AppendChat("warning", $"Unsupported file type {extension}: {ex.Message}");
-                    return;
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(extractedText))
-            {
-                AppendChat("warning", $"{fileName} has no extractable text");
+                AppendChat("warning", $"Could not retain {Path.GetFileName(source.SourcePath)}: {ex.Message}");
                 return;
             }
 
-            var chunks = await Task.Run(() => DocumentChunker.ChunkDocument(fileName, extractedText));
-            if (chunks.Count == 0)
+            if (_documents.Any(document => string.Equals(document.FilePath, storedPath, StringComparison.OrdinalIgnoreCase)))
             {
-                AppendChat("warning", $"No chunks created for {fileName}");
                 return;
             }
 
-            _documentRetriever.AddChunks(chunks);
-            await _semanticMemory.IndexDocumentAsync(filePath, extractedText, chunks);
-
-            _documents.Add(new DocumentInfo
+            string fileName = Path.GetFileName(storedPath);
+            string extension = Path.GetExtension(storedPath).ToLowerInvariant();
+            string relativePath = string.IsNullOrWhiteSpace(source.RelativePath) ? fileName : source.RelativePath;
+            string retrievalKey = relativePath.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
+            var fileInfo = new FileInfo(storedPath);
+            var document = new DocumentInfo
             {
+                Id = Guid.NewGuid().ToString("N"),
                 Name = fileName,
-                FilePath = filePath,
-                Type = extension.TrimStart('.').ToUpperInvariant(),
-                ChunkCount = chunks.Count,
-                Info = $"{chunks.Count} chunks • {extractedText.Length} chars • ~{chunks.Sum(c => c.TokenCount)} tokens"
-            });
+                FilePath = storedPath,
+                OriginalPath = source.SourcePath,
+                RelativePath = relativePath,
+                RetrievalKey = retrievalKey,
+                Type = string.IsNullOrWhiteSpace(extension) ? "FILE" : extension.TrimStart('.').ToUpperInvariant(),
+                FileSizeBytes = Math.Max(0, fileInfo.Length),
+                IndexStatus = "Stored"
+            };
 
-            AppendChat("system", $"✓ {fileName} loaded ({chunks.Count} chunks)");
+            AppendChat("system", $"Indexing: {relativePath}...");
+
+            try
+            {
+                ChatAttachmentImportResult imported = await ChatAttachmentImportService.ImportAsync(storedPath);
+                document.MimeType = imported.Attachment.MimeType;
+                document.IsImage = imported.Attachment.IsImage;
+                document.Base64Data = imported.Attachment.IsImage ? imported.Attachment.Base64Data : string.Empty;
+
+                if (imported.Attachment.IsImage)
+                {
+                    document.Type = "IMAGE";
+                    document.IndexStatus = "Vision attachment";
+                    document.Info = $"Vision attachment • {document.FileSizeBytes / 1024d:N0} KB";
+                    _documents.Add(document);
+                    AppendChat("system", $"Image retained for Builder vision: {relativePath}");
+                    return;
+                }
+
+                string extractedText = imported.Attachment.Content ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(extractedText))
+                {
+                    document.IndexStatus = "Stored (no extractable text)";
+                    document.Info = $"Retained • {document.FileSizeBytes / 1024d:N0} KB • no text extractor";
+                    _documents.Add(document);
+                    AppendChat("warning", $"{relativePath} was retained, but has no extractable text to retrieve.");
+                    return;
+                }
+
+                var chunks = await Task.Run(() => DocumentChunker.ChunkDocument(retrievalKey, extractedText));
+                if (chunks.Count == 0)
+                {
+                    document.IndexStatus = "Stored (no indexable text)";
+                    document.Info = $"Retained • {document.FileSizeBytes / 1024d:N0} KB • no indexable text";
+                    _documents.Add(document);
+                    return;
+                }
+
+                _documentRetriever.AddChunks(chunks);
+                await _semanticMemory.IndexDocumentAsync(retrievalKey, extractedText, chunks);
+
+                document.ChunkCount = chunks.Count;
+                document.IndexStatus = "Indexed";
+                document.Info = $"Indexed • {chunks.Count} chunks • {extractedText.Length:N0} chars • ~{chunks.Sum(chunk => chunk.TokenCount):N0} tokens";
+                _documents.Add(document);
+                AppendChat("system", $"✓ {relativePath} indexed ({chunks.Count} chunks)");
+            }
+            catch (Exception ex)
+            {
+                // All file types are still useful as durable project artifacts even when no text
+                // extractor exists for them.  The manager makes that limitation visible instead of
+                // silently discarding the attachment.
+                document.IndexStatus = "Stored (metadata only)";
+                document.Info = $"Retained • {document.FileSizeBytes / 1024d:N0} KB • {ShortenForStatus(ex.Message, 80)}";
+                _documents.Add(document);
+                AppendChat("warning", $"{relativePath} was retained as a binary attachment; its contents cannot be indexed yet.");
+            }
         }
 
         private async Task<(string Content, List<string> FileNames)> ResolveWorkspaceDocumentContentAsync()
@@ -4242,7 +4161,7 @@ namespace Malx_AI
 
                 // Fall back to the indexed chunks when on-disk extraction fails (file moved/locked).
                 if (string.IsNullOrWhiteSpace(text))
-                    text = _documentRetriever.GetAllTextForFile(fileName);
+                    text = _documentRetriever.GetAllTextForFile(GetDocumentRetrievalKey(doc));
 
                 if (string.IsNullOrWhiteSpace(text))
                     continue;
@@ -4415,8 +4334,175 @@ namespace Malx_AI
             }
         }
 
+        private void OpenProjectKnowledgeBase_Click(object sender, RoutedEventArgs e)
+        {
+            UpdateProjectKnowledgeBaseSummary();
+            ProjectKnowledgeBasePopup.IsOpen = true;
+        }
+
+        private void CloseProjectKnowledgeBase_Click(object sender, RoutedEventArgs e)
+        {
+            ProjectKnowledgeBasePopup.IsOpen = false;
+        }
+
+        private void RemoveProjectKnowledgeDocument_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: DocumentInfo document })
+                return;
+
+            RemoveProjectKnowledgeDocument(document);
+        }
+
+        private void RemoveProjectKnowledgeDocument(DocumentInfo document)
+        {
+            if (!_documents.Remove(document))
+                return;
+
+            string displayName = string.IsNullOrWhiteSpace(document.RelativePath) ? document.Name : document.RelativePath;
+            ProjectKnowledgeStorage.RemoveStoredFile(_projectKnowledgeBaseId, document.FilePath);
+            _documentRetriever.RemoveChunksForFile(GetDocumentRetrievalKey(document));
+            _documentContextEngaged = _documents.Count > 0 && _documentContextEngaged;
+            _nextPromptPriorityChunks.Clear();
+            _nextPromptPriorityConcept = null;
+            MemoryFocusBlock.Text = "Memory Focus: None";
+            _knowledgeIndexReadyTask = RebuildProjectKnowledgeIndexAsync();
+            AppendChat("system", $"Removed {displayName} from this project knowledge base.");
+            LogActivity($"Removed project knowledge-base file: {displayName}");
+            SavePersistedSession();
+        }
+
+        private async Task RebuildProjectKnowledgeIndexAsync()
+        {
+            _documentRetriever.ClearChunks();
+            _semanticMemory.Clear();
+            _conceptTags.Clear();
+
+            foreach (DocumentInfo document in _documents.ToList())
+            {
+                string retrievalKey = GetDocumentRetrievalKey(document);
+                document.RetrievalKey = retrievalKey;
+
+                try
+                {
+                    // Upgrade pre-project-KB snapshots on their first restore.  From then on every
+                    // document points to a project-owned copy under the session's stable ID.
+                    if (!ProjectKnowledgeStorage.IsStoredWithinProject(_projectKnowledgeBaseId, document.FilePath)
+                        && File.Exists(document.FilePath))
+                    {
+                        string original = document.FilePath;
+                        document.FilePath = await ProjectKnowledgeStorage.CopyIntoProjectAsync(
+                            _projectKnowledgeBaseId,
+                            original,
+                            string.IsNullOrWhiteSpace(document.RelativePath) ? document.Name : document.RelativePath);
+                        document.OriginalPath = string.IsNullOrWhiteSpace(document.OriginalPath) ? original : document.OriginalPath;
+                    }
+
+                    if (!File.Exists(document.FilePath))
+                    {
+                        document.IndexStatus = "File unavailable";
+                        document.Info = "Retained metadata, but the stored file is unavailable.";
+                        continue;
+                    }
+
+                    ChatAttachmentImportResult imported = await ChatAttachmentImportService.ImportAsync(document.FilePath);
+                    document.MimeType = imported.Attachment.MimeType;
+                    document.IsImage = imported.Attachment.IsImage;
+                    document.Base64Data = imported.Attachment.IsImage ? imported.Attachment.Base64Data : string.Empty;
+                    document.FileSizeBytes = Math.Max(0, new FileInfo(document.FilePath).Length);
+
+                    if (imported.Attachment.IsImage)
+                    {
+                        document.Type = "IMAGE";
+                        document.ChunkCount = 0;
+                        document.IndexStatus = "Vision attachment";
+                        document.Info = $"Vision attachment • {document.FileSizeBytes / 1024d:N0} KB";
+                        continue;
+                    }
+
+                    string content = imported.Attachment.Content ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(content))
+                    {
+                        document.ChunkCount = 0;
+                        document.IndexStatus = "Stored (no extractable text)";
+                        document.Info = $"Retained • {document.FileSizeBytes / 1024d:N0} KB • no text extractor";
+                        continue;
+                    }
+
+                    List<DocumentChunk> chunks = await Task.Run(() => DocumentChunker.ChunkDocument(retrievalKey, content));
+                    _documentRetriever.AddChunks(chunks);
+                    await _semanticMemory.IndexDocumentAsync(retrievalKey, content, chunks);
+                    document.ChunkCount = chunks.Count;
+                    document.IndexStatus = "Indexed";
+                    document.Info = $"Indexed • {chunks.Count} chunks • {content.Length:N0} chars • ~{chunks.Sum(chunk => chunk.TokenCount):N0} tokens";
+                }
+                catch (Exception ex)
+                {
+                    document.ChunkCount = 0;
+                    document.IndexStatus = "Stored (metadata only)";
+                    document.Info = $"Retained • {document.FileSizeBytes / 1024d:N0} KB • {ShortenForStatus(ex.Message, 80)}";
+                }
+            }
+
+            await RefreshConceptCloudAsync();
+            UpdateProjectKnowledgeBaseSummary();
+        }
+
+        private static string GetDocumentRetrievalKey(DocumentInfo document)
+        {
+            if (!string.IsNullOrWhiteSpace(document.RetrievalKey))
+                return document.RetrievalKey;
+            if (!string.IsNullOrWhiteSpace(document.RelativePath))
+                return document.RelativePath.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
+            return document.Name;
+        }
+
+        private void UpdateProjectKnowledgeBaseSummary()
+        {
+            int indexed = _documents.Count(document => document.ChunkCount > 0);
+            long bytes = _documents.Sum(document => Math.Max(0, document.FileSizeBytes));
+            string summary = _documents.Count == 0
+                ? "No project files yet. Add files or a folder to retain them with this chat."
+                : $"{_documents.Count:N0} file(s) retained • {indexed:N0} indexed • {bytes / 1024d / 1024d:0.##} MB";
+
+            ProjectKnowledgeBaseSummaryBlock.Text = summary;
+            ProjectKnowledgeBaseDialogSummaryBlock.Text = _documents.Count == 0
+                ? "Files added here stay with this Workplace project until you remove them."
+                : summary + " • retrieval uses hybrid lexical + local semantic ranking.";
+        }
+
+        private static string ShortenForStatus(string? value, int maxLength)
+        {
+            string compact = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim();
+            return compact.Length <= maxLength ? compact : compact[..maxLength].TrimEnd() + "…";
+        }
+
+        private string SearchProjectKnowledgeForTool(string query)
+        {
+            if (!_knowledgeIndexReadyTask.IsCompleted)
+                return "Project knowledge is still indexing. Continue from the cited passages already supplied to this turn.";
+
+            int tokenBudget = Math.Max(600, GetKnowledgePacketTokenBudget() / 2);
+            List<DocumentChunk> chunks = _documentRetriever.RetrieveRelevantChunks(
+                query,
+                Math.Max(1, tokenBudget / 250),
+                allowFallback: false);
+            return chunks.Count == 0
+                ? string.Empty
+                : BuildKnowledgePacket(chunks, null, tokenBudget);
+        }
+
         private void ClearDocuments_Click(object sender, RoutedEventArgs e)
         {
+            if (MessageBox.Show(
+                    "Remove every file retained in this Workplace project's knowledge base? This cannot be undone.",
+                    "Clear Project Knowledge Base",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            string oldProjectKnowledgeBaseId = _projectKnowledgeBaseId;
             _documents.Clear();
             _documentContextEngaged = false;
             _conceptTags.Clear();
@@ -4425,9 +4511,13 @@ namespace Malx_AI
             _nextPromptPriorityChunks.Clear();
             _nextPromptPriorityConcept = null;
             MemoryFocusBlock.Text = "Memory Focus: None";
-            AppendChat("system", "All documents and semantic memory cleared.");
-            LogActivity("Project assets and memory cleared.");
+            ProjectKnowledgeStorage.RemoveProject(oldProjectKnowledgeBaseId);
+            _projectKnowledgeBaseId = Guid.NewGuid().ToString("N");
+            _knowledgeIndexReadyTask = Task.CompletedTask;
+            AppendChat("system", "Project knowledge base cleared.");
+            LogActivity("Project knowledge base cleared.");
             UpdateContextInfo();
+            SavePersistedSession();
         }
 
         private void LoadArchitectModel_Click(object sender, RoutedEventArgs e) => SelectCouncilModel(CouncilRole.Architect, ArchitectFormatCombo);
@@ -4483,29 +4573,6 @@ namespace Malx_AI
             SavePersistedSession();
         }
 
-        private void ClearSessionMemory_Click(object sender, RoutedEventArgs e)
-        {
-            var result = MessageBox.Show(
-                "Clear prior run memory and Session Hippocampus entries for this session?",
-                "Clear Session Memory",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-
-            if (result != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            _sessionMemory = null;
-            _completedCouncilRunCount = 0;
-            _studySessionProcessedDocumentCount = 0;
-            _studySessionDomainDefinitionCount = 0;
-            _sessionHippocampus.Clear(true);
-            SessionMemoryStatusBlock.Text = "No prior run stored.";
-            LogActivity("Session memory cleared by user.");
-            AppendChat("system", "Council session memory cleared.");
-            SavePersistedSession();
-        }
 
         private static PromptFormat ParsePromptFormat(ComboBoxItem? selected)
         {
@@ -8163,7 +8230,7 @@ namespace Malx_AI
                 "You are running as a local model, so use this deterministic execution loop internally before writing the answer:\n" +
                 "1. Read the latest user request and the approved Architect specification before acting. For code/canvas work, read [[BUILDER IMPLEMENTATION CAPSULE]] as the compact source of truth.\n" +
                 "2. Convert every requirement into a concrete output behavior or content change. Do not merely describe a change that the deliverable does not contain.\n" +
-                "3. Decide whether a tool is actually needed BEFORE drafting: SEARCH_HIPPOCAMPUS for prior-session facts; CALCULATE for one expression; PYTHON_MATH or RUN_SANDBOX for executable verification; WEB_SEARCH only for current or source-backed facts. Use the exact [PAUSE: TOOL | query] protocol and never invent a tool name.\n" +
+                    "3. Decide whether a tool is actually needed BEFORE drafting: SEARCH_PROJECT_KNOWLEDGE for attached-file facts; CALCULATE for one expression; PYTHON_MATH or RUN_SANDBOX for executable verification; WEB_SEARCH only for current or source-backed facts. Use the exact [PAUSE: TOOL | query] protocol and never invent a tool name.\n" +
                 "4. Call all needed tools before the final deliverable. After [RESULT: ...], incorporate the result and do not expose tool commands, scratch work, or raw tool output. If a tool fails, use a supported alternative or state the exact limitation; never claim the tool succeeded.\n" +
                 "5. Choose the simplest implementation that satisfies the request. For a canvas iteration, modify the supplied current source and preserve every unaffected part.\n" +
                 "6. Before finalizing, check: each requested change is materially present, syntax closes, required controls/functions exist, values that needed tools were verified, and output-format rules are followed.\n" +
@@ -11154,19 +11221,6 @@ namespace Malx_AI
             return BuildLabeledBlock("SHARED VOCABULARY", sb.ToString());
         }
 
-        private static string BuildPriorKnowledgeBlock(List<SessionHippocampusEntry> entries)
-        {
-            if (entries.Count == 0)
-            {
-                return "";
-            }
-
-            string compact = SessionHippocampus.BuildPromptContext(entries, 340);
-            return string.IsNullOrWhiteSpace(compact)
-                ? ""
-                : BuildLabeledBlock("PRIOR KNOWLEDGE", compact);
-        }
-
         private static string CapOversizedInjectionBlock(string prompt, string label, int maxChars)
         {
             if (string.IsNullOrWhiteSpace(prompt) || string.IsNullOrWhiteSpace(label))
@@ -11279,161 +11333,6 @@ namespace Malx_AI
         {
             string capped = CapOversizedInjections(prompt);
             return PruneStaleToolInjections(capped, injections, currentUserMessage);
-        }
-
-        private static string BuildCappedMemoryContent(string content, int maxTokens = 560)
-        {
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                return "";
-            }
-
-            int maxChars = (int)(maxTokens * AvgCharsPerToken);
-            string trimmed = content.Trim();
-            return trimmed.Length <= maxChars ? trimmed : trimmed[..maxChars];
-        }
-
-        private static string BuildStudyMemoryContent(StudyChunk chunk, StudyChunkResult result)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"Document: {chunk.DocumentName} | Chunk {chunk.ChunkIndex}");
-
-            if (!string.IsNullOrWhiteSpace(result.Summary))
-            {
-                sb.AppendLine($"Memory: {BuildSingleLineSummary(result.Summary, 220)}");
-            }
-
-            if (result.Concepts.Count > 0)
-            {
-                sb.AppendLine("Signals:");
-                foreach (string concept in result.Concepts
-                    .Select(c => BuildSingleLineSummary(c, 120))
-                    .Where(c => !string.IsNullOrWhiteSpace(c))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(4))
-                {
-                    sb.AppendLine($"- {concept}");
-                }
-            }
-
-            return BuildCappedMemoryContent(sb.ToString(), 170);
-        }
-
-        private static string BuildSingleLineSummary(string content, int maxChars)
-        {
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                return "";
-            }
-
-            string normalized = Regex.Replace(content.Trim(), @"\s+", " ");
-            return normalized.Length <= maxChars ? normalized : normalized[..maxChars].TrimEnd() + "...";
-        }
-
-        private void WriteArchitectSessionMemory(string architectOutput, int sessionRunIndex)
-        {
-            foreach (var line in architectOutput.Split('\n'))
-            {
-                string trimmed = line.TrimStart();
-                if (!(trimmed.Length > 1 && char.IsDigit(trimmed[0]) && trimmed.IndexOfAny(['.', ')']) is int sep && sep > 0 && sep < 4))
-                {
-                    continue;
-                }
-
-                string stepContent = trimmed[(sep + 1)..].Trim();
-                if (string.IsNullOrWhiteSpace(stepContent))
-                {
-                    continue;
-                }
-
-                _sessionHippocampus.Write(new SessionHippocampusEntry
-                {
-                    Content = BuildCappedMemoryContent($"Plan step: {BuildSingleLineSummary(stepContent, 180)}", 90),
-                    Source = SessionHippocampusSource.ArchitectOutput,
-                    Tag = SessionHippocampusTag.SolutionPattern,
-                    Priority = 2,
-                    Timestamp = DateTime.Now,
-                    SessionRunIndex = sessionRunIndex
-                });
-            }
-        }
-
-        private void WriteBuilderSessionMemory(string builderOutput, int sessionRunIndex)
-        {
-            if (string.IsNullOrWhiteSpace(builderOutput))
-            {
-                return;
-            }
-
-            var lines = builderOutput.Split('\n');
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string line = lines[i].Trim();
-                if (line.Length == 0)
-                {
-                    continue;
-                }
-
-                bool looksLikeFunction = line.StartsWith("def ", StringComparison.Ordinal)
-                    || line.StartsWith("function ", StringComparison.OrdinalIgnoreCase)
-                    || line.Contains("(") && line.Contains(")") && line.Contains("{") &&
-                       (line.Contains("public ", StringComparison.OrdinalIgnoreCase)
-                        || line.Contains("private ", StringComparison.OrdinalIgnoreCase)
-                        || line.Contains("protected ", StringComparison.OrdinalIgnoreCase)
-                        || line.Contains("static ", StringComparison.OrdinalIgnoreCase));
-
-                if (!looksLikeFunction)
-                {
-                    continue;
-                }
-
-                string annotation = "";
-                for (int j = i + 1; j < Math.Min(i + 6, lines.Length); j++)
-                {
-                    string next = lines[j].Trim();
-                    if (next.StartsWith("//") || next.StartsWith("#") || next.StartsWith("/*") || next.StartsWith("\"\"\"") || next.StartsWith("'''"))
-                    {
-                        annotation = next.Trim('/', '#', '*', ' ', '"', '\'');
-                        break;
-                    }
-                }
-
-                string memoryContent = string.IsNullOrWhiteSpace(annotation)
-                    ? $"Implementation pattern: {line}"
-                    : $"Implementation pattern: {line} — {BuildSingleLineSummary(annotation, 120)}";
-
-                _sessionHippocampus.Write(new SessionHippocampusEntry
-                {
-                    Content = BuildCappedMemoryContent(memoryContent, 100),
-                    Source = SessionHippocampusSource.BuilderOutput,
-                    Tag = SessionHippocampusTag.SolutionPattern,
-                    Priority = 2,
-                    Timestamp = DateTime.Now,
-                    SessionRunIndex = sessionRunIndex
-                });
-            }
-        }
-
-        private void WriteCriticSessionMemory(string criticOutput, int sessionRunIndex)
-        {
-            foreach (var line in criticOutput.Split('\n'))
-            {
-                string trimmed = line.TrimStart();
-                if (!(trimmed.Length > 1 && char.IsDigit(trimmed[0]) && trimmed.IndexOfAny(['.', ')']) is int sep && sep > 0 && sep < 4))
-                {
-                    continue;
-                }
-
-                _sessionHippocampus.Write(new SessionHippocampusEntry
-                {
-                    Content = BuildCappedMemoryContent($"Failure signal: {BuildSingleLineSummary(trimmed, 180)}", 100),
-                    Source = SessionHippocampusSource.CriticOutput,
-                    Tag = SessionHippocampusTag.ErrorPattern,
-                    Priority = 3,
-                    Timestamp = DateTime.Now,
-                    SessionRunIndex = sessionRunIndex
-                });
-            }
         }
 
         private static TaskComplexity EstimateTaskComplexity(int requirementCount)
@@ -11833,12 +11732,6 @@ namespace Malx_AI
 
         private async Task SendQueryAsync()
         {
-            if (_isStudySessionRunning)
-            {
-                AppendChat("system", "Study Session is running. Chat is temporarily locked.");
-                return;
-            }
-
             if (_isProcessing)
             {
                 AppendChat("system", "Already processing...");
@@ -11908,17 +11801,6 @@ namespace Malx_AI
             RefineButton.Visibility = Visibility.Collapsed;
             RevisionNoticeBlock.Text = "Issues were found and the output was revised.";
             RevisionNoticeBlock.Visibility = Visibility.Collapsed;
-            if (!_isStudySessionRunning)
-            {
-                StudySessionNotificationBar.Visibility = Visibility.Collapsed;
-                StudySessionStatusText.Text = "Study Session idle";
-                StudySessionDetailText.Text = string.Empty;
-                StudySessionPhaseText.Text = "Idle";
-                StudySessionProgressBar.Value = 0;
-                StudySessionProgressLabel.Text = "0%";
-                StudySessionEntryCountText.Text = "0";
-            }
-
             string userQuery = QueryInput.Text.Trim();
             _submittedRunPrompt = userQuery;
             _lastCancelledRunPrompt = string.Empty;
@@ -12137,35 +12019,42 @@ namespace Malx_AI
                     }
                 }
 
-                // ═══════════════════════════════════════════════════════
-                // DOCUMENT CONTENT RESOLUTION — first step in pipeline
-                // ═══════════════════════════════════════════════════════
-                string documentContent = "";
-                if (runContext.IsDocumentTask)
-                {
-                    var resolvedDocs = await ResolveWorkspaceDocumentContentAsync();
-                    documentContent = resolvedDocs.Content;
-                    runContext.DocumentContent = documentContent;
-                    runContext.DocumentFileNames = resolvedDocs.FileNames;
-
-                    int docTokenEstimate = EstimateTokenCount(documentContent);
-                    LogActivity($"Document task: {runContext.DocumentFileNames.Count} file(s), {documentContent.Length} chars (~{docTokenEstimate} tokens) resolved.");
-                    AppendChat("system", $"Document content resolved: {runContext.DocumentFileNames.Count} file(s), ~{docTokenEstimate} tokens.");
-                }
-
                 LogActivity("Retrieving knowledge base context...");
-                int maxChunks = _documentRetriever.CalculateMaxChunksForContext((int)_contextSize);
-                var relevantChunks = shouldUseDocuments
-                    ? _documentRetriever.RetrieveRelevantChunks(userQuery, maxChunks)
+                await _knowledgeIndexReadyTask;
+                int knowledgeTokenBudget = GetKnowledgePacketTokenBudget();
+                int maxChunks = Math.Max(1, knowledgeTokenBudget / 250);
+                string retrievalQuery = string.IsNullOrWhiteSpace(objective) ? userQuery : userQuery + "\n" + objective;
+                var relevantChunks = documentsLoaded
+                    ? _documentRetriever.RetrieveRelevantChunks(retrievalQuery, maxChunks, allowFallback: shouldUseDocuments)
                     : new List<DocumentChunk>();
-                var finalChunks = shouldUseDocuments ? MergeWithPriority(relevantChunks, maxChunks) : new List<DocumentChunk>();
-                string knowledgePacket = BuildKnowledgePacket(finalChunks, _nextPromptPriorityConcept);
+                bool retrievalFoundEvidence = relevantChunks.Count > 0;
+                bool attachKnowledge = shouldUseDocuments || retrievalFoundEvidence;
+                if (retrievalFoundEvidence)
+                    _documentContextEngaged = true;
+                var finalChunks = attachKnowledge ? MergeWithPriority(relevantChunks, maxChunks) : new List<DocumentChunk>();
+                string knowledgePacket = BuildKnowledgePacket(finalChunks, _nextPromptPriorityConcept, knowledgeTokenBudget);
                 LogActivity($"Knowledge context ready: {finalChunks.Count} chunks from {_documents.Count} documents.");
                 UpdateContextPressurePreview(userQuery, objective, finalChunks.Count);
 
-                AppendChat("system", shouldUseDocuments
-                    ? $"Documents: {_documents.Count} | Retrieved context chunks: {finalChunks.Count}"
-                    : "Document context skipped (request appears unrelated to uploaded documents).");
+                AppendChat("system", attachKnowledge
+                    ? $"Project knowledge: {_documents.Count} file(s) | retrieved {finalChunks.Count} cited passage(s) within ~{knowledgeTokenBudget:N0} tokens."
+                    : "Project knowledge not attached: the request has no matching indexed evidence.");
+
+                // Never reinsert the full folder/file corpus into a prompt.  The document-specific
+                // pipeline receives the same cited, budgeted RAG packet as the normal council path,
+                // so a long project works on a 1B local model as well as a cloud context window.
+                string documentContent = string.Empty;
+                if (runContext.IsDocumentTask)
+                {
+                    documentContent = knowledgePacket;
+                    runContext.DocumentContent = documentContent;
+                    runContext.DocumentFileNames = finalChunks
+                        .Select(chunk => chunk.FileName)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    int docTokenEstimate = EstimateTokenCount(documentContent);
+                    LogActivity($"Document task: {runContext.DocumentFileNames.Count} cited file(s), ~{docTokenEstimate} retrieved tokens attached.");
+                }
 
                 string objectiveClause = string.IsNullOrWhiteSpace(objective)
                     ? ""
@@ -12197,12 +12086,6 @@ namespace Malx_AI
             }
 
                 // ═══════════════════════════════════════════════════════
-                // TOPIC-SHIFT DETECTION — invalidate stale session memory
-                // when the user switches subjects mid-conversation
-                // ═══════════════════════════════════════════════════════
-                DetectAndHandleTopicShift(userQuery, objective);
-
-                // ═══════════════════════════════════════════════════════
                 // PRE-FLIGHT — Decompose user prompt before Architect
                 // ═══════════════════════════════════════════════════════
                 PreFlightDecomposition decomposition;
@@ -12220,7 +12103,7 @@ namespace Malx_AI
                     runContext,
                     decomposition,
                     _isWebSearchEnabled,
-                    _sessionHippocampus.GetMetadata().TotalEntryCount);
+                    _documents.Count);
                 contextState.TaskContract = BuildCouncilGoalContractBlock(runContext.GoalContract)
                     + BuildCouncilCapabilityCard(_isWebSearchEnabled, runContext.IsCloudExecution, _connectedWorkspace.CodebaseEditAccessEnabled);
                 runContext.Complexity = EstimateTaskComplexity(decomposition.Requirements.Count);
@@ -12330,10 +12213,7 @@ namespace Malx_AI
                     if (IsQwen3Model(architectConfig.ModelPath ?? string.Empty))
                         architectSystem = BuildQwen3SystemPrompt(architectSystem, false);
 
-                    string architectQuery = string.IsNullOrWhiteSpace(objective)
-                        ? userQuery
-                        : userQuery + "\n" + objective;
-                    string architectPriorKnowledge = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(architectQuery, 3));
+                    string architectPriorKnowledge = string.Empty;
                     // Cloud models have the context headroom for a wider, fuller conversation window,
                     // which markedly improves follow-up planning ("now change X" style turns).
                     string recentConversation = CanUseCloudCouncil
@@ -12521,11 +12401,6 @@ namespace Malx_AI
                     UpdateStageIndicator(null, true, false, false);
                 }
 
-                if (!string.IsNullOrWhiteSpace(runContext.ArchitectOutput))
-                {
-                    WriteArchitectSessionMemory(runContext.ArchitectOutput, activeRunIndex);
-                }
-
                 // ═══════════════════════════════════════════════════════════════
                 // STAGE 2 — Builder: receives original prompt + Architect output
                 //           Uses segmented execution for plans > 4 steps
@@ -12576,7 +12451,7 @@ namespace Malx_AI
 
                     string architectStateSummary = BuildArchitectSummaryFromPlan(runContext.ArchitectOutput);
                     string pipelineStateHeader = BuildPipelineStateHeader(architectStateSummary, "");
-                    builderPriorKnowledge = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(runContext.ArchitectOutput, 4));
+                    builderPriorKnowledge = string.Empty;
                     string previousBuilderOutput = GetPreviousRoleOutput("builder");
 
                     // Segmentation splits large coding tasks into steps for small-context models --
@@ -13332,11 +13207,6 @@ namespace Malx_AI
                     runContext.BuilderProducedCode = DetectCodeOutput(builderOutput).IsCode;
                     runContext.BuilderOutput = builderOutput;
                     contextState.BuilderOutput = builderOutput;
-                    if (taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
-                    {
-                        WriteBuilderSessionMemory(builderOutput, activeRunIndex);
-                    }
-
                     var builderMeta = new StageMetadata
                     {
                         StageName = "Builder",
@@ -13603,7 +13473,6 @@ namespace Malx_AI
                     builderOutput = patched;
                     runContext.BuilderOutput = patched;
                     contextState.BuilderOutput = patched;
-                    WriteBuilderSessionMemory(patched, activeRunIndex);
                     UpdateProjectCanvas(patched);
                     AppendChat("builder", $"Builder auto-fix attempt {sandboxAutoFixRetries} applied to Project Canvas.");
 
@@ -13714,8 +13583,7 @@ namespace Malx_AI
                     string architectSummaryForCritic = BuildArchitectSummaryFromPlan(runContext.ArchitectOutput);
                     string builderSummaryForCritic = BuildBuilderSummaryFromCode(runContext.BuilderOutput);
                     string criticStateHeader = BuildPipelineStateHeader(architectSummaryForCritic, builderSummaryForCritic);
-                    string criticQuery = runContext.UserPrompt + "\n" + runContext.BuilderOutput;
-                    string criticPriorKnowledge = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(criticQuery, 2));
+                    string criticPriorKnowledge = string.Empty;
                     contextState.BuilderOutput = runContext.BuilderOutput;
                     contextState.SandboxLogs = sandboxResult;
                     string criticPayloadStr = criticStateHeader
@@ -13824,7 +13692,6 @@ namespace Malx_AI
                     runContext.PreviousCriticReview = criticOutput;
                     contextState.CriticOutput = criticOutput;
                     runContext.CriticThinking = criticThinking;
-                    WriteCriticSessionMemory(criticOutput, activeRunIndex);
                     var criticReport = CriticContractParser.Parse(criticOutput);
                     bool criticDetectedIssues = criticReport.HasIssues || CriticFoundIssues(criticOutput);
                     if (criticDetectedIssues && !criticReport.HasIssues)
@@ -14071,10 +13938,6 @@ namespace Malx_AI
                                 runContext.BuilderOutput = builderOutput;
                                 runContext.BuilderThinking = patchResult.ThinkingContent;
                                 runContext.BuilderProducedCode = DetectCodeOutput(builderOutput).IsCode;
-                                if (taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
-                                {
-                                    WriteBuilderSessionMemory(builderOutput, activeRunIndex);
-                                }
                                 if (ShouldSuppressReasoningFallbackFromCanvas(builderOutput, builderReasoningFallback))
                                 {
                                     runContext.BuilderThinking = builderOutput;
@@ -14262,10 +14125,6 @@ namespace Malx_AI
                             runContext.BuilderOutput = builderOutput;
                             contextState.BuilderOutput = builderOutput;
                             runContext.BuilderThinking = revisedBuilderResult.ThinkingContent;
-                            if (taskType == CouncilTaskType.Coding || runContext.BuilderProducedCode)
-                            {
-                                WriteBuilderSessionMemory(builderOutput, activeRunIndex);
-                            }
                             if (ShouldSuppressReasoningFallbackFromCanvas(builderOutput, builderReasoningFallback))
                             {
                                 runContext.BuilderThinking = builderOutput;
@@ -14326,7 +14185,7 @@ namespace Malx_AI
                     criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
                     if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? string.Empty))
                         criticSystem = BuildQwen3SystemPrompt(criticSystem, false);
-                    string criticOnlyPrior = BuildPriorKnowledgeBlock(_sessionHippocampus.Query(runContext.UserPrompt + "\n" + runContext.ArchitectOutput, 5));
+                    string criticOnlyPrior = string.Empty;
                     string criticPayloadStr = BuildPipelineStateHeader(BuildArchitectSummaryFromPlan(runContext.ArchitectOutput), "")
                         + sharedVocabularySection
                         + criticOnlyPrior
@@ -14415,21 +14274,6 @@ namespace Malx_AI
                     }
                 }
 
-                // ═══════════════════════════════════════════════════════
-                // POST-RUN — Store session memory
-                // ═══════════════════════════════════════════════════════
-                bool isCodingTask = taskType == CouncilTaskType.Coding;
-                _sessionMemory = new SessionMemoryState
-                {
-                    ArchitectPlan = runContext.ArchitectOutput,
-                    BuilderOutput = isCodingTask ? "" : runContext.BuilderOutput,
-                    CriticSummary = runContext.CriticReview,
-                    TaskDescription = userQuery.Length > 200 ? userQuery[..200] : userQuery,
-                    TaskType = taskType
-                };
-                WriteGoalContractSessionMemory(runContext.GoalContract, activeRunIndex);
-                SessionMemoryStatusBlock.Text = $"Prior run stored ({DateTime.Now:HH:mm})";
-
                 _lastRunContext = runContext;
                 _lastSandboxOutput = sandboxResult;
                 _lastFinalOutput = (runContext.IsWorkspaceTask || taskType == CouncilTaskType.Coding || useArtifactCanvasContract) ? ProjectCanvasEditor.Text : runContext.BuilderOutput;
@@ -14451,7 +14295,6 @@ namespace Malx_AI
                 AddTaskHistoryEntry(runContext, _lastFinalOutput, criticFindings, refinementParentId);
                 AddPerformanceLogEntry(runContext, criticFindings);
 
-                _sessionHippocampus.Consolidate();
                 _completedCouncilRunCount++;
                 SavePersistedSession();
 
@@ -15474,26 +15317,6 @@ namespace Malx_AI
 
             payload.AppendLine(BuildLabeledBlock("ORIGINAL REQUEST", context.UserPrompt));
 
-            if (_sessionMemory != null && !string.IsNullOrWhiteSpace(_sessionMemory.ArchitectPlan))
-            {
-                var prior = new StringBuilder();
-                prior.AppendLine($"Previous task: {_sessionMemory.TaskDescription}");
-                string planSummary = _sessionMemory.ArchitectPlan.Length > 500
-                    ? _sessionMemory.ArchitectPlan[..500] + "..."
-                    : _sessionMemory.ArchitectPlan;
-                prior.AppendLine($"Previous plan summary:\n{planSummary}");
-                if (!string.IsNullOrWhiteSpace(_sessionMemory.CriticSummary))
-                {
-                    string criticSummary = _sessionMemory.CriticSummary.Length > 300
-                        ? _sessionMemory.CriticSummary[..300] + "..."
-                        : _sessionMemory.CriticSummary;
-                    prior.AppendLine($"Previous Critic findings:\n{criticSummary}");
-                }
-
-                payload.AppendLine(BuildLabeledBlock("PRIOR SESSION CONTEXT", prior.ToString()));
-                payload.AppendLine("NOTE: The above is background reference only. Create a fresh plan for the CURRENT user request.");
-            }
-
             // For coding tasks (or when no documents), add knowledge at the end
             if (hasKnowledge && !documentGrounded && !context.IsDocumentTask)
             {
@@ -16395,12 +16218,12 @@ namespace Malx_AI
             "Do NOT guess. Do NOT make up numbers or facts.\n" +
             "To pause, output EXACTLY this on its own line (nothing before or after on that line):\n" +
             "[PAUSE: TOOL_NAME | your query here]\n" +
-            "Allowed tools: SEARCH_HIPPOCAMPUS, CALCULATE, RUN_SANDBOX, WEB_SEARCH, PYTHON_MATH\n" +
+            "Allowed tools: SEARCH_PROJECT_KNOWLEDGE, CALCULATE, RUN_SANDBOX, WEB_SEARCH, PYTHON_MATH\n" +
             "Example: [PAUSE: CALCULATE | 45 * 2]\n" +
-            "Example: [PAUSE: SEARCH_HIPPOCAMPUS | boiling point of water]\n" +
+            "Example: [PAUSE: SEARCH_PROJECT_KNOWLEDGE | deployment configuration]\n" +
             "Example: [PAUSE: WEB_SEARCH | latest .NET 10 release notes]\n" +
             "Example: [PAUSE: PYTHON_MATH | print((42 * 17) / 3)]\n" +
-            "Tool choice: use CALCULATE for simple arithmetic or unit conversion; use PYTHON_MATH for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use WEB_SEARCH for current/latest/source-backed facts; use SEARCH_HIPPOCAMPUS for facts from this chat or prior council work.\n" +
+            "Tool choice: use CALCULATE for simple arithmetic or unit conversion; use PYTHON_MATH for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use WEB_SEARCH for current/latest/source-backed facts; use SEARCH_PROJECT_KNOWLEDGE for facts in attached project files.\n" +
             "Use WEB_SEARCH for current events, updated documentation, specific definitions, comparisons, explanations, or facts outside your training data.\n" +
             "For prompts like \"what is X\" or \"what does X do to Y\", use WEB_SEARCH when X/Y are specific, current, obscure, technical, medical/legal/financial, or likely to have changed.\n" +
             "For complex math or data processing, write a Python 3 script and call PYTHON_MATH.\n" +
@@ -16442,13 +16265,13 @@ namespace Malx_AI
                 "Available tools: " + webSearchEntry +
                 "run_python (execute Python 3 for math or data processing; print() the final answer), " +
                 "calculate (evaluate a math or unit-conversion expression), " +
-                "search_session_memory (recall facts, prior plans, and outputs stored earlier in this workplace session)" +
+                "search_project_knowledge (retrieve cited passages from attached project files)" +
                 (_connectedWorkspace.CodebaseEditAccessEnabled
                     ? ", read_file (read one connected-workspace source file by relative path), search_codebase (find symbols/text across connected code files), list_files (inspect connected workspace paths)"
                     : "") +
                 ".\n" +
                 webDisabledNote +
-                "Tool choice: use calculate for simple arithmetic or unit conversion; use run_python for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use web_search for current/latest/source-backed facts; use search_session_memory for facts from this chat or prior council work; use list_files, search_codebase, and read_file for read-only connected-workspace code inspection when those tools are available.\n" +
+                "Tool choice: use calculate for simple arithmetic or unit conversion; use run_python for multi-step equations, formulas, simulations, tables, data transforms, or anything that benefits from executable verification; use web_search for current/latest/source-backed facts; use search_project_knowledge for facts in attached project files; use list_files, search_codebase, and read_file for read-only connected-workspace code inspection when those tools are available.\n" +
                 "Before calling web_search, connect the current role payload to the user's latest objective and recent workplace turns. Make the query standalone: include the actual title, person, organization, product, document, API, or topic instead of references like 'the movie', 'this model', 'that article', or pronouns.\n" +
                 "For relationship questions, preserve the relation in the query, such as what X does to Y, what happens to character Z at the end of title X, how API A differs from API B, or which version changed a behavior.\n" +
                 "Tool results only cover the specific current/source-backed claim or computation they actually address; off-topic web results are not support for the user's named entities. If web evidence is partial, mismatched, or misses a required named entity, call one narrower web_search query before finalizing when the tool is available.\n" +
@@ -16587,7 +16410,7 @@ namespace Malx_AI
                 ? ", [PAUSE: SEARCH_CODEBASE | symbol or text], [PAUSE: READ_FILE | relative/path.ext], or [PAUSE: LIST_FILES | filter]"
                 : string.Empty;
             string toolNote = allowAgenticPauses
-                ? "\nIf a needed fact, number, or detail is missing, write one exact tool line only: [PAUSE: CALCULATE | expression], [PAUSE: PYTHON_MATH | code], [PAUSE: WEB_SEARCH | query], [PAUSE: SEARCH_HIPPOCAMPUS | query]" + codebasePauseTools + ". After a result, finish normally. Never show tool lines in the final answer."
+                ? "\nIf a needed fact, number, or detail is missing, write one exact tool line only: [PAUSE: CALCULATE | expression], [PAUSE: PYTHON_MATH | code], [PAUSE: WEB_SEARCH | query], [PAUSE: SEARCH_PROJECT_KNOWLEDGE | query]" + codebasePauseTools + ". After a result, finish normally. Never show tool lines in the final answer."
                 : "\nTool preflight is already complete. Use any TOOL OBSERVATION blocks as facts. Do not write [PAUSE:] or JSON.";
 
             bool workspacePatchTask = _connectedWorkspace.CodebaseEditAccessEnabled
@@ -17564,7 +17387,7 @@ namespace Malx_AI
             {
                 // Safety net: KV cache exhausted despite budget enforcement (token estimate was off)
                 LogActivity($"{roleName}: KV cache exhausted (NoKvSlot) — prompt exceeded context window despite budget check.");
-                AppendChat("error", $"{roleName}: Prompt exceeded model context window. Try a shorter prompt, remove documents, or clear session memory.");
+                AppendChat("error", $"{roleName}: Prompt exceeded model context window. Try a shorter prompt or reduce the project knowledge base.");
                 return ReasoningParser.Parse("[Error: Prompt exceeded context window. Output was not generated.]");
             }
             finally
@@ -18815,7 +18638,7 @@ namespace Malx_AI
             return trailingPatterns.Any(p => trimmed.StartsWith(p, StringComparison.OrdinalIgnoreCase));
         }
 
-        private static string BuildKnowledgePacket(List<DocumentChunk> chunks, string? priorityConcept)
+        private static string BuildKnowledgePacket(List<DocumentChunk> chunks, string? priorityConcept, int tokenBudget = 0)
         {
             var packet = new StringBuilder();
 
@@ -18832,15 +18655,50 @@ namespace Malx_AI
                 return packet.ToString();
             }
 
+            int consumedTokens = 0;
             for (int i = 0; i < chunks.Count; i++)
             {
                 var chunk = chunks[i];
-                packet.AppendLine($"[Reference {i + 1}: {chunk.FileName}]");
-                packet.AppendLine(chunk.Content);
+                int remainingTokens = tokenBudget <= 0 ? int.MaxValue : tokenBudget - consumedTokens;
+                if (remainingTokens <= 0)
+                    break;
+
+                string content = chunk.Content;
+                int chunkTokens = Math.Max(1, chunk.TokenCount);
+                if (chunkTokens > remainingTokens)
+                {
+                    int allowedChars = Math.Max(240, remainingTokens * 4);
+                    content = content.Length <= allowedChars
+                        ? content
+                        : content[..allowedChars].TrimEnd() + "\n[passage clipped to the context budget]";
+                    chunkTokens = remainingTokens;
+                }
+
+                packet.AppendLine($"[Source {i + 1} | {chunk.FileName} | passage {chunk.ChunkId + 1}]");
+                packet.AppendLine(content);
                 packet.AppendLine();
+                consumedTokens += chunkTokens;
             }
 
             return packet.ToString();
+        }
+
+        private int GetKnowledgePacketTokenBudget()
+        {
+            int availableContext = _isCloudModeEnabled
+                ? GetCloudCouncilInputBudgetTokens()
+                : (int)Math.Min(_architectContextSize, Math.Min(_builderContextSize, _criticContextSize));
+
+            // Keep a predictable evidence budget across model sizes.  The smaller tiers need a
+            // compact, high-signal packet; larger/local-cloud contexts can see broader coverage.
+            return availableContext switch
+            {
+                <= 3072 => 420,
+                <= 4096 => 600,
+                <= 8192 => 1100,
+                <= 16384 => 2200,
+                _ => Math.Clamp((int)(availableContext * 0.24), 3000, 7000)
+            };
         }
 
         private void LogActivity(string message)
@@ -19115,7 +18973,6 @@ namespace Malx_AI
 
         private WorkplaceSessionSnapshot CaptureSessionSnapshotForPersistence()
         {
-            SessionHippocampusMetadata hippocampusMetadata = _sessionHippocampus.GetMetadata();
             var snapshot = new WorkplaceSessionSnapshot
             {
                 ObjectiveText = "",
@@ -19144,23 +19001,27 @@ namespace Malx_AI
                     Timestamp = c.Timestamp
                 }).ToList(),
                 SystemNotifications = new List<WorkplaceChatMessageDto>(),
+                ProjectKnowledgeBaseId = _projectKnowledgeBaseId,
                 Documents = _documents.Select(d => new WorkplaceDocumentDto
                 {
+                    Id = d.Id,
                     Name = d.Name,
                     FilePath = d.FilePath,
+                    OriginalPath = d.OriginalPath,
+                    RelativePath = d.RelativePath,
+                    RetrievalKey = d.RetrievalKey,
                     Type = d.Type,
                     Info = d.Info,
                     ChunkCount = d.ChunkCount,
                     MimeType = d.MimeType,
                     Base64Data = d.Base64Data,
-                    IsImage = d.IsImage
+                    IsImage = d.IsImage,
+                    FileSizeBytes = d.FileSizeBytes,
+                    IndexStatus = d.IndexStatus
                 }).ToList(),
                 TaskHistory = _taskHistory.ToList(),
                 PerformanceLog = _performanceLog.ToList(),
                 IsRunStateIsolated = true,
-                HippocampusEntries = _sessionHippocampus.ExportEntries(),
-                StudySessionCompleted = hippocampusMetadata.StudySessionCompleted,
-                StudySessionProcessedDocumentCount = _studySessionProcessedDocumentCount,
                 CompletedCouncilRunCount = _completedCouncilRunCount,
                 LastSandboxOutput = _lastSandboxOutput,
                 LastFinalOutput = _lastFinalOutput,
@@ -19786,7 +19647,7 @@ namespace Malx_AI
         /// </summary>
         public void ReleaseCachedCouncilModels()
         {
-            if (_isProcessing || _isStudySessionRunning || _modelCache.Count == 0)
+            if (_isProcessing || _modelCache.Count == 0)
                 return;
 
             LogActivity($"Released {_modelCache.Count} cached council model(s) to free memory for the chat surface.");
@@ -19810,642 +19671,6 @@ namespace Malx_AI
                     NativeCrashLedger.RegisterCleanRun(cfg.ModelPath!);
             }
         }
-
-        private async void StudySessionButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isStudySessionRunning)
-            {
-                _studySessionCancelRequested = true;
-                StudySessionStatusText.Text = "Cancelling Study Session...";
-                StudySessionDetailText.Text = "Cancellation requested. Current chunk will complete before stop.";
-                return;
-            }
-
-            await StartStudySessionAsync();
-        }
-
-        private async Task StartStudySessionAsync()
-        {
-            if (_isStudySessionRunning)
-                return;
-
-            bool shouldAutoHideNotification = false;
-            int autoHideDelayMs = 2200;
-
-            if (_documents.Count == 0)
-            {
-                StudySessionNotificationBar.Visibility = Visibility.Visible;
-                StudySessionStatusText.Text = "Study Session unavailable";
-                StudySessionDetailText.Text = "Load at least one document before starting a Study Session.";
-                StudySessionPhaseText.Text = "Idle";
-                StudySessionEntryCountText.Text = "0";
-                StudySessionProgressBar.Value = 0;
-                StudySessionProgressLabel.Text = "0%";
-                _ = HideStudySessionNotificationBarAsync(2600);
-                return;
-            }
-
-            CouncilRole? studyRole = ResolveStudyRole();
-            if (!studyRole.HasValue)
-            {
-                StudySessionNotificationBar.Visibility = Visibility.Visible;
-                StudySessionStatusText.Text = "Study Session unavailable";
-                StudySessionDetailText.Text = "Load at least one council model to run Study Session.";
-                StudySessionPhaseText.Text = "Idle";
-                StudySessionEntryCountText.Text = "0";
-                StudySessionProgressBar.Value = 0;
-                StudySessionProgressLabel.Text = "0%";
-                _ = HideStudySessionNotificationBarAsync(2600);
-                return;
-            }
-
-            _isStudySessionRunning = true;
-            _studySessionCancelRequested = false;
-            _studySessionProcessedDocumentCount = 0;
-            _studySessionDomainDefinitionCount = 0;
-            _studySessionCts = new CancellationTokenSource();
-
-            // A local Study Session loads council role models, which on a single GPU must not sit
-            // on top of the resident Normal-Chat model (the "Failed to load model" error). Free
-            // the chat model first; MainWindow restores it on return to the chat view.
-            if (!_isCloudModeEnabled && ReleaseHostChatModelAsync != null)
-            {
-                try
-                {
-                    await ReleaseHostChatModelAsync(CancellationToken.None);
-                }
-                catch (Exception releaseEx)
-                {
-                    LogActivity($"Chat model release before study session skipped: {releaseEx.Message}");
-                }
-            }
-
-            // Start each Study Session from a clean study-memory baseline so
-            // old studied documents do not bleed into later study runs.
-            _sessionHippocampus.ClearBySource(SessionHippocampusSource.StudySession);
-
-            InputAreaContainer.IsEnabled = false;
-            InputAreaContainer.Opacity = 0.55;
-            StudySessionButton.Content = "Cancel Study Session";
-
-            StudySessionNotificationBar.Visibility = Visibility.Visible;
-            StudySessionStatusText.Text = "Study Session in progress";
-            StudySessionDetailText.Text = "AI models are processing loaded documents. Chat will be restored when complete.";
-            StudySessionPhaseText.Text = "Starting";
-            StudySessionProgressBar.Value = 0;
-            StudySessionProgressLabel.Text = "0%";
-            StudySessionEntryCountText.Text = "0";
-
-            int totalEntriesWritten = 0;
-            int docsProcessed = 0;
-            int domainDefinitions = 0;
-
-            try
-            {
-                var studyDocs = await ResolveStudyDocumentsAsync();
-                docsProcessed = studyDocs.Count;
-                _studySessionProcessedDocumentCount = docsProcessed;
-                string docList = studyDocs.Count == 0
-                    ? "No documents resolved."
-                    : string.Join(", ", studyDocs.Select(d => d.Name).Take(5)) + (studyDocs.Count > 5 ? ", ..." : "");
-                StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
-                {
-                    PhaseName = "Phase 1 · Document Segmentation",
-                    Current = 1,
-                    Total = 4,
-                    EntriesWritten = totalEntriesWritten,
-                    Message = $"Segmenting {docsProcessed} document(s): {docList}"
-                });
-
-                var chunks = new List<StudyChunk>();
-                foreach (var doc in studyDocs)
-                {
-                    chunks.AddRange(SegmentDocumentForStudy(doc.Name, doc.Content));
-                }
-
-                if (chunks.Count == 0)
-                {
-                    throw new InvalidOperationException("No study chunks could be generated from loaded documents.");
-                }
-
-                var conceptPool = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-                StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
-                {
-                    PhaseName = "Phase 2 · Core Study Loop",
-                    Current = 0,
-                    Total = chunks.Count,
-                    EntriesWritten = totalEntriesWritten,
-                    Message = $"Processing {chunks.Count} chunk(s)..."
-                });
-
-                int failedChunks = 0;
-                for (int i = 0; i < chunks.Count; i++)
-                {
-                    StudyChunk chunk = chunks[i];
-                    StudyChunkResult parsed;
-                    try
-                    {
-                        parsed = await RunStudyChunkInferenceAsync(studyRole.Value, chunk, _studySessionCts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        throw;
-                    }
-                    catch (Exception chunkEx)
-                    {
-                        // One bad chunk (provider hiccup, malformed segment) must not abort the
-                        // whole study run — skip it and keep the knowledge from the others.
-                        failedChunks++;
-                        LogActivity($"Study Session: chunk {i + 1}/{chunks.Count} failed and was skipped ({chunkEx.Message}).");
-                        await BackendLogService.LogEventAsync("Workplace.StudyChunkFailed", $"Chunk:{i + 1}/{chunks.Count}\nDoc:{chunk.DocumentName}\nError:{chunkEx.Message}");
-                        StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
-                        {
-                            PhaseName = "Phase 2 · Core Study Loop",
-                            Current = i + 1,
-                            Total = chunks.Count,
-                            EntriesWritten = totalEntriesWritten,
-                            Message = $"Chunk {i + 1}/{chunks.Count} skipped after an error; continuing."
-                        });
-
-                        if (_studySessionCancelRequested || failedChunks >= Math.Max(3, chunks.Count / 2))
-                            break;
-
-                        continue;
-                    }
-
-                    string combined = BuildStudyMemoryContent(chunk, parsed);
-                    _sessionHippocampus.Write(new SessionHippocampusEntry
-                    {
-                        Content = combined,
-                        Source = SessionHippocampusSource.StudySession,
-                        Tag = SessionHippocampusTag.Summary,
-                        Priority = 2,
-                        Timestamp = DateTime.Now,
-                        SessionRunIndex = 0
-                    });
-                    totalEntriesWritten++;
-
-                    foreach (string concept in parsed.Concepts)
-                    {
-                        string term = ExtractConceptTerm(concept);
-                        if (string.IsNullOrWhiteSpace(term))
-                            continue;
-                        if (!conceptPool.TryGetValue(term, out var refs))
-                        {
-                            refs = new List<string>();
-                            conceptPool[term] = refs;
-                        }
-                        if (refs.Count < 8 && !refs.Contains(parsed.Summary, StringComparer.OrdinalIgnoreCase))
-                        {
-                            refs.Add(parsed.Summary);
-                        }
-                    }
-
-                    StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
-                    {
-                        PhaseName = "Phase 2 · Core Study Loop",
-                        Current = i + 1,
-                        Total = chunks.Count,
-                        EntriesWritten = totalEntriesWritten,
-                        Message = $"Processed chunk {i + 1}/{chunks.Count} from '{chunk.DocumentName}'"
-                    });
-
-                    if (_studySessionCancelRequested)
-                    {
-                        break;
-                    }
-                }
-
-                var flaggedTerms = FlagDomainTerms(conceptPool);
-                if (!_studySessionCancelRequested && flaggedTerms.Count > 0)
-                {
-                    StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
-                    {
-                        PhaseName = "Phase 3 · Domain Definition Extraction",
-                        Current = 0,
-                        Total = flaggedTerms.Count,
-                        EntriesWritten = totalEntriesWritten,
-                        Message = $"Generating {flaggedTerms.Count} domain definition(s)..."
-                    });
-
-                    for (int i = 0; i < flaggedTerms.Count; i++)
-                    {
-                        var term = flaggedTerms[i];
-                        string context = string.Join("\n", conceptPool[term].Take(6));
-                        string definition = await BuildDomainDefinitionAsync(studyRole.Value, term, context, _studySessionCts.Token);
-
-                        _sessionHippocampus.Write(new SessionHippocampusEntry
-                        {
-                            Content = BuildCappedMemoryContent($"{term}: {definition}"),
-                            Source = SessionHippocampusSource.StudySession,
-                            Tag = SessionHippocampusTag.DomainDefinition,
-                            Priority = 3,
-                            Timestamp = DateTime.Now,
-                            SessionRunIndex = 0
-                        });
-                        totalEntriesWritten++;
-                        domainDefinitions++;
-                        _studySessionDomainDefinitionCount = domainDefinitions;
-
-                        StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
-                        {
-                            PhaseName = "Phase 3 · Domain Definition Extraction",
-                            Current = i + 1,
-                            Total = flaggedTerms.Count,
-                            EntriesWritten = totalEntriesWritten,
-                            Message = $"Generated definition {i + 1}/{flaggedTerms.Count}"
-                        });
-
-                        if (_studySessionCancelRequested)
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                StudySessionProgress?.Invoke(this, new StudySessionProgressEventArgs
-                {
-                    PhaseName = "Phase 4 · Consolidation",
-                    Current = 1,
-                    Total = 1,
-                    EntriesWritten = totalEntriesWritten,
-                    Message = "Consolidating session hippocampus entries..."
-                });
-
-                _sessionHippocampus.Consolidate();
-                if (!_studySessionCancelRequested)
-                {
-                    _sessionHippocampus.MarkStudySessionCompleted();
-                }
-
-                SessionHippocampusMetadata metadata = _sessionHippocampus.GetMetadata();
-                UpdateSessionHippocampusIndicator();
-
-                if (_studySessionCancelRequested)
-                {
-                    StudySessionStatusText.Text = "Study Session partially completed";
-                    StudySessionDetailText.Text = $"Processed {docsProcessed} document(s), wrote {totalEntriesWritten} entries before cancel.";
-                    autoHideDelayMs = 2000;
-                }
-                else
-                {
-                    StudySessionStatusText.Text = "Study Session complete";
-                    StudySessionDetailText.Text = $"Processed {docsProcessed} document(s), wrote {totalEntriesWritten} entries, extracted {domainDefinitions} domain definition(s).";
-                    autoHideDelayMs = 2400;
-                }
-
-                StudySessionPhaseText.Text = "Completed";
-                StudySessionEntryCountText.Text = metadata.TotalEntryCount.ToString();
-                StudySessionProgressBar.Value = 100;
-                StudySessionProgressLabel.Text = "100%";
-                shouldAutoHideNotification = true;
-            }
-            catch (Exception ex)
-            {
-                StudySessionStatusText.Text = "Study Session error";
-                StudySessionDetailText.Text = ex.Message;
-                StudySessionPhaseText.Text = "Stopped";
-                StudySessionProgressLabel.Text = "0%";
-                AppendChat("error", $"Study Session failed: {ex.Message}");
-                shouldAutoHideNotification = true;
-                autoHideDelayMs = 3200;
-            }
-            finally
-            {
-                _studySessionCts?.Dispose();
-                _studySessionCts = null;
-                _studySessionCancelRequested = false;
-                _isStudySessionRunning = false;
-                InputAreaContainer.IsEnabled = true;
-                InputAreaContainer.Opacity = 1;
-                StudySessionButton.Content = "Start Study Session";
-
-                if (shouldAutoHideNotification)
-                {
-                    _ = HideStudySessionNotificationBarAsync(autoHideDelayMs);
-                }
-            }
-        }
-
-        private void StudySessionProgress_Progressed(object? sender, StudySessionProgressEventArgs e)
-        {
-            _ = Dispatcher.InvokeAsync(() =>
-            {
-                StudySessionPhaseText.Text = e.PhaseName;
-                StudySessionEntryCountText.Text = e.EntriesWritten.ToString();
-                StudySessionDetailText.Text = e.Message;
-
-                double pct = e.Total <= 0 ? 0 : Math.Clamp((double)e.Current / e.Total * 100, 0, 100);
-                StudySessionProgressBar.Value = pct;
-                StudySessionProgressLabel.Text = $"{pct:0}%";
-            }, DispatcherPriority.Background);
-        }
-
-        private CouncilRole? ResolveStudyRole()
-        {
-            if (!string.IsNullOrWhiteSpace(_council[CouncilRole.Architect].ModelPath))
-            {
-                return CouncilRole.Architect;
-            }
-
-            foreach (var kvp in _council)
-            {
-                if (!string.IsNullOrWhiteSpace(kvp.Value.ModelPath))
-                {
-                    return kvp.Key;
-                }
-            }
-
-            // Cloud mode has no local ModelPath, but ExecuteCouncilRoleAsync routes inference to the
-            // cloud council when _isCloudModeEnabled. Allow Study Session to run on the cloud council.
-            if (CanUseCloudCouncil)
-            {
-                return CouncilRole.Architect;
-            }
-
-            return null;
-        }
-
-        private async Task<List<(string Name, string Content)>> ResolveStudyDocumentsAsync()
-        {
-            var results = new List<(string Name, string Content)>();
-            foreach (var doc in _documents)
-            {
-                string displayName = string.IsNullOrWhiteSpace(doc.Name)
-                    ? (string.IsNullOrWhiteSpace(doc.FilePath) ? "document" : Path.GetFileName(doc.FilePath))
-                    : doc.Name;
-
-                string text = "";
-                if (!string.IsNullOrWhiteSpace(doc.FilePath) && File.Exists(doc.FilePath))
-                {
-                    string ext = Path.GetExtension(doc.FilePath).ToLowerInvariant();
-                    try
-                    {
-                        if (ext == ".pdf")
-                        {
-                            text = await PdfExtractor.ExtractTextFromPdfAsync(doc.FilePath);
-                        }
-                        else if (IsPlainTextExtension(ext))
-                        {
-                            text = await Task.Run(() =>
-                            {
-                                try { return File.ReadAllText(doc.FilePath, Encoding.UTF8); }
-                                catch { return File.ReadAllText(doc.FilePath, Encoding.Default); }
-                            });
-                        }
-                    }
-                    catch
-                    {
-                        text = "";
-                    }
-                }
-
-                // Fallback: if the file is missing or extraction yielded nothing, reconstruct the
-                // document text from the chunks already held in memory by the retriever so a Study
-                // Session is not silently empty (e.g. failed PDF extraction or a not-on-disk import).
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    string recovered = _documentRetriever.GetAllTextForFile(displayName);
-                    if (string.IsNullOrWhiteSpace(recovered) && !string.IsNullOrWhiteSpace(doc.FilePath))
-                        recovered = _documentRetriever.GetAllTextForFile(Path.GetFileName(doc.FilePath));
-                    if (!string.IsNullOrWhiteSpace(recovered))
-                    {
-                        text = recovered;
-                        LogActivity($"Study Session: recovered '{displayName}' text from in-memory chunks (file extraction unavailable).");
-                    }
-                }
-
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    results.Add((displayName, text));
-                }
-            }
-
-            return results;
-        }
-
-        private static List<StudyChunk> SegmentDocumentForStudy(string documentName, string content)
-        {
-            const int targetTokens = 350;
-            const int overlapTokens = 50;
-            int targetChars = (int)(targetTokens * AvgCharsPerToken);
-            int overlapChars = (int)(overlapTokens * AvgCharsPerToken);
-
-            var chunks = new List<StudyChunk>();
-            if (string.IsNullOrWhiteSpace(content))
-                return chunks;
-
-            string text = content.Trim();
-            int start = 0;
-            int index = 1;
-            while (start < text.Length)
-            {
-                int length = Math.Min(targetChars, text.Length - start);
-                string slice = text.Substring(start, length).Trim();
-                if (!string.IsNullOrWhiteSpace(slice))
-                {
-                    chunks.Add(new StudyChunk
-                    {
-                        DocumentName = documentName,
-                        ChunkIndex = index,
-                        Content = slice,
-                        TokenEstimate = (int)Math.Ceiling(slice.Length / AvgCharsPerToken)
-                    });
-                    index++;
-                }
-
-                if (start + length >= text.Length)
-                {
-                    break;
-                }
-
-                start += Math.Max(1, targetChars - overlapChars);
-            }
-
-            return chunks;
-        }
-
-        private async Task<StudyChunkResult> RunStudyChunkInferenceAsync(CouncilRole role, StudyChunk chunk, CancellationToken token)
-        {
-            string system =
-                "You are running Study Session preprocessing. Return ONLY these sections in order: " +
-                "[SUMMARY], [CONCEPTS], [Q&A]. No extra sections. " +
-                "[SUMMARY]: 3-5 sentences describing what the chunk is fundamentally about. " +
-                "[CONCEPTS]: numbered list of 5-10 key facts, rules, formulas, or concepts from the chunk. " +
-                "[Q&A]: generate exactly 3 Q/A pairs the chunk answers in the format 'Q1:' and 'A1:' etc. " +
-                "Use only the provided chunk content.";
-
-            string payload = BuildLabeledBlock("DOCUMENT NAME", chunk.DocumentName)
-                + BuildLabeledBlock("CHUNK INDEX", chunk.ChunkIndex.ToString())
-                + BuildLabeledBlock("CHUNK CONTENT", chunk.Content);
-
-            var result = await ExecuteCouncilRoleAsync(role, system, payload, token, 0.65f, showLiveCard: false);
-            return ParseStudyChunkResponse(result.Answer);
-        }
-
-        private static StudyChunkResult ParseStudyChunkResponse(string text)
-        {
-            var parsed = new StudyChunkResult();
-            if (string.IsNullOrWhiteSpace(text))
-                return parsed;
-
-            string summary = ExtractSection(text, "SUMMARY", "CONCEPTS");
-            string concepts = ExtractSection(text, "CONCEPTS", "Q&A");
-            string qa = ExtractSection(text, "Q&A", "");
-
-            parsed.Summary = string.IsNullOrWhiteSpace(summary) ? text.Trim() : summary.Trim();
-            parsed.Concepts = ParseNumberedList(concepts);
-
-            var qas = new List<(string Question, string Answer)>();
-            var qMatches = System.Text.RegularExpressions.Regex.Matches(qa, @"Q\d+\s*:\s*(.+?)\r?\nA\d+\s*:\s*(.+?)(?=(\r?\nQ\d+\s*:)|$)", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            foreach (System.Text.RegularExpressions.Match m in qMatches)
-            {
-                string q = m.Groups[1].Value.Trim();
-                string a = m.Groups[2].Value.Trim();
-                if (!string.IsNullOrWhiteSpace(q) && !string.IsNullOrWhiteSpace(a))
-                    qas.Add((q, a));
-            }
-            parsed.QuestionAnswers = qas;
-
-            return parsed;
-        }
-
-        private static string ExtractSection(string text, string startLabel, string endLabel)
-        {
-            int start = text.IndexOf($"[{startLabel}]", StringComparison.OrdinalIgnoreCase);
-            if (start < 0)
-                return "";
-            start += startLabel.Length + 2;
-
-            int end = string.IsNullOrWhiteSpace(endLabel)
-                ? text.Length
-                : text.IndexOf($"[{endLabel}]", start, StringComparison.OrdinalIgnoreCase);
-            if (end < 0)
-                end = text.Length;
-
-            return text[start..end].Trim();
-        }
-
-        private static List<string> ParseNumberedList(string text)
-        {
-            var items = new List<string>();
-            foreach (var line in text.Split('\n'))
-            {
-                string t = line.Trim();
-                if (string.IsNullOrWhiteSpace(t))
-                    continue;
-
-                bool numbered = t.Length > 1 && char.IsDigit(t[0]) && t.IndexOfAny(['.', ')']) is int sep && sep > 0 && sep < 4;
-                if (numbered)
-                {
-                    int sepIndex = t.IndexOfAny(['.', ')']);
-                    if (sepIndex > 0)
-                    {
-                        items.Add(t[(sepIndex + 1)..].Trim());
-                    }
-                }
-                else if (t.StartsWith("- ") || t.StartsWith("* "))
-                {
-                    items.Add(t[2..].Trim());
-                }
-            }
-
-            return items;
-        }
-
-        private static string BuildStudyCombinedContent(StudyChunk chunk, StudyChunkResult result)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"Document: {chunk.DocumentName} | Chunk {chunk.ChunkIndex}");
-            sb.AppendLine("Summary:");
-            sb.AppendLine(result.Summary);
-
-            if (result.Concepts.Count > 0)
-            {
-                sb.AppendLine("Concepts:");
-                for (int i = 0; i < result.Concepts.Count; i++)
-                    sb.AppendLine($"{i + 1}. {result.Concepts[i]}");
-            }
-
-            if (result.QuestionAnswers.Count > 0)
-            {
-                sb.AppendLine("Q&A:");
-                for (int i = 0; i < result.QuestionAnswers.Count; i++)
-                {
-                    sb.AppendLine($"Q{i + 1}: {result.QuestionAnswers[i].Question}");
-                    sb.AppendLine($"A{i + 1}: {result.QuestionAnswers[i].Answer}");
-                }
-            }
-
-            return BuildCappedMemoryContent(sb.ToString());
-        }
-
-        private static string ExtractConceptTerm(string concept)
-        {
-            if (string.IsNullOrWhiteSpace(concept))
-                return "";
-
-            string normalized = concept.Trim();
-            int colon = normalized.IndexOf(':');
-            if (colon > 2)
-            {
-                normalized = normalized[..colon].Trim();
-            }
-
-            var words = System.Text.RegularExpressions.Regex.Matches(normalized, @"\b[A-Za-z][A-Za-z0-9_\-]{2,}\b")
-                .Select(m => m.Value)
-                .Take(4)
-                .ToList();
-            return words.Count == 0 ? "" : string.Join(" ", words);
-        }
-
-        private static List<string> FlagDomainTerms(Dictionary<string, List<string>> conceptPool)
-        {
-            var common = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "the","and","with","from","this","that","using","process","system","data","file","input","output","result","summary","analysis","document","text"
-            };
-
-            var flagged = new List<string>();
-            foreach (var kvp in conceptPool)
-            {
-                string term = kvp.Key.Trim();
-                if (string.IsNullOrWhiteSpace(term))
-                    continue;
-
-                bool appearsAcrossChunks = kvp.Value.Count >= 2;
-                bool domainSpecific = !common.Contains(term)
-                    && (term.Any(char.IsUpper) || term.Any(char.IsDigit) || term.Contains('_') || term.Contains('-') || term.Length > 10);
-
-                if (appearsAcrossChunks || domainSpecific)
-                {
-                    flagged.Add(term);
-                }
-            }
-
-            return flagged.Distinct(StringComparer.OrdinalIgnoreCase).Take(40).ToList();
-        }
-
-        private async Task<string> BuildDomainDefinitionAsync(CouncilRole role, string term, string context, CancellationToken token)
-        {
-            string system =
-                "You are generating a domain definition from provided source context only. " +
-                "Return a concise definition and short explanation for the requested term using only this context. " +
-                "Do not use external knowledge. Do not add unrelated terms.";
-
-            string payload = BuildLabeledBlock("TERM", term)
-                + BuildLabeledBlock("CHUNK SUMMARIES", context);
-
-            var result = await ExecuteCouncilRoleAsync(role, system, payload, token, 0.3f, showLiveCard: false);
-            return string.IsNullOrWhiteSpace(result.Answer)
-                ? "Definition unavailable from provided context."
-                : BuildCappedMemoryContent(result.Answer, 200);
-        }
-
-        // ═══════════════════════════════════════════════
-        // Context Compression Engine
-        // ═══════════════════════════════════════════════
 
         private int EstimateTokenCount(string text)
         {
@@ -20636,11 +19861,6 @@ namespace Malx_AI
             if (_chatHistory.Count == 0)
                 return "";
 
-            // If a major topic shift was detected and session memory was reset,
-            // avoid feeding stale recent turns into the next architect pass.
-            if (_sessionMemory == null)
-                return "";
-
             var recentTurns = _chatHistory
                 .Where(h => _isSingleModelMode
                     ? h.Role is "user" or "agent" or "system"
@@ -20677,55 +19897,6 @@ namespace Malx_AI
                 ? "Answer the LATEST user message above. Use earlier turns only for relevant continuity."
                 : "Your plan must address the LATEST user message above. Do not repeat or continue a plan from a prior turn unless the user explicitly asks.");
             return sb.ToString();
-        }
-
-        /// <summary>
-        /// Detects whether the current user query represents a significant topic shift
-        /// from the stored session memory. When detected, invalidates stale session memory
-        /// so the Architect doesn't carry forward an irrelevant prior plan.
-        /// </summary>
-        private bool DetectAndHandleTopicShift(string currentQuery, string objective)
-        {
-            if (_sessionMemory == null || string.IsNullOrWhiteSpace(_sessionMemory.TaskDescription))
-                return false;
-
-            string currentCombined = $"{currentQuery} {objective}".ToLowerInvariant();
-            string previousTask = _sessionMemory.TaskDescription.ToLowerInvariant();
-
-            // Extract significant words from both
-            var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "the","and","for","with","that","this","from","into","about","have","has","are",
-                "was","were","will","just","what","how","can","does","please","make","create",
-                "write","give","need","want","should","could","would","also","like","using"
-            };
-
-            var currentWords = Regex.Matches(currentCombined, @"\b[a-z][a-z0-9_]{2,}\b")
-                .Select(m => m.Value)
-                .Where(w => !stopWords.Contains(w))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var previousWords = Regex.Matches(previousTask, @"\b[a-z][a-z0-9_]{2,}\b")
-                .Select(m => m.Value)
-                .Where(w => !stopWords.Contains(w))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (currentWords.Count == 0 || previousWords.Count == 0)
-                return false;
-
-            int overlap = currentWords.Intersect(previousWords, StringComparer.OrdinalIgnoreCase).Count();
-            double similarity = (double)overlap / Math.Max(currentWords.Count, previousWords.Count);
-
-            // Less than 20% overlap indicates a significant topic shift
-            if (similarity < 0.20)
-            {
-                LogActivity($"Topic shift detected (similarity={similarity:P0}). Invalidating stale session memory.");
-                _sessionMemory = null;
-                SessionMemoryStatusBlock.Text = "Session memory reset (topic change).";
-                return true;
-            }
-
-            return false;
         }
 
         // ═══════════════════════════════════════════════

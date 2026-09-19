@@ -3255,16 +3255,23 @@ namespace Malx_AI
                     Content = notification.Content,
                     Timestamp = notification.Timestamp
                 }).ToList(),
+                ProjectKnowledgeBaseId = snapshot.ProjectKnowledgeBaseId,
                 Documents = (snapshot.Documents ?? []).Select(document => new WorkplaceDocumentDto
                 {
+                    Id = document.Id,
                     Name = document.Name,
                     FilePath = document.FilePath,
+                    OriginalPath = document.OriginalPath,
+                    RelativePath = document.RelativePath,
+                    RetrievalKey = document.RetrievalKey,
                     Type = document.Type,
                     Info = document.Info,
                     ChunkCount = document.ChunkCount,
                     MimeType = document.MimeType,
                     Base64Data = document.Base64Data,
-                    IsImage = document.IsImage
+                    IsImage = document.IsImage,
+                    FileSizeBytes = document.FileSizeBytes,
+                    IndexStatus = document.IndexStatus
                 }).ToList(),
                 TaskHistory = (snapshot.TaskHistory ?? []).ToList(),
                 PerformanceLog = (snapshot.PerformanceLog ?? []).ToList(),
@@ -3280,19 +3287,6 @@ namespace Malx_AI
                         CloudModelId = kvp.Value.CloudModelId
                     },
                     StringComparer.OrdinalIgnoreCase),
-                HippocampusEntries = (snapshot.HippocampusEntries ?? []).Select(entry => new SessionHippocampusEntry
-                {
-                    Content = entry.Content,
-                    Source = entry.Source,
-                    Tag = entry.Tag,
-                    Priority = entry.Priority,
-                    Timestamp = entry.Timestamp,
-                    SessionRunIndex = entry.SessionRunIndex,
-                    AccessCount = entry.AccessCount,
-                    LastAccessedTimestamp = entry.LastAccessedTimestamp
-                }).ToList(),
-                StudySessionCompleted = snapshot.StudySessionCompleted,
-                StudySessionProcessedDocumentCount = snapshot.StudySessionProcessedDocumentCount,
                 CompletedCouncilRunCount = snapshot.CompletedCouncilRunCount,
                 LastSandboxOutput = snapshot.LastSandboxOutput,
                 LastFinalOutput = snapshot.LastFinalOutput,
@@ -4370,12 +4364,8 @@ namespace Malx_AI
             int normalDocs = _chatDocuments.Count;
             int workplaceDocs = workplaceSnapshot?.Documents.Count ?? 0;
             int councilRuns = workplaceSnapshot?.CompletedCouncilRunCount ?? 0;
-            int hippocampusCount = workplaceSnapshot?.HippocampusEntries.Count ?? 0;
             int calculatorOps = _chatMessages.Count(m => m.Role == "system" && m.Content.Contains("Calculator tool active", StringComparison.OrdinalIgnoreCase))
                 + (workplaceSnapshot?.ChatCards.Count(m => string.Equals(m.Role, "system", StringComparison.OrdinalIgnoreCase) && m.Content.Contains("Calculator tool active", StringComparison.OrdinalIgnoreCase)) ?? 0);
-            int studySignals = (workplaceSnapshot?.StudySessionCompleted == true ? 8 : 0)
-                + (workplaceSnapshot?.StudySessionProcessedDocumentCount ?? 0)
-                + (workplaceSnapshot?.ChatCards.Count(m => m.Content.Contains("Study Session", StringComparison.OrdinalIgnoreCase)) ?? 0);
 
             var nodes = new List<(string Label, int Weight, Point P)>
             {
@@ -4383,7 +4373,7 @@ namespace Malx_AI
                 ("Chat",       Math.Max(1, normalMessages),                           new Point(width * 0.22, height * 0.30)),
                 ("Workplace",  Math.Max(1, workplaceMessages + councilRuns * 2),     new Point(width * 0.78, height * 0.30)),
                 ("Documents",  Math.Max(1, normalDocs + workplaceDocs),              new Point(width * 0.22, height * 0.72)),
-                ("Study",      Math.Max(1, studySignals),                            new Point(width * 0.50, height * 0.80)),
+                ("Knowledge",  Math.Max(1, workplaceDocs),                           new Point(width * 0.50, height * 0.80)),
                 ("Calculator", Math.Max(1, calculatorOps),                           new Point(width * 0.78, height * 0.72))
             };
 
@@ -4397,8 +4387,6 @@ namespace Malx_AI
                     taggedTexts = taggedTexts.Append(((string?)workplaceSnapshot.ObjectiveText, 2));
                 if (!string.IsNullOrWhiteSpace(workplaceSnapshot?.ProjectCanvasText))
                     taggedTexts = taggedTexts.Append(((string?)workplaceSnapshot.ProjectCanvasText, 2));
-                if (workplaceSnapshot?.HippocampusEntries is { Count: > 0 } hipEntries)
-                    taggedTexts = taggedTexts.Concat(hipEntries.Select(e => ((string?)e.Content, 4)));
 
                 taggedTexts = taggedTexts.Concat(_chatDocuments.Select(d => ((string?)d.Name, 3)));
                 if (workplaceSnapshot?.Documents is { Count: > 0 } wDocs)
@@ -4426,7 +4414,7 @@ namespace Malx_AI
             Point centerP = nodes[0].P;
             AutomationProperties.SetName(NeuronCanvas, "Neuron activity graph");
             AutomationProperties.SetHelpText(NeuronCanvas,
-                $"Graph relationships: User connects to Chat, Workplace, Documents, Study, and Calculator. Counts: Chat {normalMessages}, Workplace {workplaceMessages}, Documents {normalDocs + workplaceDocs}, Council {councilRuns}, Memory {hippocampusCount}.");
+                $"Graph relationships: User connects to Chat, Workplace, Documents, Project Knowledge, and Calculator. Counts: Chat {normalMessages}, Workplace {workplaceMessages}, Documents {normalDocs + workplaceDocs}, Council {councilRuns}, Project Knowledge {workplaceDocs}.");
 
             // ═══ PASS 1: GLOW HALOS + ALL LINES (drawn first, render behind circles) ═══
 
@@ -4605,7 +4593,7 @@ namespace Malx_AI
                 NeuronCanvas.Children.Add(label);
             }
 
-            NeuronSummaryText.Text = $"Live neural map  ·  Chat {normalMessages}  ·  Workplace {workplaceMessages}  ·  Docs {normalDocs + workplaceDocs}  ·  Council {councilRuns}  ·  Memory {hippocampusCount}";
+            NeuronSummaryText.Text = $"Live neural map  ·  Chat {normalMessages}  ·  Workplace {workplaceMessages}  ·  Docs {normalDocs + workplaceDocs}  ·  Council {councilRuns}  ·  Project Knowledge {workplaceDocs}";
         }
 
         private void UpdateNeuronBranches(IEnumerable<(string? Content, int Source)> taggedTexts, double width, double height)

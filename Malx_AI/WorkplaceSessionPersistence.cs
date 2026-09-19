@@ -21,14 +21,16 @@ namespace Malx_AI
         public bool AutoOptimizeRoleContexts { get; set; } = true;
         public List<WorkplaceChatMessageDto> ChatCards { get; set; } = new();
         public List<WorkplaceDocumentDto> Documents { get; set; } = new();
+        /// <summary>
+        /// Stable identity for the durable, project-owned attachment store.  One Workplace
+        /// session maps to one knowledge base, so attachments never leak into another chat.
+        /// </summary>
+        public string ProjectKnowledgeBaseId { get; set; } = "";
         public List<WorkplaceChatMessageDto> SystemNotifications { get; set; } = new();
         public List<CouncilTaskHistoryEntry> TaskHistory { get; set; } = new();
         public List<ModelPerformanceLogEntry> PerformanceLog { get; set; } = new();
         public bool IsRunStateIsolated { get; set; }
         public Dictionary<string, WorkplaceCouncilModelDto> CouncilModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-        public List<SessionHippocampusEntry> HippocampusEntries { get; set; } = new();
-        public bool StudySessionCompleted { get; set; }
-        public int StudySessionProcessedDocumentCount { get; set; }
         public int CompletedCouncilRunCount { get; set; }
         public string LastSandboxOutput { get; set; } = "";
         public string LastFinalOutput { get; set; } = "";
@@ -58,6 +60,12 @@ namespace Malx_AI
         public string MimeType { get; set; } = "";
         public string Base64Data { get; set; } = "";
         public bool IsImage { get; set; }
+        public string Id { get; set; } = "";
+        public string OriginalPath { get; set; } = "";
+        public string RelativePath { get; set; } = "";
+        public string RetrievalKey { get; set; } = "";
+        public long FileSizeBytes { get; set; }
+        public string IndexStatus { get; set; } = "";
     }
 
     public sealed class WorkplaceCouncilModelDto
