@@ -4227,6 +4227,14 @@ namespace Malx_AI
 
             // Only the Builder writes the Project Canvas, so only the Builder is told to produce a
             // renderable artifact; the Architect and Critic keep reasoning about it in prose.
+            if (role == CouncilRole.Builder && _pendingCanvasFileRequest != null)
+            {
+                string fileInstruction = CanvasFileRequest.BuildInstruction(
+                    _pendingCanvasFileRequest,
+                    compactModel: ResolveBuilderCanvasTier() != SkillCanvasTier.Full);
+                prompt = string.IsNullOrWhiteSpace(prompt) ? fileInstruction : prompt + "\n\n" + fileInstruction;
+            }
+
             if (role == CouncilRole.Builder)
             {
                 SkillCanvasDirective? canvasDirective = AxiomCapabilityRegistry.Shared.ResolveCanvasDirective(context?.UserPrompt ?? string.Empty);
@@ -11891,6 +11899,25 @@ namespace Malx_AI
             bool continuesRenderableArtifact = _lastRunContext?.IsArtifactCanvasRequest == true || existingCanvasIsRenderable;
             bool isArtifactCanvasRequest = directArtifactCanvasRequest
                 || (projectCanvasFollowUp && continuesRenderableArtifact);
+
+            // A named file only becomes a canvas deliverable when the canvas was actually asked
+            // for; otherwise "update config.json" would hijack an ordinary coding run.
+            _pendingCanvasFileRequest = null;
+            _pendingCanvasFileExtensionHint = string.Empty;
+            bool fileRequested = CanvasFileRequest.TryDetect(
+                intentQuery,
+                out CanvasFileRequestInfo? fileRequest,
+                out string? rejectedFormat);
+            if (isArtifactCanvasRequest && fileRequested && fileRequest != null)
+            {
+                _pendingCanvasFileRequest = fileRequest;
+                _pendingCanvasFileExtensionHint = fileRequest.Extension;
+                LogActivity($"Project Canvas: file requested ({fileRequest.FileName}).");
+            }
+            else if (isArtifactCanvasRequest && rejectedFormat != null)
+            {
+                AppendChat("system", CanvasFileRequest.DescribeBinaryRefusal(rejectedFormat));
+            }
             CouncilTaskType taskType = isDocumentTask
                 ? CouncilTaskType.Document
                 : projectCanvasFollowUp && !isArtifactCanvasRequest
@@ -18105,6 +18132,16 @@ namespace Malx_AI
         {
             _canvasArtifact = ArtifactRenderService.DetectForCanvas(builderOutput, sandboxOutput);
 
+            // A file the model named explicitly takes precedence: the generic detector would
+            // either miss it (a .txt has no Markdown structure to recognise) or label it
+            // "Document Preview" and lose the real filename.
+            if (CanvasFileArtifact.TryParse(builderOutput, _pendingCanvasFileExtensionHint, out CanvasFile? namedFile)
+                && namedFile != null)
+            {
+                _canvasArtifact = CanvasFileArtifact.ToArtifact(namedFile);
+                LogActivity($"Project Canvas: presenting {namedFile.FileName}.");
+            }
+
             // A Skill that promised a rendered deliverable gets it built here when the Builder
             // returned an outline instead of a finished document, which is the norm on small models.
             SkillCanvasDirective? canvasDirective = ResolveWorkplaceCanvasDirective();
@@ -18119,9 +18156,21 @@ namespace Malx_AI
             // moment we navigate, which was the root cause of the intermittent blank canvas.
             _isCanvasPreviewMode = _canvasArtifact.SupportsPreview && !_connectedWorkspace.CodebaseEditAccessEnabled;
 
+            if (_canvasArtifact.SupportsPreview && !_isProjectCanvasShown)
+                SetProjectCanvasShown(true);
+
             RefreshCanvasArtifactUi();
             _ = RenderCanvasArtifactPreviewAsync();
         }
+
+        /// <summary>
+        /// The extension the current request asked for, so a bare fenced answer to "make me a
+        /// requirements.txt" is still recognised as that file.
+        /// </summary>
+        private string _pendingCanvasFileExtensionHint = string.Empty;
+
+        /// <summary>The file this run promised, or null when the run is not producing one.</summary>
+        private CanvasFileRequestInfo? _pendingCanvasFileRequest;
 
         private async Task RenderCanvasArtifactPreviewAsync()
         {
@@ -18316,6 +18365,19 @@ namespace Malx_AI
             }
         }
 
+        /// <summary>Offers the model's own filename when it named one, not a generic stand-in.</summary>
+        private string ResolveCanvasSaveFileName()
+        {
+            string title = (_canvasArtifact.DisplayTitle ?? string.Empty).Trim();
+            bool looksLikeFileName = title.Length > 0
+                && title.Contains('.', StringComparison.Ordinal)
+                && title.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) < 0;
+
+            return looksLikeFileName
+                ? title
+                : "project-canvas-artifact" + _canvasArtifact.SuggestedFileExtension;
+        }
+
         private async void SaveCanvasArtifactButton_Click(object sender, RoutedEventArgs e)
         {
             if (!_canvasArtifact.SupportsPreview)
@@ -18324,7 +18386,7 @@ namespace Malx_AI
             var dialog = new SaveFileDialog
             {
                 DefaultExt = _canvasArtifact.SuggestedFileExtension,
-                FileName = "project-canvas-artifact" + _canvasArtifact.SuggestedFileExtension,
+                FileName = ResolveCanvasSaveFileName(),
                 Filter = _canvasArtifact.Kind switch
                 {
                     ArtifactKind.Html => "HTML files (*.html)|*.html|All files (*.*)|*.*",

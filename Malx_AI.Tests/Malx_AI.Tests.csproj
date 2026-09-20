@@ -76,5 +76,7 @@
     <Compile Include="..\Malx_AI\Agent\AgentPromptBuilder.cs" Link="Production\Agent\AgentPromptBuilder.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentToolExecutor.cs" Link="Production\Agent\AgentToolExecutor.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentSession.cs" Link="Production\Agent\AgentSession.cs" />
+    <Compile Include="..\Malx_AI\CanvasFileArtifact.cs" Link="Production\CanvasFileArtifact.cs" />
+    <Compile Include="..\Malx_AI\CanvasFileRequest.cs" Link="Production\CanvasFileRequest.cs" />
   </ItemGroup>
 </Project>

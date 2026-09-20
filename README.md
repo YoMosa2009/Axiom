@@ -10,7 +10,7 @@ unless you deliberately reach out to a cloud model or a connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.9.3-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.9.4-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 [Download](../../releases) · [Getting started](#getting-started) · [Feedback](#feedback)
@@ -74,6 +74,17 @@ whenever a run isn't active.
 Also in Workplace: persistent sessions, study and document preprocessing, connected
 codebase access with diff-aware review, task history, per-role context controls, live
 activity, completion notifications, and the Project Canvas the Builder writes into.
+
+### Files in Project Canvas
+
+Put `@ProjectCanvas` in a Workplace prompt and ask for a file — *"make me a requirements.txt"*,
+*"a docker-compose.yml"*, *"the results as a csv"* — and it is presented in the canvas under its
+real name, with the pane opening on its own. Save offers that filename too.
+
+Any text format works: `.md`, `.txt`, `.csv`, `.json`, `.yaml`, `.sql`, source code, and so on.
+CSV renders as a table, Markdown renders, HTML and SVG keep their visual preview, and everything
+else gets a monospace view. Images and other binary formats are refused with an explanation
+rather than failing quietly.
 
 ## Computer Use
 

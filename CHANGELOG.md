@@ -1,5 +1,37 @@
 ﻿# Changelog
 
+## [V1.9.4] - 2026-09-20
+
+Project Canvas can present files the model writes.
+
+### Added
+- **Files in Project Canvas (Workplace only).** Put `@ProjectCanvas` in a Workplace prompt and
+  ask for a file -- "make me a requirements.txt", "a docker-compose.yml", "the results as a csv"
+  -- and the Builder's file is presented in the canvas under its real name, with the pane
+  sliding open on its own
+- The requested file is recognised either from a filename you wrote (`App.config`,
+  `docker-compose.yml`) or from a bare format ("as markdown", "a csv file", "in json format")
+- Presentation follows the format: CSV and TSV render as tables with quoted values kept intact,
+  Markdown renders, HTML and SVG keep their visual preview but carry the real filename, and
+  every other text format gets a monospace view. Each one shows a header with the filename and
+  line count
+- Save now offers the model's own filename (`inventory.csv`) instead of the generic
+  `project-canvas-artifact.md`
+- Works on Local, Hybrid Local, and Cloud, and at every model size: the file instruction is a
+  flat `FILE: name.ext` header above a fenced block, shortened further for sub-4B models. Axiom
+  also accepts the shapes models reach for on their own -- `**FILE:**`, `FILENAME:`, `PATH:`,
+  and filenames in the fence info string
+
+### Fixed
+- A requested plain-text file produced nothing renderable at all. The document detector only
+  recognised Markdown structure (three headings, or a table), so a `.txt`, `.json`, `.csv`, or
+  source file fell through it and the canvas stayed empty
+- The Project Canvas pane no longer stays collapsed when a run produces something to show
+
+### Changed
+- Image and other binary formats are refused with an explanation naming the format, rather than
+  silently producing nothing. `.png`, `.pdf`, `.xlsx`, archives, audio and video are all covered
+
 ## [V1.9.3] - 2026-09-20
 
 The Computer Agent: the Workplace model can now operate the machine directly.
