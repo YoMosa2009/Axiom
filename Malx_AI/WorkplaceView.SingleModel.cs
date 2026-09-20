@@ -1,4 +1,4 @@
-using Microsoft.Win32;
+﻿using Microsoft.Win32;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -94,8 +94,20 @@ namespace Malx_AI
             Visibility councilVisibility = _isSingleModelMode ? Visibility.Collapsed : Visibility.Visible;
             Visibility singleVisibility = _isSingleModelMode ? Visibility.Visible : Visibility.Collapsed;
 
-            SingleModelModeToggleButton.Content = _isSingleModelMode ? "Single Model: On" : "Single Model: Off";
-            SingleModelModeToggleButton.Opacity = _isSingleModelMode ? 1.0 : 0.72;
+            // Both states are equally "on" -- one of the two modes is always active -- so the
+            // control names the current mode at full strength instead of dimming itself when
+            // Single Model happens to be the inactive one.
+            SingleModelModeValueText.Text = _isSingleModelMode ? "Single Model" : "Council";
+            SingleModelModePillText.Text = _isSingleModelMode ? "1 agent" : "3 roles";
+            SingleModelModePill.Background = _isSingleModelMode
+                ? AppTheme.Brush(p => p.AccentSoft)
+                : AppTheme.Brush(p => p.SurfaceRaised);
+            SingleModelModePill.BorderBrush = _isSingleModelMode
+                ? AppTheme.Brush(p => p.Accent)
+                : AppTheme.Brush(p => p.Border);
+            SingleModelModePillText.Foreground = _isSingleModelMode
+                ? AppTheme.Brush(p => p.AccentMuted)
+                : AppTheme.Brush(p => p.TextSecondary);
             CouncilSubtitleText.Visibility = councilVisibility;
             SingleModelSubtitleText.Visibility = singleVisibility;
 

@@ -1,5 +1,41 @@
 ﻿# Changelog
 
+## [V1.9.3] - 2026-09-20
+
+The Computer Agent: the Workplace model can now operate the machine directly.
+
+### Added
+- **Computer Agent.** Enable it in the Workplace sidebar and the model works like a terminal
+  coding agent: it runs commands, reads and writes files, lists directories, and searches the
+  disk, then answers from what it actually found. Replaces the narrower "connect a repo or a
+  folder" framing of Codebase Edit Access, which stays available for patch review
+- Seven tools, the set the established coding agents converged on: `run_command`, `read_file`,
+  `write_file`, `edit_file`, `list_directory`, `find_files`, `search_text`, plus `finish`
+- **Manual and Auto approval.** Manual stops before every command and every file change and
+  shows an approval bar above the composer with Approve, Always allow this, and Deny. "Always
+  allow this" remembers that command for the session, matched on its leading tokens so
+  approving `git status` never quietly approves `git push --force`. Auto runs without stopping
+- **Scope control.** The agent is confined to a folder you choose, or released to the entire
+  computer. Both the whole-computer scope and Auto approval require an explicit confirmation
+- Works on Local, Hybrid Local, and Cloud, and across model sizes. Capable models get JSON tool
+  calls and up to 24 steps; sub-4B models get a flat `TOOL name` + `key: value` protocol they can
+  actually produce, a smaller step budget, and trimmed tool output so results do not swamp their
+  context
+- **Running-step indicator.** A quiet one-line note above the composer names the step in flight
+  ("Ran dotnet build", "Read App.xaml", "Waiting for approval") and disappears when the run ends
+
+### Changed
+- The Single Model toggle is now a full-width control that names the active mode with a role
+  count, instead of a small chip that dimmed itself to 72% opacity and read as disabled
+
+### Safety
+- A short list of whole-machine operations is refused in both Manual and Auto: formatting a
+  drive, creating a filesystem, repartitioning, deleting a drive root or the filesystem root,
+  rewriting the boot configuration, wiping free space, shutting the machine down, and fork
+  bombs. Writes into `Windows\System32` and `SysWOW64` are refused as well
+- The block list is matched narrowly so ordinary work is untouched: `rm -rf ./build`,
+  `del /q obj\temp.txt`, `git reset --hard`, and `npm run format` all run normally
+
 ## [V1.9.2] - 2026-09-18
 
 ### Added

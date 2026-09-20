@@ -40,10 +40,25 @@
         <Border Grid.Column="0" Background="{DynamicResource NotebookSurfaceBrush}" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource NotebookBorderBrush}">
             <ScrollViewer x:Name="CouncilSidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0" PreviewMouseWheel="SidebarScrollViewer_PreviewMouseWheel">
                 <StackPanel Margin="16,16,16,20">
-                    <Button x:Name="SingleModelModeToggleButton" Content="Single Model: Off" Click="SingleModelModeToggleButton_Click"
-                            Style="{StaticResource SubtleButtonStyle}" FontSize="10" Padding="8,4"
-                            ToolTip="Switch between Council mode (Architect/Builder/Critic) and Single Model mode (one agent)"
-                            VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                    <Button x:Name="SingleModelModeToggleButton" Click="SingleModelModeToggleButton_Click"
+                            Style="{StaticResource SubtleButtonStyle}" Height="42" Padding="12,0"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            ToolTip="Switch between Council mode (Architect/Builder/Critic) and Single Model mode (one agent)">
+                        <DockPanel LastChildFill="False">
+                            <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
+                                <TextBlock Text="MODE" FontSize="8" FontWeight="SemiBold" Opacity="0.55"
+                                           Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                <TextBlock x:Name="SingleModelModeValueText" Text="Council" FontSize="13" FontWeight="SemiBold" Margin="0,1,0,0"/>
+                            </StackPanel>
+                            <Border x:Name="SingleModelModePill" DockPanel.Dock="Right" VerticalAlignment="Center"
+                                    CornerRadius="7" Padding="8,2"
+                                    Background="{DynamicResource SurfaceRaisedBrush}"
+                                    BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
+                                <TextBlock x:Name="SingleModelModePillText" Text="3 roles" FontSize="9" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                            </Border>
+                        </DockPanel>
+                    </Button>
                     <TextBlock x:Name="CouncilSubtitleText" Text="Configure models for Architect/Builder/Critic" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
                     <TextBlock x:Name="SingleModelSubtitleText" Text="One agentic model handles the whole workplace chat" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
 
@@ -159,8 +174,43 @@
 
                     <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
 
-                    <!-- Connected Workspace -->
-                    <TextBlock Text="Connected Workspace" FontSize="12" FontWeight="SemiBold"/>
+                    <!-- Computer Agent -->
+                    <TextBlock Text="Computer Agent" FontSize="12" FontWeight="SemiBold"/>
+                    <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False">
+                                <TextBlock Text="Agent Access" FontSize="11" FontWeight="SemiBold" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                                <Border x:Name="AgentStateBadge" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="6,1" Margin="6,0,0,0" DockPanel.Dock="Right">
+                                    <TextBlock x:Name="AgentStateText" Text="Off" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                </Border>
+                            </DockPanel>
+                            <TextBlock Text="Lets the model run commands and read or change files on this computer, the way a terminal coding agent does." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
+                            <Button x:Name="AgentEnableButton" Content="Enable Computer Agent" Click="AgentEnableButton_Click" Height="32" Style="{StaticResource PremiumButtonStyle}"/>
+
+                            <TextBlock Text="Scope" FontSize="10" FontWeight="SemiBold" Margin="0,12,0,4"/>
+                            <ComboBox x:Name="AgentScopeCombo" Height="30" SelectionChanged="AgentScopeCombo_SelectionChanged" IsEnabled="False"
+                                      ToolTip="Which part of the computer the agent may touch">
+                                <ComboBoxItem Content="A folder I choose" Tag="folder" IsSelected="True"/>
+                                <ComboBoxItem Content="The entire computer" Tag="all"/>
+                            </ComboBox>
+                            <Button x:Name="AgentChooseFolderButton" Content="Choose Folder…" Click="AgentChooseFolderButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                            <TextBlock x:Name="AgentScopeDetailText" Text="No folder chosen yet." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+
+                            <TextBlock Text="Approval" FontSize="10" FontWeight="SemiBold" Margin="0,12,0,4"/>
+                            <UniformGrid Columns="2">
+                                <Button x:Name="AgentManualModeButton" Content="Manual" Click="AgentApprovalMode_Click" Tag="manual" Height="30" Margin="0,0,3,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"
+                                        ToolTip="Every command and file change waits for your approval"/>
+                                <Button x:Name="AgentAutoModeButton" Content="Auto" Click="AgentApprovalMode_Click" Tag="auto" Height="30" Margin="3,0,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"
+                                        ToolTip="The agent runs without stopping to ask"/>
+                            </UniformGrid>
+                            <TextBlock x:Name="AgentApprovalHintText" Text="Manual: you approve each command before it runs." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
+
+                    <!-- Connected Workspace (patch review) -->
+                    <TextBlock Text="Codebase Patch Review" FontSize="12" FontWeight="SemiBold"/>
                     <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
                         <StackPanel>
                             <DockPanel>
@@ -410,6 +460,29 @@
                              workplace, built in code-behind and numbered to match the prompt index. -->
                         <WrapPanel x:Name="WorkplaceAttachmentTrayPanel" Orientation="Horizontal"
                                    Margin="2,2,2,4" Visibility="Collapsed"/>
+                        <!-- Approval gate: Manual mode parks the run here until the user answers. -->
+                        <Border x:Name="AgentApprovalBar" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}"
+                                BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,6">
+                            <StackPanel>
+                                <TextBlock x:Name="AgentApprovalTitleText" Text="Run this command?" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryAccentBrush}"/>
+                                <TextBox x:Name="AgentApprovalDetailText" Text="" FontSize="11" FontFamily="Cascadia Mono, Consolas, monospace"
+                                         Margin="0,5,0,0" IsReadOnly="True" BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
+                                         Foreground="{DynamicResource NotebookTextBrush}" MaxHeight="90" VerticalScrollBarVisibility="Auto"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button x:Name="AgentApproveButton" Content="Approve" Click="AgentApprove_Click" Height="26" Padding="12,0" Style="{StaticResource PremiumButtonStyle}" FontSize="11"/>
+                                    <Button x:Name="AgentApproveAlwaysButton" Content="Always allow this" Click="AgentApproveAlways_Click" Height="26" Padding="10,0" Margin="6,0,0,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                    <Button x:Name="AgentDenyButton" Content="Deny" Click="AgentDeny_Click" Height="26" Padding="12,0" Margin="6,0,0,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Quiet running-step line. Present only while a step is in flight. -->
+                        <StackPanel x:Name="AgentActivityLine" Orientation="Horizontal" Visibility="Collapsed" Margin="8,0,8,4" Opacity="0.55">
+                            <TextBlock Text="&#9679;" FontSize="8" VerticalAlignment="Center" Foreground="{DynamicResource PrimaryAccentBrush}"/>
+                            <TextBlock x:Name="AgentActivityText" Text="" FontSize="10" Margin="5,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource DarkSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                        </StackPanel>
+
                         <Border x:Name="RefinementModeBanner" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
                             <TextBlock Text="Refinement Mode" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryAccentBrush}" TextTrimming="CharacterEllipsis"/>
                         </Border>

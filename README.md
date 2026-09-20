@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # Axiom
 
@@ -10,7 +10,7 @@ unless you deliberately reach out to a cloud model or a connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.9.1-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.9.3-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 [Download](../../releases) · [Getting started](#getting-started) · [Feedback](#feedback)
@@ -90,6 +90,37 @@ projector). Axiom probes the active model first and tells you plainly why a run 
 start rather than failing halfway through. Sessions run in a dedicated window with a
 visible pointer overlay, an action log, and safety checks on navigation and target
 selection.
+
+## Computer Agent
+
+Turn it on in the Workplace sidebar and the model operates your machine the way a terminal
+coding agent does — running commands, reading and writing files, searching the disk — then
+answers from what it actually found.
+
+It has seven tools: `run_command`, `read_file`, `write_file`, `edit_file`, `list_directory`,
+`find_files`, and `search_text`.
+
+**You choose how much rope it gets:**
+
+| Mode | Behaviour |
+|---|---|
+| **Manual** | Stops before every command and file change. An approval bar offers Approve, Always allow this, or Deny. |
+| **Auto** | Runs without stopping to ask. |
+
+**And how far it can reach** — a folder you pick, or the entire computer. Whole-computer scope
+and Auto mode each need an explicit confirmation before they turn on.
+
+Works on Local, Hybrid Local, and Cloud. Capable models get JSON tool calls and a long step
+budget; sub-4B models get a flat text protocol they can actually produce, with a shorter budget
+and trimmed tool output, so the feature still works on a small local model.
+
+**What it refuses, in both modes:** formatting a drive, repartitioning, deleting a drive root,
+rewriting the boot configuration, wiping free space, shutting the machine down, and writing into
+Windows system folders. The patterns are narrow — `rm -rf ./build` and `git reset --hard` run
+normally.
+
+While a step is in flight, a quiet line above the composer names it ("Ran dotnet build",
+"Read App.xaml"), and clears when the run finishes.
 
 ## Skills
 

@@ -3058,6 +3058,7 @@ namespace Malx_AI
             RefreshCodebaseAccessUi();
             RefreshCouncilPetToggleUi();
             InitializeWorkplaceCapabilities();
+            InitializeAgentUi();
             UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
             SizeChanged += (_, _) => ApplyDesktopLayout(ActualWidth);
@@ -11824,6 +11825,14 @@ namespace Malx_AI
             if (ComputerUseMention.IsInvoked(userQuery))
             {
                 await RunComputerUseSessionFromChatAsync(userQuery);
+                return;
+            }
+
+            // With the Computer Agent on, the prompt is a goal for the agent loop rather than a
+            // council brief: it runs tools against the machine and answers from what it found.
+            if (_agentEnabled)
+            {
+                await RunComputerAgentTurnAsync(userQuery);
                 return;
             }
 

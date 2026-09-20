@@ -70,5 +70,11 @@
     <Compile Include="..\Malx_AI\SkillArtifactComposer.cs" Link="Production\SkillArtifactComposer.cs" />
     <Compile Include="..\Malx_AI\LocalModelCapabilityProfile.cs" Link="Production\LocalModelCapabilityProfile.cs" />
     <Compile Include="..\Malx_AI\GgufMetadataReader.cs" Link="Production\GgufMetadataReader.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentTool.cs" Link="Production\Agent\AgentTool.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentPermissionPolicy.cs" Link="Production\Agent\AgentPermissionPolicy.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentToolCallParser.cs" Link="Production\Agent\AgentToolCallParser.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentPromptBuilder.cs" Link="Production\Agent\AgentPromptBuilder.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentToolExecutor.cs" Link="Production\Agent\AgentToolExecutor.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentSession.cs" Link="Production\Agent\AgentSession.cs" />
   </ItemGroup>
 </Project>
