@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,6 +42,9 @@ namespace Malx_AI.Agent
         private readonly int _maxSteps;
         private readonly List<string> _sessionAllowList = new();
 
+        /// <summary>How many unusable turns in a row before the run gives up and says so.</summary>
+        private const int MaxConsecutiveProtocolErrors = 3;
+
         public AgentSession(AgentScope scope, int maxSteps, AgentToolExecutor? executor = null)
         {
             _scope = scope ?? AgentScope.WholeComputer();
@@ -65,6 +68,7 @@ namespace Malx_AI.Agent
 
             var steps = new List<AgentStep>();
             var history = new List<AgentExchange>();
+            int consecutiveProtocolErrors = 0;
 
             try
             {
@@ -78,6 +82,26 @@ namespace Malx_AI.Agent
                     {
                         reply = await model.NextAsync(goal, history, token).ConfigureAwait(false);
                     }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // A dropped connection mid-run is not a reason to abandon work already
+                        // done. Free-tier providers drop bodies and time out often enough that a
+                        // single hiccup must not leave the machine half-changed with no summary.
+                        if (++consecutiveProtocolErrors >= MaxConsecutiveProtocolErrors)
+                        {
+                            return new AgentRunResult(
+                                $"The connection to the model kept failing ({ex.Message}). "
+                                + "Anything already done is listed above; try again when the provider settles.",
+                                steps,
+                                false,
+                                false);
+                        }
+
+                        history.Add(new AgentExchange(
+                            new AgentToolCall("(transport)", new Dictionary<string, string>()),
+                            "The previous request failed to reach the model. Continue from what is already done."));
+                        continue;
+                    }
                     finally
                     {
                         reportActivity?.Invoke(null);
@@ -85,12 +109,27 @@ namespace Malx_AI.Agent
 
                     if (reply.ProtocolError != null)
                     {
-                        // Recoverable: tell the model what was wrong and let it try again.
+                        // Recoverable: tell the model what was wrong and let it try again. Bounded,
+                        // so a model that keeps returning nothing usable reports that honestly
+                        // instead of burning every step and claiming success.
+                        if (++consecutiveProtocolErrors >= MaxConsecutiveProtocolErrors)
+                        {
+                            return new AgentRunResult(
+                                "The model did not return anything usable after several attempts. "
+                                + "That is usually a transient problem with the provider - try again, "
+                                + "or switch model in Settings if it keeps happening.",
+                                steps,
+                                false,
+                                false);
+                        }
+
                         history.Add(new AgentExchange(
                             new AgentToolCall("(invalid)", new Dictionary<string, string>()),
                             "Tool error: " + reply.ProtocolError));
                         continue;
                     }
+
+                    consecutiveProtocolErrors = 0;
 
                     if (reply.Call == null)
                     {

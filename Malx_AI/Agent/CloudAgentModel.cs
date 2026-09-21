@@ -59,7 +59,17 @@ namespace Malx_AI.Agent
 
             OpenRouterToolCall? toolCall = response.ToolCalls?.FirstOrDefault();
             if (toolCall == null)
-                return AgentModelReply.Answer((response.Text ?? string.Empty).Trim());
+            {
+                string text = (response.Text ?? string.Empty).Trim();
+
+                // A turn with neither a tool call nor any text is a dropped turn, not an answer.
+                // Treating it as one ended runs instantly with a cheerful "Done." having done
+                // nothing at all, which is indistinguishable from the agent refusing to work.
+                if (text.Length == 0)
+                    return AgentModelReply.Malformed("That reply was empty. Call a tool, or answer the question in words.");
+
+                return AgentModelReply.Answer(text);
+            }
 
             if (!AgentToolNames.IsKnown(toolCall.Name))
             {

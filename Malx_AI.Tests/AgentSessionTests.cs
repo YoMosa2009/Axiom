@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -201,6 +201,78 @@ namespace Malx_AI.Tests
             Assert.False(File.Exists(outside));
             Assert.False(result.Steps[0].Result!.Succeeded);
             Assert.Contains("outside the folder", result.Steps[0].Result!.Error!);
+        }
+
+        /// <summary>A model that throws a transport failure for the first N turns, then behaves.</summary>
+        private sealed class FlakyAgentModel : IAgentModel
+        {
+            private readonly int _failures;
+            private int _calls;
+
+            public FlakyAgentModel(int failures) => _failures = failures;
+
+            public string? Unavailable => null;
+
+            public Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
+            {
+                if (_calls++ < _failures)
+                    throw new IOException("the response ended prematurely");
+                return Task.FromResult(AgentModelReply.Answer("recovered"));
+            }
+        }
+
+        [Fact]
+        public async Task ADroppedConnectionIsRetriedRatherThanEndingTheRun()
+        {
+            // A free-tier provider dropping one body must not abandon work already done.
+            AgentRunResult result = await NewSession().RunAsync(
+                "go", AgentApprovalMode.Auto, new FlakyAgentModel(failures: 2),
+                AlwaysApprove, _ => { }, CancellationToken.None);
+
+            Assert.Equal("recovered", result.FinalMessage);
+        }
+
+        [Fact]
+        public async Task RepeatedConnectionFailuresReportHonestlyInsteadOfClaimingSuccess()
+        {
+            AgentRunResult result = await NewSession().RunAsync(
+                "go", AgentApprovalMode.Auto, new FlakyAgentModel(failures: 99),
+                AlwaysApprove, _ => { }, CancellationToken.None);
+
+            Assert.Contains("kept failing", result.FinalMessage);
+            Assert.DoesNotContain("Done.", result.FinalMessage);
+        }
+
+        [Fact]
+        public async Task AnEmptyReplyIsRetriedNotTreatedAsAFinishedAnswer()
+        {
+            // The live bug: a dropped turn ended the run instantly with a cheerful "Done."
+            // having written nothing at all.
+            var model = new ScriptedAgentModel(
+                AgentModelReply.Malformed("That reply was empty."),
+                AgentModelReply.Tool(Write("late.txt", "made it")),
+                AgentModelReply.Answer("Wrote it after the hiccup."));
+
+            AgentRunResult result = await NewSession().RunAsync(
+                "write late.txt", AgentApprovalMode.Auto, model, AlwaysApprove, _ => { }, CancellationToken.None);
+
+            Assert.Equal("Wrote it after the hiccup.", result.FinalMessage);
+            Assert.True(File.Exists(Path.Combine(_folder, "late.txt")));
+        }
+
+        [Fact]
+        public async Task ThreeUnusableRepliesInARowStopTheRunWithAnExplanation()
+        {
+            var model = new ScriptedAgentModel(
+                AgentModelReply.Malformed("empty"),
+                AgentModelReply.Malformed("empty"),
+                AgentModelReply.Malformed("empty"),
+                AgentModelReply.Answer("never reached"));
+
+            AgentRunResult result = await NewSession().RunAsync(
+                "go", AgentApprovalMode.Auto, model, AlwaysApprove, _ => { }, CancellationToken.None);
+
+            Assert.Contains("did not return anything usable", result.FinalMessage);
         }
 
         [Fact]
