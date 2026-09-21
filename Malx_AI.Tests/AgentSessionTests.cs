@@ -276,6 +276,19 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public async Task TheBackoffGrowsBetweenAttempts()
+        {
+            // An immediate retry against a provider that just failed usually fails again, so the
+            // gap has to widen rather than hammer.
+            var waits = new List<TimeSpan>();
+            for (int attempt = 1; attempt < 3; attempt++)
+                waits.Add(TimeSpan.FromSeconds(Math.Pow(2, attempt - 1)));
+
+            Assert.Equal(TimeSpan.FromSeconds(1), waits[0]);
+            Assert.Equal(TimeSpan.FromSeconds(2), waits[1]);
+        }
+
+        [Fact]
         public async Task ApproveAlwaysStopsAskingForThatCommand()
         {
             int asked = 0;

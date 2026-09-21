@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -49,13 +49,12 @@ namespace Malx_AI.Agent
                 AppendExchange(history[i], i);
             _renderedExchanges = history.Count;
 
-            OpenRouterChatResponse response = await _service.SendConversationAsync(
-                _messages,
-                _systemPrompt,
-                thinkingEnabled: false,
-                modelId: _modelId,
-                tools: AgentToolSchemas.All(),
-                cancellationToken: token).ConfigureAwait(false);
+            OpenRouterChatResponse? response = await SendWithRetryAsync(token).ConfigureAwait(false);
+            if (response == null)
+            {
+                return AgentModelReply.Malformed(
+                    "The model returned nothing usable after several attempts. Try the request again.");
+            }
 
             OpenRouterToolCall? toolCall = response.ToolCalls?.FirstOrDefault();
             if (toolCall == null)
@@ -82,6 +81,66 @@ namespace Malx_AI.Agent
 
             _pendingToolCall = toolCall;
             return AgentModelReply.Tool(new AgentToolCall(toolCall.Name.ToLowerInvariant(), arguments));
+        }
+
+        /// <summary>Attempts per turn before the turn is reported as failed.</summary>
+        private const int MaxAttempts = 3;
+
+        /// <summary>Overridable so tests do not actually wait.</summary>
+        internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
+
+        /// <summary>
+        /// Sends one turn, retrying transport failures and empty responses.
+        /// </summary>
+        /// <remarks>
+        /// Free-tier endpoints drop response bodies and return empty completions often enough that
+        /// an agent which gives up on the first one is only "sometimes working". Retrying here
+        /// rather than in the session keeps the conversation intact, and the backoff matters: an
+        /// immediate retry against a provider that just failed usually fails again.
+        /// </remarks>
+        private async Task<OpenRouterChatResponse?> SendWithRetryAsync(CancellationToken token)
+        {
+            Exception? lastFailure = null;
+
+            for (int attempt = 0; attempt < MaxAttempts; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    await Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt - 1)), token).ConfigureAwait(false);
+                    await BackendLogService.LogEventAsync(
+                        "ComputerAgent",
+                        $"retrying turn (attempt {attempt + 1}/{MaxAttempts}): {lastFailure?.Message ?? "empty response"}")
+                        .ConfigureAwait(false);
+                }
+
+                try
+                {
+                    OpenRouterChatResponse response = await _service.SendConversationAsync(
+                        _messages,
+                        _systemPrompt,
+                        thinkingEnabled: false,
+                        modelId: _modelId,
+                        tools: AgentToolSchemas.All(),
+                        cancellationToken: token).ConfigureAwait(false);
+
+                    bool hasToolCall = response.ToolCalls?.Count > 0;
+                    bool hasText = !string.IsNullOrWhiteSpace(response.Text);
+                    if (hasToolCall || hasText)
+                        return response;
+
+                    lastFailure = null;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    lastFailure = ex;
+                }
+            }
+
+            return null;
         }
 
         private OpenRouterToolCall? _pendingToolCall;
