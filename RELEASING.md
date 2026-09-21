@@ -1,4 +1,4 @@
-# Publishing Axiom updates
+﻿# Publishing Axiom updates
 
 Axiom 1.7.0 and newer can update itself from stable releases in
 [`YoMosa2009/Axiom`](https://github.com/YoMosa2009/Axiom/releases).
@@ -16,8 +16,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Publish-GitHubRelease.ps1
 
 It reads the project version, runs tests, creates the clean package under
 `E:\Axiom-Updates`, extracts the matching `CHANGELOG.md` section into release notes,
-creates the GitHub tag and release, and uploads the ZIP. It also configures this Windows
-account's in-app updater to use `E:\Axiom-Updates` through `AXIOM_UPDATE_DIR`.
+creates the GitHub tag and release, and uploads the ZIP.
+
+Pass `-OutputRoot <path>` when the default drive is not available. The script does not
+touch `AXIOM_UPDATE_DIR`; add `-SetUpdateDir` only if you want this Windows account's
+in-app updater pointed at the build output, and remember that the variable persists —
+if that drive later fills up or is disconnected, in-app updates will fail until it is
+changed back.
 
 Use `-PackageOnly` to generate and test the local ZIP and notes without publishing.
 

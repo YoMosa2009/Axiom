@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
@@ -100,6 +100,23 @@ namespace Malx_AI
             {
                 progress?.Report(100);
                 return targetPath;
+            }
+
+            // Check the disk before opening a socket. Without this, a full or disconnected drive
+            // surfaced as a bare "Update download failed" after streaming hundreds of megabytes,
+            // with the real cause (an IOException from the final flush) only in the error log.
+            if (!UpdateStoragePaths.TryResolveUsableRoot(update.PackageSizeBytes, out string usableRoot, out string? spaceNotice))
+            {
+                throw new IOException(
+                    $"There is not enough room to download the update: {spaceNotice}. "
+                    + "Free some space, or set AXIOM_UPDATE_DIR to a drive that has room.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(spaceNotice))
+            {
+                await BackendLogService.LogEventAsync("UpdateDownload", spaceNotice).ConfigureAwait(false);
+                targetPath = Path.Combine(usableRoot, "downloads", Path.GetFileName(targetPath));
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
             }
 
             string partialPath = targetPath + ".partial";

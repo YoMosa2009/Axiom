@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Tests, packages, and publishes the current Axiom version as a GitHub Release.
@@ -24,7 +24,8 @@ param(
     [string]$Repository = "YoMosa2009/Axiom",
     [string]$TargetBranch = "main",
     [switch]$PackageOnly,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$SetUpdateDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -155,15 +156,23 @@ if (-not $PackageOnly) {
 }
 
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
-try {
-    [Environment]::SetEnvironmentVariable(
-        "AXIOM_UPDATE_DIR",
-        $OutputRoot,
-        [EnvironmentVariableTarget]::User)
-    $env:AXIOM_UPDATE_DIR = $OutputRoot
-}
-catch {
-    Write-Warning "Could not persist AXIOM_UPDATE_DIR for this Windows account: $($_.Exception.Message)"
+
+# Only redirect this account's in-app updater when explicitly asked. Setting it on every
+# publish permanently pointed the developer's own Axiom at the build output drive; when that
+# drive later filled up or went away, every in-app update failed with nothing but
+# "Update download failed" to go on.
+if ($SetUpdateDir) {
+    try {
+        [Environment]::SetEnvironmentVariable(
+            "AXIOM_UPDATE_DIR",
+            $OutputRoot,
+            [EnvironmentVariableTarget]::User)
+        $env:AXIOM_UPDATE_DIR = $OutputRoot
+        Write-Host "AXIOM_UPDATE_DIR set to $OutputRoot for this Windows account." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Warning "Could not persist AXIOM_UPDATE_DIR for this Windows account: $($_.Exception.Message)"
+    }
 }
 
 if (-not $SkipTests) {
