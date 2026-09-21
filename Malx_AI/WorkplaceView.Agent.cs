@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -318,27 +318,38 @@ namespace Malx_AI
                 ? null
                 : LocalModelCapabilityProfile.FromModel(GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath);
             AgentTier tier = AgentPromptBuilder.TierFor(capability, _isCloudModeEnabled);
+            string systemPrompt = AgentPromptBuilder.Build(tier, scope, _agentApprovalMode, _isCloudModeEnabled);
 
             _cancellationTokenSource?.Dispose();
             _cancellationTokenSource = new CancellationTokenSource();
             CancellationToken token = _cancellationTokenSource.Token;
 
-            LogActivity($"Computer Agent: {tier} tier, {_agentApprovalMode} approval, scope {scope.Describe()}.");
+            IAgentModel model = BuildAgentModel(tier, systemPrompt);
+            if (!string.IsNullOrWhiteSpace(model.Unavailable))
+            {
+                AppendChat("error", model.Unavailable!);
+                FinishAgentRunUi();
+                return;
+            }
 
-            var session = new AgentSession(scope, tier);
+            LogActivity($"Computer Agent: {tier} tier, {_agentApprovalMode} approval, scope {scope.Describe()}.");
+            RelayStatusBlock.Text = "Relay: Agent running";
+
+            var session = new AgentSession(scope, AgentPromptBuilder.MaxStepsFor(tier));
             AgentRunResult result;
             try
             {
                 result = await session.RunAsync(
                     userQuery,
                     _agentApprovalMode,
-                    InvokeAgentModelAsync,
+                    model,
                     RequestAgentApprovalAsync,
                     ReportAgentActivity,
                     token);
             }
             catch (Exception ex)
             {
+                await BackendLogService.LogErrorAsync("ComputerAgent", ex);
                 AppendChat("error", $"The agent stopped: {ex.Message}");
                 FinishAgentRunUi();
                 return;
@@ -352,32 +363,71 @@ namespace Malx_AI
                 LogActivity($"Agent · {step.Call.DescribeShort()} · {outcome}");
             }
 
+            _ = BackendLogService.LogEventAsync(
+                "ComputerAgent",
+                $"tier:{tier} mode:{_agentApprovalMode} steps:{result.Steps.Count} "
+                + $"limit:{result.StoppedOnStepLimit} cancelled:{result.Cancelled}");
+
             AppendChat("assistant", result.FinalMessage);
             _chatHistory.Add(("assistant", result.FinalMessage));
             FinishAgentRunUi();
         }
 
-        private async Task<string> InvokeAgentModelAsync(string systemPrompt, string transcript, CancellationToken token)
+        /// <summary>
+        /// Picks how the agent talks to the model.
+        /// </summary>
+        /// <remarks>
+        /// Cloud and Hybrid Local use the provider's own function calling with the agent's tools
+        /// and nothing else. Routing them through the council executor was the original bug: that
+        /// path rewrites the system prompt with council role identity and advertises web_search /
+        /// run_python instead, so the model concluded it had no machine access and refused.
+        /// </remarks>
+        private IAgentModel BuildAgentModel(AgentTier tier, string systemPrompt)
         {
-            ReasoningParser.ParsedResponse response = await ExecuteCouncilRoleAsync(
-                CouncilRole.Builder,
-                systemPrompt,
-                transcript,
-                token,
-                temperatureOverride: 0.1f,
-                baseStateVault: null,
-                loadBaseState: false,
-                allowBatchRecovery: true,
-                showLiveCard: false,
-                maxGenerationTokensOverride: 1400,
-                contextSizeOverride: null,
-                useBuilderToolDecision: false,
-                outputGrammar: null,
-                allowAgenticPauses: false,
-                internalInferenceStep: true);
+            if (_isCloudModeEnabled)
+            {
+                return new CloudAgentModel(
+                    _openRouterChatService,
+                    _isHybridLocalCouncilSelected
+                        ? (_openRouterChatService.CustomEndpointConfiguredModelId ?? GetEffectiveCouncilModelId())
+                        : GetEffectiveCouncilModelId(),
+                    systemPrompt);
+            }
 
-            return response.Answer ?? string.Empty;
+            // A local GGUF has no tool-calling channel, so it is asked for the flat text protocol
+            // and parsed back. internalInferenceStep keeps the council's own prompt scaffolding
+            // out of the way.
+            return new TextProtocolAgentModel(
+                async (prompt, transcript, cancellation) =>
+                {
+                    ReasoningParser.ParsedResponse response = await ExecuteCouncilRoleAsync(
+                        CouncilRole.Builder,
+                        prompt,
+                        transcript,
+                        cancellation,
+                        temperatureOverride: 0.1f,
+                        baseStateVault: null,
+                        loadBaseState: false,
+                        allowBatchRecovery: true,
+                        showLiveCard: false,
+                        maxGenerationTokensOverride: 900,
+                        contextSizeOverride: null,
+                        useBuilderToolDecision: false,
+                        outputGrammar: null,
+                        allowAgenticPauses: false,
+                        internalInferenceStep: true);
+                    return response.Answer ?? string.Empty;
+                },
+                systemPrompt,
+                ObservationBudgetFor(tier));
         }
+
+        private static int ObservationBudgetFor(AgentTier tier) => tier switch
+        {
+            AgentTier.Micro => 1200,
+            AgentTier.Compact => 3000,
+            _ => 6000
+        };
 
         private void FinishAgentRunUi()
         {

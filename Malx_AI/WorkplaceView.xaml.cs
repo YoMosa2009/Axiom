@@ -87,148 +87,21 @@ namespace Malx_AI
                 : "Web Search tool disabled";
         }
 
+        /// <summary>
+        /// Refreshes the patch-review controls in the Project Canvas header.
+        /// </summary>
+        /// <remarks>
+        /// The sidebar panel this also used to drive is gone: the Computer Agent replaced
+        /// "enable access, connect a folder, review a patch" with an agent that reads and edits
+        /// files directly. The canvas-header Accept / Reject / Undo buttons remain for patches
+        /// produced by the council pipeline.
+        /// </remarks>
         private void RefreshCodebaseAccessUi()
         {
             bool enabled = _connectedWorkspace.CodebaseEditAccessEnabled;
-            string lockedMode = string.IsNullOrWhiteSpace(_connectedWorkspace.LockedMode)
-                ? GetEffectiveWorkspaceAgentModeLabel()
-                : _connectedWorkspace.LockedMode;
-
-            if (CodebaseAccessModeText != null)
-                CodebaseAccessModeText.Text = enabled ? lockedMode : "Off";
-
-            if (CodebaseEditAccessButton != null)
-            {
-                CodebaseEditAccessButton.Content = enabled ? "Enabled - locked for this chat" : "1. Enable for this chat";
-                CodebaseEditAccessButton.IsEnabled = !enabled && !_isProcessing;
-                CodebaseEditAccessButton.ToolTip = enabled
-                    ? "Locked for this Workplace chat. Start a new Workplace chat to disable or change mode."
-                    : "Enable codebase access and lock this Workplace chat to the current local/cloud mode.";
-            }
-
-            if (ConnectWorkspaceFolderButton != null)
-                ConnectWorkspaceFolderButton.IsEnabled = enabled && !_isProcessing;
-            if (ConnectWorkspaceFilesButton != null)
-                ConnectWorkspaceFilesButton.IsEnabled = enabled && !_isProcessing;
-            if (ConnectWorkspaceRepositoryButton != null)
-                ConnectWorkspaceRepositoryButton.IsEnabled = enabled && !_isProcessing;
-            if (CloneWorkspaceRepositoryButton != null)
-            {
-                bool canClone = enabled
-                    && !_isProcessing
-                    && !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
-                    && string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath);
-                CloneWorkspaceRepositoryButton.IsEnabled = canClone;
-                CloneWorkspaceRepositoryButton.Visibility = enabled && !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-            }
-
-            if (ConnectGitHubAccountButton != null)
-            {
-                bool githubLinked = _mcpConnectorService?.IsGitHubConnected == true;
-                ConnectGitHubAccountButton.IsEnabled = enabled && !_isProcessing;
-                ConnectGitHubAccountButton.Content = githubLinked ? "GitHub Connected" : "Connect GitHub Account";
-                ConnectGitHubAccountButton.Opacity = githubLinked ? 0.85 : 1.0;
-            }
-
-            if (GitHubAccountStatusBlock != null)
-            {
-                if (_mcpConnectorService?.IsGitHubConnected == true)
-                {
-                    string? label = _mcpConnectorService.GetGitHubAccountLabel();
-                    GitHubAccountStatusBlock.Text = string.IsNullOrWhiteSpace(label)
-                        ? "GitHub: connected — full github_* tools available to cloud council"
-                        : $"GitHub: connected as {label} — full github_* tools available";
-                    GitHubAccountStatusBlock.Foreground = AppTheme.Brush(p => p.Accent);
-                }
-                else
-                {
-                    GitHubAccountStatusBlock.Text = "GitHub: not connected — connect for private clones + issues/PRs/API tools";
-                    GitHubAccountStatusBlock.Foreground = AppTheme.Brush(p => p.TextMuted);
-                }
-            }
-
-            if (CodebaseAutoApplyToggle != null)
-            {
-                CodebaseAutoApplyToggle.IsEnabled = enabled && !_isProcessing;
-                CodebaseAutoApplyToggle.IsChecked = _connectedWorkspace.AutoApplyCodebaseChanges;
-                CodebaseAutoApplyToggle.Opacity = enabled ? 1.0 : 0.45;
-            }
-
-            if (ConnectedWorkspaceStatusBlock != null)
-            {
-                bool hasConnectedCode = !string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath)
-                    || _connectedWorkspace.ConnectedFiles.Count > 0;
-                ConnectedWorkspaceStatusBlock.Text = !enabled
-                    ? "Step 1: enable access. This locks the chat to the current local/cloud mode."
-                    : _hasPendingCodebaseChanges
-                        ? _pendingCodebasePatchApplyBlocked
-                            ? "Patch blocked by pre-apply safety checks. No files changed."
-                            : "Review pending code changes in Project Canvas."
-                        : hasConnectedCode
-                            ? $"Ready in {lockedMode} mode. Ask for a small code change to get a reviewable patch."
-                            : $"Enabled in {lockedMode} mode. Step 2: open a local folder or clone a repo.";
-            }
-
-            string details = "No code connected yet.";
-            if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath))
-            {
-                details = $"Connected: {_connectedWorkspace.DisplayName}\n{_connectedWorkspace.RootPath}\nIndexed {_connectedWorkspace.IndexedFileCount:n0} file(s)";
-                if (_connectedWorkspace.IndexedByteCount > 0)
-                    details += $" / {FormatByteCount(_connectedWorkspace.IndexedByteCount)}";
-            }
-            else if (_connectedWorkspace.ConnectedFiles.Count > 0)
-            {
-                details = $"Connected: {_connectedWorkspace.DisplayName}\n{_connectedWorkspace.ConnectedFiles.Count:n0} selected file(s)\nIndexed {_connectedWorkspace.IndexedFileCount:n0} file(s)";
-                if (_connectedWorkspace.IndexedByteCount > 0)
-                    details += $" / {FormatByteCount(_connectedWorkspace.IndexedByteCount)}";
-            }
-            else if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl))
-            {
-                details = $"Repo URL saved: {_connectedWorkspace.DisplayName}\n{_connectedWorkspace.RepositoryUrl}\nChoose a destination folder to clone before editing.";
-            }
-
-            if (!string.IsNullOrWhiteSpace(_connectedWorkspace.StatusMessage))
-                details += "\n" + _connectedWorkspace.StatusMessage;
-
-            if (ConnectedWorkspaceDetailBlock != null)
-                ConnectedWorkspaceDetailBlock.Text = details;
-
-            if (ConnectedWorkspaceConnectHintBlock != null)
-                ConnectedWorkspaceConnectHintBlock.Text = enabled
-                    ? "Step 2: open local code, pick files, clone a repo, or Connect GitHub for API tools + private clones."
-                    : "Step 2 unlocks after access is enabled.";
-
-            if (CodebaseReviewHintBlock != null)
-            {
-                if (_hasPendingCodebaseChanges)
-                {
-                    CodebaseReviewHintBlock.Text = _pendingCodebasePatchApplyBlocked
-                        ? "Patch blocked: " + GetPendingCodebasePatchBlockInlineSummary()
-                        : "Patch ready: inspect Project Canvas, then accept or reject.";
-                }
-                else if (_lastCodebaseUndo != null)
-                {
-                    CodebaseReviewHintBlock.Text = "Last patch can be undone from Project Canvas or this panel.";
-                }
-                else
-                {
-                    CodebaseReviewHintBlock.Text = _connectedWorkspace.AutoApplyCodebaseChanges
-                        ? "Step 3: ask for a change. Valid patches will be applied automatically."
-                        : "Step 3: ask for a change. Proposed edits appear in Project Canvas for review.";
-                }
-            }
-
-            if (CodebaseAutoApplyHintBlock != null)
-                CodebaseAutoApplyHintBlock.Text = _connectedWorkspace.AutoApplyCodebaseChanges
-                    ? "Auto mode: valid patches are written after parsing, path, and file checks."
-                    : "Manual mode: review patches before writing files.";
-
-            Visibility reviewVisibility = enabled && (!_connectedWorkspace.AutoApplyCodebaseChanges || _hasPendingCodebaseChanges)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+            Visibility reviewVisibility = _hasPendingCodebaseChanges ? Visibility.Visible : Visibility.Collapsed;
             bool canAcceptCodebaseChanges = _hasPendingCodebaseChanges && !_pendingCodebasePatchApplyBlocked;
+
             string acceptToolTip = BuildCodebaseAcceptToolTip(canAcceptCodebaseChanges);
             if (AcceptCodebaseChangesButton != null)
             {
@@ -251,25 +124,6 @@ namespace Malx_AI
             {
                 UndoCodebaseChangesButton.Visibility = undoVisibility;
                 UndoCodebaseChangesButton.IsEnabled = undoVisibility == Visibility.Visible;
-            }
-            if (UndoCodebaseChangesSidebarButton != null)
-            {
-                UndoCodebaseChangesSidebarButton.Visibility = undoVisibility;
-                UndoCodebaseChangesSidebarButton.IsEnabled = undoVisibility == Visibility.Visible;
-            }
-            if (CodebaseReviewActionGrid != null)
-                CodebaseReviewActionGrid.Visibility = reviewVisibility;
-            if (AcceptCodebaseChangesSidebarButton != null)
-            {
-                AcceptCodebaseChangesSidebarButton.IsEnabled = canAcceptCodebaseChanges;
-                AcceptCodebaseChangesSidebarButton.ToolTip = acceptToolTip;
-            }
-            if (RejectCodebaseChangesSidebarButton != null)
-            {
-                RejectCodebaseChangesSidebarButton.IsEnabled = _hasPendingCodebaseChanges;
-                RejectCodebaseChangesSidebarButton.ToolTip = _pendingCodebasePatchApplyBlocked
-                    ? "Reject the blocked patch and ask Builder for a corrected version"
-                    : "Reject proposed codebase changes";
             }
         }
 
@@ -4637,211 +4491,6 @@ namespace Malx_AI
             CouncilPetToggleRequested?.Invoke(!_isCouncilPetEnabled);
         }
 
-        private void CodebaseEditAccessButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_connectedWorkspace.CodebaseEditAccessEnabled)
-            {
-                AppendChat("system", "Codebase Edit Access is already locked for this Workplace chat. Start a new Workplace chat to change or disable it.");
-                return;
-            }
-
-            string lockedMode = GetEffectiveWorkspaceAgentModeLabel();
-
-            _connectedWorkspace.CodebaseEditAccessEnabled = true;
-            _connectedWorkspace.LockedMode = lockedMode;
-            _connectedWorkspace.EnabledAt = DateTime.Now;
-            _connectedWorkspace.StatusMessage = $"Enabled {DateTime.Now:HH:mm}; mode locked to {lockedMode}.";
-            RefreshCodebaseAccessUi();
-            RefreshWorkplaceCloudModeUi();
-            AppendChat("system", $"Codebase Edit Access enabled. This Workplace chat is locked to {lockedMode} mode until you start a new Workplace chat.");
-            SavePersistedSession();
-        }
-
-        private void CodebaseAutoApplyToggle_Changed(object sender, RoutedEventArgs e)
-        {
-            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
-            {
-                if (CodebaseAutoApplyToggle != null)
-                    CodebaseAutoApplyToggle.IsChecked = false;
-                return;
-            }
-
-            bool enabled = CodebaseAutoApplyToggle?.IsChecked == true;
-            if (_connectedWorkspace.AutoApplyCodebaseChanges == enabled)
-                return;
-
-            _connectedWorkspace.AutoApplyCodebaseChanges = enabled;
-            _connectedWorkspace.StatusMessage = enabled
-                ? "Auto mode enabled. Valid patches will be applied after Builder produces them."
-                : "Auto mode disabled. New patches will wait for Accept or Reject.";
-            RefreshCodebaseAccessUi();
-            AppendChat("system", enabled
-                ? "Auto mode enabled for Codebase Edit Access. Valid patches will be written automatically after parsing and path checks."
-                : "Auto mode disabled. Future codebase patches will wait for manual Accept or Reject.");
-            SavePersistedSession();
-        }
-
-        private void ConnectWorkspaceFolderButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
-            {
-                AppendChat("system", "Enable Codebase Edit Access before connecting a folder.");
-                return;
-            }
-
-            var dialog = new OpenFolderDialog
-            {
-                Title = "Connect Codebase Folder"
-            };
-
-            if (dialog.ShowDialog() != true)
-                return;
-
-            try
-            {
-                WorkspaceIndexResult index = _workspaceAccessService.IndexWorkspace(dialog.FolderName);
-                _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.Folder.ToString();
-                _connectedWorkspace.RootPath = index.RootPath;
-                _connectedWorkspace.RepositoryUrl = string.Empty;
-                _connectedWorkspace.ConnectedFiles.Clear();
-                _connectedWorkspace.DisplayName = index.DisplayName;
-                _connectedWorkspace.IndexedFileCount = index.Files.Count;
-                _connectedWorkspace.IndexedByteCount = index.TotalBytes;
-                _connectedWorkspace.IndexedAt = DateTime.Now;
-                WorkspaceGitStatus gitStatus = _workspaceAccessService.GetGitStatus(index.RootPath);
-                string gitSuffix = gitStatus.IsRepository
-                    ? $" Git branch: {(string.IsNullOrWhiteSpace(gitStatus.Branch) ? "detached HEAD" : gitStatus.Branch)}."
-                    : "";
-                _connectedWorkspace.StatusMessage = $"Indexed {index.Files.Count:n0} candidate source files at {_connectedWorkspace.IndexedAt:HH:mm}.{gitSuffix}";
-                RefreshCodebaseAccessUi();
-                AppendChat("system", $"Connected workspace '{index.DisplayName}' with {index.Files.Count:n0} indexed file(s).");
-                SavePersistedSession();
-            }
-            catch (Exception ex)
-            {
-                _connectedWorkspace.StatusMessage = "Folder connection failed: " + ex.Message;
-                RefreshCodebaseAccessUi();
-                AppendChat("error", $"Workspace connection failed: {ex.Message}");
-            }
-        }
-
-        private void ConnectWorkspaceFilesButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
-            {
-                AppendChat("system", "Enable Codebase Edit Access before connecting files.");
-                return;
-            }
-
-            var dialog = new OpenFileDialog
-            {
-                Filter = "Code and text files|*.cs;*.xaml;*.csproj;*.sln;*.slnx;*.py;*.js;*.ts;*.jsx;*.tsx;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.html;*.htm;*.css;*.md;*.txt;*.sql;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh|All files (*.*)|*.*",
-                Multiselect = true,
-                Title = "Connect Codebase Files"
-            };
-
-            if (dialog.ShowDialog() != true)
-                return;
-
-            try
-            {
-                WorkspaceIndexResult index = _workspaceAccessService.IndexFiles(dialog.FileNames);
-                _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.Files.ToString();
-                _connectedWorkspace.RootPath = string.Empty;
-                _connectedWorkspace.RepositoryUrl = string.Empty;
-                _connectedWorkspace.ConnectedFiles = dialog.FileNames.Select(Path.GetFullPath).ToList();
-                _connectedWorkspace.DisplayName = index.DisplayName;
-                _connectedWorkspace.IndexedFileCount = index.Files.Count;
-                _connectedWorkspace.IndexedByteCount = index.TotalBytes;
-                _connectedWorkspace.IndexedAt = DateTime.Now;
-                _connectedWorkspace.StatusMessage = $"Connected {index.Files.Count:n0} file(s) at {_connectedWorkspace.IndexedAt:HH:mm}.";
-                RefreshCodebaseAccessUi();
-                AppendChat("system", $"Connected {index.Files.Count:n0} codebase file(s).");
-                SavePersistedSession();
-            }
-            catch (Exception ex)
-            {
-                _connectedWorkspace.StatusMessage = "File connection failed: " + ex.Message;
-                RefreshCodebaseAccessUi();
-                AppendChat("error", $"Workspace file connection failed: {ex.Message}");
-            }
-        }
-
-        private async void ConnectWorkspaceRepositoryButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
-            {
-                AppendChat("system", "Enable Codebase Edit Access before connecting a repository.");
-                return;
-            }
-
-            string? url = ShowTextInputDialog(
-                "Clone GitHub/Repo",
-                "Paste a GitHub, GitLab, Bitbucket, or git repository URL. Next, choose where to clone it.",
-                _connectedWorkspace.RepositoryUrl);
-            if (string.IsNullOrWhiteSpace(url))
-                return;
-
-            url = url.Trim();
-            if (!_workspaceAccessService.LooksLikeRepositoryUrl(url))
-            {
-                AppendChat("error", "That does not look like a repository URL. Use an https://, git://, or ssh:// URL.");
-                return;
-            }
-
-            var dialog = new OpenFolderDialog
-            {
-                Title = "Choose Where To Clone The Repository"
-            };
-
-            if (dialog.ShowDialog() != true)
-                return;
-
-            _connectedWorkspace.ConnectionKind = WorkspaceConnectionKind.GitRepository.ToString();
-            _connectedWorkspace.RepositoryUrl = url;
-            _connectedWorkspace.RootPath = string.Empty;
-            _connectedWorkspace.ConnectedFiles.Clear();
-            _connectedWorkspace.DisplayName = BuildRepositoryDisplayName(url);
-            _connectedWorkspace.IndexedFileCount = 0;
-            _connectedWorkspace.IndexedByteCount = 0;
-            _connectedWorkspace.IndexedAt = DateTime.Now;
-            await CloneConnectedRepositoryToFolderAsync(url, dialog.FolderName, _connectedWorkspace.DisplayName);
-        }
-
-        private async void CloneWorkspaceRepositoryButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (!_connectedWorkspace.CodebaseEditAccessEnabled)
-            {
-                AppendChat("system", "Enable Codebase Edit Access before cloning a repository.");
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl))
-            {
-                AppendChat("system", "Connect a GitHub/repo URL before cloning.");
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath))
-            {
-                AppendChat("system", "This repository already has a local folder connected.");
-                return;
-            }
-
-            var dialog = new OpenFolderDialog
-            {
-                Title = "Choose Where To Clone The Repository"
-            };
-
-            if (dialog.ShowDialog() != true)
-                return;
-
-            await CloneConnectedRepositoryToFolderAsync(
-                _connectedWorkspace.RepositoryUrl,
-                dialog.FolderName,
-                _connectedWorkspace.DisplayName);
-        }
-
         internal void SetMcpConnectorService(McpConnectorService? service)
         {
             if (_mcpConnectorService != null)
@@ -4855,78 +4504,6 @@ namespace Malx_AI
         private void OnMcpConnectorServiceChanged()
         {
             Dispatcher.InvokeAsync(RefreshCodebaseAccessUi, DispatcherPriority.Background);
-        }
-
-        private async void ConnectGitHubAccountButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_mcpConnectorService == null)
-            {
-                AppendChat("system", "GitHub connectors are unavailable. Open Settings → Cloud Connectors after restarting Axiom.");
-                return;
-            }
-
-            if (_mcpConnectorService.IsGitHubConnected)
-            {
-                MessageBoxResult result = MessageBox.Show(
-                    "GitHub is already connected. Disconnect?",
-                    "GitHub",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-                if (result == MessageBoxResult.Yes)
-                {
-                    _mcpConnectorService.DisconnectGitHub();
-                    AppendChat("system", "GitHub disconnected.");
-                    RefreshCodebaseAccessUi();
-                }
-                return;
-            }
-
-            if (ConnectGitHubAccountButton != null)
-                ConnectGitHubAccountButton.IsEnabled = false;
-            AppendChat("system", "Opening GitHub device login in your browser…");
-            var progressUi = new Progress<string>(msg =>
-            {
-                Dispatcher.InvokeAsync(() =>
-                {
-                    if (msg.StartsWith("DEVICE_CODE|", StringComparison.Ordinal))
-                    {
-                        string[] parts = msg.Split('|');
-                        string userCode = parts.Length > 1 ? parts[1] : "";
-                        string verifyUri = parts.Length > 2 ? parts[2] : "https://github.com/login/device";
-                        if (!string.IsNullOrWhiteSpace(userCode))
-                        {
-                            try { Clipboard.SetText(userCode); } catch { /* ignore */ }
-                            LogActivity("GitHub device code: " + userCode);
-                            MessageBox.Show(
-                                "Enter this code on the GitHub page:\n\n" +
-                                "        " + userCode + "\n\n" +
-                                "(Copied to clipboard — Ctrl+V on GitHub.)\n\n" +
-                                "1. Paste/type the code\n2. Authorize Axiom\n3. Return here\n\n" +
-                                "Page: " + verifyUri,
-                                "GitHub device code",
-                                MessageBoxButton.OK,
-                                MessageBoxImage.Information);
-                        }
-                        return;
-                    }
-                    LogActivity("GitHub: " + msg);
-                }, DispatcherPriority.Background);
-            });
-
-            try
-            {
-                string account = await _mcpConnectorService.ConnectGitHubAsync(CancellationToken.None, progressUi)
-                    .ConfigureAwait(true);
-                AppendChat("system", $"GitHub connected as {account}. Cloud council can use full github_* tools; private clones use your token automatically.");
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message, "Connect GitHub", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            finally
-            {
-                RefreshCodebaseAccessUi();
-            }
         }
 
         private async Task CloneConnectedRepositoryToFolderAsync(string repositoryUrl, string parentFolder, string displayName)
@@ -4999,22 +4576,6 @@ namespace Malx_AI
 
         private void SetCodebaseConnectionButtonsEnabled(bool enabled)
         {
-            if (CodebaseEditAccessButton != null)
-                CodebaseEditAccessButton.IsEnabled = enabled && !_connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
-            if (ConnectWorkspaceFolderButton != null)
-                ConnectWorkspaceFolderButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
-            if (ConnectWorkspaceFilesButton != null)
-                ConnectWorkspaceFilesButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
-            if (ConnectWorkspaceRepositoryButton != null)
-                ConnectWorkspaceRepositoryButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
-            if (CloneWorkspaceRepositoryButton != null)
-                CloneWorkspaceRepositoryButton.IsEnabled = enabled
-                    && _connectedWorkspace.CodebaseEditAccessEnabled
-                    && !_isProcessing
-                    && !string.IsNullOrWhiteSpace(_connectedWorkspace.RepositoryUrl)
-                    && string.IsNullOrWhiteSpace(_connectedWorkspace.RootPath);
-            if (ConnectGitHubAccountButton != null)
-                ConnectGitHubAccountButton.IsEnabled = enabled && _connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
         }
 
         private static string BuildRepositoryDisplayName(string url)

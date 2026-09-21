@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text;
 
 namespace Malx_AI.Agent
@@ -40,7 +40,15 @@ namespace Malx_AI.Agent
             _ => 24
         };
 
-        public static string Build(AgentTier tier, AgentScope scope, AgentApprovalMode mode)
+        /// <summary>
+        /// Builds the operating instructions.
+        /// </summary>
+        /// <param name="nativeToolCalling">
+        /// True when the transport carries real function definitions. The prompt then must NOT
+        /// describe a text protocol: telling a model to "reply with JSON" while it also holds real
+        /// tool definitions produces a model that does neither well.
+        /// </param>
+        public static string Build(AgentTier tier, AgentScope scope, AgentApprovalMode mode, bool nativeToolCalling = false)
         {
             var builder = new StringBuilder();
             builder.AppendLine("[AXIOM COMPUTER AGENT]");
@@ -50,7 +58,9 @@ namespace Malx_AI.Agent
                 : "Approval mode: Manual. The user approves each command and file change before it runs; a refusal is a normal answer, not an error.");
             builder.AppendLine();
 
-            if (tier == AgentTier.Full)
+            if (nativeToolCalling)
+                AppendNativeToolProtocol(builder);
+            else if (tier == AgentTier.Full)
                 AppendFullProtocol(builder);
             else
                 AppendFlatProtocol(builder, tier);
@@ -64,6 +74,16 @@ namespace Malx_AI.Agent
             builder.AppendLine("- Commands run through PowerShell, non-interactive: anything that waits for typed input will fail, so pass flags instead.");
             builder.Append("[/AXIOM COMPUTER AGENT]");
             return builder.ToString();
+        }
+
+        private static void AppendNativeToolProtocol(StringBuilder builder)
+        {
+            builder.AppendLine("You have real tools attached to this conversation. Call them; do not describe calling them.");
+            builder.AppendLine();
+            builder.AppendLine("- run_command runs any shell command on this machine, so \"I cannot access your computer\" is never true here. Launching an app is run_command (for example: Start-Process notepad).");
+            builder.AppendLine("- read_file, write_file, edit_file, list_directory, find_files and search_text work on the user's real files.");
+            builder.AppendLine();
+            builder.AppendLine("Call one tool at a time and wait for its result before the next. When the task is done, reply in plain words with what you did and what you found; that reply ends the run.");
         }
 
         private static void AppendFullProtocol(StringBuilder builder)

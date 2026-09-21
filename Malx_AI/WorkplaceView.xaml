@@ -209,38 +209,6 @@
 
                     <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
 
-                    <!-- Connected Workspace (patch review) -->
-                    <TextBlock Text="Codebase Patch Review" FontSize="12" FontWeight="SemiBold"/>
-                    <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
-                        <StackPanel>
-                            <DockPanel>
-                                <TextBlock Text="Codebase Edit Access" FontSize="11" FontWeight="SemiBold"/>
-                                <Border x:Name="CodebaseAccessModeBadge" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="6,1" Margin="6,0,0,0" DockPanel.Dock="Right">
-                                    <TextBlock x:Name="CodebaseAccessModeText" Text="Off" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                </Border>
-                            </DockPanel>
-                            <TextBlock x:Name="ConnectedWorkspaceStatusBlock" Text="Step 1: enable access. This locks the chat to the current local/cloud mode." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
-                            <Button x:Name="CodebaseEditAccessButton" Content="1. Enable for this chat" Click="CodebaseEditAccessButton_Click" Height="32" Style="{StaticResource PremiumButtonStyle}"/>
-                            <TextBlock x:Name="ConnectedWorkspaceConnectHintBlock" Text="Step 2: connect code from your computer or clone a repo." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,10,0,6" TextWrapping="Wrap"/>
-                            <Button x:Name="ConnectWorkspaceFolderButton" Content="Open Local Folder" Click="ConnectWorkspaceFolderButton_Click" Height="30" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
-                            <Button x:Name="ConnectWorkspaceFilesButton" Content="Pick Individual Files" Click="ConnectWorkspaceFilesButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
-                            <Button x:Name="ConnectWorkspaceRepositoryButton" Content="Clone GitHub/Repo" Click="ConnectWorkspaceRepositoryButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
-                            <Button x:Name="CloneWorkspaceRepositoryButton" Content="Clone Repo to Folder" Click="CloneWorkspaceRepositoryButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
-                            <Button x:Name="ConnectGitHubAccountButton" Content="Connect GitHub Account" Click="ConnectGitHubAccountButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"
-                                    ToolTip="Sign in with GitHub so council can use full github_* tools and private clones work without extra prompts"/>
-                            <TextBlock x:Name="GitHubAccountStatusBlock" Text="GitHub: not connected" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="ConnectedWorkspaceDetailBlock" Text="No code connected yet." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="CodebaseReviewHintBlock" Text="Step 3: ask for a change. Proposed edits appear in Project Canvas for review." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,10,0,6" TextWrapping="Wrap"/>
-                            <CheckBox x:Name="CodebaseAutoApplyToggle" Content="Auto apply valid patches" Margin="0,0,0,4" Checked="CodebaseAutoApplyToggle_Changed" Unchecked="CodebaseAutoApplyToggle_Changed" IsEnabled="False" ToolTip="When enabled, valid codebase patches are applied automatically after Builder produces them."/>
-                            <TextBlock x:Name="CodebaseAutoApplyHintBlock" Text="Manual mode: review patches before writing files." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8" TextWrapping="Wrap"/>
-                            <Button x:Name="UndoCodebaseChangesSidebarButton" Content="Undo Last Apply" Click="UndoCodebaseChanges_Click" Height="28" Margin="0,0,0,8" Style="{StaticResource SubtleButtonStyle}" Visibility="Collapsed" IsEnabled="False"/>
-                            <UniformGrid x:Name="CodebaseReviewActionGrid" Columns="2" Margin="0,0,0,0">
-                                <Button x:Name="AcceptCodebaseChangesSidebarButton" Content="Accept Changes" Click="AcceptCodebaseChanges_Click" Height="28" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
-                                <Button x:Name="RejectCodebaseChangesSidebarButton" Content="Reject" Click="RejectCodebaseChanges_Click" Height="28" Margin="4,0,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
-                            </UniformGrid>
-                        </StackPanel>
-                    </Border>
-
                     <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
 
                     <!-- Project Knowledge Base -->
