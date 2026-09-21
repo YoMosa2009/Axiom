@@ -445,11 +445,18 @@
                         </Border>
 
                         <!-- Quiet running-step line. Present only while a step is in flight. -->
-                        <StackPanel x:Name="AgentActivityLine" Orientation="Horizontal" Visibility="Collapsed" Margin="8,0,8,4" Opacity="0.55">
-                            <TextBlock Text="&#9679;" FontSize="8" VerticalAlignment="Center" Foreground="{DynamicResource PrimaryAccentBrush}"/>
-                            <TextBlock x:Name="AgentActivityText" Text="" FontSize="10" Margin="5,0,0,0" VerticalAlignment="Center"
-                                       Foreground="{DynamicResource DarkSecondaryBrush}" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
-                        </StackPanel>
+                        <Border x:Name="AgentActivityLine" Visibility="Collapsed" HorizontalAlignment="Left"
+                                Margin="8,0,8,5" Padding="8,3" CornerRadius="9"
+                                Background="{DynamicResource SurfaceRaisedBrush}"
+                                BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource PrimaryAccentBrush}"/>
+                                <TextBlock x:Name="AgentActivityText" Text="" FontSize="10.5" FontWeight="Medium"
+                                           Margin="7,0,0,0" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource NotebookTextBrush}"
+                                           TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                            </StackPanel>
+                        </Border>
 
                         <Border x:Name="RefinementModeBanner" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
                             <TextBlock Text="Refinement Mode" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryAccentBrush}" TextTrimming="CharacterEllipsis"/>

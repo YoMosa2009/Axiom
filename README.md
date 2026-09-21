@@ -10,7 +10,7 @@ unless you deliberately reach out to a cloud model or a connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.9.4-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.9.5-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 [Download](../../releases) · [Getting started](#getting-started) · [Feedback](#feedback)
@@ -71,9 +71,9 @@ A multi-agent workspace for work that takes more than one pass.
 executes, and verifies its own result. Switch between them from the Workplace header
 whenever a run isn't active.
 
-Also in Workplace: persistent sessions, study and document preprocessing, connected
-codebase access with diff-aware review, task history, per-role context controls, live
-activity, completion notifications, and the Project Canvas the Builder writes into.
+Also in Workplace: persistent sessions, study and document preprocessing, task history,
+per-role context controls, live activity, completion notifications, and the Project Canvas
+the Builder writes into.
 
 ### Files in Project Canvas
 

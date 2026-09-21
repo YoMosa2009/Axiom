@@ -1,5 +1,40 @@
 ﻿# Changelog
 
+## [V1.9.5] - 2026-09-21
+
+Agent Access works. It did not in V1.9.3 or V1.9.4.
+
+### Fixed
+- **Agent Access could not reach the machine at all.** In cloud mode the model answered "I
+  can't open Notepad - I'm running in a cloud environment without access to your local
+  machine" and never attempted a tool call. The agent had been borrowing the Workplace council
+  executor as its model transport, and that path rewrites the system prompt with council role
+  identity and advertises a different tool set (web_search, run_python, calculate) as the
+  provider's native tools. The agent's own instructions arrived as buried prose describing
+  tools the transport never offered, so the model used what it could see - none of which
+  touches the machine - and correctly reported that it had no access
+- The agent now owns its transport. Cloud and Hybrid Local send the agent's tools as real
+  function definitions and read structured tool calls back; local GGUF models keep the text
+  protocol, since they have no tool-calling channel
+- **A dropped turn ended a run with a false "Done."** A completion with neither a tool call nor
+  any text was treated as the final answer, so a run could finish instantly having done
+  nothing - indistinguishable from the agent refusing to work
+- **A dropped connection abandoned a run mid-way**, leaving the machine half-changed with no
+  summary. Both failures are now retried at the transport with 1s/2s backoff, three attempts
+  per turn, with the session tolerating a turn that still fails and reporting honestly when
+  several do
+
+Measured against a live cloud model on a two-step goal (write a file, read it back, report a
+line), six runs back to back: 6 of 6 succeeded. The same check failed 1 in 2 beforehand.
+
+### Changed
+- **Codebase Edit Access is gone.** Agent Access replaces it: instead of enabling access,
+  connecting a folder, and reviewing a patch, the agent reads and edits files directly. The
+  sidebar panel and its handlers are removed; the Project Canvas header keeps Accept / Reject /
+  Undo for patches the council pipeline still produces
+- The running-step indicator above the composer is now a small bordered chip instead of text at
+  55% opacity, which was effectively invisible against the composer
+
 ## [V1.9.4] - 2026-09-20
 
 Project Canvas can present files the model writes.
