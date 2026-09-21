@@ -42,8 +42,38 @@ namespace Malx_AI.Agent
     /// <summary>One tool invocation requested by the model.</summary>
     public sealed record AgentToolCall(string Tool, IReadOnlyDictionary<string, string> Arguments)
     {
-        public string Arg(string key) =>
-            Arguments.TryGetValue(key, out string? value) ? value ?? string.Empty : string.Empty;
+        public string Arg(string key)
+        {
+            if (Arguments.TryGetValue(key, out string? exact) && !string.IsNullOrWhiteSpace(exact))
+                return exact;
+
+            // Common aliases emitted across various model sizes and providers
+            string[]? aliases = key.ToLowerInvariant() switch
+            {
+                "path" => ["file", "filepath", "file_path", "filename", "file_name", "target", "directory", "dir"],
+                "command" => ["cmd", "run", "script", "shell_command"],
+                "pattern" => ["query", "search", "text", "term", "filter"],
+                "old_string" => ["old_text", "oldtext", "old", "search", "target"],
+                "new_string" => ["new_text", "newtext", "new", "replace", "replacement"],
+                "content" => ["text", "body", "code", "file_content"],
+                "start_line" => ["startline", "start", "line_start"],
+                "line_count" => ["linecount", "lines", "count"],
+                "file_pattern" => ["filepattern", "glob", "filter"],
+                "summary" => ["result", "message", "final_text"],
+                _ => null
+            };
+
+            if (aliases != null)
+            {
+                foreach (string alias in aliases)
+                {
+                    if (Arguments.TryGetValue(alias, out string? value) && !string.IsNullOrWhiteSpace(value))
+                        return value;
+                }
+            }
+
+            return Arguments.TryGetValue(key, out string? fallbackVal) ? (fallbackVal ?? string.Empty) : string.Empty;
+        }
 
         public string Arg(string key, string fallback)
         {

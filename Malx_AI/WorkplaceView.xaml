@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="Malx_AI.WorkplaceView"
+<UserControl x:Class="Malx_AI.WorkplaceView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Malx_AI"
@@ -468,7 +468,7 @@
                                  then scrolls. -->
                             <avalonedit:TextEditor x:Name="QueryInput"
                                      Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}"
-                                     FontFamily="Segoe UI" FontSize="13" KeyDown="QueryInput_KeyDown"
+                                     FontFamily="Segoe UI" FontSize="13" KeyDown="QueryInput_KeyDown" PreviewKeyDown="QueryInput_PreviewKeyDown"
                                      WordWrap="True" ShowLineNumbers="False"
                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
                                      Margin="8,6,8,4" MinHeight="40" MaxHeight="168"/>
@@ -534,6 +534,9 @@
                                 <Button x:Name="CouncilPetToggleButton" Content="Bit" Click="CouncilPetToggleButton_Click" Width="42" Height="30" Padding="8,2"
                                         Style="{StaticResource SubtleButtonStyle}" Margin="0,2,6,2" ToolTip="Show the draggable Council Bit status companion"/>
                                 <local:EffortSelector x:Name="WorkplaceEffortSelector" Height="30" Margin="0,2,6,2" VerticalAlignment="Center"/>
+                                <Button x:Name="WorkplaceAttachFileButton" Width="30" Height="30" Margin="0,2,6,2" Click="WorkplaceAttachFileButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0" AutomationProperties.Name="Attach files" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
+                                    <Path Width="13" Height="13" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
+                                </Button>
 
                                 <!-- Zero-size while closed, so they sit in the toggle row without affecting its layout. -->
                                 <Popup x:Name="WorkplaceSkillsPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceSkillsButton}"

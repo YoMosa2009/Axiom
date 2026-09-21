@@ -44,15 +44,18 @@ namespace Malx_AI.Agent
         private readonly Func<string, string, CancellationToken, Task<string>> _complete;
         private readonly string _systemPrompt;
         private readonly int _observationBudget;
+        private readonly IReadOnlyList<(string Role, string Content)>? _priorChatHistory;
 
         public TextProtocolAgentModel(
             Func<string, string, CancellationToken, Task<string>> complete,
             string systemPrompt,
-            int observationBudget)
+            int observationBudget,
+            IReadOnlyList<(string Role, string Content)>? priorChatHistory = null)
         {
             _complete = complete ?? throw new ArgumentNullException(nameof(complete));
             _systemPrompt = systemPrompt;
             _observationBudget = observationBudget;
+            _priorChatHistory = priorChatHistory;
         }
 
         public string? Unavailable => null;
@@ -72,6 +75,22 @@ namespace Malx_AI.Agent
         private string RenderTranscript(string goal, IReadOnlyList<AgentExchange> history)
         {
             var builder = new StringBuilder();
+
+            if (_priorChatHistory != null && _priorChatHistory.Count > 0)
+            {
+                var recentTurns = _priorChatHistory.Take(Math.Max(0, _priorChatHistory.Count - 1)).TakeLast(4);
+                builder.AppendLine("[RECENT CONVERSATION CONTEXT]");
+                foreach (var (role, content) in recentTurns)
+                {
+                    if (string.IsNullOrWhiteSpace(content))
+                        continue;
+                    string label = string.Equals(role, "user", StringComparison.OrdinalIgnoreCase) ? "User" : "Assistant";
+                    string preview = content.Length > 250 ? content[..250] + "…" : content;
+                    builder.AppendLine($"{label}: {preview}");
+                }
+                builder.AppendLine();
+            }
+
             builder.Append("Task: ").AppendLine(goal);
 
             foreach (AgentExchange exchange in history)

@@ -49,22 +49,29 @@ namespace Malx_AI.Agent
             return TryParseFlat(text, out call, out error);
         }
 
+        private static readonly Regex ToolCallTagRegex =
+            new(@"<tool_call>\s*(?<body>\{[\s\S]*?\})\s*</tool_call>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         private static bool TryParseJson(string text, out AgentToolCall? call, out string? error)
         {
             call = null;
             error = null;
 
+            Match tagMatch = ToolCallTagRegex.Match(text);
             Match fenced = FencedBlockRegex.Match(text);
+            string candidateText = tagMatch.Success
+                ? tagMatch.Groups["body"].Value
+                : (fenced.Success ? fenced.Groups["body"].Value : text);
             // Brace matching rather than a regex: "arguments" is itself an object, and any
             // non-greedy pattern stops at its closing brace and hands back invalid JSON.
-            string? body = TryExtractJsonObject(fenced.Success ? fenced.Groups["body"].Value : text);
+            string? body = TryExtractJsonObject(candidateText);
 
             if (body == null)
             {
                 // Text that was clearly reaching for a tool call but does not parse is a failure the
                 // model can fix, not a final answer — returning it verbatim would print raw JSON at
                 // the user.
-                if (fenced.Success || BareObjectRegex.IsMatch(text))
+                if (tagMatch.Success || fenced.Success || BareObjectRegex.IsMatch(text))
                     error = "That tool call was not valid JSON. Send one complete JSON object with balanced braces.";
                 return false;
             }
@@ -81,12 +88,46 @@ namespace Malx_AI.Agent
                     return false;
 
                 var arguments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                if (root.TryGetProperty("arguments", out JsonElement args) && args.ValueKind == JsonValueKind.Object)
-                    CopyProperties(args, arguments);
-                else if (root.TryGetProperty("args", out JsonElement shortArgs) && shortArgs.ValueKind == JsonValueKind.Object)
-                    CopyProperties(shortArgs, arguments);
+                if (root.TryGetProperty("arguments", out JsonElement args))
+                {
+                    if (args.ValueKind == JsonValueKind.Object)
+                    {
+                        CopyProperties(args, arguments);
+                    }
+                    else if (args.ValueKind == JsonValueKind.String)
+                    {
+                        string str = args.GetString() ?? string.Empty;
+                        try
+                        {
+                            using JsonDocument parsedArgs = JsonDocument.Parse(str);
+                            if (parsedArgs.RootElement.ValueKind == JsonValueKind.Object)
+                                CopyProperties(parsedArgs.RootElement, arguments);
+                        }
+                        catch { /* fall through to raw string */ }
+                    }
+                }
+                else if (root.TryGetProperty("args", out JsonElement shortArgs))
+                {
+                    if (shortArgs.ValueKind == JsonValueKind.Object)
+                    {
+                        CopyProperties(shortArgs, arguments);
+                    }
+                    else if (shortArgs.ValueKind == JsonValueKind.String)
+                    {
+                        string str = shortArgs.GetString() ?? string.Empty;
+                        try
+                        {
+                            using JsonDocument parsedArgs = JsonDocument.Parse(str);
+                            if (parsedArgs.RootElement.ValueKind == JsonValueKind.Object)
+                                CopyProperties(parsedArgs.RootElement, arguments);
+                        }
+                        catch { /* fall through to raw string */ }
+                    }
+                }
                 else
+                {
                     CopyProperties(root, arguments, skip: ["tool", "name"]);
+                }
 
                 if (!AgentToolNames.IsKnown(tool))
                 {

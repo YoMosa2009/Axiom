@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -4002,6 +4002,15 @@ namespace Malx_AI
             if (HandleMcpMentionPreviewKeyDown(e))
                 return;
 
+            if (e.Key == Key.V && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                if (TryHandleNormalChatClipboardPaste())
+                {
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             if (e.Key == Key.Enter || e.Key == Key.Return)
             {
                 if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
@@ -4017,6 +4026,56 @@ namespace Malx_AI
                     e.Handled = true;
                 }
             }
+        }
+
+        private bool TryHandleNormalChatClipboardPaste()
+        {
+            try
+            {
+                if (Clipboard.ContainsImage())
+                {
+                    BitmapSource? image = Clipboard.GetImage();
+                    if (image != null)
+                    {
+                        string tempDir = Path.Combine(AppDataPaths.ChatHistory, "PastedAttachments");
+                        Directory.CreateDirectory(tempDir);
+                        string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..4]}.png";
+                        string filePath = Path.Combine(tempDir, fileName);
+
+                        using (var fileStream = new FileStream(filePath, FileMode.Create))
+                        {
+                            var encoder = new PngBitmapEncoder();
+                            encoder.Frames.Add(BitmapFrame.Create(image));
+                            encoder.Save(fileStream);
+                        }
+
+                        _ = ImportChatAttachmentFilesAsync([filePath]);
+                        ShowTransientStatus($"Pasted image attached: {fileName}");
+                        return true;
+                    }
+                }
+
+                if (Clipboard.ContainsFileDropList())
+                {
+                    var fileDropList = Clipboard.GetFileDropList();
+                    if (fileDropList != null && fileDropList.Count > 0)
+                    {
+                        var files = fileDropList.Cast<string>().Where(File.Exists).ToArray();
+                        if (files.Length > 0)
+                        {
+                            _ = ImportChatAttachmentFilesAsync(files);
+                            ShowTransientStatus($"Pasted {files.Length} file(s) attached.");
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowTransientStatus($"Clipboard paste failed: {ex.Message}");
+            }
+
+            return false;
         }
 
         private void InputBox_TextChanged(object sender, TextChangedEventArgs e)

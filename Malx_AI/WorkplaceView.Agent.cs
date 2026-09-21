@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -19,6 +19,7 @@ namespace Malx_AI
         private string _agentScopeFolder = string.Empty;
         private AgentApprovalMode _agentApprovalMode = AgentApprovalMode.Manual;
         private TaskCompletionSource<AgentApprovalOutcome>? _agentPendingApproval;
+        private AgentActiveTaskState? _activeAgentTaskState;
 
         private const string AgentEnabledKey = "workplace_agent_enabled";
         private const string AgentScopeAllKey = "workplace_agent_scope_all";
@@ -324,7 +325,51 @@ namespace Malx_AI
             _cancellationTokenSource = new CancellationTokenSource();
             CancellationToken token = _cancellationTokenSource.Token;
 
-            IAgentModel model = BuildAgentModel(tier, systemPrompt);
+            // Context preservation: detect if we are continuing an ongoing or step-limited task
+            bool isContinuation = false;
+            string effectiveGoal = userQuery;
+            List<AgentExchange>? initialHistory = null;
+            List<string>? initialAllowList = null;
+
+            if (_activeAgentTaskState != null)
+            {
+                initialAllowList = _activeAgentTaskState.SessionAllowList;
+                if (_activeAgentTaskState.StoppedOnStepLimit || AgentContextManager.IsContinuationPhrase(userQuery))
+                {
+                    isContinuation = true;
+                    effectiveGoal = AgentContextManager.BuildContinuationGoal(
+                        _activeAgentTaskState.OriginalGoal,
+                        userQuery,
+                        _activeAgentTaskState.TouchedFiles,
+                        _activeAgentTaskState.LastStatusMessage);
+                    initialHistory = _activeAgentTaskState.AccumulatedExchanges;
+                }
+            }
+
+            if (!isContinuation)
+            {
+                _activeAgentTaskState = new AgentActiveTaskState
+                {
+                    OriginalGoal = userQuery,
+                    LastTurnGoal = userQuery
+                };
+            }
+            else if (_activeAgentTaskState != null)
+            {
+                _activeAgentTaskState.LastTurnGoal = userQuery;
+            }
+
+            // If documents or images are attached, inform the agent of their paths
+            if (_documents.Count > 0)
+            {
+                string attachmentManifest = BuildWorkplaceAttachmentIndexBlock(userQuery);
+                if (!string.IsNullOrWhiteSpace(attachmentManifest))
+                {
+                    effectiveGoal = $"{effectiveGoal}\n\n[ATTACHED FILES IN WORKSPACE]\n{attachmentManifest}";
+                }
+            }
+
+            IAgentModel model = BuildAgentModel(tier, systemPrompt, _chatHistory);
             if (!string.IsNullOrWhiteSpace(model.Unavailable))
             {
                 AppendChat("error", model.Unavailable!);
@@ -332,20 +377,23 @@ namespace Malx_AI
                 return;
             }
 
-            LogActivity($"Computer Agent: {tier} tier, {_agentApprovalMode} approval, scope {scope.Describe()}.");
+            int maxSteps = AgentPromptBuilder.MaxStepsFor(tier, EffortPolicy.Current, capability, _isCloudModeEnabled);
+            LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, scope {scope.Describe()}.");
             RelayStatusBlock.Text = "Relay: Agent running";
 
-            var session = new AgentSession(scope, AgentPromptBuilder.MaxStepsFor(tier));
+            var session = new AgentSession(scope, maxSteps);
             AgentRunResult result;
             try
             {
                 result = await session.RunAsync(
-                    userQuery,
+                    effectiveGoal,
                     _agentApprovalMode,
                     model,
                     RequestAgentApprovalAsync,
                     ReportAgentActivity,
-                    token);
+                    token,
+                    initialHistory,
+                    initialAllowList);
             }
             catch (Exception ex)
             {
@@ -353,6 +401,28 @@ namespace Malx_AI
                 AppendChat("error", $"The agent stopped: {ex.Message}");
                 FinishAgentRunUi();
                 return;
+            }
+
+            if (_activeAgentTaskState != null)
+            {
+                _activeAgentTaskState.StoppedOnStepLimit = result.StoppedOnStepLimit;
+                _activeAgentTaskState.LastStatusMessage = result.FinalMessage;
+                if (result.Exchanges != null && result.Exchanges.Count > 0)
+                {
+                    _activeAgentTaskState.AccumulatedExchanges.Clear();
+                    _activeAgentTaskState.AccumulatedExchanges.AddRange(result.Exchanges);
+                    foreach (string file in AgentContextManager.ExtractTouchedFiles(result.Exchanges))
+                        _activeAgentTaskState.TouchedFiles.Add(file);
+                }
+                foreach (string allowed in session.SessionAllowList)
+                {
+                    if (!_activeAgentTaskState.SessionAllowList.Contains(allowed))
+                        _activeAgentTaskState.SessionAllowList.Add(allowed);
+                }
+                if (!result.StoppedOnStepLimit && !result.Cancelled)
+                {
+                    _activeAgentTaskState.StoppedOnStepLimit = false;
+                }
             }
 
             foreach (AgentStep step in result.Steps)
@@ -365,7 +435,7 @@ namespace Malx_AI
 
             _ = BackendLogService.LogEventAsync(
                 "ComputerAgent",
-                $"tier:{tier} mode:{_agentApprovalMode} steps:{result.Steps.Count} "
+                $"tier:{tier} effort:{EffortPolicy.Current} mode:{_agentApprovalMode} steps:{result.Steps.Count}/{maxSteps} "
                 + $"limit:{result.StoppedOnStepLimit} cancelled:{result.Cancelled}");
 
             AppendChat("assistant", result.FinalMessage);
@@ -382,7 +452,7 @@ namespace Malx_AI
         /// path rewrites the system prompt with council role identity and advertises web_search /
         /// run_python instead, so the model concluded it had no machine access and refused.
         /// </remarks>
-        private IAgentModel BuildAgentModel(AgentTier tier, string systemPrompt)
+        private IAgentModel BuildAgentModel(AgentTier tier, string systemPrompt, IReadOnlyList<(string Role, string Content)>? chatHistory = null)
         {
             if (_isCloudModeEnabled)
             {
@@ -391,7 +461,8 @@ namespace Malx_AI
                     _isHybridLocalCouncilSelected
                         ? (_openRouterChatService.CustomEndpointConfiguredModelId ?? GetEffectiveCouncilModelId())
                         : GetEffectiveCouncilModelId(),
-                    systemPrompt);
+                    systemPrompt,
+                    chatHistory);
             }
 
             // A local GGUF has no tool-calling channel, so it is asked for the flat text protocol
@@ -419,7 +490,8 @@ namespace Malx_AI
                     return response.Answer ?? string.Empty;
                 },
                 systemPrompt,
-                ObservationBudgetFor(tier));
+                ObservationBudgetFor(tier),
+                chatHistory);
         }
 
         private static int ObservationBudgetFor(AgentTier tier) => tier switch

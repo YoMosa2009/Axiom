@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,7 +24,8 @@ namespace Malx_AI.Agent
         string FinalMessage,
         IReadOnlyList<AgentStep> Steps,
         bool StoppedOnStepLimit,
-        bool Cancelled);
+        bool Cancelled,
+        IReadOnlyList<AgentExchange>? Exchanges = null);
 
     /// <summary>
     /// The agent loop: ask the model, run what it asks for, feed the result back, repeat.
@@ -58,16 +59,29 @@ namespace Malx_AI.Agent
             IAgentModel model,
             AgentApprovalRequest requestApproval,
             AgentActivityReporter reportActivity,
-            CancellationToken token)
+            CancellationToken token,
+            IReadOnlyList<AgentExchange>? initialHistory = null,
+            IEnumerable<string>? initialAllowList = null)
         {
             ArgumentNullException.ThrowIfNull(model);
             ArgumentNullException.ThrowIfNull(requestApproval);
 
+            if (initialAllowList != null)
+            {
+                foreach (string item in initialAllowList)
+                {
+                    if (!string.IsNullOrWhiteSpace(item) && !_sessionAllowList.Contains(item))
+                        _sessionAllowList.Add(item);
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(model.Unavailable))
-                return new AgentRunResult(model.Unavailable!, [], false, false);
+                return new AgentRunResult(model.Unavailable!, [], false, false, []);
 
             var steps = new List<AgentStep>();
-            var history = new List<AgentExchange>();
+            var history = initialHistory != null && initialHistory.Count > 0
+                ? new List<AgentExchange>(AgentContextManager.CompactExchanges(initialHistory))
+                : new List<AgentExchange>();
             int consecutiveProtocolErrors = 0;
 
             try
@@ -94,7 +108,8 @@ namespace Malx_AI.Agent
                                 + "Anything already done is listed above; try again when the provider settles.",
                                 steps,
                                 false,
-                                false);
+                                false,
+                                history);
                         }
 
                         history.Add(new AgentExchange(
@@ -120,7 +135,8 @@ namespace Malx_AI.Agent
                                 + "or switch model in Settings if it keeps happening.",
                                 steps,
                                 false,
-                                false);
+                                false,
+                                history);
                         }
 
                         history.Add(new AgentExchange(
@@ -138,7 +154,8 @@ namespace Malx_AI.Agent
                             string.IsNullOrWhiteSpace(answer) ? "Done." : answer.Trim(),
                             steps,
                             false,
-                            false);
+                            false,
+                            history);
                     }
 
                     AgentToolCall call = reply.Call;
@@ -150,7 +167,8 @@ namespace Malx_AI.Agent
                             string.IsNullOrWhiteSpace(summary) ? "Done." : summary,
                             steps,
                             false,
-                            false);
+                            false,
+                            history);
                     }
 
                     AgentPermissionDecision decision = AgentPermissionPolicy.Evaluate(call, mode, _sessionAllowList);
@@ -211,7 +229,7 @@ namespace Malx_AI.Agent
             catch (OperationCanceledException)
             {
                 reportActivity?.Invoke(null);
-                return new AgentRunResult("Stopped.", steps, false, true);
+                return new AgentRunResult("Stopped.", steps, false, true, history);
             }
 
             reportActivity?.Invoke(null);
@@ -219,7 +237,8 @@ namespace Malx_AI.Agent
                 $"I reached the {_maxSteps}-step limit for this model before finishing. Ask me to continue if the work so far looks right.",
                 steps,
                 true,
-                false);
+                false,
+                history);
         }
 
         /// <summary>Commands the user chose to stop being asked about during this run.</summary>

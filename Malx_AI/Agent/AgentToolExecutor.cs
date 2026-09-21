@@ -210,6 +210,30 @@ namespace Malx_AI.Agent
             string original = File.ReadAllText(path);
             int occurrences = CountOccurrences(original, oldString);
             if (occurrences == 0)
+            {
+                // Try normalizing line endings to match the file's conventions
+                string normalizedOldCrlf = oldString.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                if (CountOccurrences(original, normalizedOldCrlf) == 1)
+                {
+                    oldString = normalizedOldCrlf;
+                    if (original.Contains("\r\n"))
+                        newString = newString.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                    occurrences = 1;
+                }
+                else
+                {
+                    string normalizedOldLf = oldString.Replace("\r\n", "\n");
+                    if (CountOccurrences(original, normalizedOldLf) == 1)
+                    {
+                        oldString = normalizedOldLf;
+                        if (!original.Contains("\r\n"))
+                            newString = newString.Replace("\r\n", "\n");
+                        occurrences = 1;
+                    }
+                }
+            }
+
+            if (occurrences == 0)
                 return AgentToolResult.Fail("old_string was not found in the file. Read the file and copy the exact text.");
             if (occurrences > 1)
                 return AgentToolResult.Fail($"old_string appears {occurrences} times. Include more surrounding lines so it is unique.");

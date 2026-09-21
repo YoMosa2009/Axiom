@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Text;
 
 namespace Malx_AI.Agent
@@ -32,13 +32,70 @@ namespace Malx_AI.Agent
             };
         }
 
-        /// <summary>Iteration ceiling for a tier. A small model loops itself into nonsense quickly.</summary>
-        public static int MaxStepsFor(AgentTier tier) => tier switch
+        /// <summary>Iteration ceiling for a tier and effort. Small models get fewer steps to avoid loops; large and cloud models get deep budgets.</summary>
+        internal static int MaxStepsFor(
+            AgentTier tier,
+            EffortLevel effort,
+            LocalModelCapabilityProfile? capability,
+            bool isCloudMode)
         {
-            AgentTier.Micro => 4,
-            AgentTier.Compact => 8,
-            _ => 24
-        };
+            if (isCloudMode || (tier == AgentTier.Full && (capability == null || capability.SizeClass == LocalModelSizeClass.TenBPlus || capability.SizeClass == LocalModelSizeClass.Unknown)))
+            {
+                return effort switch
+                {
+                    EffortLevel.Light => 20,
+                    EffortLevel.Medium => 36,
+                    EffortLevel.High => 60,
+                    EffortLevel.ExtraHigh => 90,
+                    EffortLevel.Ultra => 128,
+                    _ => 36
+                };
+            }
+
+            if (capability?.SizeClass == LocalModelSizeClass.FourToTenB || tier == AgentTier.Full)
+            {
+                return effort switch
+                {
+                    EffortLevel.Light => 14,
+                    EffortLevel.Medium => 24,
+                    EffortLevel.High => 40,
+                    EffortLevel.ExtraHigh => 64,
+                    EffortLevel.Ultra => 96,
+                    _ => 24
+                };
+            }
+
+            if (capability?.SizeClass == LocalModelSizeClass.OneToFourB || tier == AgentTier.Compact)
+            {
+                return effort switch
+                {
+                    EffortLevel.Light => 8,
+                    EffortLevel.Medium => 14,
+                    EffortLevel.High => 24,
+                    EffortLevel.ExtraHigh => 36,
+                    EffortLevel.Ultra => 52,
+                    _ => 14
+                };
+            }
+
+            // SubOneB / Micro
+            return effort switch
+            {
+                EffortLevel.Light => 4,
+                EffortLevel.Medium => 8,
+                EffortLevel.High => 12,
+                EffortLevel.ExtraHigh => 18,
+                EffortLevel.Ultra => 26,
+                _ => 8
+            };
+        }
+
+        /// <summary>Iteration ceiling for a tier at the given effort.</summary>
+        public static int MaxStepsFor(AgentTier tier, EffortLevel effort) =>
+            MaxStepsFor(tier, effort, null, tier == AgentTier.Full);
+
+        /// <summary>Iteration ceiling for a tier at default Medium effort.</summary>
+        public static int MaxStepsFor(AgentTier tier) => MaxStepsFor(tier, EffortLevel.Medium);
 
         /// <summary>
         /// Builds the operating instructions.

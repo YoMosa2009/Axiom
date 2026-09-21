@@ -1,4 +1,20 @@
-﻿# Changelog
+# Changelog
+
+## [V1.9.6] - 2026-09-21
+
+Agent continuation, dynamic step scaling, tool execution robustness, and Workplace attachments.
+
+### Added
+- **Multi-turn agent continuation.** When an agent finishes its allotted steps or pauses, responding with "continue", "keep going", "proceed", or follow-up directions seamlessly resumes the ongoing task with full memory of the original goal, touched files, and prior tool outcomes.
+- **Dynamic step limit scaling across all model tiers.** Substantially increased step limits across all effort levels: Ultra mode now provides up to 128 steps (over 5x increase from 24) on Cloud and 10B+ models, 96 steps on 4B–10B, 52 steps on 1B–4B, and 26 steps on Sub-1B models, with proportional increases across Light, Medium, High, and ExtraHigh.
+- **Workplace prompt toolbar attach button.** Added a minimal "+" attachment button directly beside the Effort selector in the Workplace toolbar, supporting images, code, text, PDFs, and Office documents.
+- **Direct clipboard paste for screenshots and files.** Pressing Ctrl+V in the Workplace prompt box or Normal Chat immediately attaches clipboard images (saved cleanly to PNG) and file drops without opening File Explorer. Attached documents and images are indexed and made visible to the agent loop.
+- **Observation compaction.** In multi-step agent runs, recent tool exchanges are preserved at full fidelity while older observations are automatically compacted to prevent context bloat and context rot.
+
+### Fixed
+- **Agent amnesia after step limits.** In previous versions, replying "continue" after hitting the step limit started a blank session with only the word "continue", causing the model to forget the task completely and prompt the user for instructions.
+- **CRLF vs LF line-ending mismatches in file editing.** `edit_file` now normalizes newline formats between Windows line endings and model outputs, preventing failed replacements on Windows source files.
+- **Tool calling flexibility.** Added argument aliasing for common parameter synonyms (`path`/`file`, `command`/`cmd`, `pattern`/`query`) across model families, and added parsing support for `<tool_call>` tag blocks and stringified JSON arguments.
 
 ## [V1.9.5] - 2026-09-21
 

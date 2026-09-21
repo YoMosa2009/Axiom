@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -26,11 +26,30 @@ namespace Malx_AI.Agent
         private readonly List<OpenRouterMessage> _messages = new();
         private int _renderedExchanges;
 
-        public CloudAgentModel(OpenRouterChatService service, string modelId, string systemPrompt)
+        public CloudAgentModel(
+            OpenRouterChatService service,
+            string modelId,
+            string systemPrompt,
+            IReadOnlyList<(string Role, string Content)>? priorChatHistory = null)
         {
             _service = service ?? throw new ArgumentNullException(nameof(service));
             _modelId = modelId;
             _systemPrompt = systemPrompt;
+
+            if (priorChatHistory != null && priorChatHistory.Count > 0)
+            {
+                // Seed recent turns (excluding the last one if it is the current query)
+                var turnsToSeed = priorChatHistory.Take(Math.Max(0, priorChatHistory.Count - 1)).TakeLast(8);
+                foreach (var (role, content) in turnsToSeed)
+                {
+                    if (string.IsNullOrWhiteSpace(content))
+                        continue;
+                    string normalizedRole = string.Equals(role, "user", StringComparison.OrdinalIgnoreCase)
+                        ? "user"
+                        : "assistant";
+                    _messages.Add(new OpenRouterMessage(normalizedRole, content, PreserveFullText: true));
+                }
+            }
         }
 
         public string? Unavailable =>
@@ -40,7 +59,7 @@ namespace Malx_AI.Agent
 
         public async Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
         {
-            if (_messages.Count == 0)
+            if (_messages.Count == 0 || _messages[^1].Role != "user")
                 _messages.Add(new OpenRouterMessage("user", goal, PreserveFullText: true));
 
             // Append only what is new, so the assistant/tool message pairing the provider requires
@@ -149,8 +168,11 @@ namespace Malx_AI.Agent
         {
             // Pair the assistant's tool call with its result. When the call came from the provider
             // its real id is reused; a locally synthesised id keeps the shape valid otherwise.
+            string argsJson = exchange.Call.Arguments.Count > 0
+                ? JsonSerializer.Serialize(exchange.Call.Arguments)
+                : "{}";
             OpenRouterToolCall call = _pendingToolCall
-                ?? new OpenRouterToolCall($"call_{index}", exchange.Call.Tool, "{}");
+                ?? new OpenRouterToolCall($"call_{index}", exchange.Call.Tool, argsJson);
             _pendingToolCall = null;
 
             _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call]));

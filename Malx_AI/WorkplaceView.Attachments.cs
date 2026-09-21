@@ -4,6 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media.Imaging;
+using Microsoft.Win32;
 
 namespace Malx_AI
 {
@@ -155,6 +158,89 @@ namespace Malx_AI
                     _recentlyAttachedWorkplaceDocuments.Add(Path.GetFileName(file));
                 ProcessFilesAsync(files);
             }
+        }
+
+        private const string WorkplaceAttachmentDialogFilter =
+            "Supported files (documents;spreadsheets;presentations;e-books;notebooks;code;images)|*.pdf;*.txt;*.md;*.markdown;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.csv;*.tsv;*.xlsx;*.docx;*.pptx;*.odt;*.ods;*.odp;*.epub;*.ipynb;*.rtf;*.log;*.ini;*.config;*.cs;*.js;*.ts;*.jsx;*.tsx;*.html;*.htm;*.css;*.sql;*.py;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh;*.tex;*.srt;*.vtt;*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|Documents (*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md)|*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md;*.markdown|Spreadsheets and data (*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb)|*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb|Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|All files (*.*)|*.*";
+
+        private void WorkplaceAttachFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFileDialog
+            {
+                Filter = WorkplaceAttachmentDialogFilter,
+                Multiselect = true
+            };
+
+            if (dialog.ShowDialog() == true && dialog.FileNames.Length > 0)
+            {
+                foreach (string file in dialog.FileNames)
+                    _recentlyAttachedWorkplaceDocuments.Add(Path.GetFileName(file));
+                ProcessFilesAsync(dialog.FileNames);
+            }
+        }
+
+        private void QueryInput_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.V && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                if (TryHandleClipboardAttachmentPaste())
+                {
+                    e.Handled = true;
+                }
+            }
+        }
+
+        private bool TryHandleClipboardAttachmentPaste()
+        {
+            try
+            {
+                if (Clipboard.ContainsImage())
+                {
+                    BitmapSource? image = Clipboard.GetImage();
+                    if (image != null)
+                    {
+                        string tempDir = Path.Combine(AppDataPaths.ChatHistory, "PastedAttachments");
+                        Directory.CreateDirectory(tempDir);
+                        string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..4]}.png";
+                        string filePath = Path.Combine(tempDir, fileName);
+
+                        using (var fileStream = new FileStream(filePath, FileMode.Create))
+                        {
+                            var encoder = new PngBitmapEncoder();
+                            encoder.Frames.Add(BitmapFrame.Create(image));
+                            encoder.Save(fileStream);
+                        }
+
+                        _recentlyAttachedWorkplaceDocuments.Add(fileName);
+                        ProcessFilesAsync([filePath]);
+                        LogActivity($"Pasted image attached: {fileName}");
+                        return true;
+                    }
+                }
+
+                if (Clipboard.ContainsFileDropList())
+                {
+                    var fileDropList = Clipboard.GetFileDropList();
+                    if (fileDropList != null && fileDropList.Count > 0)
+                    {
+                        var files = fileDropList.Cast<string>().Where(File.Exists).ToArray();
+                        if (files.Length > 0)
+                        {
+                            foreach (string file in files)
+                                _recentlyAttachedWorkplaceDocuments.Add(Path.GetFileName(file));
+                            ProcessFilesAsync(files);
+                            LogActivity($"Pasted {files.Length} file(s) attached.");
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogActivity($"Clipboard attachment paste failed: {ex.Message}");
+            }
+
+            return false;
         }
 
         /// <summary>Names queued for an entrance animation the next time the tray rebuilds.</summary>
