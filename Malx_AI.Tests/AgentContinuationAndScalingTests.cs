@@ -243,5 +243,45 @@ namespace Malx_AI.Tests
             Assert.True(result.Exchanges!.Count >= 2);
             Assert.Contains("python test.py", session.SessionAllowList);
         }
+
+        [Fact]
+        public void UpdateReleaseParser_ParsesV196ReleaseCorrectlyForOta()
+        {
+            string releaseJson = """
+            {
+              "tag_name": "v1.9.6",
+              "name": "Axiom V1.9.6",
+              "draft": false,
+              "prerelease": false,
+              "html_url": "https://github.com/YoMosa2009/Axiom/releases/tag/v1.9.6",
+              "body": "Agent continuation, dynamic step scaling, tool execution robustness, and Workplace attachments.",
+              "published_at": "2026-09-21T21:52:12Z",
+              "assets": [
+                {
+                  "name": "Axiom-v1.9.6-win-x64-clean.zip",
+                  "browser_download_url": "https://github.com/YoMosa2009/Axiom/releases/download/v1.9.6/Axiom-v1.9.6-win-x64-clean.zip",
+                  "size": 415111779,
+                  "digest": "sha256:0e414f1ac056b08981bcb7adb6f9bad748e2bdf2ca84b3477efb5708415a095f"
+                }
+              ]
+            }
+            """;
+
+            var result = UpdateReleaseParser.Parse(releaseJson, new Version(1, 9, 5));
+            Assert.NotNull(result);
+            Assert.Equal("v1.9.6", result.LatestVersionTag);
+            Assert.Equal(new Version(1, 9, 6, 0), result.LatestVersion);
+            Assert.True(result.IsNewerVersionAvailable);
+            Assert.True(result.HasPackageAsset);
+            Assert.Equal(UpdatePackageKind.Zip, result.PackageKind);
+            Assert.Equal("Axiom-v1.9.6-win-x64-clean.zip", result.PackageFileName);
+            Assert.Equal("0e414f1ac056b08981bcb7adb6f9bad748e2bdf2ca84b3477efb5708415a095f", result.PackageSha256);
+            Assert.Equal(415111779, result.PackageSizeBytes);
+
+            // Once updated to 1.9.6, newer version available should be false
+            var currentResult = UpdateReleaseParser.Parse(releaseJson, new Version(1, 9, 6));
+            Assert.NotNull(currentResult);
+            Assert.False(currentResult.IsNewerVersionAvailable);
+        }
     }
 }
