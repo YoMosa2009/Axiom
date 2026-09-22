@@ -371,41 +371,63 @@ namespace Malx_AI
 
         private void WorkplaceQueryInput_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (!_workplaceMentionPopupOpen || WorkplaceMentionList == null)
-                return;
-
-            int count = WorkplaceMentionList.Items.Count;
-            if (count == 0)
-                return;
-
-            if (e.Key == Key.Escape)
+            if (_workplaceMentionPopupOpen && WorkplaceMentionList != null)
             {
-                CloseWorkplaceMentionPopup();
-                e.Handled = true;
-                return;
+                int count = WorkplaceMentionList.Items.Count;
+                if (count > 0)
+                {
+                    if (e.Key == Key.Escape)
+                    {
+                        CloseWorkplaceMentionPopup();
+                        e.Handled = true;
+                        return;
+                    }
+
+                    if (e.Key == Key.Down)
+                    {
+                        _workplaceMentionSelectedIndex = Math.Min(count - 1, _workplaceMentionSelectedIndex + 1);
+                        WorkplaceMentionList.SelectedIndex = _workplaceMentionSelectedIndex;
+                        e.Handled = true;
+                        return;
+                    }
+
+                    if (e.Key == Key.Up)
+                    {
+                        _workplaceMentionSelectedIndex = Math.Max(0, _workplaceMentionSelectedIndex - 1);
+                        WorkplaceMentionList.SelectedIndex = _workplaceMentionSelectedIndex;
+                        e.Handled = true;
+                        return;
+                    }
+
+                    if (e.Key is Key.Tab or Key.Enter)
+                    {
+                        if (WorkplaceMentionList.SelectedItem is McpConnectorInfo connector)
+                            ApplyWorkplaceMentionCompletion(connector);
+                        e.Handled = true;
+                        return;
+                    }
+                }
             }
 
-            if (e.Key == Key.Down)
+            // Plain Enter sends the prompt; Shift+Enter inserts a newline
+            if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) != ModifierKeys.Shift)
             {
-                _workplaceMentionSelectedIndex = Math.Min(count - 1, _workplaceMentionSelectedIndex + 1);
-                WorkplaceMentionList.SelectedIndex = _workplaceMentionSelectedIndex;
                 e.Handled = true;
-                return;
-            }
+                if (!SendButton.IsEnabled || _isProcessing)
+                    return;
 
-            if (e.Key == Key.Up)
-            {
-                _workplaceMentionSelectedIndex = Math.Max(0, _workplaceMentionSelectedIndex - 1);
-                WorkplaceMentionList.SelectedIndex = _workplaceMentionSelectedIndex;
-                e.Handled = true;
-                return;
-            }
-
-            if (e.Key is Key.Tab or Key.Enter)
-            {
-                if (WorkplaceMentionList.SelectedItem is McpConnectorInfo connector)
-                    ApplyWorkplaceMentionCompletion(connector);
-                e.Handled = true;
+                _ = Dispatcher.BeginInvoke(async () =>
+                {
+                    try
+                    {
+                        await SendQueryAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        await BackendLogService.LogErrorAsync("Workplace.SendFromKeyDown", ex);
+                        AppendChat("error", ex.Message);
+                    }
+                }, System.Windows.Threading.DispatcherPriority.Background);
             }
         }
 

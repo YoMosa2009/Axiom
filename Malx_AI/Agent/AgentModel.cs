@@ -33,6 +33,9 @@ namespace Malx_AI.Agent
 
         /// <summary>Told to the user when a run cannot start, e.g. a missing key.</summary>
         string? Unavailable { get; }
+
+        /// <summary>Invoked when token usage is recorded during a turn (promptTokens, completionTokens).</summary>
+        Action<int, int>? OnTokenUsageRecorded { get => null; set { } }
     }
 
     /// <summary>

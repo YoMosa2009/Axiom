@@ -17,6 +17,10 @@ namespace Malx_AI.Agent
             @"^\s*(?:continue|keep\s+going|proceed|go\s+on|go\s+ahead|yes|yes\s+please|please\s+continue|finish\s+it|finish|do\s+it|retry|resume)\s*[.!]?\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+        private static readonly Regex NewTaskPhraseRegex = new(
+            @"^\s*(?:new\s+task|new\s+project|start\s+(?:a\s+)?new\s+project|start\s+fresh|reset\s+agent|clear\s+agent|new\s+chat)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         /// <summary>
         /// True when the user's message is an explicit continuation command.
         /// </summary>
@@ -25,6 +29,16 @@ namespace Malx_AI.Agent
             if (string.IsNullOrWhiteSpace(text))
                 return false;
             return ContinuationPhraseRegex.IsMatch(text.Trim());
+        }
+
+        /// <summary>
+        /// True when the user explicitly requests starting a brand new task or resetting project state.
+        /// </summary>
+        public static bool IsNewTaskPhrase(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+            return NewTaskPhraseRegex.IsMatch(text.Trim());
         }
 
         /// <summary>
@@ -110,6 +124,43 @@ namespace Malx_AI.Agent
             };
         }
 
+        private static readonly Regex DepCheckRegex = new(
+            @"(?:import\s+([a-zA-Z0-9_\-]+)|pip\s+show\s+([a-zA-Z0-9_\-]+)|pip\s+install\s+([a-zA-Z0-9_\-]+))",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        /// <summary>
+        /// Collects packages and tools verified to be installed or working from successful command executions.
+        /// </summary>
+        public static HashSet<string> ExtractVerifiedDependencies(IEnumerable<AgentExchange> exchanges)
+        {
+            var deps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (exchanges == null)
+                return deps;
+
+            foreach (var ex in exchanges)
+            {
+                if (ex.Call.Tool.Equals(AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase))
+                {
+                    string cmd = ex.Call.Arg("command");
+                    if (ex.Observation.Contains("[Exit code: 0") || (!ex.Observation.Contains("[Exit code:") && !ex.Observation.StartsWith("ERROR", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var matches = DepCheckRegex.Matches(cmd);
+                        foreach (Match m in matches)
+                        {
+                            string pkg = m.Groups[1].Value;
+                            if (string.IsNullOrWhiteSpace(pkg)) pkg = m.Groups[2].Value;
+                            if (string.IsNullOrWhiteSpace(pkg)) pkg = m.Groups[3].Value;
+                            if (!string.IsNullOrWhiteSpace(pkg) && !pkg.Equals("sys", StringComparison.OrdinalIgnoreCase) && !pkg.Equals("os", StringComparison.OrdinalIgnoreCase))
+                            {
+                                deps.Add(pkg);
+                            }
+                        }
+                    }
+                }
+            }
+            return deps;
+        }
+
         /// <summary>
         /// Builds the contextual goal for continuing an agent task.
         /// </summary>
@@ -117,7 +168,8 @@ namespace Malx_AI.Agent
             string originalGoal,
             string userQuery,
             IReadOnlyCollection<string> touchedFiles,
-            string? lastErrorOrStatus)
+            string? lastErrorOrStatus,
+            IReadOnlyCollection<string>? verifiedDependencies = null)
         {
             var builder = new StringBuilder();
             builder.AppendLine("[CONTINUING ACTIVE TASK]");
@@ -129,6 +181,12 @@ namespace Malx_AI.Agent
                 builder.AppendLine(string.Join(", ", touchedFiles.Select(Path.GetFileName)));
             }
 
+            if (verifiedDependencies != null && verifiedDependencies.Count > 0)
+            {
+                builder.Append("Verified packages/tools already installed and working: ");
+                builder.AppendLine(string.Join(", ", verifiedDependencies));
+            }
+
             if (!string.IsNullOrWhiteSpace(lastErrorOrStatus))
             {
                 builder.Append("Current state: ").AppendLine(lastErrorOrStatus);
@@ -136,7 +194,8 @@ namespace Malx_AI.Agent
 
             if (!IsContinuationPhrase(userQuery))
             {
-                builder.Append("User follow-up guidance: ").AppendLine(userQuery);
+                builder.Append("User follow-up / change request: ").AppendLine(userQuery);
+                builder.AppendLine("IMPORTANT: Dependencies and project setup are already completed. Work directly on the existing project files using read_file, edit_file, or write_file. DO NOT re-install packages or re-download dependencies.");
             }
 
             builder.AppendLine("Resume execution from your current progress and finish the task.");
@@ -155,6 +214,7 @@ namespace Malx_AI.Agent
         public List<AgentExchange> AccumulatedExchanges { get; } = new();
         public HashSet<string> TouchedFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<string> SessionAllowList { get; } = new();
+        public HashSet<string> VerifiedDependencies { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string LastStatusMessage { get; set; } = string.Empty;
     }
 }

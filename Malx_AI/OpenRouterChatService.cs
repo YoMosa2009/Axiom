@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -2066,20 +2066,22 @@ namespace Malx_AI
 
         private static int GetConversationHistoryMessageLimit(OpenRouterModelProfile profile)
         {
-            if (!profile.IsCustomEndpoint)
-                return ConversationHistoryMessageLimit;
-
             int window = Math.Max(4096, profile.ApproximateContextWindowTokens);
-            return window >= 65536 ? 48 : ConversationHistoryMessageLimit;
+            if (window >= 131072)
+                return 120;
+            if (window >= 65536)
+                return 80;
+            if (window >= 32768)
+                return 50;
+            if (window >= 16384)
+                return 36;
+            return ConversationHistoryMessageLimit;
         }
 
         private static int GetConversationHistoryCharacterBudget(OpenRouterModelProfile profile)
         {
-            if (!profile.IsCustomEndpoint)
-                return ConversationHistoryCharacterBudget;
-
             int window = Math.Max(4096, profile.ApproximateContextWindowTokens);
-            return Math.Clamp(window * 3, ConversationHistoryCharacterBudget, 400000);
+            return Math.Clamp((int)(window * 2.8), ConversationHistoryCharacterBudget, 800000);
         }
 
         private List<OpenRouterMessage> TrimConversationHistory(

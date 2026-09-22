@@ -108,7 +108,7 @@ namespace Malx_AI.Agent
                 WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                RedirectStandardInput = true,
+                RedirectStandardInput = false,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8,
@@ -121,12 +121,12 @@ namespace Malx_AI.Agent
             process.OutputDataReceived += (_, e) => { if (e.Data != null) stdout.AppendLine(e.Data); };
             process.ErrorDataReceived += (_, e) => { if (e.Data != null) stderr.AppendLine(e.Data); };
 
+            var stopwatch = Stopwatch.StartNew();
             if (!process.Start())
                 return AgentToolResult.Fail("The command could not be started.");
 
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            process.StandardInput.Close();
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
             timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
@@ -134,12 +134,14 @@ namespace Malx_AI.Agent
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
+                process.WaitForExit();
             }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)
             {
                 TryKill(process);
+                stopwatch.Stop();
                 return AgentToolResult.Fail(
-                    $"The command was still running after {timeoutSeconds}s and was stopped.\n"
+                    $"The command timed out after {timeoutSeconds}s ({stopwatch.ElapsedMilliseconds}ms) and was stopped.\n"
                     + Combine(stdout, stderr));
             }
             catch (OperationCanceledException)
@@ -148,10 +150,26 @@ namespace Malx_AI.Agent
                 throw;
             }
 
+            stopwatch.Stop();
+            long elapsedMs = stopwatch.ElapsedMilliseconds;
+
             string combined = Combine(stdout, stderr);
-            return process.ExitCode == 0
-                ? AgentToolResult.Ok(string.IsNullOrWhiteSpace(combined) ? "(no output)" : combined)
-                : AgentToolResult.Fail($"exit code {process.ExitCode}\n{combined}");
+            string exitPrefix = $"[Exit code: {process.ExitCode} | Duration: {elapsedMs}ms]";
+
+            if (process.ExitCode == 0)
+            {
+                string body = string.IsNullOrWhiteSpace(combined)
+                    ? "(Command completed successfully with no standard output)"
+                    : combined;
+                return AgentToolResult.Ok($"{exitPrefix}\n{body}");
+            }
+            else
+            {
+                string body = string.IsNullOrWhiteSpace(combined)
+                    ? "(Command failed with no output)"
+                    : combined;
+                return AgentToolResult.Fail($"{exitPrefix}\n{body}");
+            }
         }
 
         private AgentToolResult ReadFile(AgentToolCall call)
@@ -192,7 +210,9 @@ namespace Malx_AI.Agent
 
             string content = call.Arg("content");
             File.WriteAllText(path, content, new UTF8Encoding(false));
-            return AgentToolResult.Ok($"Wrote {content.Length} characters to {path}.");
+            var fileInfo = new FileInfo(path);
+            int lineCount = content.Split('\n').Length;
+            return AgentToolResult.Ok($"Successfully wrote {fileInfo.Length:N0} bytes ({lineCount} lines) to {path}. Verified on disk.");
         }
 
         private AgentToolResult EditFile(AgentToolCall call)
@@ -238,8 +258,11 @@ namespace Malx_AI.Agent
             if (occurrences > 1)
                 return AgentToolResult.Fail($"old_string appears {occurrences} times. Include more surrounding lines so it is unique.");
 
-            File.WriteAllText(path, original.Replace(oldString, newString, StringComparison.Ordinal), new UTF8Encoding(false));
-            return AgentToolResult.Ok($"Edited {path}.");
+            string replaced = original.Replace(oldString, newString, StringComparison.Ordinal);
+            File.WriteAllText(path, replaced, new UTF8Encoding(false));
+            var fileInfo = new FileInfo(path);
+            int lineCount = replaced.Split('\n').Length;
+            return AgentToolResult.Ok($"Successfully edited {path} ({fileInfo.Length:N0} bytes, {lineCount} lines). Verified on disk.");
         }
 
         private AgentToolResult ListDirectory(AgentToolCall call)

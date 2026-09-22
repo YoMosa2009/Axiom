@@ -10,6 +10,7 @@ using Xunit;
 
 namespace Malx_AI.Tests
 {
+    [Collection("ProcessLifecycleCollection")]
     public class AgentContinuationAndScalingTests : IDisposable
     {
         private readonly string _folder = Path.Combine(Path.GetTempPath(), "AxiomContinuationTests", Guid.NewGuid().ToString("N"));
@@ -282,6 +283,142 @@ namespace Malx_AI.Tests
             var currentResult = UpdateReleaseParser.Parse(releaseJson, new Version(1, 9, 6));
             Assert.NotNull(currentResult);
             Assert.False(currentResult.IsNewerVersionAvailable);
+        }
+
+        [Fact]
+        public void UpdateReleaseParser_ParsesV197ReleaseCorrectlyForOta()
+        {
+            string releaseJson = """
+            {
+              "tag_name": "v1.9.7",
+              "name": "Axiom V1.9.7",
+              "draft": false,
+              "prerelease": false,
+              "html_url": "https://github.com/YoMosa2009/Axiom/releases/tag/v1.9.7",
+              "body": "Agent Access anti-redundancy, Council Mode synergy, Workplace token tracking accuracy, Enter-to-send, and grounded tool feedback.",
+              "published_at": "2026-09-21T23:45:00Z",
+              "assets": [
+                {
+                  "name": "Axiom-v1.9.7-win-x64-clean.zip",
+                  "browser_download_url": "https://github.com/YoMosa2009/Axiom/releases/download/v1.9.7/Axiom-v1.9.7-win-x64-clean.zip",
+                  "size": 415000000,
+                  "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                }
+              ]
+            }
+            """;
+
+            var result = UpdateReleaseParser.Parse(releaseJson, new Version(1, 9, 6));
+            Assert.NotNull(result);
+            Assert.Equal("v1.9.7", result.LatestVersionTag);
+            Assert.Equal(new Version(1, 9, 7, 0), result.LatestVersion);
+            Assert.True(result.IsNewerVersionAvailable);
+            Assert.True(result.HasPackageAsset);
+            Assert.Equal(UpdatePackageKind.Zip, result.PackageKind);
+            Assert.Equal("Axiom-v1.9.7-win-x64-clean.zip", result.PackageFileName);
+
+            // Once updated to 1.9.7, newer version available should be false
+            var currentResult = UpdateReleaseParser.Parse(releaseJson, new Version(1, 9, 7));
+            Assert.NotNull(currentResult);
+            Assert.False(currentResult.IsNewerVersionAvailable);
+        }
+
+        [Fact]
+        public void ExtractVerifiedDependencies_ExtractsFromSuccessfulChecksAndInstalls()
+        {
+            var exchanges = new List<AgentExchange>
+            {
+                new(new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "python -c \"import pygame\"" }), "[Exit code: 0 | Duration: 120ms]\n(Command completed successfully with no standard output)"),
+                new(new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "pip show numpy" }), "[Exit code: 0 | Duration: 80ms]\nName: numpy\nVersion: 1.24.0"),
+                new(new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "python -c \"import torch\"" }), "[Exit code: 1 | Duration: 95ms]\nModuleNotFoundError: No module named 'torch'"),
+                new(new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "pip install sounddevice" }), "[Exit code: 0 | Duration: 1500ms]\nSuccessfully installed sounddevice-0.4.6")
+            };
+
+            HashSet<string> verified = AgentContextManager.ExtractVerifiedDependencies(exchanges);
+            Assert.Contains("pygame", verified);
+            Assert.Contains("numpy", verified);
+            Assert.Contains("sounddevice", verified);
+            Assert.DoesNotContain("torch", verified);
+        }
+
+        [Fact]
+        public void BuildContinuationGoal_IncludesVerifiedDependenciesAndForbidsReinstall()
+        {
+            string goal = AgentContextManager.BuildContinuationGoal(
+                "make me a simple tetris game",
+                "make the blocks blue and add pause button",
+                ["tetris.py"],
+                "Tetris game created and running",
+                ["pygame"]);
+
+            Assert.Contains("[CONTINUING ACTIVE TASK]", goal);
+            Assert.Contains("Original task: make me a simple tetris game", goal);
+            Assert.Contains("Files touched so far: tetris.py", goal);
+            Assert.Contains("Verified packages/tools already installed and working: pygame", goal);
+            Assert.Contains("User follow-up / change request: make the blocks blue and add pause button", goal);
+            Assert.Contains("DO NOT re-install packages or re-download dependencies", goal);
+        }
+
+        [Theory]
+        [InlineData("new task: create a snake game", true)]
+        [InlineData("new project", true)]
+        [InlineData("start fresh", true)]
+        [InlineData("reset agent", true)]
+        [InlineData("clear agent", true)]
+        [InlineData("make the blocks blue", false)]
+        [InlineData("change the colors to neon", false)]
+        [InlineData("fix the collision bug", false)]
+        [InlineData("continue", false)]
+        public void IsNewTaskPhrase_DistinguishesNewProjectFromFollowUp(string text, bool expected)
+        {
+            Assert.Equal(expected, AgentContextManager.IsNewTaskPhrase(text));
+        }
+
+        [Fact]
+        public async Task AgentToolExecutor_WriteAndEditFile_ReturnsDiskVerification()
+        {
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+            string filePath = Path.Combine(_folder, "test_verify.py");
+
+            var writeCall = new AgentToolCall("write_file", new Dictionary<string, string>
+            {
+                ["path"] = filePath,
+                ["content"] = "import pygame\nprint('hello')\n"
+            });
+
+            AgentToolResult writeResult = await executor.ExecuteAsync(writeCall, CancellationToken.None);
+            Assert.True(writeResult.Succeeded);
+            Assert.Contains("Verified on disk", writeResult.Output);
+            Assert.Contains("bytes", writeResult.Output);
+            Assert.Contains("lines", writeResult.Output);
+
+            var editCall = new AgentToolCall("edit_file", new Dictionary<string, string>
+            {
+                ["path"] = filePath,
+                ["old_string"] = "print('hello')",
+                ["new_string"] = "print('verified')"
+            });
+
+            AgentToolResult editResult = await executor.ExecuteAsync(editCall, CancellationToken.None);
+            Assert.True(editResult.Succeeded);
+            Assert.Contains("Verified on disk", editResult.Output);
+            Assert.Contains("print('verified')", File.ReadAllText(filePath));
+        }
+
+        [Fact]
+        public async Task AgentToolExecutor_RunCommand_FormatsExitCodeAndDuration()
+        {
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+            var call = new AgentToolCall("run_command", new Dictionary<string, string>
+            {
+                ["command"] = "Write-Output 'GroundingCheck'"
+            });
+
+            AgentToolResult result = await executor.ExecuteAsync(call, CancellationToken.None);
+            Assert.True(result.Succeeded, result.Error ?? result.Output);
+            Assert.Contains("[Exit code: 0", result.Output);
+            Assert.Contains("Duration:", result.Output);
+            Assert.Contains("GroundingCheck", result.Output);
         }
     }
 }

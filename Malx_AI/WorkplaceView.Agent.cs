@@ -328,35 +328,29 @@ namespace Malx_AI
             // Context preservation: detect if we are continuing an ongoing or step-limited task
             bool isContinuation = false;
             string effectiveGoal = userQuery;
-            List<AgentExchange>? initialHistory = null;
+            IReadOnlyList<AgentExchange>? initialHistory = null;
             List<string>? initialAllowList = null;
 
-            if (_activeAgentTaskState != null)
+            if (_activeAgentTaskState != null && !AgentContextManager.IsNewTaskPhrase(userQuery))
             {
+                isContinuation = true;
                 initialAllowList = _activeAgentTaskState.SessionAllowList;
-                if (_activeAgentTaskState.StoppedOnStepLimit || AgentContextManager.IsContinuationPhrase(userQuery))
-                {
-                    isContinuation = true;
-                    effectiveGoal = AgentContextManager.BuildContinuationGoal(
-                        _activeAgentTaskState.OriginalGoal,
-                        userQuery,
-                        _activeAgentTaskState.TouchedFiles,
-                        _activeAgentTaskState.LastStatusMessage);
-                    initialHistory = _activeAgentTaskState.AccumulatedExchanges;
-                }
+                effectiveGoal = AgentContextManager.BuildContinuationGoal(
+                    _activeAgentTaskState.OriginalGoal,
+                    userQuery,
+                    _activeAgentTaskState.TouchedFiles,
+                    _activeAgentTaskState.LastStatusMessage,
+                    _activeAgentTaskState.VerifiedDependencies);
+                initialHistory = AgentContextManager.CompactExchanges(_activeAgentTaskState.AccumulatedExchanges, recentKeepCount: 8);
+                _activeAgentTaskState.LastTurnGoal = userQuery;
             }
-
-            if (!isContinuation)
+            else
             {
                 _activeAgentTaskState = new AgentActiveTaskState
                 {
                     OriginalGoal = userQuery,
                     LastTurnGoal = userQuery
                 };
-            }
-            else if (_activeAgentTaskState != null)
-            {
-                _activeAgentTaskState.LastTurnGoal = userQuery;
             }
 
             // If documents or images are attached, inform the agent of their paths
@@ -369,6 +363,56 @@ namespace Malx_AI
                 }
             }
 
+            // Council synergy: when Council Mode is active, Architect plans and identifies dependencies
+            bool enableCouncilSynergy = !_isSingleModelMode
+                && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Architect) || HasEffectiveLocalRoleModel(CouncilRole.Critic));
+            string? architectPlan = null;
+
+            if (enableCouncilSynergy && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Architect)))
+            {
+                UpdateStageIndicator(CouncilRole.Architect, false, false, false);
+                RelayStatusBlock.Text = "Relay: Architect is planning...";
+                LogActivity("Architect planning agent mission...");
+
+                string architectSystem = "You are the Council Architect. The Council Builder will execute the user request using Machine Agent Tools (commands, file operations).\n"
+                    + "Analyze the goal and provide a concise, grounded architectural blueprint (3-5 bullet points):\n"
+                    + "1. Components/files to create or modify (if modifying existing project, modify in-place; do NOT recreate existing files).\n"
+                    + "2. Identify required dependencies/software and instruct Builder to pre-check if they are already installed (e.g. python -c \"import <pkg>\" or pip show) BEFORE attempting installation.\n"
+                    + "3. Outline verification steps (e.g. run test or launch with Start-Process).\n"
+                    + "Output ONLY the concise blueprint.";
+
+                try
+                {
+                    ReasoningParser.ParsedResponse architectResult = await ExecuteCouncilRoleAsync(
+                        CouncilRole.Architect,
+                        architectSystem,
+                        $"Scope: {scope.Describe()}\nUser Request: {effectiveGoal}",
+                        token,
+                        temperatureOverride: 0.2f,
+                        showLiveCard: false);
+
+                    if (!string.IsNullOrWhiteSpace(architectResult.Answer))
+                    {
+                        architectPlan = architectResult.Answer.Trim();
+                        effectiveGoal = $"{effectiveGoal}\n\n[ARCHITECT BLUEPRINT]\n{architectPlan}";
+                        LogActivity("Architect blueprint generated.");
+                    }
+                }
+                catch (Exception archEx)
+                {
+                    LogActivity($"Architect planning pass skipped: {archEx.Message}");
+                }
+            }
+
+            if (enableCouncilSynergy)
+            {
+                UpdateStageIndicator(CouncilRole.Builder, architectPlan != null, false, false);
+            }
+            else
+            {
+                UpdateStageIndicator(CouncilRole.Builder, false, false, false);
+            }
+
             IAgentModel model = BuildAgentModel(tier, systemPrompt, _chatHistory);
             if (!string.IsNullOrWhiteSpace(model.Unavailable))
             {
@@ -379,7 +423,7 @@ namespace Malx_AI
 
             int maxSteps = AgentPromptBuilder.MaxStepsFor(tier, EffortPolicy.Current, capability, _isCloudModeEnabled);
             LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, scope {scope.Describe()}.");
-            RelayStatusBlock.Text = "Relay: Agent running";
+            RelayStatusBlock.Text = enableCouncilSynergy ? "Relay: Builder executing agent mission..." : "Relay: Agent running";
 
             var session = new AgentSession(scope, maxSteps);
             AgentRunResult result;
@@ -413,6 +457,8 @@ namespace Malx_AI
                     _activeAgentTaskState.AccumulatedExchanges.AddRange(result.Exchanges);
                     foreach (string file in AgentContextManager.ExtractTouchedFiles(result.Exchanges))
                         _activeAgentTaskState.TouchedFiles.Add(file);
+                    foreach (string dep in AgentContextManager.ExtractVerifiedDependencies(result.Exchanges))
+                        _activeAgentTaskState.VerifiedDependencies.Add(dep);
                 }
                 foreach (string allowed in session.SessionAllowList)
                 {
@@ -438,8 +484,66 @@ namespace Malx_AI
                 $"tier:{tier} effort:{EffortPolicy.Current} mode:{_agentApprovalMode} steps:{result.Steps.Count}/{maxSteps} "
                 + $"limit:{result.StoppedOnStepLimit} cancelled:{result.Cancelled}");
 
-            AppendChat("assistant", result.FinalMessage);
-            _chatHistory.Add(("assistant", result.FinalMessage));
+            string finalChatMessage = result.FinalMessage;
+
+            // Council synergy: Critic review phase
+            if (enableCouncilSynergy && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Critic)))
+            {
+                UpdateStageIndicator(CouncilRole.Critic, architectPlan != null, true, false);
+                RelayStatusBlock.Text = "Relay: Critic is reviewing...";
+                LogActivity("Critic auditing agent execution...");
+
+                string touchedFilesList = _activeAgentTaskState?.TouchedFiles.Count > 0
+                    ? string.Join(", ", _activeAgentTaskState.TouchedFiles.Select(Path.GetFileName))
+                    : "none";
+
+                string criticSystem = "You are the Council Critic. The Council Builder just completed executing an agent mission on the machine.\n"
+                    + "Review the Builder's work against the goal and provide a concise verification audit (2-3 bullet points):\n"
+                    + "- Did the Builder meet the user's requirements without unnecessary re-downloading or re-installing?\n"
+                    + "- Are the files, code, and executed commands verified and intact?\n"
+                    + "- Final verdict: [VERIFIED] or [NEEDS REVISION].\n"
+                    + "Output ONLY the concise audit.";
+
+                string criticPayload = $"User Request: {userQuery}\n"
+                    + (architectPlan != null ? $"Architect Blueprint: {architectPlan}\n" : "")
+                    + $"Files Touched: {touchedFilesList}\n"
+                    + $"Builder Execution Report:\n{result.FinalMessage}";
+
+                try
+                {
+                    ReasoningParser.ParsedResponse criticResult = await ExecuteCouncilRoleAsync(
+                        CouncilRole.Critic,
+                        criticSystem,
+                        criticPayload,
+                        token,
+                        temperatureOverride: 0.2f,
+                        showLiveCard: false);
+
+                    if (!string.IsNullOrWhiteSpace(criticResult.Answer))
+                    {
+                        string criticAudit = criticResult.Answer.Trim();
+                        finalChatMessage = $"{result.FinalMessage}\n\n**Council Critic Verification**\n{criticAudit}";
+                        UpdateStageIndicator(null, architectPlan != null, true, true);
+                    }
+                }
+                catch (Exception criticEx)
+                {
+                    LogActivity($"Critic review pass skipped: {criticEx.Message}");
+                    UpdateStageIndicator(null, architectPlan != null, true, false);
+                }
+            }
+            else if (enableCouncilSynergy)
+            {
+                UpdateStageIndicator(null, architectPlan != null, true, false);
+            }
+            else
+            {
+                UpdateStageIndicator(null, false, true, false);
+            }
+
+            AppendChat("assistant", finalChatMessage);
+            _chatHistory.Add(("assistant", finalChatMessage));
+            UpdateWorkplaceTokenUsageIndicator();
             FinishAgentRunUi();
         }
 
@@ -456,13 +560,20 @@ namespace Malx_AI
         {
             if (_isCloudModeEnabled)
             {
-                return new CloudAgentModel(
+                var cloudModel = new CloudAgentModel(
                     _openRouterChatService,
                     _isHybridLocalCouncilSelected
                         ? (_openRouterChatService.CustomEndpointConfiguredModelId ?? GetEffectiveCouncilModelId())
                         : GetEffectiveCouncilModelId(),
                     systemPrompt,
                     chatHistory);
+                cloudModel.OnTokenUsageRecorded = (promptTokens, completionTokens) =>
+                {
+                    _lastRolePromptTokenEstimates[CouncilRole.Builder] = promptTokens;
+                    _lastRoleGeneratedTokenCounts[CouncilRole.Builder] = completionTokens;
+                    UpdateWorkplaceTokenUsageIndicator();
+                };
+                return cloudModel;
             }
 
             // A local GGUF has no tool-calling channel, so it is asked for the flat text protocol
@@ -481,7 +592,7 @@ namespace Malx_AI
                         loadBaseState: false,
                         allowBatchRecovery: true,
                         showLiveCard: false,
-                        maxGenerationTokensOverride: 900,
+                        maxGenerationTokensOverride: 2048,
                         contextSizeOverride: null,
                         useBuilderToolDecision: false,
                         outputGrammar: null,

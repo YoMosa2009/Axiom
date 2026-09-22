@@ -1,5 +1,22 @@
 # Changelog
 
+## [V1.9.7] - 2026-09-21
+
+Agent Access anti-redundancy, Council Mode synergy, Workplace token tracking accuracy, Enter-to-send, and grounded tool feedback.
+
+### Added
+- **Council Mode & Agent Access Synergy.** When Agent Access is active in Council Mode, the council roles seamlessly collaborate: the Architect formulates an actionable execution blueprint (identifying dependencies to pre-check and target files to edit), the Builder executes the machine agent tools, and the Critic audits the execution outcome for requirement fulfillment and environment discipline.
+- **Persistent Verified Dependency Tracking.** Successful dependency checks (`python -c "import <pkg>"`, `pip show`, etc.) and installations are tracked across multi-turn sessions so the agent remembers which tools are already verified and never re-installs them.
+- **Accurate Real-Time Token Tracking.** Included assistant turns and accumulated tool exchanges in Workplace token calculations, and hooked runtime token usage reporting from model completions to the indicator bar to eliminate the `Agent 24 / 247K` discrepancy.
+- **Grounded Tool Execution Feedback.** `run_command` now returns explicit exit codes, duration in milliseconds, separated stdout and stderr, and non-empty confirmation. `write_file` and `edit_file` verify changes on disk and report file size and line counts.
+- **Dynamic History Message and Character Scaling.** Removed the rigid 24-message cap and 48KB budget in cloud and custom endpoint conversations, scaling dynamically up to 120 messages and 800,000 characters based on context capacity.
+- **Increased Local Generation Limit.** Raised the maximum generation limit for local GGUF models from 900 to 2048 tokens to eliminate truncated code writes.
+
+### Fixed
+- **Redundant Re-downloading / Re-installing in Agent Access.** Added pre-check instructions requiring models to test if packages or tools already exist before installing, and preserved project context on follow-up turns (e.g. "make the blocks blue") so existing files are edited in-place instead of re-installing dependencies from scratch.
+- **Workplace Enter Key Submission.** Pressing Enter in the prompt box now immediately sends the chat query, while Shift + Enter inserts a newline.
+- **Standard Input Broken Pipe Race Condition.** Resolved an issue where closing standard input prematurely on process start could cause PowerShell startup aborts under heavy system loads.
+
 ## [V1.9.6] - 2026-09-21
 
 Agent continuation, dynamic step scaling, tool execution robustness, and Workplace attachments.

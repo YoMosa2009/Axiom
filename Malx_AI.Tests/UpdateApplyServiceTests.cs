@@ -4,6 +4,7 @@ using Xunit;
 
 namespace Malx_AI.Tests;
 
+[Collection("ProcessLifecycleCollection")]
 public sealed class UpdateApplyServiceTests
 {
     // FilesAreIdentical gates whether the updater skips replacing a file entirely. A false

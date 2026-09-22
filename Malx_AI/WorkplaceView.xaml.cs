@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -32,6 +32,7 @@ using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Rendering;
 using Malx_AI.Mcp;
 using Malx_AI.ComputerUse;
+using Malx_AI.Agent;
 
 namespace Malx_AI
 {
@@ -2121,6 +2122,7 @@ namespace Malx_AI
                 _pendingCodebasePatchApplyBlocked = false;
                 _pendingCodebasePatchBlockSummary = string.Empty;
                 _lastCodebaseUndo = null;
+                _activeAgentTaskState = null;
             }
 
             QueryInput.Text = string.Empty;
@@ -3600,8 +3602,19 @@ namespace Malx_AI
         private int EstimateWorkplaceContextTokens()
         {
             int historyTokens = _chatHistory
-                .Where(h => h.Role is "user" or "agent" or "architect" or "builder" or "critic" or "builder-patch" or "builder-revision")
+                .Where(h => h.Role is "user" or "agent" or "assistant" or "architect" or "builder" or "critic" or "builder-patch" or "builder-revision")
                 .Sum(h => EstimateTokenCount(h.Content));
+
+            if (_activeAgentTaskState != null && _activeAgentTaskState.AccumulatedExchanges.Count > 0)
+            {
+                foreach (AgentExchange ex in _activeAgentTaskState.AccumulatedExchanges)
+                {
+                    historyTokens += EstimateTokenCount(ex.Call.Tool);
+                    foreach (var kvp in ex.Call.Arguments)
+                        historyTokens += EstimateTokenCount(kvp.Key) + EstimateTokenCount(kvp.Value);
+                    historyTokens += EstimateTokenCount(ex.Observation);
+                }
+            }
 
             int currentInputTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
             int currentCanvasTokens = 0;

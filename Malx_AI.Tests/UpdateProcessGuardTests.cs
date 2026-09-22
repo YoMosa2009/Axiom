@@ -4,6 +4,7 @@ using Xunit;
 
 namespace Malx_AI.Tests;
 
+[Collection("ProcessLifecycleCollection")]
 public sealed class UpdateProcessGuardTests
 {
     [Fact]

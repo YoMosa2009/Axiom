@@ -17,7 +17,7 @@
     <WebView2EnableCsWinRTProjection>false</WebView2EnableCsWinRTProjection>
     <!-- Source of truth for the GitHub release update check: bump this for every release
          so it matches the release tag (e.g. tag v1.4.0 -> Version 1.4.0). -->
-    <Version>1.9.6</Version>
+    <Version>1.9.7</Version>
     <ApplicationIcon>Assets\AxiomLogo.ico</ApplicationIcon>
   </PropertyGroup>
 

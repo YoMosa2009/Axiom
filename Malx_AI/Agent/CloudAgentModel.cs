@@ -57,6 +57,8 @@ namespace Malx_AI.Agent
                 ? null
                 : "Cloud mode needs a valid OpenRouter API key, or a configured Hybrid Local endpoint, in Settings.";
 
+        public Action<int, int>? OnTokenUsageRecorded { get; set; }
+
         public async Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
         {
             if (_messages.Count == 0 || _messages[^1].Role != "user")
@@ -145,7 +147,13 @@ namespace Malx_AI.Agent
                     bool hasToolCall = response.ToolCalls?.Count > 0;
                     bool hasText = !string.IsNullOrWhiteSpace(response.Text);
                     if (hasToolCall || hasText)
+                    {
+                        if (response.Usage != null)
+                        {
+                            OnTokenUsageRecorded?.Invoke(response.Usage.PromptTokens, response.Usage.CompletionTokens);
+                        }
                         return response;
+                    }
 
                     lastFailure = null;
                 }
