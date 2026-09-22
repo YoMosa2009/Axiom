@@ -2396,12 +2396,13 @@ namespace Malx_AI
             public bool IsImage { get; set; }
             public long FileSizeBytes { get; set; }
             public string IndexStatus { get; set; } = "";
+            public bool IsPending { get; set; } = true;
         }
 
         private OpenRouterMessage BuildCloudCouncilInitialUserMessage(CouncilRole role, string? userPayload)
         {
             string payload = userPayload ?? string.Empty;
-            if (role != CouncilRole.Builder)
+            if (role != CouncilRole.Builder && role != CouncilRole.Architect)
                 return new OpenRouterMessage("user", payload, PreserveFullText: true);
 
             IEnumerable<DocumentInfo> visionSource = _computerUseTurnImages ?? _documents.ToList();
@@ -2417,14 +2418,14 @@ namespace Malx_AI
             if (!_openRouterChatService.SupportsImageInput(GetEffectiveCouncilModelId()))
             {
                 payload += "\n\n" + LocalVisionSupport.BuildUnavailableNote(images.Count);
-                LogActivity($"Builder: {images.Count} image attachment(s) withheld because the routed cloud model does not advertise image input.");
+                LogActivity($"{role}: {images.Count} image attachment(s) withheld because the routed cloud model does not advertise image input.");
                 return new OpenRouterMessage("user", payload, PreserveFullText: true);
             }
 
             List<string> imageDataUrls = images
                 .Select(image => LocalVisionSupport.BuildImageDataUrl(image.MimeType, image.Base64Data))
                 .ToList();
-            LogActivity($"Builder: attached {imageDataUrls.Count} image(s) to the cloud vision payload.");
+            LogActivity($"{role}: attached {imageDataUrls.Count} image(s) to the cloud vision payload.");
             string visionOrderNote = AttachmentReferenceResolver.BuildVisionOrderNote(images.Select(image => image.Name));
             if (!string.IsNullOrWhiteSpace(visionOrderNote))
                 payload = visionOrderNote + "\n\n" + payload;
@@ -2850,6 +2851,16 @@ namespace Malx_AI
                 UpdateWorkplaceMentionPopup();
             };
             QueryInput.TextArea.PreviewKeyDown += WorkplaceQueryInput_PreviewKeyDown;
+            CommandManager.AddPreviewExecutedHandler(QueryInput, (s, e) =>
+            {
+                if (e.Command == ApplicationCommands.Paste)
+                {
+                    if (TryHandleClipboardAttachmentPaste())
+                    {
+                        e.Handled = true;
+                    }
+                }
+            });
             Directory.CreateDirectory(CouncilKvStateFolder);
             LoadOpenRouterKeyForWorkplace();
             LoadCustomEndpointForWorkplace();
@@ -11389,6 +11400,11 @@ namespace Malx_AI
             _lastCancelledRunPrompt = string.Empty;
             string userInstruction = userQuery;
             QueryInput.Text = string.Empty;
+            foreach (DocumentInfo doc in _documents)
+            {
+                doc.IsPending = false;
+            }
+            RefreshWorkplaceAttachmentTray();
             Guid? refinementParentId = null;
             bool refinementPass = false;
             string previousFinalForDiff = _lastFinalOutput;

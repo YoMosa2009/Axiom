@@ -23,6 +23,7 @@ namespace Malx_AI.Agent
         private readonly OpenRouterChatService _service;
         private readonly string _modelId;
         private readonly string _systemPrompt;
+        private readonly IReadOnlyList<string>? _imageDataUrls;
         private readonly List<OpenRouterMessage> _messages = new();
         private int _renderedExchanges;
 
@@ -30,11 +31,13 @@ namespace Malx_AI.Agent
             OpenRouterChatService service,
             string modelId,
             string systemPrompt,
-            IReadOnlyList<(string Role, string Content)>? priorChatHistory = null)
+            IReadOnlyList<(string Role, string Content)>? priorChatHistory = null,
+            IReadOnlyList<string>? imageDataUrls = null)
         {
             _service = service ?? throw new ArgumentNullException(nameof(service));
             _modelId = modelId;
             _systemPrompt = systemPrompt;
+            _imageDataUrls = imageDataUrls;
 
             if (priorChatHistory != null && priorChatHistory.Count > 0)
             {
@@ -62,7 +65,7 @@ namespace Malx_AI.Agent
         public async Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
         {
             if (_messages.Count == 0 || _messages[^1].Role != "user")
-                _messages.Add(new OpenRouterMessage("user", goal, PreserveFullText: true));
+                _messages.Add(new OpenRouterMessage("user", goal, PreserveFullText: true, ImageDataUrls: _imageDataUrls));
 
             // Append only what is new, so the assistant/tool message pairing the provider requires
             // stays intact across turns.

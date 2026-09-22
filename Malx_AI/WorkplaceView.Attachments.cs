@@ -71,17 +71,22 @@ namespace Malx_AI
             WorkplaceAttachmentTrayPanel.Children.Clear();
 
             IReadOnlyList<AttachmentReferenceEntry> index = BuildWorkplaceAttachmentIndex();
-            if (index.Count == 0)
+            var pending = new List<(DocumentInfo Document, AttachmentReferenceEntry Entry)>();
+            for (int i = 0; i < _documents.Count && i < index.Count; i++)
+            {
+                if (_documents[i].IsPending)
+                    pending.Add((_documents[i], index[i]));
+            }
+
+            if (pending.Count == 0)
             {
                 WorkplaceAttachmentTrayPanel.Visibility = Visibility.Collapsed;
                 return;
             }
 
             WorkplaceAttachmentTrayPanel.Visibility = Visibility.Visible;
-            for (int i = 0; i < _documents.Count && i < index.Count; i++)
+            foreach ((DocumentInfo document, AttachmentReferenceEntry entry) in pending)
             {
-                DocumentInfo document = _documents[i];
-                AttachmentReferenceEntry entry = index[i];
                 bool animate = _recentlyAttachedWorkplaceDocuments.Remove(document.Name);
                 var item = new AttachmentPreviewItem
                 {
@@ -194,42 +199,64 @@ namespace Malx_AI
         {
             try
             {
+                // 1. Check for standard or stream-based image in clipboard
+                BitmapSource? image = null;
                 if (Clipboard.ContainsImage())
                 {
-                    BitmapSource? image = Clipboard.GetImage();
-                    if (image != null)
+                    image = Clipboard.GetImage();
+                }
+
+                if (image == null)
+                {
+                    IDataObject data = Clipboard.GetDataObject();
+                    if (data != null)
                     {
-                        string tempDir = Path.Combine(AppDataPaths.ChatHistory, "PastedAttachments");
-                        Directory.CreateDirectory(tempDir);
-                        string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..4]}.png";
-                        string filePath = Path.Combine(tempDir, fileName);
-
-                        using (var fileStream = new FileStream(filePath, FileMode.Create))
+                        if (data.GetDataPresent("PNG") && data.GetData("PNG") is Stream pngStream)
                         {
-                            var encoder = new PngBitmapEncoder();
-                            encoder.Frames.Add(BitmapFrame.Create(image));
-                            encoder.Save(fileStream);
+                            var decoder = new PngBitmapDecoder(pngStream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+                            if (decoder.Frames.Count > 0)
+                                image = decoder.Frames[0];
                         }
-
-                        _recentlyAttachedWorkplaceDocuments.Add(fileName);
-                        ProcessFilesAsync([filePath]);
-                        LogActivity($"Pasted image attached: {fileName}");
-                        return true;
+                        else if (data.GetDataPresent(DataFormats.Bitmap) && data.GetData(DataFormats.Bitmap) is BitmapSource bmp)
+                        {
+                            image = bmp;
+                        }
                     }
                 }
 
+                if (image != null)
+                {
+                    string tempDir = Path.Combine(AppDataPaths.ChatHistory, "PastedAttachments");
+                    Directory.CreateDirectory(tempDir);
+                    string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..4]}.png";
+                    string filePath = Path.Combine(tempDir, fileName);
+
+                    using (var fileStream = new FileStream(filePath, FileMode.Create))
+                    {
+                        var encoder = new PngBitmapEncoder();
+                        encoder.Frames.Add(BitmapFrame.Create(image));
+                        encoder.Save(fileStream);
+                    }
+
+                    _recentlyAttachedWorkplaceDocuments.Add(fileName);
+                    ProcessFilesAsync([filePath]);
+                    LogActivity($"Pasted image attached: {fileName}");
+                    return true;
+                }
+
+                // 2. Check for files or folders in clipboard
                 if (Clipboard.ContainsFileDropList())
                 {
                     var fileDropList = Clipboard.GetFileDropList();
                     if (fileDropList != null && fileDropList.Count > 0)
                     {
-                        var files = fileDropList.Cast<string>().Where(File.Exists).ToArray();
+                        var files = fileDropList.Cast<string>().Where(p => File.Exists(p) || Directory.Exists(p)).ToArray();
                         if (files.Length > 0)
                         {
                             foreach (string file in files)
                                 _recentlyAttachedWorkplaceDocuments.Add(Path.GetFileName(file));
                             ProcessFilesAsync(files);
-                            LogActivity($"Pasted {files.Length} file(s) attached.");
+                            LogActivity($"Pasted {files.Length} file/folder(s) attached.");
                             return true;
                         }
                     }

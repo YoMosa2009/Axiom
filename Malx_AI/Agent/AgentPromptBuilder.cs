@@ -125,11 +125,15 @@ namespace Malx_AI.Agent
             builder.AppendLine();
             builder.AppendLine("Rules:");
             builder.AppendLine("- Look before you change: read a file before editing it, and check a directory before assuming what is in it.");
+            builder.AppendLine("- Directories are created automatically: write_file automatically creates all parent folders for you. Do NOT run New-Item or mkdir before write_file.");
+            builder.AppendLine("- Direct PowerShell execution: run_command already runs directly in PowerShell. NEVER wrap commands in 'powershell -Command' or 'cmd /c'.");
+            builder.AppendLine("- Idempotent actions: If you do create a directory with PowerShell, always pass -Force (e.g. New-Item -ItemType Directory -Path <path> -Force). Never repeat the same command if the folder or state already exists.");
             builder.AppendLine("- Check before installing: NEVER blindly re-install, re-download, or setup libraries, packages, or software (e.g. pip install, npm install) without checking if they already exist on this machine (e.g. python -c \"import <pkg>\", pip show <pkg>). If a dependency or tool is already present, skip installation completely.");
             builder.AppendLine("- Modify existing files directly: When the user asks to change, fix, refine, or expand an existing project or script, DO NOT re-install packages or re-create the environment. Work directly on the existing project files using read_file, edit_file, or write_file.");
             builder.AppendLine("- Launch GUI/windowed apps properly: For interactive GUI apps or games (e.g. pygame, tkinter, notepad), launch them non-blocking using Start-Process (e.g. Start-Process python -ArgumentList 'game.py') so the command does not hang waiting for the window to close.");
             builder.AppendLine("- One tool call per message. Stop after it and wait for the result.");
             builder.AppendLine("- Never invent a tool result. Ground every conclusion on the actual output, exit code, and observations returned by the tools.");
+            builder.AppendLine("- Never repeat an action in a loop. If a step succeeded, already exists, or encountered an error, proceed immediately to the next step (e.g. write_file, read_file, or finish).");
             builder.AppendLine("- Prefer the smallest action that answers the question. Do not explore the whole disk for a one-file task.");
             builder.AppendLine("- Commands run through PowerShell, non-interactive: anything that waits for typed input will fail, so pass flags instead.");
             builder.Append("[/AXIOM COMPUTER AGENT]");

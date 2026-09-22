@@ -356,11 +356,22 @@ namespace Malx_AI
             // If documents or images are attached, inform the agent of their paths
             if (_documents.Count > 0)
             {
+                var fileDetails = new StringBuilder();
+                fileDetails.AppendLine("[ATTACHED FILES ON DISK]");
+                foreach (DocumentInfo doc in _documents)
+                {
+                    string kind = doc.IsImage ? "Image" : "File";
+                    fileDetails.AppendLine($"- {doc.Name} ({kind}): Path = \"{doc.FilePath}\"");
+                }
+
                 string attachmentManifest = BuildWorkplaceAttachmentIndexBlock(userQuery);
                 if (!string.IsNullOrWhiteSpace(attachmentManifest))
                 {
-                    effectiveGoal = $"{effectiveGoal}\n\n[ATTACHED FILES IN WORKSPACE]\n{attachmentManifest}";
+                    fileDetails.AppendLine();
+                    fileDetails.AppendLine(attachmentManifest);
                 }
+
+                effectiveGoal = $"{effectiveGoal}\n\n{fileDetails.ToString().Trim()}";
             }
 
             // Council synergy: when Council Mode is active, Architect plans and identifies dependencies
@@ -560,13 +571,27 @@ namespace Malx_AI
         {
             if (_isCloudModeEnabled)
             {
+                List<string>? imageDataUrls = null;
+                var images = _documents
+                    .Where(doc => doc.IsImage && !string.IsNullOrWhiteSpace(doc.MimeType) && !string.IsNullOrWhiteSpace(doc.Base64Data))
+                    .Take(MaxCouncilVisionImagesPerTurn)
+                    .ToList();
+                if (images.Count > 0 && _openRouterChatService.SupportsImageInput(GetEffectiveCouncilModelId()))
+                {
+                    imageDataUrls = images
+                        .Select(image => LocalVisionSupport.BuildImageDataUrl(image.MimeType, image.Base64Data))
+                        .ToList();
+                    LogActivity($"Agent Access: supplied {imageDataUrls.Count} image(s) to cloud model for vision.");
+                }
+
                 var cloudModel = new CloudAgentModel(
                     _openRouterChatService,
                     _isHybridLocalCouncilSelected
                         ? (_openRouterChatService.CustomEndpointConfiguredModelId ?? GetEffectiveCouncilModelId())
                         : GetEffectiveCouncilModelId(),
                     systemPrompt,
-                    chatHistory);
+                    chatHistory,
+                    imageDataUrls);
                 cloudModel.OnTokenUsageRecorded = (promptTokens, completionTokens) =>
                 {
                     _lastRolePromptTokenEstimates[CouncilRole.Builder] = promptTokens;

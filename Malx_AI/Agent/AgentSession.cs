@@ -83,6 +83,8 @@ namespace Malx_AI.Agent
                 ? new List<AgentExchange>(AgentContextManager.CompactExchanges(initialHistory))
                 : new List<AgentExchange>();
             int consecutiveProtocolErrors = 0;
+            AgentToolCall? lastToolCall = null;
+            int consecutiveIdenticalCalls = 0;
 
             try
             {
@@ -171,12 +173,40 @@ namespace Malx_AI.Agent
                             history);
                     }
 
+                    if (AreCallsIdentical(call, lastToolCall))
+                    {
+                        consecutiveIdenticalCalls++;
+                    }
+                    else
+                    {
+                        consecutiveIdenticalCalls = 0;
+                        lastToolCall = call;
+                    }
+
+                    if (consecutiveIdenticalCalls >= 3)
+                    {
+                        return new AgentRunResult(
+                            $"The agent was stopped because it repeatedly attempted the identical action ({call.DescribeShort()}) without making progress. If the desired files or folders already exist, review them or provide a refined instruction.",
+                            steps,
+                            false,
+                            false,
+                            history);
+                    }
+
                     AgentPermissionDecision decision = AgentPermissionPolicy.Evaluate(call, mode, _sessionAllowList);
 
                     if (decision.Permission == AgentPermission.Deny)
                     {
                         steps.Add(new AgentStep(call, AgentPermission.Deny, null, decision.Reason));
                         history.Add(new AgentExchange(call, "Refused: " + decision.Reason));
+                        continue;
+                    }
+
+                    if (consecutiveIdenticalCalls == 2)
+                    {
+                        string loopBlockMsg = $"Repetitive action blocked: '{call.Tool}' with identical arguments was attempted 3 times in a row without making progress. Proceed immediately to creating or modifying files using write_file or finish.";
+                        steps.Add(new AgentStep(call, decision.Permission, AgentToolResult.Fail(loopBlockMsg), "repetition blocked"));
+                        history.Add(new AgentExchange(call, loopBlockMsg));
                         continue;
                     }
 
@@ -223,7 +253,12 @@ namespace Malx_AI.Agent
                     }
 
                     steps.Add(new AgentStep(call, decision.Permission, result, decision.Reason));
-                    history.Add(new AgentExchange(call, result.ToObservation()));
+                    string observation = result.ToObservation();
+                    if (consecutiveIdenticalCalls == 1)
+                    {
+                        observation += "\n[WARNING: You executed the identical tool call with the identical arguments twice in a row. Do not repeat this action again. If the desired folder or state already exists, proceed immediately to writing files using write_file.]";
+                    }
+                    history.Add(new AgentExchange(call, observation));
                 }
             }
             catch (OperationCanceledException)
@@ -243,5 +278,21 @@ namespace Malx_AI.Agent
 
         /// <summary>Commands the user chose to stop being asked about during this run.</summary>
         public IReadOnlyList<string> SessionAllowList => _sessionAllowList;
+
+        internal static bool AreCallsIdentical(AgentToolCall? a, AgentToolCall? b)
+        {
+            if (a == null || b == null)
+                return false;
+            if (!string.Equals(a.Tool, b.Tool, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (a.Arguments.Count != b.Arguments.Count)
+                return false;
+            foreach (var kvp in a.Arguments)
+            {
+                if (!b.Arguments.TryGetValue(kvp.Key, out string? val) || !string.Equals(kvp.Value, val, StringComparison.Ordinal))
+                    return false;
+            }
+            return true;
+        }
     }
 }

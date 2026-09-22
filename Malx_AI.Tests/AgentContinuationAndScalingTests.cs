@@ -420,5 +420,106 @@ namespace Malx_AI.Tests
             Assert.Contains("Duration:", result.Output);
             Assert.Contains("GroundingCheck", result.Output);
         }
+
+        [Fact]
+        public void UpdateReleaseParser_ParsesV198ReleaseCorrectlyForOta()
+        {
+            string releaseJson = """
+            {
+              "tag_name": "v1.9.8",
+              "name": "Axiom V1.9.8",
+              "draft": false,
+              "prerelease": false,
+              "html_url": "https://github.com/YoMosa2009/Axiom/releases/tag/v1.9.8",
+              "body": "Workplace attachment composer clearance, Ctrl+V image/file pasting, Agent Access design vision, shell execution normalization, and repetitive command loop guard.",
+              "published_at": "2026-09-22T03:00:00Z",
+              "assets": [
+                {
+                  "name": "Axiom-v1.9.8-win-x64-clean.zip",
+                  "browser_download_url": "https://github.com/YoMosa2009/Axiom/releases/download/v1.9.8/Axiom-v1.9.8-win-x64-clean.zip",
+                  "size": 415000000,
+                  "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                }
+              ]
+            }
+            """;
+
+            var result = UpdateReleaseParser.Parse(releaseJson, new Version(1, 9, 7));
+            Assert.NotNull(result);
+            Assert.Equal("v1.9.8", result.LatestVersionTag);
+            Assert.Equal(new Version(1, 9, 8, 0), result.LatestVersion);
+            Assert.True(result.IsNewerVersionAvailable);
+            Assert.True(result.HasPackageAsset);
+            Assert.Equal(UpdatePackageKind.Zip, result.PackageKind);
+            Assert.Equal("Axiom-v1.9.8-win-x64-clean.zip", result.PackageFileName);
+
+            var currentResult = UpdateReleaseParser.Parse(releaseJson, new Version(1, 9, 8));
+            Assert.NotNull(currentResult);
+            Assert.False(currentResult.IsNewerVersionAvailable);
+        }
+
+        [Theory]
+        [InlineData("powershell -Command \"New-Item -ItemType Directory -Path 'F:\\WebsiteProject'\"", "New-Item -ItemType Directory -Path 'F:\\WebsiteProject'")]
+        [InlineData("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Write-Output 'Hello'\"", "Write-Output 'Hello'")]
+        [InlineData("powershell -c 'Get-Process'", "Get-Process")]
+        [InlineData("cmd /c \"echo Hello\"", "echo Hello")]
+        [InlineData("Write-Output 'Direct'", "Write-Output 'Direct'")]
+        public void NormalizeCommand_UnwrapsRedundantShellWrappers(string input, string expected)
+        {
+            string normalized = AgentToolExecutor.NormalizeCommand(input);
+            Assert.Equal(expected, normalized);
+        }
+
+        [Fact]
+        public void IsDirectoryAlreadyExistsScenario_DetectsDirectoryExist()
+        {
+            string cmd = "New-Item -ItemType Directory -Path 'F:\\WebsiteProject'";
+            string stderr = "New-Item : An item with the specified name F:\\WebsiteProject already exists.\nAt line:1 char:1\nCategoryInfo : ResourceExists: (F:\\WebsiteProject:String) [New-Item], IOException\nFullyQualifiedErrorId : DirectoryExist,Microsoft.PowerShell.Commands.NewItemCommand";
+            bool detected = AgentToolExecutor.IsDirectoryAlreadyExistsScenario(cmd, string.Empty, stderr);
+            Assert.True(detected);
+
+            bool notDirectory = AgentToolExecutor.IsDirectoryAlreadyExistsScenario("python script.py", string.Empty, "ImportError: no module");
+            Assert.False(notDirectory);
+        }
+
+        [Fact]
+        public void AgentSession_AreCallsIdentical_ComparesAccurately()
+        {
+            var call1 = new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "dir" });
+            var call2 = new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "dir" });
+            var call3 = new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "ls" });
+            var call4 = new AgentToolCall("read_file", new Dictionary<string, string> { ["path"] = "a.txt" });
+
+            Assert.True(AgentSession.AreCallsIdentical(call1, call2));
+            Assert.False(AgentSession.AreCallsIdentical(call1, call3));
+            Assert.False(AgentSession.AreCallsIdentical(call1, call4));
+            Assert.False(AgentSession.AreCallsIdentical(call1, null));
+        }
+
+        [Fact]
+        public async Task AgentSession_RepetitiveToolCallGuard_BlocksOnThirdRepetition()
+        {
+            var mockModel = new ScriptedAgentModel(
+                AgentModelReply.Tool(new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "New-Item -ItemType Directory -Path 'test'" })),
+                AgentModelReply.Tool(new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "New-Item -ItemType Directory -Path 'test'" })),
+                AgentModelReply.Tool(new AgentToolCall("run_command", new Dictionary<string, string> { ["command"] = "New-Item -ItemType Directory -Path 'test'" })),
+                AgentModelReply.Answer("Done.")
+            );
+
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+            var session = new AgentSession(AgentScope.Folder(_folder), maxSteps: 10, executor: executor);
+
+            AgentRunResult result = await session.RunAsync(
+                "create directory test",
+                AgentApprovalMode.Auto,
+                mockModel,
+                (_, _, _) => Task.FromResult(AgentApprovalOutcome.Approve),
+                _ => { },
+                CancellationToken.None);
+
+            Assert.False(result.Cancelled);
+            // Verify step 3 was blocked by the repetitive tool call guard
+            Assert.Contains(result.Steps, s => s.Note == "repetition blocked" && s.Result?.Error?.Contains("Repetitive action blocked") == true);
+        }
     }
 }

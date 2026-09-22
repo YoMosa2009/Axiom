@@ -409,6 +409,16 @@ namespace Malx_AI
                 }
             }
 
+            // Ctrl+V pastes images or files from clipboard into the attachment tray
+            if (e.Key == Key.V && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                if (TryHandleClipboardAttachmentPaste())
+                {
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             // Plain Enter sends the prompt; Shift+Enter inserts a newline
             if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) != ModifierKeys.Shift)
             {

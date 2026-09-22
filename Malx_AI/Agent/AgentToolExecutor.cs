@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -94,6 +95,8 @@ namespace Malx_AI.Agent
             if (string.IsNullOrWhiteSpace(command))
                 return AgentToolResult.Fail("No command supplied.");
 
+            command = NormalizeCommand(command);
+
             string workingDirectory = ResolveWorkingDirectory(call.Arg("cwd"));
             int timeoutSeconds = int.TryParse(call.Arg("timeout_seconds"), out int parsed) && parsed > 0
                 ? Math.Min(parsed, 600)
@@ -162,6 +165,11 @@ namespace Malx_AI.Agent
                     ? "(Command completed successfully with no standard output)"
                     : combined;
                 return AgentToolResult.Ok($"{exitPrefix}\n{body}");
+            }
+            else if (IsDirectoryAlreadyExistsScenario(command, stdout.ToString(), stderr.ToString()))
+            {
+                string body = $"Directory already exists and is ready for use.\n{combined}".Trim();
+                return AgentToolResult.Ok($"[Exit code: 0 (Directory already exists) | Duration: {elapsedMs}ms]\n{body}");
             }
             else
             {
@@ -438,6 +446,55 @@ namespace Malx_AI.Agent
         /// <summary>Wraps a command for -Command, doubling single quotes so the shell sees it whole.</summary>
         internal static string QuoteForPowerShell(string command) =>
             "\"" + command.Replace("\"", "`\"", StringComparison.Ordinal) + "\"";
+
+        /// <summary>
+        /// Strips redundant outer powershell / powershell.exe / cmd /c invocations that models sometimes generate,
+        /// avoiding nested quote escaping and backtick mangling.
+        /// </summary>
+        internal static string NormalizeCommand(string command)
+        {
+            if (string.IsNullOrWhiteSpace(command))
+                return string.Empty;
+
+            string trimmed = command.Trim();
+
+            // Match outer shell wrappers like:
+            // powershell -Command "..."
+            // powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "..."
+            // powershell -c "..."
+            // cmd /c "..."
+            var match = Regex.Match(
+                trimmed,
+                @"^(?:powershell(?:\.exe)?(?:\s+-(?:NoProfile|NonInteractive|ExecutionPolicy\s+\w+))*\s+-(?:Command|c)\s+|cmd(?:\.exe)?\s+/c\s+)(.*)$",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+            if (match.Success)
+            {
+                string remainder = match.Groups[1].Value.Trim();
+                if ((remainder.StartsWith("\"") && remainder.EndsWith("\"")) || (remainder.StartsWith("'") && remainder.EndsWith("'")))
+                {
+                    if (remainder.Length >= 2)
+                        remainder = remainder.Substring(1, remainder.Length - 2).Trim();
+                }
+                trimmed = remainder;
+            }
+
+            return trimmed;
+        }
+
+        internal static bool IsDirectoryAlreadyExistsScenario(string command, string stdout, string stderr)
+        {
+            string cmd = command.ToLowerInvariant();
+            if (cmd.Contains("new-item") || cmd.Contains("mkdir") || cmd.Contains("md "))
+            {
+                string err = (stderr + " " + stdout).ToLowerInvariant();
+                if (err.Contains("already exists") || err.Contains("directoryexist") || err.Contains("resourceexists"))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         private static void TryKill(Process process)
         {

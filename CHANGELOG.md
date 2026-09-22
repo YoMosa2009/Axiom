@@ -1,5 +1,17 @@
 # Changelog
 
+## [V1.9.8] - 2026-09-21
+
+Workplace attachment composer clearance, Ctrl+V image/file pasting, Agent Access design vision, shell execution normalization, and repetitive command loop guard.
+
+### Added
+- **Workplace Attachment Tray Lifecycle.** Newly attached files and images are tracked as pending and automatically cleared from the prompt type box when the message is sent, while remaining in conversation context and knowledge retrieval.
+- **Ctrl+V Pasting for Images and Files in Workplace.** Pressing `Ctrl + V` in the Workplace prompt box reliably pastes screenshots, images (PNG/Bitmap/DIB), and copied files directly into the attachment tray.
+- **Vision Integration in Agent Access.** Cloud and Hybrid Local agent runs now supply image Data URLs and full disk file paths to models so vision-capable models can see attached designs, mockups, and diagrams.
+- **Repetitive Tool Call Guard.** The agent session loop detects repeated identical tool calls, warns the model on consecutive duplicate actions, blocks redundant 3rd attempts, and prevents infinite loops.
+- **Shell Command Normalization.** `run_command` automatically unwraps redundant outer `powershell -Command` or `cmd /c` wrappers, eliminating escaping artifacts such as trailing backticks on folder names.
+- **Directory Creation Idempotency.** `run_command` treats directory creation commands targeting folders that already exist as success rather than an error, preventing models from retrying folder creation.
+
 ## [V1.9.7] - 2026-09-21
 
 Agent Access anti-redundancy, Council Mode synergy, Workplace token tracking accuracy, Enter-to-send, and grounded tool feedback.
