@@ -12890,7 +12890,7 @@ namespace Malx_AI
                                 : "Builder applied a verified source change to Project Canvas.")
                             : useArtifactCanvasContract
                                 ? (isRenderable
-                                    ? $"Builder generated a renderable {_canvasArtifact.DisplayTitle} and sent it to the canvas."
+                                    ? ArtifactRenderService.BuildCanvasChatReply(builderOutput, _canvasArtifact)
                                     : "Builder output was routed to Project Canvas — no renderable artifact was detected in the output. The canvas shows the raw text. Try asking for an explicit HTML or SVG artifact.")
                                 : "Builder output was sent to Project Canvas.");
                         _chatHistory.Add(("builder", builderOutput));

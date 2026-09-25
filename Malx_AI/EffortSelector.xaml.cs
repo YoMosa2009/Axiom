@@ -14,6 +14,20 @@ namespace Malx_AI
         private bool _isDragging;
         private Window? _hostWindow;
 
+        /// <summary>Hides the "Effort ·" caption so only the level shows, for a narrow composer.</summary>
+        public bool IsCompact
+        {
+            get => EffortCaptionText.Visibility != Visibility.Visible;
+            set
+            {
+                Visibility captionVisibility = value ? Visibility.Collapsed : Visibility.Visible;
+                EffortCaptionText.Visibility = captionVisibility;
+                EffortCaptionSeparator.Visibility = captionVisibility;
+                MinWidth = value ? 0 : 116;
+                ToggleContentGrid.MinWidth = value ? 0 : 94;
+            }
+        }
+
         public EffortSelector()
         {
             InitializeComponent();

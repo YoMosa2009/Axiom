@@ -23,6 +23,7 @@ namespace Malx_AI
         public string ModelLabel { get; set; } = "";
         public string ThinkingContent { get; set; } = "";
         public string ThinkingHeaderText { get; set; } = "Thinking";
+        public string CanvasReplyText { get; set; } = "";
         public Guid Id { get; set; } = Guid.NewGuid();
         public DateTime Timestamp { get; set; } = DateTime.Now;
         public string Importance { get; set; } = "Low";

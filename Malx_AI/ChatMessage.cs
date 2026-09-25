@@ -32,6 +32,7 @@ namespace Malx_AI
         private bool _isCodeBlockCollapsed;
         private bool _isSearchMatch;
         private string _streamingDisplayTarget = string.Empty;
+        private string _canvasReplyText = string.Empty;
         private System.Windows.Threading.DispatcherTimer? _streamingRevealTimer;
 
         public ObservableCollection<ChatMessageCodeBlock> CodeBlocks { get; } = new();
@@ -84,6 +85,46 @@ namespace Malx_AI
 
         public DateTime Timestamp { get; set; }
         public string ModelLabel { get; set; } = "";
+
+        /// <summary>
+        /// Set when this reply's deliverable was rendered into Project Canvas: the conversational
+        /// text the bubble shows instead of the artifact source. <see cref="Content"/> keeps the
+        /// full response so conversation history (and follow-up edits) still see the artifact.
+        /// </summary>
+        public string CanvasReplyText
+        {
+            get => _canvasReplyText;
+            set
+            {
+                if (InvokeOnUiThreadIfRequired(() => CanvasReplyText = value))
+                    return;
+
+                string normalized = value ?? string.Empty;
+                if (_canvasReplyText == normalized)
+                    return;
+
+                _canvasReplyText = normalized;
+                if (!_isStreaming)
+                    UpdateCodeBlockPresentation(PresentationContent);
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasCanvasArtifact));
+                OnPropertyChanged(nameof(RichRenderContent));
+                OnPropertyChanged(nameof(SupportsRichRendering));
+            }
+        }
+
+        public bool HasCanvasArtifact => !string.IsNullOrWhiteSpace(_canvasReplyText);
+
+        /// <summary>
+        /// True while this reply is being generated for Project Canvas. Streaming then shows the
+        /// model's lead-in and a progress line instead of raw artifact source scrolling by.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsCanvasDeliveryTurn { get; set; }
+
+        internal const string CanvasStreamingProgressText = "_Building it in Project Canvas..._";
+
+        private string PresentationContent => HasCanvasArtifact ? _canvasReplyText : _content;
 
         public string ThinkingContent
         {
@@ -211,7 +252,7 @@ namespace Malx_AI
 
         public bool HasDisplayContent => !string.IsNullOrWhiteSpace(_displayFormattedContent);
 
-        public string RichRenderContent => NormalizeMathCodeFences(_content);
+        public string RichRenderContent => NormalizeMathCodeFences(PresentationContent);
 
         public string RichThinkingContent => NormalizeMathCodeFences(_thinkingContent);
 
@@ -272,12 +313,15 @@ namespace Malx_AI
             _content = content;
             _formattedContent = MarkdownParser.ToDisplayText(content);
             _displayFormattedContent = _formattedContent;
-            UpdateCodeBlockPresentation(content);
+            AdoptRawHtmlDocumentAsCanvasReply(content);
+            UpdateCodeBlockPresentation(PresentationContent);
             Timestamp = DateTime.Now;
         }
 
         public void SetStreamingContent(string? content)
         {
+            if (IsCanvasDeliveryTurn)
+                content = ArtifactRenderService.BuildCanvasStreamingPreview(content, CanvasStreamingProgressText);
             SetContentCore(content, preserveFormatting: true, notifyRichRendering: false, smoothStreaming: true);
         }
 
@@ -311,7 +355,16 @@ namespace Malx_AI
             }
             else
             {
-                UpdateCodeBlockPresentation(normalized);
+                // A new reply body invalidates a canvas reply derived from the old one.
+                if (contentChanged && _canvasReplyText.Length > 0)
+                {
+                    _canvasReplyText = string.Empty;
+                    OnPropertyChanged(nameof(CanvasReplyText));
+                    OnPropertyChanged(nameof(HasCanvasArtifact));
+                }
+
+                AdoptRawHtmlDocumentAsCanvasReply(normalized);
+                UpdateCodeBlockPresentation(HasCanvasArtifact ? _canvasReplyText : normalized);
             }
 
             if (contentChanged)
@@ -322,6 +375,27 @@ namespace Malx_AI
                 if (notifyRichRendering)
                     OnPropertyChanged(nameof(SupportsRichRendering));
             }
+        }
+
+        /// <summary>
+        /// A finished assistant reply that is a raw (unfenced) HTML document is a rendered
+        /// deliverable, whatever model, mode, or Skill produced it — including chats saved before
+        /// canvas replies existed. Show a conversational reply instead of rendering the page
+        /// inside the bubble; the source stays in <see cref="Content"/> for Open in Canvas.
+        /// </summary>
+        private void AdoptRawHtmlDocumentAsCanvasReply(string? content)
+        {
+            if (HasCanvasArtifact || !string.Equals(Role, "assistant", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string reply = ArtifactRenderService.BuildCanvasReplyForRawHtmlDocument(content);
+            if (reply.Length == 0)
+                return;
+
+            _canvasReplyText = reply;
+            OnPropertyChanged(nameof(CanvasReplyText));
+            OnPropertyChanged(nameof(HasCanvasArtifact));
+            OnPropertyChanged(nameof(SupportsRichRendering));
         }
 
         private void SetStreamingDisplayTarget(string target)

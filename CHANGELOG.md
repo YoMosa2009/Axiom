@@ -1,5 +1,19 @@
 # Changelog
 
+## [V1.9.10] - 2026-09-25
+
+Project Canvas deliverables fit cleanly, the chat answers conversationally instead of rendering the artifact inside the message, and the composer stays tidy when the canvas is open.
+
+### Fixed
+- **Canvas artifacts cut off on the right.** Print-style pages (fixed 8.5in / 210mm widths), fixed-size slide stages, and wide tables are now zoomed to fit the Project Canvas pane, re-fitting as the pane is resized. Content hidden on purpose (off-screen slides, drawers) no longer causes sideways scrolling. The fit logic now lives in the document head, so a reply cut off mid-markup can no longer disable it. Applies to Normal Chat and Workplace.
+- **The artifact rendered inside the chat bubble.** When a reply's deliverable goes to Project Canvas, the bubble shows the model's own short message about what it made (or, if it wrote none, a reply naming the artifact's real title) plus an **Open in Canvas** button. While it generates, the bubble shows the lead-in and a progress line instead of raw source. The same applies to any assistant reply that is a bare HTML document, including chats saved before this update, for local, Hybrid Local, and cloud models. The full source stays in the conversation, so follow-up edits still work.
+- **Empty strip above the Project Canvas.** The canvas pane now runs the full height of the chat view beside the model/context header instead of starting below it, and the dead band between the last message and the composer is gone.
+- **Messy composer with the canvas open.** The tool row no longer wraps "+ / Skills / Plugins" onto ragged lines. It steps from full labels to icon-only buttons to a clean two-row layout as space shrinks, and the canvas header moves its buttons below the title instead of clipping it.
+
+### Changed
+- Skill and @ProjectCanvas prompts ask the model to open with one or two conversational sentences before the artifact and to avoid fixed page widths.
+- Workplace canvas notices use the same conversational reply instead of "generated a renderable HTML Preview".
+
 ## [V1.9.9] - 2026-09-24
 
 Reliable tool use in Cloud and Hybrid Local: Skills, Plugins, and "make me…" requests no longer freeze on "generating" or stop at the model's opening sentence.

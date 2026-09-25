@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 
@@ -57,11 +58,13 @@ namespace Malx_AI
             NavigationBar.Padding = compact ? new Thickness(12, 8, 12, 8) : new Thickness(20, 12, 20, 12);
             ChatHeaderBorder.Padding = compact ? new Thickness(20, 10, 20, 2) : new Thickness(28, 14, 28, 4);
             TokenUsagePanel.Width = compact ? 300 : wide ? 380 : 340;
+            // Bottom padding stays small: it is a dead band inside the scroll viewport where
+            // messages are clipped, which read as an empty strip above the composer.
             ChatDisplay.Padding = compact
-                ? new Thickness(20, 12, 20, 18)
+                ? new Thickness(20, 12, 20, 6)
                 : wide
-                    ? new Thickness(40, 22, 40, 28)
-                    : new Thickness(28, 18, 28, 24);
+                    ? new Thickness(40, 22, 40, 8)
+                    : new Thickness(28, 18, 28, 6);
 
             InputContainerBorder.Margin = compact
                 ? new Thickness(16, 0, 16, 18)
@@ -74,6 +77,108 @@ namespace Malx_AI
 
             double workplaceWidth = Math.Max(0, ContentContainer.ActualWidth);
             WorkplaceViewControl.ApplyDesktopLayout(workplaceWidth);
+        }
+
+        private enum ComposerToolbarMode { Full, IconOnly, Stacked }
+
+        private bool _isUpdatingComposerToolbar;
+
+        // Also wired to both tool groups: a control appearing inside them (the cloud model
+        // picker, the loading spinner) changes what fits without the row itself resizing.
+        private void ComposerToolbarGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (e.WidthChanged)
+                UpdateComposerToolbarLayout();
+        }
+
+        /// <summary>
+        /// Keeps the composer's tool row tidy at every width. The chat column shrinks sharply
+        /// when Project Canvas opens, and the old WrapPanel then broke "+ / Skills / Plugins"
+        /// onto ragged extra lines. Instead the row degrades in deliberate steps: full labels,
+        /// then icon-only buttons (tooltips keep the names), then the controls on a second row.
+        /// </summary>
+        private void UpdateComposerToolbarLayout()
+        {
+            if (_isUpdatingComposerToolbar || ComposerToolbarGrid == null)
+                return;
+
+            double available = ComposerToolbarGrid.ActualWidth;
+            if (available <= 0)
+                return;
+
+            _isUpdatingComposerToolbar = true;
+            try
+            {
+                ComposerToolbarMode mode = ComposerToolbarMode.Full;
+                ApplyComposerLabels(compact: false);
+                if (MeasureComposerRowWidth() > available)
+                {
+                    mode = ComposerToolbarMode.IconOnly;
+                    ApplyComposerLabels(compact: true);
+                    if (MeasureComposerRowWidth() > available)
+                    {
+                        // On two rows each group has the full width to itself, so the labels
+                        // come back whenever both groups still fit with them.
+                        mode = ComposerToolbarMode.Stacked;
+                        ApplyComposerLabels(compact: false);
+                        MeasureComposerRowWidth();
+                        if (Math.Max(ComposerLeftTools.DesiredSize.Width, ComposerRightTools.DesiredSize.Width) > available)
+                            ApplyComposerLabels(compact: true);
+                    }
+                }
+
+                bool stacked = mode == ComposerToolbarMode.Stacked;
+                Grid.SetRow(ComposerRightTools, stacked ? 1 : 0);
+                Grid.SetColumn(ComposerRightTools, stacked ? 0 : 1);
+                Grid.SetColumnSpan(ComposerRightTools, stacked ? 2 : 1);
+                ComposerRightTools.Margin = stacked ? new Thickness(16, 0, 14, 10) : new Thickness(0, 0, 14, 0);
+                ComposerLeftTools.Margin = stacked ? new Thickness(16, 10, 0, 6) : new Thickness(16, 10, 0, 10);
+            }
+            finally
+            {
+                _isUpdatingComposerToolbar = false;
+            }
+        }
+
+        // The canvas pane can be quite narrow; rather than clipping the "Project Canvas" title,
+        // the Preview / Source / hide buttons drop below it when the row cannot hold both.
+        private void NormalProjectCanvasHeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (!e.WidthChanged)
+                return;
+
+            NormalProjectCanvasHeaderActions.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            bool stack = e.NewSize.Width < NormalProjectCanvasHeaderActions.DesiredSize.Width + 150;
+            Grid.SetRow(NormalProjectCanvasHeaderActions, stack ? 1 : 0);
+            Grid.SetColumn(NormalProjectCanvasHeaderActions, stack ? 0 : 1);
+            NormalProjectCanvasHeaderActions.HorizontalAlignment = stack ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            NormalProjectCanvasHeaderActions.Margin = stack ? new Thickness(0, 8, 0, 0) : new Thickness(10, 0, 0, 0);
+        }
+
+        private double MeasureComposerRowWidth()
+        {
+            var unbounded = new Size(double.PositiveInfinity, double.PositiveInfinity);
+            ComposerLeftTools.Measure(unbounded);
+            ComposerRightTools.Measure(unbounded);
+            // Desired sizes include each panel's own margins; keep a small gap between groups.
+            return ComposerLeftTools.DesiredSize.Width + ComposerRightTools.DesiredSize.Width + 12;
+        }
+
+        private void ApplyComposerLabels(bool compact)
+        {
+            Visibility labelVisibility = compact ? Visibility.Collapsed : Visibility.Visible;
+            var iconMargin = compact ? new Thickness(0) : new Thickness(0, 0, 7, 0);
+
+            SkillsButtonLabel.Visibility = labelVisibility;
+            PluginsButtonLabel.Visibility = labelVisibility;
+            WebToggleLabel.Visibility = labelVisibility;
+            SkillsButtonIcon.Margin = iconMargin;
+            PluginsButtonIcon.Margin = iconMargin;
+            WebToggleIcon.Margin = iconMargin;
+            SkillsButton.MinWidth = compact ? 34 : 90;
+            PluginsButton.MinWidth = compact ? 34 : 96;
+            SkillsButton.Margin = compact ? new Thickness(4, 0, 4, 0) : new Thickness(6, 0, 6, 0);
+            NormalEffortSelector.IsCompact = compact;
         }
 
         private double GetResponsiveSidebarWidth()

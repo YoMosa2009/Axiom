@@ -900,6 +900,81 @@
         <Grid x:Name="ContentContainer" Grid.Row="1" Grid.Column="1" Background="{DynamicResource NotebookBackgroundBrush}">
             <!-- CHAT VIEW (default) -->
             <DockPanel x:Name="ChatView" Background="{DynamicResource NotebookBackgroundBrush}">
+                <!-- Docked first so the canvas runs the full height of the chat view, beside the
+                     model/context header instead of underneath it. -->
+                <Border x:Name="NormalProjectCanvasPane"
+                        DockPanel.Dock="Right"
+                        Width="0" MaxWidth="680"
+                        Visibility="Collapsed"
+                        Background="{DynamicResource NotebookSurfaceBrush}"
+                        BorderBrush="{DynamicResource NotebookBorderBrush}"
+                        BorderThickness="1,0,0,0"
+                        ClipToBounds="True">
+                    <Grid Margin="14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,12">
+                            <Grid x:Name="NormalProjectCanvasHeaderGrid" SizeChanged="NormalProjectCanvasHeaderGrid_SizeChanged">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" MinWidth="0"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="Project Canvas" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock x:Name="NormalProjectCanvasStatusText" Text="Use @ProjectCanvas to render an artifact." FontSize="10" Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                                </StackPanel>
+                                <StackPanel x:Name="NormalProjectCanvasHeaderActions" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                                    <Button x:Name="NormalProjectCanvasPreviewButton" Content="Preview" Click="NormalProjectCanvasPreview_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" MinWidth="66" Padding="10,0" Margin="0,0,5,0" IsEnabled="False"/>
+                                    <Button x:Name="NormalProjectCanvasSourceButton" Content="Source" Click="NormalProjectCanvasSource_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" MinWidth="58" Padding="10,0" Margin="0,0,7,0" IsEnabled="False"/>
+                                    <Button Width="30" Height="30" Click="NormalProjectCanvasClose_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Hide Project Canvas">
+                                        <TextBlock Text="&#x203A;" FontSize="18" Foreground="{DynamicResource DarkSecondaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="1" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" ClipToBounds="True">
+                            <Grid>
+                                <wv2:WebView2 x:Name="NormalProjectCanvasWebView" DefaultBackgroundColor="#00000000" Visibility="Collapsed"/>
+                                <TextBox x:Name="NormalProjectCanvasSourceView"
+                                         Visibility="Collapsed"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="NoWrap"
+                                         FontFamily="Consolas"
+                                         FontSize="12"
+                                         Padding="12"
+                                         Background="{DynamicResource NotebookBackgroundBrush}"
+                                         Foreground="{DynamicResource NotebookTextBrush}"
+                                         BorderThickness="0"
+                                         HorizontalScrollBarVisibility="Auto"
+                                         VerticalScrollBarVisibility="Auto"/>
+                                <StackPanel x:Name="NormalProjectCanvasEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="280" Margin="24">
+                                    <Border Width="46" Height="46" CornerRadius="12" Background="#262321" BorderBrush="#3A3632" BorderThickness="1" HorizontalAlignment="Center" Margin="0,0,0,14">
+                                        <TextBlock Text="&#x25C7;" FontSize="23" Foreground="{DynamicResource PrimaryAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="Project Canvas is ready" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Add @ProjectCanvas to a prompt. Axiom will render the completed HTML, SVG, interactive JavaScript, chart, or document here." FontSize="11" Foreground="{DynamicResource MutedTextBrush}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,7,0,0" LineHeight="16"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                            <Button x:Name="NormalProjectCanvasCopyButton" Content="Copy source" Click="NormalProjectCanvasCopy_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" Padding="10,0" Margin="0,0,6,0" IsEnabled="False"/>
+                            <Button x:Name="NormalProjectCanvasSaveButton" Content="Save" Click="NormalProjectCanvasSave_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" Padding="12,0" IsEnabled="False"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
                 <!-- Header -->
                 <Border x:Name="ChatHeaderBorder" DockPanel.Dock="Top" BorderThickness="0" Padding="28,14,28,4" Background="Transparent">
                     <StackPanel>
@@ -1018,7 +1093,7 @@
                     <Grid Grid.Row="0">
                         <ListBox x:Name="ChatDisplay"
                                  Margin="0"
-                                  Padding="32,18,32,24"
+                                  Padding="32,18,32,6"
                                  HorizontalAlignment="Stretch"
                                  Background="{DynamicResource NotebookBackgroundBrush}"
                                  BorderThickness="0"
@@ -1247,6 +1322,7 @@
                                                     <Button x:Name="EditResendActionButton" Content="Edit &amp; Resend" Click="EditResendMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="92" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
                                                     <Button x:Name="RegenerateActionButton" Content="Regenerate" Click="RegenerateMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="78" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
                                                     <Button x:Name="RetryCloudActionButton" Content="Retry Other" Click="RetryOtherCloudModel_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="78" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    <Button x:Name="OpenCanvasActionButton" Content="Open in Canvas" Click="OpenMessageInProjectCanvas_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="92" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
                                                     <Button x:Name="PinActionButton" Content="Pin" Click="PinMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="40" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
                                                     <Button Content="Branch" Click="BranchMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="56" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
                                                     <Button Content="Copy" Click="CopyMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="46" Margin="0,0,0,4" Style="{StaticResource SubtleButtonStyle}"/>
@@ -1280,6 +1356,13 @@
                                             <DataTrigger Binding="{Binding ShouldShowGenerationStatus}" Value="True">
                                                 <Setter TargetName="AssistantGenerationStatusText" Property="Visibility" Value="Visible"/>
                                             </DataTrigger>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Role}" Value="assistant"/>
+                                                    <Condition Binding="{Binding HasCanvasArtifact}" Value="True"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter TargetName="OpenCanvasActionButton" Property="Visibility" Value="Visible"/>
+                                            </MultiDataTrigger>
                                             <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
                                                 <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
                                                 <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="2"/>
@@ -1392,7 +1475,7 @@
                     </Grid>
 
                     <!-- Input Area -->
-                    <Border Grid.Row="1" BorderThickness="0" Padding="0,12,0,0" Background="Transparent">
+                    <Border Grid.Row="1" BorderThickness="0" Padding="0,8,0,0" Background="Transparent">
                         <StackPanel>
                             <Border x:Name="BranchNavigatorBorder" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="8" Margin="32,0,32,8">
                                 <DockPanel>
@@ -1555,23 +1638,27 @@
 
 
                                     <Grid Grid.Row="2" MinHeight="56" Background="Transparent">
-                                        <Grid Margin="0,0,0,0">
+                                        <Grid x:Name="ComposerToolbarGrid" Margin="0,0,0,0" SizeChanged="ComposerToolbarGrid_SizeChanged">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
 
-                                            <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,10,0,10">
+                                            <StackPanel x:Name="ComposerLeftTools" SizeChanged="ComposerToolbarGrid_SizeChanged" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,10,0,10">
                                                 <Button Width="34" Height="34" Margin="0,0,4,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}" AutomationProperties.Name="Attach files" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
                                                     <Path Width="14" Height="14" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
                                                 </Button>
                                                 <Button x:Name="SkillsButton" MinWidth="90" Margin="6,0,6,0" Click="OpenSkills_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach reusable Skills to every Axiom model and mode">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                        <Path Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
+                                                        <Path x:Name="SkillsButtonIcon" Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                               StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                               Data="M7,1 L8.3,4.7 L12,3.4 L9.8,6.7 L13,9 L9,9 L9,13 L6.7,9.8 L3.4,12 L4.7,8.3 L1,7 L4.7,5.7 L3.4,2.2 L6.7,4.2 Z"/>
-                                                        <TextBlock Text="Skills" VerticalAlignment="Center"/>
+                                                        <TextBlock x:Name="SkillsButtonLabel" Text="Skills" VerticalAlignment="Center"/>
                                                         <Border x:Name="SkillsButtonBadge" Margin="7,0,0,0" Padding="5,1" CornerRadius="7" Background="{DynamicResource AccentSoftBrush}" Visibility="Collapsed">
                                                             <TextBlock x:Name="SkillsButtonCountText" Text="0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource AccentMutedBrush}"/>
                                                         </Border>
@@ -1579,17 +1666,17 @@
                                                 </Button>
                                                 <Button x:Name="PluginsButton" MinWidth="96" Click="OpenPlugins_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach Axiom-native capability Plugins">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                        <Path Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
+                                                        <Path x:Name="PluginsButtonIcon" Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                               StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                               Data="M5,1 L9,1 L9,5 L13,5 L13,9 L9,9 L9,13 L5,13 L5,9 L1,9 L1,5 L5,5 Z"/>
-                                                        <TextBlock Text="Plugins" VerticalAlignment="Center"/>
+                                                        <TextBlock x:Name="PluginsButtonLabel" Text="Plugins" VerticalAlignment="Center"/>
                                                         <Border x:Name="PluginsButtonBadge" Margin="7,0,0,0" Padding="5,1" CornerRadius="7" Background="{DynamicResource AccentSoftBrush}" Visibility="Collapsed">
                                                             <TextBlock x:Name="PluginsButtonCountText" Text="0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource AccentMutedBrush}"/>
                                                         </Border>
                                                     </StackPanel>
                                                 </Button>
-                                            </WrapPanel>
+                                            </StackPanel>
 
                                             <Popup x:Name="SkillsPopup"
                                                    Placement="Top"
@@ -1673,7 +1760,7 @@
                                                 </Border>
                                             </Popup>
 
-                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,14,0">
+                                            <StackPanel x:Name="ComposerRightTools" SizeChanged="ComposerToolbarGrid_SizeChanged" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,14,0">
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed">
                                                      <TextBlock Text="{Binding ElementName=HeaderModelName, Path=Text}" FontSize="13" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"/>
                                                 </StackPanel>
@@ -1730,14 +1817,14 @@
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <!-- Globe: outline, equator and meridian, stroked from the button foreground
                                                              so it follows the on/off/hover states with the label. -->
-                                                        <Grid Width="13" Height="13" Margin="0,0,7,0">
+                                                        <Grid x:Name="WebToggleIcon" Width="13" Height="13" Margin="0,0,7,0">
                                                             <Ellipse Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"/>
                                                             <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"
                                                                   Data="M0.6,6.5 H12.4"/>
                                                             <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"
                                                                   Data="M6.5,0.4 C3.7,2.8 3.7,10.2 6.5,12.6 C9.3,10.2 9.3,2.8 6.5,0.4"/>
                                                         </Grid>
-                                                        <TextBlock Text="Web" VerticalAlignment="Center"/>
+                                                        <TextBlock x:Name="WebToggleLabel" Text="Web" VerticalAlignment="Center"/>
                                                     </StackPanel>
                                                 </ToggleButton>
                                                 <Border x:Name="InlineLoadingIndicator" Visibility="Collapsed" Width="34" Height="34" Margin="0,0,8,0" Background="#00FFFFFF">
@@ -1772,73 +1859,6 @@
                         </StackPanel>
                     </Border>
 
-                    <Border x:Name="NormalProjectCanvasPane"
-                            Grid.Column="1" Grid.RowSpan="2"
-                            Width="0" MaxWidth="680"
-                            Visibility="Collapsed"
-                            Background="{DynamicResource NotebookSurfaceBrush}"
-                            BorderBrush="{DynamicResource NotebookBorderBrush}"
-                            BorderThickness="1,0,0,0"
-                            ClipToBounds="True">
-                        <Grid Margin="14">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-
-                            <Border Grid.Row="0" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,12">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" MinWidth="0"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="Project Canvas" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
-                                        <TextBlock x:Name="NormalProjectCanvasStatusText" Text="Use @ProjectCanvas to render an artifact." FontSize="10" Foreground="{DynamicResource MutedTextBrush}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
-                                        <Button x:Name="NormalProjectCanvasPreviewButton" Content="Preview" Click="NormalProjectCanvasPreview_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" MinWidth="66" Padding="10,0" Margin="0,0,5,0" IsEnabled="False"/>
-                                        <Button x:Name="NormalProjectCanvasSourceButton" Content="Source" Click="NormalProjectCanvasSource_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" MinWidth="58" Padding="10,0" Margin="0,0,7,0" IsEnabled="False"/>
-                                        <Button Width="30" Height="30" Click="NormalProjectCanvasClose_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Hide Project Canvas">
-                                            <TextBlock Text="&#x203A;" FontSize="18" Foreground="{DynamicResource DarkSecondaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Button>
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
-
-                            <Border Grid.Row="1" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" ClipToBounds="True">
-                                <Grid>
-                                    <wv2:WebView2 x:Name="NormalProjectCanvasWebView" DefaultBackgroundColor="#00000000" Visibility="Collapsed"/>
-                                    <TextBox x:Name="NormalProjectCanvasSourceView"
-                                             Visibility="Collapsed"
-                                             IsReadOnly="True"
-                                             AcceptsReturn="True"
-                                             TextWrapping="NoWrap"
-                                             FontFamily="Consolas"
-                                             FontSize="12"
-                                             Padding="12"
-                                             Background="{DynamicResource NotebookBackgroundBrush}"
-                                             Foreground="{DynamicResource NotebookTextBrush}"
-                                             BorderThickness="0"
-                                             HorizontalScrollBarVisibility="Auto"
-                                             VerticalScrollBarVisibility="Auto"/>
-                                    <StackPanel x:Name="NormalProjectCanvasEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="280" Margin="24">
-                                        <Border Width="46" Height="46" CornerRadius="12" Background="#262321" BorderBrush="#3A3632" BorderThickness="1" HorizontalAlignment="Center" Margin="0,0,0,14">
-                                            <TextBlock Text="&#x25C7;" FontSize="23" Foreground="{DynamicResource PrimaryAccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                        <TextBlock Text="Project Canvas is ready" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Center"/>
-                                        <TextBlock Text="Add @ProjectCanvas to a prompt. Axiom will render the completed HTML, SVG, interactive JavaScript, chart, or document here." FontSize="11" Foreground="{DynamicResource MutedTextBrush}" TextAlignment="Center" TextWrapping="Wrap" Margin="0,7,0,0" LineHeight="16"/>
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
-
-                            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-                                <Button x:Name="NormalProjectCanvasCopyButton" Content="Copy source" Click="NormalProjectCanvasCopy_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" Padding="10,0" Margin="0,0,6,0" IsEnabled="False"/>
-                                <Button x:Name="NormalProjectCanvasSaveButton" Content="Save" Click="NormalProjectCanvasSave_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Height="30" Padding="12,0" IsEnabled="False"/>
-                            </StackPanel>
-                        </Grid>
-                    </Border>
                 </Grid>
             </DockPanel>
 
@@ -2465,7 +2485,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.9.9" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.9.10" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Grid.Column="1" Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>

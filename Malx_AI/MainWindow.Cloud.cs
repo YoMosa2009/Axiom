@@ -1521,7 +1521,8 @@ namespace Malx_AI
                 _currentStreamingMessage = new ChatMessage("assistant", string.Empty)
                 {
                     ModelLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId),
-                    PreferPlainTextRendering = false
+                    PreferPlainTextRendering = false,
+                    IsCanvasDeliveryTurn = ShouldRouteNormalChatToCanvas(userMsg)
                 };
                 _currentStreamingMessage.IsThinkingInProgress = true;
                 _currentStreamingMessage.IsStreaming = true;
@@ -1596,7 +1597,7 @@ namespace Malx_AI
                     toolLoopResult.Usage);
 
                 await Dispatcher.InvokeAsync(() =>
-                    TryRouteNormalChatArtifact(userMsg, toolLoopResult.ResponseText));
+                    ApplyNormalChatCanvasRouting(_currentStreamingMessage, userMsg, toolLoopResult.ResponseText));
 
                 ShowTransientStatus($"Tokens: {_tokenCount}  •  Mode: Cloud ({_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)})");
                 _currentStreamingMessage = null;

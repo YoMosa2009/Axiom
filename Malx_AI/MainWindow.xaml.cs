@@ -1508,7 +1508,8 @@ namespace Malx_AI
                 CompactionSummaries = msg.CompactionSummaries,
                 CloudPromptTokens = msg.CloudPromptTokens,
                 CloudCompletionTokens = msg.CloudCompletionTokens,
-                CloudTotalTokens = msg.CloudTotalTokens
+                CloudTotalTokens = msg.CloudTotalTokens,
+                CanvasReplyText = msg.CanvasReplyText
             };
         }
 
@@ -1525,7 +1526,8 @@ namespace Malx_AI
                 IsCompactionProtected = state.IsCompactionProtected,
                 CloudPromptTokens = state.CloudPromptTokens,
                 CloudCompletionTokens = state.CloudCompletionTokens,
-                CloudTotalTokens = state.CloudTotalTokens
+                CloudTotalTokens = state.CloudTotalTokens,
+                CanvasReplyText = state.CanvasReplyText
             };
         }
 
@@ -2404,7 +2406,8 @@ namespace Malx_AI
                         CompactionSummaries = m.CompactionSummaries,
                         CloudPromptTokens = m.CloudPromptTokens,
                         CloudCompletionTokens = m.CloudCompletionTokens,
-                        CloudTotalTokens = m.CloudTotalTokens
+                        CloudTotalTokens = m.CloudTotalTokens,
+                        CanvasReplyText = m.CanvasReplyText
                     });
                 }
 
@@ -3360,7 +3363,8 @@ namespace Malx_AI
                     CompactionSummaries = CloneCompactionSummaries(msg.CompactionSummaries),
                     CloudPromptTokens = msg.CloudPromptTokens,
                     CloudCompletionTokens = msg.CloudCompletionTokens,
-                    CloudTotalTokens = msg.CloudTotalTokens
+                    CloudTotalTokens = msg.CloudTotalTokens,
+                    CanvasReplyText = msg.CanvasReplyText
                 });
             }
 
@@ -3406,7 +3410,8 @@ namespace Malx_AI
                     CompactionSummaries = msg.CompactionSummaries,
                     CloudPromptTokens = msg.CloudPromptTokens,
                     CloudCompletionTokens = msg.CloudCompletionTokens,
-                    CloudTotalTokens = msg.CloudTotalTokens
+                    CloudTotalTokens = msg.CloudTotalTokens,
+                    CanvasReplyText = msg.CanvasReplyText
                 });
             }
 
@@ -3992,7 +3997,8 @@ namespace Malx_AI
                     CompactionSummaries = msg.CompactionSummaries,
                     CloudPromptTokens = msg.CloudPromptTokens,
                     CloudCompletionTokens = msg.CloudCompletionTokens,
-                    CloudTotalTokens = msg.CloudTotalTokens
+                    CloudTotalTokens = msg.CloudTotalTokens,
+                    CanvasReplyText = msg.CanvasReplyText
                 });
             }
 
@@ -4109,6 +4115,7 @@ namespace Malx_AI
                             CloudPromptTokens = msg.CloudPromptTokens,
                             CloudCompletionTokens = msg.CloudCompletionTokens,
                             CloudTotalTokens = msg.CloudTotalTokens,
+                            CanvasReplyText = msg.CanvasReplyText,
                             Importance = Enum.TryParse<MessageImportance>(msg.Importance, out var restoredImportance) ? restoredImportance : MessageImportance.Low,
                             IsCompactionProtected = msg.IsCompactionProtected,
                             IsCompactionMarker = msg.IsCompactionMarker,

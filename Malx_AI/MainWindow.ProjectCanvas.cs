@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -86,19 +87,80 @@ namespace Malx_AI
 
             return """
 [PROJECT CANVAS MODE]
-The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifact, not only an explanation. Return the complete artifact source in the final answer so Axiom can route it to Project Canvas. Prefer one self-contained HTML document with inline CSS and JavaScript for interactive, animated, calculated, or stateful work; standalone SVG is suitable for static vector work; Markdown is suitable for a formatted document. Do not use external URLs, CDNs, fonts, scripts, stylesheets, images, or libraries because the canvas is offline. Make the artifact responsive to its container and avoid fixed viewport assumptions. Calculator, Python, and Java sandbox tools are optional accuracy aids: use them only when they materially help with math, data, validation, or code execution. Do not claim a tool was used unless its result is present. Skip extended step-by-step deliberation before answering: do not silently draft or rewrite the artifact in a hidden reasoning pass first. Go straight to writing the complete artifact as your visible answer.
+The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifact, not only an explanation. Return the complete artifact source in the final answer so Axiom can route it to Project Canvas. Prefer one self-contained HTML document with inline CSS and JavaScript for interactive, animated, calculated, or stateful work; standalone SVG is suitable for static vector work; Markdown is suitable for a formatted document. Do not use external URLs, CDNs, fonts, scripts, stylesheets, images, or libraries because the canvas is offline. Make the artifact responsive to its container and avoid fixed viewport or page widths. Before the artifact, write one or two short, natural sentences to the user saying what you made; Axiom shows them in the chat while the artifact opens in Project Canvas, so do not describe it at length or repeat it. Calculator, Python, and Java sandbox tools are optional accuracy aids: use them only when they materially help with math, data, validation, or code execution. Do not claim a tool was used unless its result is present. Skip extended step-by-step deliberation before answering: do not silently draft or rewrite the artifact in a hidden reasoning pass first. Go straight to writing the complete artifact as your visible answer.
 [/PROJECT CANVAS MODE]
 """;
         }
 
-        private void TryRouteNormalChatArtifact(string userMessage, string responseText)
+        /// <summary>
+        /// Routes a finished Normal Chat reply's artifact into Project Canvas and, when it lands
+        /// there, swaps the bubble to the conversational reply so the artifact is not rendered a
+        /// second time inside the chat. Same behaviour for local, Hybrid Local, and cloud models.
+        /// </summary>
+        private void ApplyNormalChatCanvasRouting(ChatMessage? message, string userMessage, string responseText)
+        {
+            ArtifactRenderInfo? artifact = TryRouteNormalChatArtifact(userMessage, responseText);
+            if (artifact == null && message?.HasCanvasArtifact == true)
+            {
+                // No Skill or @ProjectCanvas asked for it, but the model answered with a whole
+                // HTML document anyway; the bubble already shows a reply, so show the page too.
+                ArtifactRenderInfo raw = ArtifactRenderService.DetectForNormalChat(responseText);
+                if (raw.SupportsPreview)
+                    ShowNormalProjectCanvasArtifact(raw);
+                return;
+            }
+
+            if (message == null || artifact == null)
+                return;
+
+            string reply = ArtifactRenderService.BuildCanvasChatReply(responseText, artifact);
+            message.CanvasReplyText = reply;
+
+            foreach (var branch in _branches)
+            {
+                ChatMessageState? state = branch.Messages.FirstOrDefault(m => m.Id == message.Id);
+                if (state != null)
+                    state.CanvasReplyText = reply;
+            }
+        }
+
+        private void OpenMessageInProjectCanvas_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is not ChatMessage message || string.IsNullOrWhiteSpace(message.Content))
+                return;
+
+            ArtifactRenderInfo artifact = ArtifactRenderService.DetectForNormalChat(message.Content);
+            if (!artifact.SupportsPreview || artifact.Kind == ArtifactKind.Document)
+            {
+                // Small-model replies are structured text Axiom composed the artifact from.
+                foreach (string format in new[] { SkillSmallModelFormats.Outline, SkillSmallModelFormats.Chart, SkillSmallModelFormats.Markdown })
+                {
+                    if (SkillArtifactComposer.TryCompose(format, message.Content, out string composedHtml))
+                    {
+                        ArtifactRenderInfo composed = ArtifactRenderService.DetectForNormalChat(composedHtml);
+                        if (composed.SupportsPreview)
+                        {
+                            artifact = composed;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (artifact.SupportsPreview)
+                ShowNormalProjectCanvasArtifact(artifact);
+            else
+                ShowTransientStatus("This reply's artifact could not be reopened.");
+        }
+
+        private ArtifactRenderInfo? TryRouteNormalChatArtifact(string userMessage, string responseText)
         {
             if (string.IsNullOrWhiteSpace(responseText))
-                return;
+                return null;
 
             SkillCanvasDirective? directive = ResolveNormalChatCanvasDirective(userMessage);
             if (directive == null && !IsProjectCanvasRequested(userMessage))
-                return;
+                return null;
 
             ArtifactRenderInfo artifact = ArtifactRenderService.DetectForNormalChat(responseText);
 
@@ -114,17 +176,24 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
             if (!artifact.SupportsPreview)
             {
                 NormalProjectCanvasStatusText.Text = "The response did not contain a renderable artifact.";
-                return;
+                return null;
             }
 
             if (directive != null)
                 ShowTransientStatus($"{directive.SkillName} rendered the result in Project Canvas.");
 
+            ShowNormalProjectCanvasArtifact(artifact);
+            return artifact;
+        }
+
+        private void ShowNormalProjectCanvasArtifact(ArtifactRenderInfo artifact)
+        {
             _normalProjectCanvasArtifact = artifact;
             _normalProjectCanvasPreviewMode = true;
             _normalProjectCanvasNavigationSource = string.Empty;
             NormalProjectCanvasSourceView.Text = artifact.RawSource ?? string.Empty;
-            NormalProjectCanvasStatusText.Text = artifact.DisplayTitle;
+            string artifactTitle = ArtifactRenderService.ExtractArtifactTitle(artifact);
+            NormalProjectCanvasStatusText.Text = string.IsNullOrWhiteSpace(artifactTitle) ? artifact.DisplayTitle : artifactTitle;
             NormalProjectCanvasPreviewButton.IsEnabled = true;
             NormalProjectCanvasSourceButton.IsEnabled = true;
             NormalProjectCanvasCopyButton.IsEnabled = true;
@@ -244,7 +313,9 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
 
         private double GetNormalProjectCanvasTargetWidth()
         {
-            double available = NormalChatWorkspaceGrid?.ActualWidth ?? ActualWidth;
+            // The pane is docked beside the whole chat view, so size it from that view: the
+            // workspace grid is what remains AFTER the pane and would shrink as it opens.
+            double available = ChatView?.ActualWidth ?? ActualWidth;
             if (double.IsNaN(available) || available <= 0)
                 available = 1100;
 

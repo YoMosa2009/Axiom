@@ -95,12 +95,13 @@ namespace Malx_AI
             builder.AppendLine("Output shape:");
             builder.AppendLine($"- Return exactly one ```{fence} fenced block containing the complete artifact.");
             builder.AppendLine($"- {guidance}");
-            builder.AppendLine("- At most one short sentence before the block. Nothing after it. Never split the artifact across several blocks.");
+            builder.AppendLine("- Before the block, write one or two short, natural sentences to the user in your own words saying what you made (its subject and one notable detail). Axiom shows those sentences in the chat while the artifact opens in Project Canvas, so do not describe the artifact at length.");
+            builder.AppendLine("- Nothing after the block. Never split the artifact across several blocks.");
             builder.AppendLine();
             builder.AppendLine("Environment (non-negotiable):");
             builder.AppendLine("- Fully offline. No external URLs, CDNs, webfonts, stylesheets, scripts, images, or libraries; each one fails silently and leaves a broken artifact.");
             builder.AppendLine("- Build visuals from CSS, inline SVG, or the canvas API. Never leave a placeholder box, an image reference, or text such as \"[chart goes here]\".");
-            builder.AppendLine("- The pane is a narrow, user-resizable column (roughly 300-750px). Use relative units and let the layout reflow; never assume a desktop viewport width.");
+            builder.AppendLine("- The pane is a narrow, user-resizable column (roughly 300-750px). Use relative units and let the layout reflow; never assume a desktop viewport width. Page or slide containers use width:100% with a max-width, never a fixed width such as 8.5in, 210mm, or 1000px.");
             builder.AppendLine("- Do not claim a file was written, exported, downloaded, or saved. Producing the artifact is the whole deliverable.");
             builder.AppendLine("- Skip hidden deliberation: do not draft or rewrite the artifact in a reasoning pass first. Write the finished artifact directly as your visible answer.");
 

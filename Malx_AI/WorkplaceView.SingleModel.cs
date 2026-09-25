@@ -356,7 +356,7 @@ namespace Malx_AI
                     runContext.BuilderRoutedToCanvas = true;
                     routedToCanvas = true;
                     AppendChat("agent", _canvasArtifact.SupportsPreview
-                        ? $"Generated a renderable {_canvasArtifact.DisplayTitle} and sent it to Project Canvas."
+                        ? ArtifactRenderService.BuildCanvasChatReply(output, _canvasArtifact)
                         : "Output was sent to Project Canvas.");
                 }
             }

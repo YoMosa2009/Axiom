@@ -51,7 +51,7 @@
     </UserControl.Resources>
     <Grid>
         <Button x:Name="ToggleButton" Style="{StaticResource ComposerButtonStyle}" Padding="9,0" Click="ToggleButton_Click" ToolTip="Choose response effort">
-            <Grid MinWidth="94">
+            <Grid x:Name="ToggleContentGrid" MinWidth="94">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
@@ -59,8 +59,8 @@
                 </Grid.ColumnDefinitions>
                 <Border Width="7" Height="7" Margin="0,0,7,0" Background="{DynamicResource PrimaryAccentBrush}" CornerRadius="3.5" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Effort" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" VerticalAlignment="Center"/>
-                    <TextBlock Text="·" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" Margin="5,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="EffortCaptionText" Text="Effort" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="EffortCaptionSeparator" Text="·" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" Margin="5,0" VerticalAlignment="Center"/>
                     <TextBlock x:Name="ButtonLevelText" Text="Medium" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentMutedBrush}" VerticalAlignment="Center"/>
                 </StackPanel>
                 <Path Grid.Column="2" Margin="7,0,0,0" Width="8" Height="5" Fill="{DynamicResource AccentMutedBrush}" Data="M0,0 L8,0 L4,4.5 Z" VerticalAlignment="Center"/>

@@ -121,9 +121,45 @@ namespace Malx_AI
             "c.style.height=Math.floor(c.height*ratio)+'px';" +
             "}}" +
             "}" +
-            "function runFixes(){fixContrast();fixSvg();fixCanvases();}" +
+            // fitWidth: print-style documents (fixed 8.5in / 210mm pages), wide tables, and
+            // fixed-width slide stages are authored for a desktop viewport and were cut off in
+            // the narrow canvas pane. Measure how far visible content really reaches — clipped by
+            // any overflow-hiding/scrolling ancestor, and ignoring anything that starts beyond the
+            // right edge (off-screen slides, drawers) — then zoom the whole page down so it fits,
+            // never below a legible floor.
+            "function contentRight(view){" +
+            "var b=document.body;if(!b)return 0;var max=0,seen=0;" +
+            "function walk(e,clip){" +
+            "if(++seen>4000)return;var cs=getComputedStyle(e);if(cs.display==='none'||cs.position==='fixed')return;" +
+            "var r=e.getBoundingClientRect();var right=Math.min(r.right,clip);" +
+            "if(r.width>0&&r.height>0&&r.left<view&&cs.visibility!=='hidden'&&right>max)max=right;" +
+            // Only truly clipped content (hidden/clip: slide tracks, marquees) is ignored. A
+            // scroll container still hides its overflow behind a sideways scrollbar — models wrap
+            // whole fixed-width pages in one — so what it holds counts toward the fit.
+            "var ox=cs.overflowX;var c=(ox==='hidden'||ox==='clip')?Math.min(clip,r.right):clip;" +
+            "for(var k=e.firstElementChild;k;k=k.nextElementSibling)walk(k,c);" +
+            "}" +
+            "for(var k=b.firstElementChild;k;k=k.nextElementSibling)walk(k,Infinity);" +
+            "return max;" +
+            "}" +
+            "var fitting=false;" +
+            "function fitWidth(){" +
+            "if(fitting)return;fitting=true;" +
+            "var de=document.documentElement;var b=document.body;de.style.zoom='';de.style.overflowX='';if(b)b.style.overflowX='';" +
+            "var view=de.clientWidth;" +
+            "if(view>0){var right=contentRight(view);var fits=right<=view+4;" +
+            "if(!fits){var z=(view-2)/right;fits=z>=0.3;de.style.zoom=Math.max(0.3,z).toFixed(4);}" +
+            // Once everything visible fits, sideways scrolling can only reveal off-screen parts
+            // (hidden drawers, inactive slides), so it is switched off.
+            "if(fits){de.style.overflowX='hidden';if(b)b.style.overflowX='hidden';}}" +
+            "fitting=false;" +
+            "}" +
+            "var fitTimer=0;function scheduleFit(){clearTimeout(fitTimer);fitTimer=setTimeout(fitWidth,120);}" +
+            "function runFixes(){fixContrast();fixSvg();fixCanvases();var before=document.documentElement.style.zoom;fitWidth();if(document.documentElement.style.zoom!==before&&!location.hash){window.scrollTo(0,0);}}" +
             "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',runFixes);}else{runFixes();}" +
-            "window.addEventListener('resize',function(){fixSvg();fixCanvases();});" +
+            "window.addEventListener('load',scheduleFit);" +
+            "if(document.fonts&&document.fonts.ready){document.fonts.ready.then(scheduleFit);}" +
+            "window.addEventListener('resize',function(){fixSvg();fixCanvases();scheduleFit();});" +
             "})();</script>";
 
         /// <summary>
@@ -167,6 +203,143 @@ namespace Malx_AI
             // disagreeing about whether HTML, SVG, JavaScript, or Markdown is renderable.
             return DetectForCanvas(responseText, sandboxOutput: null);
         }
+
+        private static readonly Regex ChatFencedBlockRegex = new(@"```[^\r\n`]*(?:\r?\n[\s\S]*?(?:```|$)|$)", RegexOptions.Compiled);
+        private static readonly Regex ChatHtmlDocumentRegex = new(@"(?:<!DOCTYPE\s+html[^>]*>\s*)?<html\b[\s\S]*?(?:</html\s*>|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ChatSvgRegex = new(@"<svg\b[\s\S]*?(?:</svg\s*>|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ChatDocumentBodyStartRegex = new(@"(?m)^(?:#{1,6}\s|\|.*\|\s*$)", RegexOptions.Compiled);
+        private static readonly Regex ArtifactStartRegex = new(@"```|<!DOCTYPE\s+html|<html\b|<svg\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex HtmlTitleRegex = new(@"<title[^>]*>(?<t>[\s\S]*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex HtmlH1Regex = new(@"<h1\b[^>]*>(?<t>[\s\S]*?)</h1>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex MarkdownTitleRegex = new(@"(?m)^#{1,2}\s+(?<t>.+?)\s*#*\s*$", RegexOptions.Compiled);
+        private static readonly Regex TagRegex = new(@"<[^>]+>", RegexOptions.Compiled);
+
+        /// <summary>
+        /// The words the model addressed to the user around the artifact it rendered — the
+        /// artifact source itself (fenced blocks, raw HTML/SVG documents, or the Markdown
+        /// document body) removed. Empty when the response was nothing but the artifact.
+        /// </summary>
+        public static string ExtractCanvasConversationalText(string? responseText, ArtifactKind kind)
+        {
+            string text = (responseText ?? string.Empty).Replace("\r\n", "\n");
+            if (kind == ArtifactKind.Document)
+            {
+                // A Markdown document IS the response; only a lead-in before its first heading
+                // or table is conversation.
+                Match bodyStart = ChatDocumentBodyStartRegex.Match(text);
+                text = bodyStart.Success ? text[..bodyStart.Index] : string.Empty;
+            }
+
+            text = ChatFencedBlockRegex.Replace(text, "\n");
+            text = ChatHtmlDocumentRegex.Replace(text, "\n");
+            text = ChatSvgRegex.Replace(text, "\n");
+
+            // Whatever markup survives (a stray snippet the model wrote unfenced) is not prose.
+            var lines = text.Split('\n')
+                .Select(line => line.TrimEnd())
+                .Where(line => !line.TrimStart().StartsWith('<'))
+                .ToList();
+            string prose = Regex.Replace(string.Join("\n", lines), @"\n{3,}", "\n\n").Trim();
+
+            if (prose.Count(char.IsLetter) < 12 || prose.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length < 3)
+                return string.Empty;
+
+            const int maxChars = 700;
+            if (prose.Length > maxChars)
+            {
+                int cut = prose.LastIndexOfAny(['.', '!', '?'], maxChars - 1);
+                prose = cut > 80 ? prose[..(cut + 1)] : prose[..maxChars].TrimEnd() + "...";
+            }
+
+            return prose;
+        }
+
+        /// <summary>
+        /// What Normal Chat shows in the message bubble once the artifact itself has opened in
+        /// Project Canvas: the model's own words when it wrote any, otherwise a short reply built
+        /// from the artifact's real title and kind.
+        /// </summary>
+        public static string BuildCanvasChatReply(string? responseText, ArtifactRenderInfo artifact)
+        {
+            string prose = ExtractCanvasConversationalText(responseText, artifact?.Kind ?? ArtifactKind.None);
+            if (!string.IsNullOrWhiteSpace(prose))
+                return prose;
+
+            string title = ExtractArtifactTitle(artifact);
+            string subject = string.IsNullOrWhiteSpace(title)
+                ? "the " + DescribeArtifactKind(artifact?.Kind ?? ArtifactKind.None) + " you asked for"
+                : "**" + title + "**";
+            return $"Here's {subject}, ready in Project Canvas, where you can preview it, view the source, or save it.";
+        }
+
+        /// <summary>
+        /// Streaming view for a turn whose deliverable goes to Project Canvas: the model's lead-in
+        /// sentence, then a progress line instead of raw artifact source scrolling through chat.
+        /// </summary>
+        public static string BuildCanvasStreamingPreview(string? partialResponse, string progressText)
+        {
+            string partial = partialResponse ?? string.Empty;
+            Match start = ArtifactStartRegex.Match(partial);
+            if (!start.Success)
+                return partial;
+
+            string lead = partial[..start.Index].Trim();
+            return string.IsNullOrWhiteSpace(lead) ? progressText : lead + "\n\n" + progressText;
+        }
+
+        private static readonly Regex UnfencedHtmlDocumentRegex = new(@"(?m)^[ \t]*(?:<!DOCTYPE\s+html\b|<html\b[^>]*>)[\s\S]*?(?:<head\b|<body\b)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        /// <summary>
+        /// True when a reply carries a whole HTML document as raw text (not inside a code fence).
+        /// Such a reply is a rendered deliverable: the chat bubble would otherwise try to render
+        /// the page itself, squeezed and cut off, instead of a conversational answer.
+        /// </summary>
+        public static bool ContainsUnfencedHtmlDocument(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || text.IndexOf("<html", StringComparison.OrdinalIgnoreCase) < 0 && text.IndexOf("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+
+            string outsideFences = ChatFencedBlockRegex.Replace(text, "\n");
+            return UnfencedHtmlDocumentRegex.IsMatch(outsideFences);
+        }
+
+        /// <summary>Canvas chat reply for a reply that is itself an unfenced HTML document; empty otherwise.</summary>
+        public static string BuildCanvasReplyForRawHtmlDocument(string? text)
+        {
+            if (!ContainsUnfencedHtmlDocument(text))
+                return string.Empty;
+
+            ArtifactRenderInfo artifact = DetectForNormalChat(text!);
+            return artifact.SupportsPreview ? BuildCanvasChatReply(text, artifact) : string.Empty;
+        }
+
+        public static string ExtractArtifactTitle(ArtifactRenderInfo? artifact)
+        {
+            string source = artifact?.RawSource ?? string.Empty;
+            if (source.Length == 0)
+                return string.Empty;
+
+            Match match = HtmlTitleRegex.Match(source);
+            if (!match.Success || string.IsNullOrWhiteSpace(TagRegex.Replace(match.Groups["t"].Value, string.Empty)))
+                match = HtmlH1Regex.Match(source);
+            if (!match.Success && artifact!.Kind == ArtifactKind.Document)
+                match = MarkdownTitleRegex.Match(source);
+            if (!match.Success)
+                return string.Empty;
+
+            string title = WebUtility.HtmlDecode(TagRegex.Replace(match.Groups["t"].Value, " "));
+            title = Regex.Replace(title, @"\s+", " ").Trim().Trim('*', '_', '`').Trim();
+            return title.Length > 90 ? title[..87].TrimEnd() + "..." : title;
+        }
+
+        private static string DescribeArtifactKind(ArtifactKind kind) => kind switch
+        {
+            ArtifactKind.Svg => "graphic",
+            ArtifactKind.Chart => "chart",
+            ArtifactKind.Document => "document",
+            ArtifactKind.InteractiveJavaScript => "interactive preview",
+            _ => "page"
+        };
 
         public static string ExtractChartOutputBase64(string? sandboxOutput)
         {
@@ -617,13 +790,18 @@ except Exception:
 
             string result = html;
 
+            // The resize script goes in the head too (it defers itself to DOMContentLoaded). At the
+            // end of the body it was swallowed whenever the artifact was malformed — a reply cut
+            // off inside an attribute quote left the fit logic as part of that attribute, and
+            // the fixed-width page stayed half off-screen.
             if (headClose >= 0)
-                result = result[..headClose] + CanvasResponsiveNormalize + result[headClose..];
-
-            // Recalculate bodyClose offset after head injection
-            bodyClose = result.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-            if (bodyClose >= 0)
+            {
+                result = result[..headClose] + CanvasResponsiveNormalize + CanvasResponsiveResizeScript + result[headClose..];
+            }
+            else if (bodyClose >= 0)
+            {
                 result = result[..bodyClose] + CanvasResponsiveResizeScript + result[bodyClose..];
+            }
 
             return result;
         }

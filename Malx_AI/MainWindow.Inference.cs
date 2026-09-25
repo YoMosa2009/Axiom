@@ -4372,6 +4372,7 @@ namespace Malx_AI
                     : _nextMessageModelOverride;
                 _currentStreamingMessage.IsThinkingInProgress = thinkingModeEnabled;
                 _currentStreamingMessage.IsStreaming = true;
+                _currentStreamingMessage.IsCanvasDeliveryTurn = ShouldRouteNormalChatToCanvas(userMsg);
                 _chatMessages.Add(_currentStreamingMessage);
 
                 var responseBuilder = new StringBuilder();
@@ -4491,7 +4492,7 @@ namespace Malx_AI
                             ? _modelName
                             : _nextMessageModelOverride;
 
-                        TryRouteNormalChatArtifact(userMsg, finalizedResponse.Answer);
+                        ApplyNormalChatCanvasRouting(_currentStreamingMessage, userMsg, finalizedResponse.Answer);
 
                         var activeBranch = _branches.FirstOrDefault(b => b.Id == _activeBranchId);
                         if (activeBranch != null)
@@ -4504,7 +4505,8 @@ namespace Malx_AI
                                 ThinkingContent = _currentStreamingMessage.ThinkingContent,
                             ThinkingHeaderText = _currentStreamingMessage.ThinkingHeaderText,
                                 ModelLabel = _currentStreamingMessage.ModelLabel,
-                                Timestamp = _currentStreamingMessage.Timestamp
+                                Timestamp = _currentStreamingMessage.Timestamp,
+                                CanvasReplyText = _currentStreamingMessage.CanvasReplyText
                             });
                         }
 
