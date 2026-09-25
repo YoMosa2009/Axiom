@@ -1002,7 +1002,7 @@ namespace Malx_AI
             {
                 defs.Add(new OpenRouterToolDefinition(
                     "run_python",
-                    "Execute Python 3 code in the offline sandbox and return its printed output.",
+                    "Run a short Python 3 snippet in an offline sandbox to compute or verify numbers/data, and get back only its printed stdout. Files it writes are never shown to the user. Do NOT use it to build or save the deliverable (HTML, documents, slides, reports, code for the user): write that directly in your final answer.",
                     new JsonObject
                     {
                         ["type"] = "object",

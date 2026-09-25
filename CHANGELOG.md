@@ -1,5 +1,15 @@
 # Changelog
 
+## [V1.9.9] - 2026-09-24
+
+Reliable tool use in Cloud and Hybrid Local: Skills, Plugins, and "make me…" requests no longer freeze on "generating" or stop at the model's opening sentence.
+
+### Fixed
+- **Endless "generating" when a model used a tool (Cloud & Hybrid Local).** The embedded Python runtime was started on a background thread that kept the interpreter lock forever, so the first `run_python` call (which Skills, Project Canvas, and most "make/build" requests trigger) blocked the turn indefinitely while the model sat idle. The lock is now released after start-up, and Python session setup/cleanup are time-bounded so a stuck script can never hold a chat turn hostage. This also unblocks Workplace, whose Python calls queued behind the stuck session.
+- **Hybrid Local stopping at "I'll build this…" with nothing made.** Self-hosted gateways send SSE `: keep-alive` lines while the model composes a tool call. Axiom mistook them for a non-streamed reply and discarded the rest of the stream, losing the tool call and the entire deliverable. Keep-alive and other SSE control lines are now skipped.
+- **Models building the deliverable inside the Python sandbox.** Some models tried to write the HTML/report to files from `run_python`, pass after pass. The tool contract now states that the sandbox is for computation only, duplicate tool calls are suppressed, and after the grounding round of a Skill/Project Canvas turn (or a few sandbox runs on any turn) the model is steered to write the final answer.
+- **Free-tier outages ending tool turns mid-way.** When every OpenRouter fallback fails at once (rate limit or "provider overloaded"), Normal chat now waits briefly and retries the chain once before reporting an error.
+
 ## [V1.9.8] - 2026-09-21
 
 Workplace attachment composer clearance, Ctrl+V image/file pasting, Agent Access design vision, shell execution normalization, and repetitive command loop guard.

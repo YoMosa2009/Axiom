@@ -1337,6 +1337,13 @@ namespace Malx_AI
                         }
                     }
 
+                    if (allowModelFallback
+                        && !ContainsIgnoredProvidersMessage(retryBody)
+                        && await TryBeginFallbackChainRestartAsync(requestedModelProfile, attemptedModelIds, $"Status:{(int)response.StatusCode}", cancellationToken))
+                    {
+                        return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+                    }
+
                     // Fallback chain exhausted (or disabled). A 429 here is a transient throttle (free-tier
                     // models all share the limit window), so surface it as a typed, retryable exception.
                     if (response.StatusCode == HttpStatusCode.TooManyRequests)
@@ -1419,6 +1426,15 @@ namespace Malx_AI
                     if (firstStreamLineSample.Length == 0)
                         firstStreamLineSample = Truncate(line, 220);
 
+                    // SSE comments (": keep-alive", ": OPENROUTER PROCESSING") and the non-data SSE
+                    // fields carry no chunk. Gateways in front of Ollama emit keep-alives while the
+                    // model is composing a tool call; the custom-endpoint branch below used to
+                    // mistake one for a non-streamed JSON body and ReadToEnd() the rest of the
+                    // stream away — dropping the tool call and every later token, so the turn
+                    // ended on the model's "I'll build this..." preamble.
+                    if (OllamaStreamChunkConverter.IsSseNonDataLine(line))
+                        continue;
+
                     string payload;
                     if (line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                     {
@@ -1434,10 +1450,11 @@ namespace Malx_AI
                         // and ended the turn with an empty message.
                         payload = nativeChunk;
                     }
-                    else if (requestedModelProfile.IsCustomEndpoint)
+                    else if (requestedModelProfile.IsCustomEndpoint && line.TrimStart().StartsWith('{'))
                     {
                         // Not a chunk at all: some servers ignore stream:true and answer with a
                         // single JSON body, which may be pretty-printed across several lines.
+                        // Only a line that opens a JSON object can start such a body.
                         string remainder = await reader.ReadToEndAsync(cancellationToken);
                         string jsonBody = string.IsNullOrWhiteSpace(remainder)
                             ? line
@@ -1624,6 +1641,12 @@ namespace Malx_AI
                             $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}\nFirstLine:{firstStreamLineSample}");
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
                             return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+
+                        if ((streamStalled || providerStreamError.Length > 0)
+                            && await TryBeginFallbackChainRestartAsync(requestedModelProfile, attemptedModelIds, failureKind, cancellationToken))
+                        {
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+                        }
 
                         if (streamStalled)
                             throw new InvalidOperationException($"{displayModelLabel} stopped responding mid-stream and no fallback model is available. Try again shortly or switch models.");
@@ -2764,6 +2787,31 @@ namespace Malx_AI
                 && (responseBody.Contains("Provider returned error", StringComparison.OrdinalIgnoreCase)
                     || responseBody.Contains("no healthy upstream", StringComparison.OrdinalIgnoreCase)
                     || responseBody.Contains("temporarily unavailable", StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Free-tier providers blip together: the whole fallback chain can 429/503 inside one second
+        // (observed: Gemma rate-limited while both Nemotron routes were "temporarily overloaded"),
+        // which killed tool-loop turns midway. Allow ONE delayed restart of the chain per request;
+        // the marker in attemptedModelIds survives the reset so the restart can never recur.
+        private const string FallbackChainRestartMarker = "\u0000fallback-chain-restarted";
+        private static readonly TimeSpan FallbackChainRestartDelay = TimeSpan.FromSeconds(6);
+
+        private async Task<bool> TryBeginFallbackChainRestartAsync(
+            OpenRouterModelProfile failedProfile,
+            ISet<string> attemptedModelIds,
+            string reason,
+            CancellationToken cancellationToken)
+        {
+            if (failedProfile.IsCustomEndpoint || attemptedModelIds.Contains(FallbackChainRestartMarker))
+                return false;
+
+            attemptedModelIds.Clear();
+            attemptedModelIds.Add(FallbackChainRestartMarker);
+            await BackendLogService.LogEventAsync(
+                "OpenRouterFallbackChainRestart",
+                $"LastModel:{failedProfile.AliasLabel}\nReason:{reason}\nDelaySeconds:{FallbackChainRestartDelay.TotalSeconds:F0}");
+            await Task.Delay(FallbackChainRestartDelay, cancellationToken);
+            return true;
         }
 
         private string GetFallbackModelId(string currentModelId, ISet<string> attemptedModelIds)

@@ -1036,7 +1036,7 @@ namespace Malx_AI
             {
                 tools.Add(new OpenRouterToolDefinition(
                     "run_python",
-                    "Execute Python code in the existing sandbox and return stdout/stderr.",
+                    "Run a short Python 3 snippet in an offline sandbox to compute or verify numbers/data, and get back only its printed stdout. Files it writes are never shown to the user. Do NOT use it to build or save the deliverable (HTML, documents, slides, reports, code for the user): write that directly in your final answer.",
                     new JsonObject
                     {
                         ["type"] = "object",
@@ -1205,7 +1205,10 @@ namespace Malx_AI
                 includeRunJava);
             var reasoningParts = new List<string>();
             int toolCallCount = 0;
+            int sandboxExecutionCount = 0;
             bool pythonSessionStarted = false;
+            bool forceNoToolsSynthesis = false;
+            var executedToolSignatures = new HashSet<string>(StringComparer.Ordinal);
 
             int toolLoopLimit = EffortPolicy.ScaleToolBudget(CloudToolLoopIterationLimit, capability: null);
             try
@@ -1217,7 +1220,7 @@ namespace Malx_AI
                         systemPrompt,
                         thinkingEnabled,
                         _selectedOpenRouterModelId,
-                        tools,
+                        forceNoToolsSynthesis ? null : tools,
                         onToken,
                         token);
 
@@ -1240,6 +1243,19 @@ namespace Malx_AI
 
                     foreach (OpenRouterToolCall toolCall in response.ToolCalls)
                     {
+                        string signature = (toolCall?.Name ?? string.Empty).Trim() + "\n" + (toolCall?.ArgumentsJson ?? string.Empty).Trim();
+                        if (!executedToolSignatures.Add(signature))
+                        {
+                            messages.Add(new OpenRouterMessage(
+                                "tool",
+                                "Duplicate tool call suppressed. Use the earlier result and continue to the final answer.",
+                                toolCall?.Id));
+                            continue;
+                        }
+
+                        if (IsCloudSandboxToolCall(toolCall))
+                            sandboxExecutionCount++;
+
                         if (string.Equals(toolCall?.Name, "run_python", StringComparison.OrdinalIgnoreCase) && !pythonSessionStarted)
                         {
                             await _pythonExecutionService.StartPersistentSessionAsync(token);
@@ -1249,6 +1265,23 @@ namespace Malx_AI
                         CloudToolExecutionResult executionResult = await ExecuteCloudToolCallAsync(toolCall, userMsg, messages, token);
                         string boundedToolResult = BuildCloudToolResultMessage(executionResult.Result, toolCall.Name);
                         messages.Add(new OpenRouterMessage("tool", boundedToolResult, toolCall.Id));
+                    }
+
+                    // A deliverable turn (Skill / @ProjectCanvas) only needs tools to ground numbers
+                    // before writing the artifact. Models otherwise keep "building" the artifact
+                    // inside run_python (writing HTML files nobody sees), pass after pass, while the
+                    // user watches "generating" for minutes. After one grounding round on such a
+                    // turn -- or a few sandbox runs on any turn -- the next pass must write the answer.
+                    if (!forceNoToolsSynthesis
+                        && ((projectCanvasRequested && response.ToolCalls.Any(IsCloudSandboxOrSearchToolCall))
+                            || sandboxExecutionCount >= CloudSandboxExecutionSoftLimit))
+                    {
+                        messages.Add(new OpenRouterMessage(
+                            "user",
+                            projectCanvasRequested
+                                ? "Use the tool result(s) above and write the complete final deliverable now, directly in your answer. Do not call more tools and do not describe what you are about to do."
+                                : "Use the tool result(s) above and write the final answer now. Do not call more tools."));
+                        forceNoToolsSynthesis = true;
                     }
                 }
 
@@ -1285,6 +1318,20 @@ namespace Malx_AI
                     await _pythonExecutionService.EndPersistentSessionAsync(CancellationToken.None);
             }
         }
+
+        private const int CloudSandboxExecutionSoftLimit = 3;
+
+        private static bool IsCloudSandboxToolCall(OpenRouterToolCall? toolCall)
+        {
+            string name = toolCall?.Name?.Trim() ?? string.Empty;
+            return name.Equals("run_python", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("run_java", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("calculate", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsCloudSandboxOrSearchToolCall(OpenRouterToolCall? toolCall)
+            => IsCloudSandboxToolCall(toolCall)
+                || string.Equals(toolCall?.Name?.Trim(), "web_search", StringComparison.OrdinalIgnoreCase);
 
         private static bool HasCloudWebSearchEvidence(string text)
         {

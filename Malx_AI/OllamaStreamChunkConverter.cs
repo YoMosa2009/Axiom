@@ -18,6 +18,23 @@ namespace Malx_AI
     public static class OllamaStreamChunkConverter
     {
         /// <summary>
+        /// True for Server-Sent Events lines that carry no chunk: comments (": keep-alive",
+        /// ": OPENROUTER PROCESSING") and the <c>event:</c>/<c>id:</c>/<c>retry:</c> fields.
+        /// </summary>
+        public static bool IsSseNonDataLine(string? line)
+        {
+            string trimmed = (line ?? string.Empty).TrimStart();
+            if (trimmed.Length == 0)
+                return false;
+            if (trimmed[0] == ':')
+                return true;
+
+            return trimmed.StartsWith("event:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("id:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("retry:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// True when the line is a usable streaming chunk; <paramref name="openAiChunkJson"/> then
         /// holds it in OpenAI form. Lines that already carry "choices" (or a provider error) are
         /// passed through untouched.

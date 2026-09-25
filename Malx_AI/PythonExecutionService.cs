@@ -12,6 +12,7 @@ namespace Malx_AI
     public sealed class PythonExecutionService
     {
         private const int DefaultTimeoutMs = 10000;
+        private static readonly TimeSpan SessionGilTimeout = TimeSpan.FromSeconds(10);
         private const string SandboxPrelude = """
 import math
 import json
@@ -92,7 +93,15 @@ def axiom_now_iso():
                 await Task.Run(() => Installer.SetupPython(), token).ConfigureAwait(false);
                 if (!_pythonEngineInitialized)
                 {
-                    await Task.Run(() => PythonEngine.Initialize(), token).ConfigureAwait(false);
+                    // Initialize() leaves the GIL held by the calling thread. It runs on a thread-pool
+                    // thread that then goes back to the pool still owning the GIL, so every later
+                    // Py.GIL() on any other thread blocked forever: the first run_python call hung the
+                    // whole turn ("generating" forever with an idle model). Release it here.
+                    await Task.Run(() =>
+                    {
+                        PythonEngine.Initialize();
+                        PythonEngine.BeginAllowThreads();
+                    }, token).ConfigureAwait(false);
                     _pythonEngineInitialized = true;
                 }
 
@@ -149,19 +158,34 @@ def axiom_now_iso():
                 if (_persistentSession != null)
                     return;
 
-                using var gil = Py.GIL();
-                var globals = new PyDict();
-                using var builtins = Py.Import("builtins");
-                globals.SetItem("__builtins__", builtins);
-                using var mainName = new PyString("__main__");
-                globals.SetItem("__name__", mainName);
-                PythonEngine.Exec(SandboxPrelude, globals, globals);
-
-                _persistentSession = new PythonSessionState
+                // Bounded: a session is an optimisation, so if the interpreter is wedged the tool
+                // call must still get an answer (ExecuteMathScriptAsync works without globals)
+                // instead of hanging the chat turn on an unbounded Py.GIL() wait.
+                Task<PythonSessionState> createTask = Task.Run(() =>
                 {
-                    Globals = globals,
-                    StartedAt = DateTime.UtcNow
-                };
+                    using var gil = Py.GIL();
+                    var globals = new PyDict();
+                    using var builtins = Py.Import("builtins");
+                    globals.SetItem("__builtins__", builtins);
+                    using var mainName = new PyString("__main__");
+                    globals.SetItem("__name__", mainName);
+                    PythonEngine.Exec(SandboxPrelude, globals, globals);
+                    return new PythonSessionState
+                    {
+                        Globals = globals,
+                        StartedAt = DateTime.UtcNow
+                    };
+                });
+
+                if (await Task.WhenAny(createTask, Task.Delay(SessionGilTimeout, token)).ConfigureAwait(false) != createTask)
+                {
+                    token.ThrowIfCancellationRequested();
+                    await BackendLogService.LogEventAsync("PythonExecutionService.SessionStartTimeout",
+                        $"Could not acquire the Python GIL within {SessionGilTimeout.TotalSeconds:F0}s; continuing without a persistent session.").ConfigureAwait(false);
+                    return;
+                }
+
+                _persistentSession = await createTask.ConfigureAwait(false);
             }
             finally
             {
@@ -180,8 +204,15 @@ def axiom_now_iso():
 
                 try
                 {
-                    using var gil = Py.GIL();
-                    _persistentSession.Dispose();
+                    PythonSessionState session = _persistentSession;
+                    Task disposeTask = Task.Run(() =>
+                    {
+                        using var gil = Py.GIL();
+                        session.Dispose();
+                    });
+                    // Never let cleanup hold the finished turn hostage: a script that outlived its
+                    // timeout can still own the GIL. The session is dropped either way.
+                    await Task.WhenAny(disposeTask, Task.Delay(SessionGilTimeout)).ConfigureAwait(false);
                 }
                 catch
                 {

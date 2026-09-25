@@ -104,5 +104,28 @@ namespace Malx_AI.Tests
         {
             Assert.False(OllamaStreamChunkConverter.TryConvertLine(null, out _));
         }
+
+        [Theory]
+        [InlineData(": keep-alive")]
+        [InlineData(": OPENROUTER PROCESSING")]
+        [InlineData("event: message")]
+        [InlineData("id: 42")]
+        [InlineData("retry: 3000")]
+        public void SseCommentAndFieldLines_AreNotChunks(string line)
+        {
+            // Regression: a gateway keep-alive sent while the model composed a tool call was read
+            // as the start of a non-streamed body, and the rest of the stream (the tool call and
+            // the whole answer) was swallowed.
+            Assert.True(OllamaStreamChunkConverter.IsSseNonDataLine(line));
+        }
+
+        [Theory]
+        [InlineData("data: {\"choices\":[]}")]
+        [InlineData("{\"message\":{\"content\":\"hi\"}}")]
+        [InlineData("")]
+        public void DataAndJsonLines_AreNotSkipped(string line)
+        {
+            Assert.False(OllamaStreamChunkConverter.IsSseNonDataLine(line));
+        }
     }
 }
