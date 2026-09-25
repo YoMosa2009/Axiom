@@ -100,8 +100,11 @@ function Assert-ReleaseCheckout {
         throw "Commit or stash all changes before publishing. The release tag must identify the exact source used to build the ZIP."
     }
 
-    Invoke-Checked -Command "gh" -Arguments @("auth", "status", "-h", "github.com")
-    Invoke-Checked -Command "git" -Arguments @("fetch", "origin", $Branch)
+    # Out-Null: a PowerShell function returns every uncaptured output line, so without it
+    # the gh/git chatter became part of the returned commit and GitHub rejected the release
+    # with "target_commitish is invalid".
+    Invoke-Checked -Command "gh" -Arguments @("auth", "status", "-h", "github.com") | Out-Null
+    Invoke-Checked -Command "git" -Arguments @("fetch", "origin", $Branch) | Out-Null
 
     $head = (& git rev-parse HEAD).Trim()
     $remoteHead = (& git rev-parse "origin/$Branch").Trim()
