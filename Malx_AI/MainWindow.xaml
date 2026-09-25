@@ -246,6 +246,51 @@
             </Setter>
         </Style>
 
+        <!-- Minimal line-icon buttons under chat messages. Icons are 16x16 stroked paths drawn
+             from the button's foreground, so hover/disabled states recolour them with no extra art. -->
+        <Style x:Key="MessageActionIconButtonStyle" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="0,0,2,0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ToolTipService.InitialShowDelay" Value="350"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="7">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Opacity" Value="0.8"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="border" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="MessageActionIconPathStyle" TargetType="Path">
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="16"/>
+            <Setter Property="Stretch" Value="None"/>
+            <Setter Property="StrokeThickness" Value="1.4"/>
+            <Setter Property="StrokeStartLineCap" Value="Round"/>
+            <Setter Property="StrokeEndLineCap" Value="Round"/>
+            <Setter Property="StrokeLineJoin" Value="Round"/>
+            <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+        </Style>
+
         <Style x:Key="ChatInputUtilityButtonStyle" TargetType="Button">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
             <Setter Property="Height" Value="34"/>
@@ -1318,14 +1363,28 @@
                                                                            IsHtmlRenderingEnabled="False"
                                                                            HorizontalAlignment="Stretch"
                                                                            Visibility="Collapsed"/>
-                                                <WrapPanel x:Name="ActionButtonPanel" HorizontalAlignment="Right" Margin="0,8,0,0" Visibility="Collapsed">
-                                                    <Button x:Name="EditResendActionButton" Content="Edit &amp; Resend" Click="EditResendMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="92" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button x:Name="RegenerateActionButton" Content="Regenerate" Click="RegenerateMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="78" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button x:Name="RetryCloudActionButton" Content="Retry Other" Click="RetryOtherCloudModel_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="78" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button x:Name="OpenCanvasActionButton" Content="Open in Canvas" Click="OpenMessageInProjectCanvas_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="92" Margin="0,0,5,4" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button x:Name="PinActionButton" Content="Pin" Click="PinMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="40" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button Content="Branch" Click="BranchMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="56" Margin="0,0,5,4" Style="{StaticResource SubtleButtonStyle}"/>
-                                                    <Button Content="Copy" Click="CopyMessage_Click" Tag="{Binding}" FontSize="10" Padding="8,2" MinWidth="46" Margin="0,0,0,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                <WrapPanel x:Name="ActionButtonPanel" HorizontalAlignment="Right" Margin="0,6,0,0" Visibility="Collapsed">
+                                                    <Button x:Name="EditResendActionButton" Click="EditResendMessage_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Edit &amp; Resend" AutomationProperties.Name="Edit &amp; Resend" Visibility="Collapsed">
+                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M10.8,2.7 L13.3,5.2 L5.6,12.9 L2.6,13.4 L3.1,10.4 Z M9.2,4.3 L11.7,6.8"/>
+                                                    </Button>
+                                                    <Button x:Name="RegenerateActionButton" Click="RegenerateMessage_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Regenerate" AutomationProperties.Name="Regenerate" Visibility="Collapsed">
+                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M13.2,8 A5.2,5.2 0 1 1 11.7,4.3 M12.2,1.6 L12.2,4.6 L9.2,4.6"/>
+                                                    </Button>
+                                                    <Button x:Name="RetryCloudActionButton" Click="RetryOtherCloudModel_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Retry with another model" AutomationProperties.Name="Retry with another model" Visibility="Collapsed">
+                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M2.5,5.2 L12.5,5.2 M10,2.7 L12.5,5.2 L10,7.7 M13.5,10.8 L3.5,10.8 M6,8.3 L3.5,10.8 L6,13.3"/>
+                                                    </Button>
+                                                    <Button x:Name="OpenCanvasActionButton" Click="OpenMessageInProjectCanvas_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Open in Canvas" AutomationProperties.Name="Open in Canvas" Visibility="Collapsed">
+                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M2.5,3.2 L13.5,3.2 L13.5,12.8 L2.5,12.8 Z M9.3,3.2 L9.3,12.8 M10.9,6 L12,6 M10.9,8 L12,8"/>
+                                                    </Button>
+                                                    <Button x:Name="PinActionButton" Click="PinMessage_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Pin" AutomationProperties.Name="Pin">
+                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M5.8,2.3 L10.2,2.3 M7,2.3 L7,6.4 L4.6,9 L11.4,9 L9,6.4 L9,2.3 M8,9 L8,13.8"/>
+                                                    </Button>
+                                                    <Button Click="BranchMessage_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Branch from here" AutomationProperties.Name="Branch from here">
+                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M3.6,3.4 A1.4,1.4 0 1 0 6.4,3.4 A1.4,1.4 0 1 0 3.6,3.4 Z M3.6,12.6 A1.4,1.4 0 1 0 6.4,12.6 A1.4,1.4 0 1 0 3.6,12.6 Z M9.6,4.6 A1.4,1.4 0 1 0 12.4,4.6 A1.4,1.4 0 1 0 9.6,4.6 Z M5,4.8 L5,11.2 M11,6 C11,9.2 5,8.4 5,11.2"/>
+                                                    </Button>
+                                                    <Button Click="CopyMessage_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Copy" AutomationProperties.Name="Copy">
+                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M5.6,5.6 L13.2,5.6 L13.2,13.4 L5.6,13.4 Z M2.8,10.4 L2.8,2.8 L10.4,2.8"/>
+                                                    </Button>
                                                 </WrapPanel>
                                             </StackPanel>
                                         </Border>

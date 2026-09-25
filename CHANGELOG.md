@@ -11,6 +11,7 @@ Project Canvas deliverables fit cleanly, the chat answers conversationally inste
 - **Messy composer with the canvas open.** The tool row no longer wraps "+ / Skills / Plugins" onto ragged lines. It steps from full labels to icon-only buttons to a clean two-row layout as space shrinks, and the canvas header moves its buttons below the title instead of clipping it.
 
 ### Changed
+- **Icon message actions.** The text buttons under chat messages (Edit & Resend, Regenerate, Retry with another model, Open in Canvas, Pin, Branch, Copy) are now minimal line icons with tooltips and accessible names, with a soft hover highlight.
 - Skill and @ProjectCanvas prompts ask the model to open with one or two conversational sentences before the artifact and to avoid fixed page widths.
 - Workplace canvas notices use the same conversational reply instead of "generated a renderable HTML Preview".
 
