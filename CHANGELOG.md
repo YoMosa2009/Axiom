@@ -1,5 +1,12 @@
 # Changelog
 
+## [V1.9.11] - 2026-09-25
+
+In-app updates keep working when the configured update drive is disconnected.
+
+### Fixed
+- **"Update download failed" when AXIOM_UPDATE_DIR points to a missing drive.** Axiom created the configured download folder before checking whether it was usable, so a redirect to an unplugged drive (for example an external or USB disk) failed every update with "Could not find a part of the path". The updater now checks the drive first and falls back to the normal profile folder, and it stages the update next to wherever the download actually landed.
+
 ## [V1.9.10] - 2026-09-25
 
 Project Canvas deliverables fit cleanly, the chat answers conversationally instead of rendering the artifact inside the message, and the composer stays tidy when the canvas is open.
