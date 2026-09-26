@@ -71,6 +71,7 @@ namespace Malx_AI.Agent
                     AgentToolNames.RunCommand => await RunCommandAsync(call, token),
                     AgentToolNames.ReadFile => ReadFile(call),
                     AgentToolNames.WriteFile => WriteFile(call),
+                    AgentToolNames.AppendFile => AppendFile(call),
                     AgentToolNames.EditFile => EditFile(call),
                     AgentToolNames.ListDirectory => ListDirectory(call),
                     AgentToolNames.FindFiles => FindFiles(call),
@@ -107,7 +108,7 @@ namespace Malx_AI.Agent
                 FileName = "powershell.exe",
                 // -NoProfile keeps a user's profile script from changing what the agent sees, and
                 // -NonInteractive turns a prompt into an error instead of a hang nobody can answer.
-                Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " + QuoteForPowerShell(command),
+                Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + EncodeForPowerShell(command),
                 WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -156,6 +157,8 @@ namespace Malx_AI.Agent
             stopwatch.Stop();
             long elapsedMs = stopwatch.ElapsedMilliseconds;
 
+            string cleanedError = CleanPowerShellErrorStream(stderr.ToString());
+            stderr.Clear().Append(cleanedError);
             string combined = Combine(stdout, stderr);
             string exitPrefix = $"[Exit code: {process.ExitCode} | Duration: {elapsedMs}ms]";
 
@@ -221,6 +224,27 @@ namespace Malx_AI.Agent
             var fileInfo = new FileInfo(path);
             int lineCount = content.Split('\n').Length;
             return AgentToolResult.Ok($"Successfully wrote {fileInfo.Length:N0} bytes ({lineCount} lines) to {path}. Verified on disk.");
+        }
+
+        /// <summary>
+        /// Adds text to the end of a file (creating it if needed). Lets a model write a large
+        /// file in parts: one oversized write_file call is cut off at the model's output limit
+        /// and arrives as broken JSON, which previously stalled the whole run.
+        /// </summary>
+        private AgentToolResult AppendFile(AgentToolCall call)
+        {
+            if (!TryResolve(call.Arg("path"), out string path, out string error))
+                return AgentToolResult.Fail(error);
+
+            string? directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            string content = call.Arg("content");
+            File.AppendAllText(path, content, new UTF8Encoding(false));
+            var fileInfo = new FileInfo(path);
+            int lineCount = File.ReadAllText(path).Split('\n').Length;
+            return AgentToolResult.Ok($"Appended {content.Length:N0} characters. {path} is now {fileInfo.Length:N0} bytes ({lineCount} lines).");
         }
 
         private AgentToolResult EditFile(AgentToolCall call)
@@ -443,9 +467,42 @@ namespace Malx_AI.Agent
                 : text[..MaxOutputChars] + $"\n… output truncated at {MaxOutputChars} characters.";
         }
 
-        /// <summary>Wraps a command for -Command, doubling single quotes so the shell sees it whole.</summary>
-        internal static string QuoteForPowerShell(string command) =>
-            "\"" + command.Replace("\"", "`\"", StringComparison.Ordinal) + "\"";
+        /// <summary>
+        /// Hands the command to PowerShell byte-for-byte as -EncodedCommand (UTF-16LE Base64).
+        /// </summary>
+        /// <remarks>
+        /// The old form wrapped it as -Command "..." with inner quotes escaped as `" - but Windows
+        /// splits the process command line before PowerShell sees it, and a backtick is not an
+        /// escape there. Any command containing a double quote (every quoted path) arrived
+        /// mangled: Start-Process "C:\site\index.html" became Start-Process `C:\... and failed with
+        /// "cannot find the file specified", which sent agents into rewrite-and-retry loops.
+        /// Progress output is silenced so PowerShell does not emit CLIXML progress records.
+        /// </remarks>
+        internal static string EncodeForPowerShell(string command) =>
+            Convert.ToBase64String(Encoding.Unicode.GetBytes("$ProgressPreference = 'SilentlyContinue'\n" + (command ?? string.Empty)));
+
+        private static readonly Regex ClixmlStringRegex = new(@"<S S=""(?:Error|Warning)"">(?<text>.*?)</S>", RegexOptions.Singleline | RegexOptions.Compiled);
+
+        /// <summary>
+        /// PowerShell started with -EncodedCommand may write its error stream as CLIXML
+        /// ("#&lt; CLIXML" plus XML). Turns that back into the plain text a model can read.
+        /// </summary>
+        internal static string CleanPowerShellErrorStream(string stderr)
+        {
+            if (string.IsNullOrEmpty(stderr) || !stderr.Contains("#< CLIXML", StringComparison.Ordinal))
+                return stderr ?? string.Empty;
+
+            var builder = new StringBuilder();
+            foreach (Match match in ClixmlStringRegex.Matches(stderr))
+            {
+                string text = System.Net.WebUtility.HtmlDecode(match.Groups["text"].Value)
+                    .Replace("_x000D__x000A_", "\n", StringComparison.Ordinal)
+                    .Replace("_x000A_", "\n", StringComparison.Ordinal);
+                builder.Append(text);
+            }
+
+            return builder.ToString().Trim();
+        }
 
         /// <summary>
         /// Strips redundant outer powershell / powershell.exe / cmd /c invocations that models sometimes generate,

@@ -10,7 +10,7 @@ unless you deliberately reach out to a cloud model or a connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.9.11-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.9.12-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 [Download](../../releases) · [Getting started](#getting-started) · [Feedback](#feedback)
@@ -108,8 +108,15 @@ Turn it on in the Workplace sidebar and the model operates your machine the way 
 coding agent does — running commands, reading and writing files, searching the disk — then
 answers from what it actually found.
 
-It has seven tools: `run_command`, `read_file`, `write_file`, `edit_file`, `list_directory`,
-`find_files`, and `search_text`.
+It has eight tools: `run_command`, `read_file`, `write_file`, `append_file`, `edit_file`,
+`list_directory`, `find_files`, and `search_text`. Long files are written in parts
+(`write_file`, then `append_file`), so no single reply is cut off at the model's output limit.
+
+Each run appears as one **Agent** card in the chat that fills in live — every step shows up
+with ✓ or ✗ the moment it finishes — and then becomes the final answer with the step list
+underneath. Before a run may finish, Axiom checks the claimed result against the disk: a
+summary that lists files that were never written, or a page that links to missing files, is
+sent back to the agent to fix.
 
 **You choose how much rope it gets:**
 
@@ -130,8 +137,8 @@ rewriting the boot configuration, wiping free space, shutting the machine down, 
 Windows system folders. The patterns are narrow — `rm -rf ./build` and `git reset --hard` run
 normally.
 
-While a step is in flight, a quiet line above the composer names it ("Ran dotnet build",
-"Read App.xaml"), and clears when the run finishes.
+While a step is in flight, a quiet line above the composer names it with a live timer
+("Thinking · 12s", "Writing a file · 3.2 KB"), and clears when the run finishes.
 
 ## Skills
 
@@ -209,8 +216,12 @@ OpenRouter with your own key.
 |---|---|---|
 | **Edios 1.5** | Google Gemma 4 31B (free) | General chat, reasoning, documents, tool use |
 | **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Repository-aware coding |
-| **Workplace cloud default** | Poolside Laguna M.1 (free) | Council and Single Model runs |
+| **Workplace cloud model** | Dots Studio Dots3-Note Preview (free) | The one model behind every Workplace cloud run: Council, Single Model, Agent Access, and Computer Use. Text + image input, 512K context, built for coding, tool use, and long-horizon agent work |
 | **Kestral 1** | Your self-hosted endpoint | Hybrid Local inference |
+
+The Workplace deliberately runs on exactly one cloud model, with no silent fallback to
+another: council roles build on each other's output, and Computer Use and image attachments
+need a model that can see.
 
 Cloud availability and routing depend on OpenRouter and its providers. Axiom reports
 exhausted keys and rate limits directly instead of dressing them up as answers.

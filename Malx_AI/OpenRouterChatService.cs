@@ -94,7 +94,8 @@ namespace Malx_AI
             bool IsCodeSpecialized,
             int ApproximateContextWindowTokens,
             int DefaultMaxCompletionTokens = 8192,
-            bool IsCustomEndpoint = false)
+            bool IsCustomEndpoint = false,
+            bool KnownImageInput = false)
     {
         public IEnumerable<string> AllApiModelIds
         {
@@ -163,15 +164,17 @@ namespace Malx_AI
             new(
                 AliasId: WorkplaceCouncilDefaultModelId,
                 AliasLabel: WorkplaceCouncilDefaultModelLabel,
-                PrimaryApiModelId: "poolside/laguna-m.1:free",
-                AlternativeApiModelIds:
-                [
-                    "nvidia/nemotron-3-ultra-550b-a55b:free",
-                    "google/gemma-4-31b-it:free",
-                    "meta-llama/llama-3.3-70b-instruct:free",
-                ],
+                // Exactly one model for Council / Single Model / Agent Access / Computer Use: a
+                // mid-task swap breaks role continuity, and every Workplace feature (Computer Use
+                // screenshots, image attachments) needs image input, so there are no alternates.
+                PrimaryApiModelId: "dots-studio/dots-3-note-preview:free",
+                AlternativeApiModelIds: [],
                 IsCodeSpecialized: true,
-                ApproximateContextWindowTokens: 262144)
+                ApproximateContextWindowTokens: 512000,
+                DefaultMaxCompletionTokens: 16384,
+                // Known to take images, so Computer Use is not blocked before the model catalog
+                // has been fetched (the name alone gives no hint that it can see).
+                KnownImageInput: true)
         ];
         private const string AuthKeyUrl = "https://openrouter.ai/api/v1/auth/key";
         private const string KeyInfoUrl = "https://openrouter.ai/api/v1/key";
@@ -256,9 +259,11 @@ namespace Malx_AI
         // starts generating needs its own bound.
         private static readonly TimeSpan StreamFirstContentTimeout = TimeSpan.FromSeconds(45);
         private static readonly TimeSpan CustomEndpointStreamFirstContentTimeout = TimeSpan.FromSeconds(180);
+        private static readonly TimeSpan CustomEndpointToolCallFirstContentTimeout = TimeSpan.FromMinutes(8);
         // Absolute ceiling for one streamed response. Generous: a slow free-tier provider
         // streaming a long deliverable stays well under this; only a runaway/zombie stream hits it.
-        private static readonly TimeSpan StreamTotalDurationLimit = TimeSpan.FromMinutes(4);
+        // Agent turns that write a whole file in one tool call run long on free tiers.
+        private static readonly TimeSpan StreamTotalDurationLimit = TimeSpan.FromMinutes(10);
         // Non-streamed body reads after ResponseHeadersRead have the same unbounded-read exposure.
         private static readonly TimeSpan NonStreamBodyReadTimeout = TimeSpan.FromSeconds(100);
 
@@ -285,7 +290,7 @@ namespace Malx_AI
         public const string Hepha25CoderModelId = "hepha-2.5-coder";
         public const string Hepha25CoderModelLabel = "Hepha 2.5 Coder";
         public const string WorkplaceCouncilDefaultModelId = "workplace-gpt-oss-20b";
-        public const string WorkplaceCouncilDefaultModelLabel = "Poolside: Laguna M.1 (free)";
+        public const string WorkplaceCouncilDefaultModelLabel = "Dots Studio: Dots3-Note Preview (free)";
         public const string CustomEndpointModelId = "custom-endpoint";
         public const string CustomEndpointModelLabel = "Kestral 1";
         // Used only when the server does not advertise a window of its own. It must stay
@@ -939,7 +944,8 @@ namespace Malx_AI
             int? maxTokensOverride = null,
             IReadOnlyList<string>? stopSequences = null,
             bool allowModelFallback = true,
-            bool requireCompleteResponse = false)
+            bool requireCompleteResponse = false,
+            Action<string, int>? onToolCallProgress = null)
         {
             return await SendMessageStreamInternalAsync(
                 messages,
@@ -954,7 +960,15 @@ namespace Malx_AI
                 maxTokensOverride,
                 stopSequences,
                 allowModelFallback: allowModelFallback,
-                requireCompleteResponse: requireCompleteResponse);
+                requireCompleteResponse: requireCompleteResponse,
+                onToolCallProgress: onToolCallProgress);
+        }
+
+        /// <summary>Loads the OpenRouter model catalog (capabilities, image support) if it is not loaded yet.</summary>
+        public async Task EnsureModelCatalogAsync(CancellationToken cancellationToken = default)
+        {
+            if (_availableModels.Count == 0 && HasValidKey)
+                await TryDetectPreferredModelAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public async Task<bool> ValidateModelAvailabilityAsync(string modelId, CancellationToken cancellationToken = default)
@@ -1243,7 +1257,8 @@ namespace Malx_AI
             IReadOnlyList<string>? stopSequences = null,
             bool allowModelFallback = true,
             int sameModelStreamRetries = 0,
-            bool requireCompleteResponse = false)
+            bool requireCompleteResponse = false,
+            Action<string, int>? onToolCallProgress = null)
         {
             if (!HasAnyValidCloudCredential)
                 throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required.");
@@ -1333,7 +1348,7 @@ namespace Malx_AI
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
                         {
                             await BackendLogService.LogEventAsync("OpenRouterFallback", $"Primary:{requestedModelProfile.AliasLabel}\nFallback:{ResolveModelLabel(fallbackModelId)}\nStatus:{(int)response.StatusCode} ({response.StatusCode})\nBody:{Truncate(retryBody, 400)}");
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
                         }
                     }
 
@@ -1341,7 +1356,7 @@ namespace Malx_AI
                         && !ContainsIgnoredProvidersMessage(retryBody)
                         && await TryBeginFallbackChainRestartAsync(requestedModelProfile, attemptedModelIds, $"Status:{(int)response.StatusCode}", cancellationToken))
                     {
-                        return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+                        return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
                     }
 
                     // Fallback chain exhausted (or disabled). A 429 here is a transient throttle (free-tier
@@ -1387,8 +1402,11 @@ namespace Malx_AI
                 TimeSpan lineIdle = requestedModelProfile.IsCustomEndpoint
                     ? CustomEndpointStreamLineIdleTimeout
                     : StreamLineIdleTimeout;
+                // A self-hosted server composing a long tool call (a whole file) sends only
+                // keep-alives until the call is complete, so with tools attached the first real
+                // delta can legitimately take minutes.
                 TimeSpan firstContentTimeout = requestedModelProfile.IsCustomEndpoint
-                    ? CustomEndpointStreamFirstContentTimeout
+                    ? (tools != null && tools.Count > 0 ? CustomEndpointToolCallFirstContentTimeout : CustomEndpointStreamFirstContentTimeout)
                     : StreamFirstContentTimeout;
 
                 while (true)
@@ -1581,6 +1599,13 @@ namespace Malx_AI
                         reasoningBuilder.Append(reasoningDetailsDelta);
 
                     AppendStreamingToolCalls(delta, toolCallAccumulators);
+                    if (onToolCallProgress != null && toolCallAccumulators.Count > 0)
+                    {
+                        // Lets an agent show "Writing index.html - 3.2 KB" while a long tool call
+                        // (a whole file) streams, instead of an unexplained "Thinking".
+                        StreamingToolCallAccumulator current = toolCallAccumulators[toolCallAccumulators.Keys.Max()];
+                        onToolCallProgress(current.Name.ToString(), current.Arguments.Length);
+                    }
 
                     if (!anyDeltaReceived
                         && (textBuilder.Length > 0 || reasoningBuilder.Length > 0 || toolCallAccumulators.Count > 0))
@@ -1624,7 +1649,7 @@ namespace Malx_AI
                             $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:disabled\nSameModelRetry:{sameModelStreamRetries}\nFirstLine:{firstStreamLineSample}");
                         if (sameModelStreamRetries < 1)
                         {
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, allowModelFallback: false, sameModelStreamRetries: sameModelStreamRetries + 1);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, allowModelFallback: false, sameModelStreamRetries: sameModelStreamRetries + 1, onToolCallProgress: onToolCallProgress);
                         }
 
                         if (streamStalled)
@@ -1640,12 +1665,12 @@ namespace Malx_AI
                             "OpenRouterStreamDegeneration",
                             $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}\nFirstLine:{firstStreamLineSample}");
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
 
                         if ((streamStalled || providerStreamError.Length > 0)
                             && await TryBeginFallbackChainRestartAsync(requestedModelProfile, attemptedModelIds, failureKind, cancellationToken))
                         {
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
                         }
 
                         if (streamStalled)
@@ -2673,7 +2698,7 @@ namespace Malx_AI
             }
 
             if (_imageInputModelIds.Count == 0)
-                return false;
+                return profile?.KnownImageInput == true;
 
             if (_imageInputModelIds.Contains(normalized))
                 return true;
@@ -2824,8 +2849,8 @@ namespace Malx_AI
                     [FindModelProfile(Hepha25CoderModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
                 Hepha25CoderModelId =>
                     [FindModelProfile(Edios15ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
-                WorkplaceCouncilDefaultModelId =>
-                    [FindModelProfile(Edios15ModelId), FindModelProfile(Hepha25CoderModelId)],
+                // The Workplace runs on its one model only; it never silently becomes another.
+                WorkplaceCouncilDefaultModelId => [],
                 // The custom endpoint is a single self-hosted model with no OpenRouter alternates --
                 // a transient failure should fail cleanly, never silently cross over to a real
                 // OpenRouter model (which could fire with a missing/invalid OpenRouter key).

@@ -200,7 +200,7 @@ internal sealed class ComputerUseTaskContract
             // whole contract on a goal that is plainly done: the agent is then told its current
             // goal is "open Edge" while Edge is open, and it goes back and redoes earlier work.
             if (current.Application.Length == 0
-                || !ComputerUseApplicationVerification.IsRequestedApplicationVisible(current.Application, capture)
+                || !ComputerUseApplicationVerification.IsRequestedApplicationInFront(current.Application, capture)
                 || !HasRequiredText(current, capture)
                 || !IsApplicationLaunchOnly(current))
             {

@@ -82,6 +82,7 @@ namespace Malx_AI
             "error" => "Error",
             "sandbox" => "Sandbox",
             "warning" => "Warning",
+            "notice" => "Notice",
             "memory" => "Memory",
             _ => "System"
         };
@@ -129,6 +130,7 @@ namespace Malx_AI
             "error" => ErrorCardBrush,
             "sandbox" => SandboxCardBrush,
             "warning" => CriticCardBrush,
+            "notice" => CriticCardBrush,
             "memory" => MemoryCardBrush,
             _ => SystemCardBrush
         };
@@ -143,6 +145,7 @@ namespace Malx_AI
             "error" => ErrorAccentBrush,
             "sandbox" => SandboxAccentBrush,
             "warning" => WarningAccentBrush,
+            "notice" => WarningAccentBrush,
             "memory" => MemoryAccentBrush,
             _ => SystemAccentBrush
         };

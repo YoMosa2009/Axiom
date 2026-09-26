@@ -9,6 +9,15 @@ namespace Malx_AI.Agent
     /// <summary>One completed step: what the agent ran and what came back.</summary>
     public sealed record AgentExchange(AgentToolCall Call, string Observation);
 
+    /// <summary>
+    /// A model failure no retry can fix (e.g. the API key's quota is used up). The session stops
+    /// at once and shows the message, instead of treating it as a flaky connection.
+    /// </summary>
+    public sealed class AgentFatalException : Exception
+    {
+        public AgentFatalException(string message, Exception? inner = null) : base(message, inner) { }
+    }
+
     /// <summary>What the model wants next: either a tool call, or a final answer.</summary>
     public sealed record AgentModelReply(AgentToolCall? Call, string? FinalText, string? ProtocolError = null)
     {

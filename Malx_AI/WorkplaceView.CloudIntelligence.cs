@@ -6,7 +6,7 @@ namespace Malx_AI
     public partial class WorkplaceView
     {
         // Reserve room for system instructions, tool observations, and the role's output instead
-        // of treating Laguna M.1's advertised 256K window as fully usable input. Every call site
+        // of treating the Workplace model's advertised window as fully usable input. Every call site
         // pairs this with CouncilRole.Builder's local-mode budget, so it's implicitly Builder's cloud
         // input budget too.
         private int GetCloudCouncilInputBudgetTokens()

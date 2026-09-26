@@ -82,4 +82,27 @@ public class ComputerUseWindowPresenceTests
         Assert.Contains("[OUTCOME VERIFIED]", contract!.ObserveCurrentOutcome(capture));
         Assert.True(contract.Complete);
     }
+
+    [Fact]
+    public void TakeMeToAnAppIsNotDoneWhileAnotherAppIsInFront()
+    {
+        // The live "@ComputerUse take me to microsoft edge" run: Edge was open in the background,
+        // another application held the foreground, and the run declared success in one second
+        // without doing anything.
+        const string request = "take me to microsoft edge";
+        const string plan = """
+            {"error":"","outcomes":[
+              {"request_text":"take me to microsoft edge","description":"Open Microsoft Edge browser","kind":"desktop","destination":"","match":"site","separate_tab":false,"application":"Microsoft Edge","required_text":[]}
+            ]}
+            """;
+        Assert.True(ComputerUseTaskContract.TryParse(plan, request, out ComputerUseTaskContract? contract, out string error), error);
+
+        ComputerUseCapture background = Capture("claude", "Claude", "msedge: Home / X - Personal - Microsoft Edge");
+        Assert.Equal("", contract!.ObserveCurrentOutcome(background));
+        Assert.False(contract.Complete);
+
+        ComputerUseCapture inFront = Capture("msedge", "Home / X - Personal - Microsoft Edge");
+        Assert.Contains("[OUTCOME VERIFIED]", contract.ObserveCurrentOutcome(inFront));
+        Assert.True(contract.Complete);
+    }
 }

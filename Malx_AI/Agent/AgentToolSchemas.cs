@@ -37,7 +37,13 @@ namespace Malx_AI.Agent
                 AgentToolNames.WriteFile,
                 "Create a file, or replace an existing file's entire contents.",
                 ("path", "string", "Absolute or relative path to the file.", true),
-                ("content", "string", "The complete file contents.", true)),
+                ("content", "string", "The complete file contents. For a long file (roughly 150+ lines) put only the first part here and add the rest with append_file.", true)),
+
+            Define(
+                AgentToolNames.AppendFile,
+                "Append text to the end of a file, creating it if it does not exist. Use it to write a long file in several parts after write_file.",
+                ("path", "string", "Absolute or relative path to the file.", true),
+                ("content", "string", "The text to add to the end of the file.", true)),
 
             Define(
                 AgentToolNames.EditFile,

@@ -115,6 +115,7 @@ namespace Malx_AI.Agent
             {
                 AgentToolNames.ReadFile => $"[Read {path}]",
                 AgentToolNames.WriteFile => $"[Wrote {path}]",
+                AgentToolNames.AppendFile => $"[Appended to {path}]",
                 AgentToolNames.EditFile => $"[Edited {path}]",
                 AgentToolNames.ListDirectory => $"[Listed {path}]",
                 AgentToolNames.FindFiles => $"[Found files matching '{call.Arg("pattern")}']",

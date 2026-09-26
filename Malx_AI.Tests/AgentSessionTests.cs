@@ -309,5 +309,63 @@ namespace Malx_AI.Tests
 
             Assert.Equal(1, asked);
         }
+
+        [Fact]
+        public async Task EachStepIsReportedLiveAsItCompletes()
+        {
+            // The Workplace shows the agent's work as it happens; before, the user saw only
+            // "Thinking" until the whole run ended.
+            var model = new ScriptedAgentModel(
+                AgentModelReply.Tool(Write("a.txt", "1")),
+                AgentModelReply.Tool(Write("b.txt", "2")),
+                AgentModelReply.Answer("Both written."));
+            var reported = new List<string>();
+
+            AgentRunResult result = await NewSession().RunAsync(
+                "write two files", AgentApprovalMode.Auto, model, AlwaysApprove, _ => { }, CancellationToken.None,
+                onStep: step => reported.Add(step.Call.DescribeShort()));
+
+            Assert.Equal(new[] { "Wrote a.txt", "Wrote b.txt" }, reported);
+            Assert.Equal("Both written.", result.FinalMessage);
+        }
+
+        [Fact]
+        public async Task ALargeFileCanBeWrittenInParts()
+        {
+            var append = new AgentToolCall(AgentToolNames.AppendFile,
+                new Dictionary<string, string> { ["path"] = "site/index.html", ["content"] = "<p>part two</p>\n" });
+            var model = new ScriptedAgentModel(
+                AgentModelReply.Tool(Write("site/index.html", "<p>part one</p>\n")),
+                AgentModelReply.Tool(append),
+                AgentModelReply.Answer("Done."));
+
+            await NewSession().RunAsync(
+                "make a page", AgentApprovalMode.Auto, model, AlwaysApprove, _ => { }, CancellationToken.None);
+
+            Assert.Equal("<p>part one</p>\n<p>part two</p>\n", File.ReadAllText(Path.Combine(_folder, "site", "index.html")));
+        }
+
+        private sealed class FatalModel : IAgentModel
+        {
+            public int Calls;
+            public string? Unavailable => null;
+            public Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
+            {
+                Calls++;
+                throw new AgentFatalException("Your API key has used up its free daily request quota.");
+            }
+        }
+
+        [Fact]
+        public async Task AnUnfixableModelFailureStopsAtOnceWithItsMessage()
+        {
+            var model = new FatalModel();
+
+            AgentRunResult result = await NewSession().RunAsync(
+                "anything", AgentApprovalMode.Auto, model, AlwaysApprove, _ => { }, CancellationToken.None);
+
+            Assert.Equal(1, model.Calls);
+            Assert.Contains("quota", result.FinalMessage, StringComparison.OrdinalIgnoreCase);
+        }
     }
 }

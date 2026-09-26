@@ -41,18 +41,33 @@ namespace Malx_AI
 
         private async Task RunComputerUseSessionFromChatAsync(string userQuery)
         {
+            // Capability is judged from the model catalog; without it the check can only guess
+            // from the model's name, which wrongly blocked vision models with plain names.
+            if (_isCloudModeEnabled && !_isHybridLocalCouncilSelected)
+            {
+                try
+                {
+                    LoadOpenRouterKeyForWorkplace();
+                    await _openRouterChatService.EnsureModelCatalogAsync(CancellationToken.None);
+                }
+                catch (Exception catalogEx)
+                {
+                    LogActivity($"Model catalog refresh skipped: {catalogEx.Message}");
+                }
+            }
+
             ComputerUseCapabilityResult capability = ProbeComputerUseCapability();
             string goal = ComputerUseMention.StripMentions(userQuery);
             if (!capability.CanRun)
             {
-                AppendChat("error", capability.Reason);
+                AppendVisibleNotice(capability.Reason);
                 FinishComputerUseRunUi();
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(goal))
             {
-                AppendChat("system", "Computer Use is ready. Add a short goal after @ComputerUse, for example: @ComputerUse open Notepad and type hello.");
+                AppendVisibleNotice("Computer Use is ready. Add a short goal after @ComputerUse, for example: @ComputerUse open Notepad and type hello.");
                 FinishComputerUseRunUi();
                 return;
             }
@@ -60,7 +75,7 @@ namespace Malx_AI
             Window? host = Window.GetWindow(this);
             if (host == null)
             {
-                AppendChat("error", "Computer Use could not find the main window.");
+                AppendVisibleNotice("Computer Use could not find the main window.");
                 FinishComputerUseRunUi();
                 return;
             }
@@ -84,7 +99,7 @@ namespace Malx_AI
                 capability = ProbeComputerUseCapability();
                 if (!capability.CanRun)
                 {
-                    AppendChat("error", capability.Reason);
+                    AppendVisibleNotice(capability.Reason);
                     FinishComputerUseRunUi();
                     return;
                 }
@@ -92,6 +107,8 @@ namespace Malx_AI
 
             RelayStatusBlock.Text = "Relay: Computer Use";
             PublishCouncilPetStatus("Computer Use", "Operating the desktop.");
+            const string runTitle = "Computer Use";
+            AgentRunCard runCard = StartAgentRunCard(goal, runTitle);
 
             if (!_isCloudModeEnabled && ReleaseHostChatModelAsync != null)
             {
@@ -122,7 +139,7 @@ namespace Malx_AI
                         OnChat = message => Dispatcher.Invoke(() =>
                         {
                             LogActivity(message);
-                            AppendChat("system", message);
+                            AppendAgentRunCardLine(runCard, message, runTitle);
                         }),
                         OnStop = () =>
                         {
@@ -131,17 +148,18 @@ namespace Malx_AI
                     },
                     token);
 
-                AppendChat("system", result.Summary);
+                CompleteAgentRunCard(runCard, result.Summary);
+                _chatHistory.Add(("assistant", result.Summary));
                 LogActivity($"Computer Use {(result.Completed ? "completed" : "stopped unfinished")} after {result.Steps} step(s). {result.Summary}");
             }
             catch (OperationCanceledException)
             {
-                AppendChat("system", "Computer Use stopped by the user.");
+                CompleteAgentRunCard(runCard, "Computer Use stopped by the user.");
             }
             catch (Exception ex)
             {
                 await BackendLogService.LogErrorAsync("Workplace.ComputerUse", ex);
-                AppendChat("error", "Computer Use failed: " + ex.Message);
+                CompleteAgentRunCard(runCard, "Computer Use failed: " + ex.Message);
             }
             finally
             {

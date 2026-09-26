@@ -76,6 +76,18 @@ namespace Malx_AI.Agent
             OpenRouterChatResponse? response = await SendWithRetryAsync(token).ConfigureAwait(false);
             if (response == null)
             {
+                if (_lastTurnWasTruncatedToolCall)
+                    return AgentModelReply.Malformed(TruncatedToolCallGuidance(null));
+
+                // Every attempt this turn was throttled. Stop with the real reason rather than
+                // spending more of the key's daily free requests on a model that is busy.
+                if (_lastTurnWasRateLimited)
+                {
+                    throw new AgentFatalException(
+                        "The Workplace model is busy on OpenRouter's free tier right now (rate-limited). "
+                        + "Anything already done is listed above - try again in a minute or two.");
+                }
+
                 return AgentModelReply.Malformed(
                     "The model returned nothing usable after several attempts. Try the request again.");
             }
@@ -101,7 +113,13 @@ namespace Malx_AI.Agent
             }
 
             if (!TryReadArguments(toolCall.ArgumentsJson, out Dictionary<string, string> arguments, out string? error))
-                return AgentModelReply.Malformed($"The arguments for {toolCall.Name} were not valid JSON: {error}");
+            {
+                // Almost always a call cut off at the output limit mid-way through a file's
+                // content. Resending the same request reproduces it, so ask for smaller parts.
+                return AgentModelReply.Malformed(LooksTruncated(toolCall.ArgumentsJson)
+                    ? TruncatedToolCallGuidance(toolCall.Name)
+                    : $"The arguments for {toolCall.Name} were not valid JSON: {error}");
+            }
 
             _pendingToolCall = toolCall;
             return AgentModelReply.Tool(new AgentToolCall(toolCall.Name.ToLowerInvariant(), arguments));
@@ -125,6 +143,8 @@ namespace Malx_AI.Agent
         private async Task<OpenRouterChatResponse?> SendWithRetryAsync(CancellationToken token)
         {
             Exception? lastFailure = null;
+            _lastTurnWasTruncatedToolCall = false;
+            _lastTurnWasRateLimited = false;
 
             for (int attempt = 0; attempt < MaxAttempts; attempt++)
             {
@@ -139,14 +159,24 @@ namespace Malx_AI.Agent
 
                 try
                 {
-                    OpenRouterChatResponse response = await _service.SendConversationAsync(
+                    // Streamed, not a single blocking request: a turn that writes a whole file can
+                    // take minutes, and a blocking call showed nothing but "Thinking" for all of it
+                    // (then hit the body-read timeout). Streaming keeps the connection observably
+                    // alive and lets the UI show the tool call as it forms. The Workplace runs on
+                    // exactly one model, so there is no cross-model fallback here.
+                    OpenRouterChatResponse response = await _service.SendConversationStreamAsync(
                         _messages,
                         _systemPrompt,
                         thinkingEnabled: false,
                         modelId: _modelId,
                         tools: AgentToolSchemas.All(),
-                        cancellationToken: token).ConfigureAwait(false);
+                        onToken: OnText == null ? null : chunk => OnText(chunk),
+                        cancellationToken: token,
+                        maxTokensOverride: AgentTurnMaxTokens,
+                        allowModelFallback: false,
+                        onToolCallProgress: OnToolCallProgress).ConfigureAwait(false);
 
+                    _lastTurnWasRateLimited = false;
                     bool hasToolCall = response.ToolCalls?.Count > 0;
                     bool hasText = !string.IsNullOrWhiteSpace(response.Text);
                     if (hasToolCall || hasText)
@@ -164,19 +194,111 @@ namespace Malx_AI.Agent
                 {
                     throw;
                 }
+                catch (OpenRouterKeyExhaustedException exhausted)
+                {
+                    throw new AgentFatalException(exhausted.Message, exhausted);
+                }
+                catch (OpenRouterRateLimitedException rateLimited)
+                {
+                    // Free models share an upstream pool that throttles in bursts. Wait what the
+                    // provider suggests (bounded) rather than burning the retries in two seconds.
+                    lastFailure = rateLimited;
+                    _lastTurnWasRateLimited = true;
+                    if (attempt < MaxAttempts - 1)
+                    {
+                        int waitSeconds = Math.Clamp(rateLimited.RetryAfterSeconds > 0 ? rateLimited.RetryAfterSeconds : 8, 4, 30);
+                        OnWaiting?.Invoke($"Model is rate-limited, retrying in {waitSeconds}s");
+                        await Delay(TimeSpan.FromSeconds(waitSeconds), token).ConfigureAwait(false);
+                    }
+                }
                 catch (Exception ex)
                 {
                     lastFailure = ex;
+
+                    // Self-hosted servers (llama-server behind Ollama) reject a tool call that was
+                    // cut off at the output limit with a 500 "invalid tool call arguments ...
+                    // unexpected end of JSON input". The same request fails the same way every
+                    // time, so stop retrying and have the model write in smaller parts instead.
+                    if (IsTruncatedToolCallFailure(ex.Message))
+                    {
+                        _lastTurnWasTruncatedToolCall = true;
+                        return null;
+                    }
                 }
             }
 
             return null;
         }
 
+        /// <summary>Output budget for one agent turn: enough for a sizeable file in one call.</summary>
+        internal const int AgentTurnMaxTokens = 16384;
+
+        /// <summary>Streamed reply text, for a live view of the agent's final answer.</summary>
+        public Action<string>? OnText { get; set; }
+
+        /// <summary>(tool name, argument characters so far) while a tool call streams in.</summary>
+        public Action<string, int>? OnToolCallProgress { get; set; }
+
+        /// <summary>A short status while the turn is waiting (e.g. on a rate limit).</summary>
+        public Action<string>? OnWaiting { get; set; }
+
+        private bool _lastTurnWasTruncatedToolCall;
+        private bool _lastTurnWasRateLimited;
+
+        internal static bool IsTruncatedToolCallFailure(string? message)
+        {
+            string text = message ?? string.Empty;
+            return text.Contains("invalid tool call arguments", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("unexpected end of JSON", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>True when tool-call JSON stops part-way, i.e. it hit the output limit.</summary>
+        internal static bool LooksTruncated(string? json)
+        {
+            string trimmed = (json ?? string.Empty).TrimEnd();
+            if (trimmed.Length == 0)
+                return false;
+
+            int depth = 0;
+            bool inString = false;
+            bool escaped = false;
+            foreach (char c in trimmed)
+            {
+                if (escaped) { escaped = false; continue; }
+                if (inString)
+                {
+                    if (c == '\\') escaped = true;
+                    else if (c == '"') inString = false;
+                    continue;
+                }
+
+                if (c == '"') inString = true;
+                else if (c is '{' or '[') depth++;
+                else if (c is '}' or ']') depth--;
+            }
+
+            return inString || depth > 0;
+        }
+
+        internal static string TruncatedToolCallGuidance(string? toolName) =>
+            $"Your {(string.IsNullOrWhiteSpace(toolName) ? "last tool call" : toolName + " call")} was cut off because it was too long for one reply, so nothing was written. "
+            + "Write long files in parts: call write_file with the first part (about 150 lines at most), "
+            + "then call append_file with each following part until the file is complete.";
+
         private OpenRouterToolCall? _pendingToolCall;
 
         private void AppendExchange(AgentExchange exchange, int index)
         {
+            // Session notes ("(invalid)", "(transport)", "(verification)") are not real tool calls.
+            // Sending them as function calls named "(verification)" is rejected by providers that
+            // validate function names, so they go to the model as a plain message instead.
+            if (exchange.Call.Tool.StartsWith('('))
+            {
+                _pendingToolCall = null;
+                _messages.Add(new OpenRouterMessage("user", "[Axiom] " + exchange.Observation));
+                return;
+            }
+
             // Pair the assistant's tool call with its result. When the call came from the provider
             // its real id is reused; a locally synthesised id keeps the shape valid otherwise.
             string argsJson = exchange.Call.Arguments.Count > 0

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -46,6 +47,12 @@ namespace Malx_AI.Agent
         /// <summary>How many unusable turns in a row before the run gives up and says so.</summary>
         private const int MaxConsecutiveProtocolErrors = 3;
 
+        /// <summary>How many times a run's claimed result can be sent back for fixing.</summary>
+        private const int MaxVerificationPasses = 2;
+
+        /// <summary>How often one exact call may run in a single task before it is blocked.</summary>
+        private const int MaxIdenticalCallsPerRun = 2;
+
         public AgentSession(AgentScope scope, int maxSteps, AgentToolExecutor? executor = null)
         {
             _scope = scope ?? AgentScope.WholeComputer();
@@ -61,7 +68,8 @@ namespace Malx_AI.Agent
             AgentActivityReporter reportActivity,
             CancellationToken token,
             IReadOnlyList<AgentExchange>? initialHistory = null,
-            IEnumerable<string>? initialAllowList = null)
+            IEnumerable<string>? initialAllowList = null,
+            Action<AgentStep>? onStep = null)
         {
             ArgumentNullException.ThrowIfNull(model);
             ArgumentNullException.ThrowIfNull(requestApproval);
@@ -79,12 +87,23 @@ namespace Malx_AI.Agent
                 return new AgentRunResult(model.Unavailable!, [], false, false, []);
 
             var steps = new List<AgentStep>();
+
+            // Each completed step is reported as it happens, so the UI can show the work live
+            // (like a terminal agent) instead of one summary at the very end.
+            void AddStep(AgentStep step)
+            {
+                steps.Add(step);
+                try { onStep?.Invoke(step); }
+                catch { /* a UI callback failure must never stop the run */ }
+            }
             var history = initialHistory != null && initialHistory.Count > 0
                 ? new List<AgentExchange>(AgentContextManager.CompactExchanges(initialHistory))
                 : new List<AgentExchange>();
             int consecutiveProtocolErrors = 0;
             AgentToolCall? lastToolCall = null;
             int consecutiveIdenticalCalls = 0;
+            int verificationPasses = 0;
+            var callCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
             try
             {
@@ -97,6 +116,10 @@ namespace Malx_AI.Agent
                     try
                     {
                         reply = await model.NextAsync(goal, history, token).ConfigureAwait(false);
+                    }
+                    catch (AgentFatalException fatal)
+                    {
+                        return new AgentRunResult(fatal.Message, steps, false, false, history);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -152,6 +175,26 @@ namespace Malx_AI.Agent
                     if (reply.Call == null)
                     {
                         string answer = reply.FinalText ?? string.Empty;
+
+                        // Check the claimed result against the disk before accepting it: a
+                        // summary listing files that were never written, or a page linking to
+                        // missing assets, gets sent back for one more pass (bounded).
+                        if (verificationPasses < MaxVerificationPasses)
+                        {
+                            IReadOnlyList<string> problems = AgentWorkVerifier.FindProblems(answer, steps, _scope.WorkingDirectory);
+                            if (problems.Count > 0)
+                            {
+                                verificationPasses++;
+                                reportActivity?.Invoke("Checking the work");
+                                history.Add(new AgentExchange(
+                                    new AgentToolCall("(verification)", new Dictionary<string, string>()),
+                                    "Not finished yet - checking the files on disk found:\n- "
+                                    + string.Join("\n- ", problems)
+                                    + "\nFix these with the tools (create the missing files or correct the references), then give your final summary."));
+                                continue;
+                            }
+                        }
+
                         return new AgentRunResult(
                             string.IsNullOrWhiteSpace(answer) ? "Done." : answer.Trim(),
                             steps,
@@ -164,7 +207,7 @@ namespace Malx_AI.Agent
                     if (string.Equals(call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))
                     {
                         string summary = call.Arg("summary");
-                        steps.Add(new AgentStep(call, AgentPermission.Allow, AgentToolResult.Ok("done"), "finished"));
+                        AddStep(new AgentStep(call, AgentPermission.Allow, AgentToolResult.Ok("done"), "finished"));
                         return new AgentRunResult(
                             string.IsNullOrWhiteSpace(summary) ? "Done." : summary,
                             steps,
@@ -197,7 +240,7 @@ namespace Malx_AI.Agent
 
                     if (decision.Permission == AgentPermission.Deny)
                     {
-                        steps.Add(new AgentStep(call, AgentPermission.Deny, null, decision.Reason));
+                        AddStep(new AgentStep(call, AgentPermission.Deny, null, decision.Reason));
                         history.Add(new AgentExchange(call, "Refused: " + decision.Reason));
                         continue;
                     }
@@ -205,8 +248,37 @@ namespace Malx_AI.Agent
                     if (consecutiveIdenticalCalls == 2)
                     {
                         string loopBlockMsg = $"Repetitive action blocked: '{call.Tool}' with identical arguments was attempted 3 times in a row without making progress. Proceed immediately to creating or modifying files using write_file or finish.";
-                        steps.Add(new AgentStep(call, decision.Permission, AgentToolResult.Fail(loopBlockMsg), "repetition blocked"));
+                        AddStep(new AgentStep(call, decision.Permission, AgentToolResult.Fail(loopBlockMsg), "repetition blocked"));
                         history.Add(new AgentExchange(call, loopBlockMsg));
+                        continue;
+                    }
+
+                    // Cycles that alternate (rewrite a file, rerun the same failing command,
+                    // rewrite, rerun...) slip past the consecutive check above; a live run spent
+                    // its whole 30-step budget that way. Count exact repeats across the run.
+                    string signature = CallSignature(call);
+                    int seen = callCounts.TryGetValue(signature, out int previous) ? previous + 1 : 1;
+                    callCounts[signature] = seen;
+                    // Looking again (listing a folder, re-reading a file) is legitimate after
+                    // changes, so read-only calls get more room than commands and writes.
+                    int allowed = AgentToolNames.IsReadOnly(call.Tool) ? MaxIdenticalCallsPerRun + 2 : MaxIdenticalCallsPerRun;
+                    if (seen >= allowed + 2)
+                    {
+                        return new AgentRunResult(
+                            $"The agent was stopped because it kept repeating the same action ({call.DescribeShort()}) without making progress. "
+                            + "Anything already done is listed above; a more specific instruction usually gets it unstuck.",
+                            steps,
+                            false,
+                            false,
+                            history);
+                    }
+
+                    if (seen > allowed)
+                    {
+                        string cycleMsg = $"Blocked: this exact {call.Tool} call has already been made {seen - 1} times in this task, and repeating it will not change the result. "
+                            + "Use the earlier results: if a command keeps failing, try a different command or approach; if the work is done, give your final summary.";
+                        AddStep(new AgentStep(call, decision.Permission, AgentToolResult.Fail(cycleMsg), "repetition blocked"));
+                        history.Add(new AgentExchange(call, cycleMsg));
                         continue;
                     }
 
@@ -225,7 +297,7 @@ namespace Malx_AI.Agent
 
                         if (outcome == AgentApprovalOutcome.Deny)
                         {
-                            steps.Add(new AgentStep(call, AgentPermission.Ask, null, "denied by the user"));
+                            AddStep(new AgentStep(call, AgentPermission.Ask, null, "denied by the user"));
                             history.Add(new AgentExchange(
                                 call,
                                 "The user declined this step. Do not retry it; work around it or explain what you need."));
@@ -252,7 +324,7 @@ namespace Malx_AI.Agent
                         reportActivity?.Invoke(null);
                     }
 
-                    steps.Add(new AgentStep(call, decision.Permission, result, decision.Reason));
+                    AddStep(new AgentStep(call, decision.Permission, result, decision.Reason));
                     string observation = result.ToObservation();
                     if (consecutiveIdenticalCalls == 1)
                     {
@@ -278,6 +350,11 @@ namespace Malx_AI.Agent
 
         /// <summary>Commands the user chose to stop being asked about during this run.</summary>
         public IReadOnlyList<string> SessionAllowList => _sessionAllowList;
+
+        internal static string CallSignature(AgentToolCall call) =>
+            call.Tool.ToLowerInvariant() + "|" + string.Join("|", call.Arguments
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => pair.Key.ToLowerInvariant() + "=" + pair.Value));
 
         internal static bool AreCallsIdentical(AgentToolCall? a, AgentToolCall? b)
         {

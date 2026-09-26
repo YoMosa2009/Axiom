@@ -102,7 +102,7 @@ namespace Malx_AI.ComputerUse
                 return string.Empty;
 
             string appName = pendingApplicationLaunch;
-            if (ComputerUseApplicationVerification.IsRequestedApplicationVisible(appName, capture))
+            if (ComputerUseApplicationVerification.IsRequestedApplicationInFront(appName, capture))
             {
                 pendingApplicationLaunch = null;
                 applicationLaunchRecoveryRequired = false;

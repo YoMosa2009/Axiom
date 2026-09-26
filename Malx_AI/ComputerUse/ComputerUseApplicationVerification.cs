@@ -28,6 +28,47 @@ namespace Malx_AI.ComputerUse
             return candidates.Any(candidate => Matches(requestedApp, candidate));
         }
 
+        private static readonly HashSet<string> ShellProcesses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "explorer", "shellexperiencehost", "startmenuexperiencehost", "searchhost", "searchapp", "lockapp", "unknown"
+        };
+
+        /// <summary>
+        /// Whether the requested application is where the user is: in front, or on screen while
+        /// focus is only passing through the Windows shell.
+        /// </summary>
+        /// <remarks>
+        /// "Open X" / "take me to X" means X ends up in front. Accepting X merely being open
+        /// somewhere behind another app finished "take me to Microsoft Edge" in one second with
+        /// Edge still in the background and another application in front. Focus that lands on
+        /// the shell (the session panel hides just before capture) is the one case where "on
+        /// screen" has to stand in for "in front".
+        /// </remarks>
+        public static bool IsRequestedApplicationInFront(string? requestedApp, ComputerUseCapture? capture)
+        {
+            if (capture == null || string.IsNullOrWhiteSpace(requestedApp))
+                return false;
+
+            if (Matches(requestedApp, capture.ForegroundProcessName + " " + capture.ForegroundWindowTitle))
+                return true;
+
+            return IsShellForeground(capture) && IsRequestedApplicationVisible(requestedApp, capture);
+        }
+
+        private static bool IsShellForeground(ComputerUseCapture capture)
+        {
+            string process = (capture.ForegroundProcessName ?? string.Empty).Trim();
+            if (process.Length == 0 || !ShellProcesses.Contains(process))
+                return false;
+
+            // Explorer is also File Explorer; only its desktop/taskbar windows are the shell.
+            string title = (capture.ForegroundWindowTitle ?? string.Empty).Trim();
+            return !string.Equals(process, "explorer", StringComparison.OrdinalIgnoreCase)
+                || title.Length == 0
+                || string.Equals(title, "Program Manager", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(title, "unknown", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>Whether one window's identity names the requested application.</summary>
         public static bool Matches(string requestedApp, string? windowIdentity)
         {

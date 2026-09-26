@@ -78,6 +78,7 @@
     <Compile Include="..\Malx_AI\Agent\AgentSession.cs" Link="Production\Agent\AgentSession.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentModel.cs" Link="Production\Agent\AgentModel.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentContextManager.cs" Link="Production\Agent\AgentContextManager.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentWorkVerifier.cs" Link="Production\Agent\AgentWorkVerifier.cs" />
     <Compile Include="..\Malx_AI\CanvasFileArtifact.cs" Link="Production\CanvasFileArtifact.cs" />
     <Compile Include="..\Malx_AI\CanvasFileRequest.cs" Link="Production\CanvasFileRequest.cs" />
     <Compile Include="..\Malx_AI\EffortPolicy.cs" Link="Production\EffortPolicy.cs" />

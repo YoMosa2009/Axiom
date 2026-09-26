@@ -123,7 +123,15 @@ namespace Malx_AI.Agent
                 AppendFlatProtocol(builder, tier);
 
             builder.AppendLine();
+            builder.AppendLine("How to work (like a terminal coding agent):");
+            builder.AppendLine("1. Take a quick look first when it matters (list the working folder, read the files you will change).");
+            builder.AppendLine("2. Build the complete result the user asked for - real, working files, not a plan or a stub. For something like \"make me a website\", create a project folder with a finished index.html plus any CSS/JS it needs, working offline.");
+            builder.AppendLine("3. Verify it: list or read back what you wrote, run it or its tests when that is possible.");
+            builder.AppendLine("4. Keep going step after step until the whole task is done. Do not stop after one action or ask whether to continue; only stop early if you are truly blocked.");
+            builder.AppendLine("5. Finish with a short plain-language summary: what you built or changed, where it is, and how to open or run it.");
+            builder.AppendLine();
             builder.AppendLine("Rules:");
+            builder.AppendLine("- Long files: one reply has an output limit, and a tool call cut off by it writes nothing. Keep each write_file under about 150 lines; put the rest in follow-up append_file calls.");
             builder.AppendLine("- Look before you change: read a file before editing it, and check a directory before assuming what is in it.");
             builder.AppendLine("- Directories are created automatically: write_file automatically creates all parent folders for you. Do NOT run New-Item or mkdir before write_file.");
             builder.AppendLine("- Direct PowerShell execution: run_command already runs directly in PowerShell. NEVER wrap commands in 'powershell -Command' or 'cmd /c'.");
@@ -145,7 +153,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("You have real tools attached to this conversation. Call them; do not describe calling them.");
             builder.AppendLine();
             builder.AppendLine("- run_command runs any shell command on this machine, so \"I cannot access your computer\" is never true here. Launching an app is run_command (for example: Start-Process notepad).");
-            builder.AppendLine("- read_file, write_file, edit_file, list_directory, find_files and search_text work on the user's real files.");
+            builder.AppendLine("- read_file, write_file, append_file, edit_file, list_directory, find_files and search_text work on the user's real files.");
             builder.AppendLine();
             builder.AppendLine("Call one tool at a time and wait for its result before the next. When the task is done, reply in plain words with what you did and what you found; that reply ends the run.");
         }
@@ -161,6 +169,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("- run_command: command, optional cwd, optional timeout_seconds");
             builder.AppendLine("- read_file: path, optional start_line, optional line_count");
             builder.AppendLine("- write_file: path, content  (replaces the whole file)");
+            builder.AppendLine("- append_file: path, content  (adds to the end of the file; use it to write long files in parts)");
             builder.AppendLine("- edit_file: path, old_string, new_string  (old_string must appear exactly once)");
             builder.AppendLine("- list_directory: path");
             builder.AppendLine("- find_files: pattern, optional path");

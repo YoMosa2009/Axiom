@@ -15,6 +15,7 @@ namespace Malx_AI.Agent
         public const string RunCommand = "run_command";
         public const string ReadFile = "read_file";
         public const string WriteFile = "write_file";
+        public const string AppendFile = "append_file";
         public const string EditFile = "edit_file";
         public const string ListDirectory = "list_directory";
         public const string FindFiles = "find_files";
@@ -23,7 +24,7 @@ namespace Malx_AI.Agent
 
         public static readonly IReadOnlyList<string> All =
         [
-            RunCommand, ReadFile, WriteFile, EditFile, ListDirectory, FindFiles, SearchText, Finish
+            RunCommand, ReadFile, WriteFile, AppendFile, EditFile, ListDirectory, FindFiles, SearchText, Finish
         ];
 
         /// <summary>Tools that only observe. Everything else can change the machine.</summary>
@@ -95,6 +96,8 @@ namespace Malx_AI.Agent
                     return "Read " + FileLabel(Arg("path"));
                 case AgentToolNames.WriteFile:
                     return "Wrote " + FileLabel(Arg("path"));
+                case AgentToolNames.AppendFile:
+                    return "Added to " + FileLabel(Arg("path"));
                 case AgentToolNames.EditFile:
                     return "Edited " + FileLabel(Arg("path"));
                 case AgentToolNames.ListDirectory:

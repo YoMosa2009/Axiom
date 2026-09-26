@@ -1,5 +1,23 @@
 # Changelog
 
+## [V1.9.12] - 2026-09-26
+
+Agent Access works like a terminal coding agent, @ComputerUse runs and reports in the chat, and the Workplace cloud mode moves to one vision-capable model.
+
+### Changed
+- **New Workplace cloud model: Dots Studio Dots3-Note Preview (free).** Poolside Laguna M.1 was removed from OpenRouter's free catalog, and the Workplace had been falling back to models that cannot see images (so every Computer Use screenshot failed with "No endpoints found that support image input"). The Workplace now runs on exactly one model, with no silent fallback to another: Dots3-Note, a 280B mixture-of-experts model (16B active) with text and image input, a 512K context window, and training aimed at coding, tool use, and long-horizon agent work.
+
+### Fixed
+- **Agent Access stalling after one or two steps on "Thinking".** Each agent turn was a single blocking request, so a turn that wrote a whole file showed nothing for minutes and then hit a timeout or the output limit. Turns now stream, with a larger output budget. A file write cut off at the output limit (seen as "invalid tool call arguments ... unexpected end of JSON") is no longer resent identically three times: the agent is told to write the file in parts with the new `append_file` tool. Rate limits wait for the provider's suggested delay, and a used-up daily quota stops the run with a clear message instead of retrying.
+- **Agent Access shows its work live.** Each run is one Agent card in the chat that fills in as it works (every step with ✓ or ✗ as it finishes), then becomes the final answer with the step list underneath. The activity line shows a running timer and the size of a file as it is being written.
+- **Agent Access checks its result before finishing.** A summary that lists files that were never written, or a page that links to missing files, is sent back to the agent to fix before the run ends.
+- **@ComputerUse appeared to do nothing ("Relay: Idle").** Its messages, including the reason a run cannot start and its final result, went only to the notification bell. They now appear in the chat as an Agent card, and problems that need your attention appear as a Notice card. Agent Access errors are shown the same way.
+- **Agent commands containing double quotes were mangled.** `run_command` wrapped each command as `-Command "..."` with backtick-escaped quotes, which Windows does not honour, so any quoted path (for example `Start-Process "C:\site\index.html"`) failed with "cannot find the file specified". Commands are now passed with `-EncodedCommand`, byte for byte.
+- **Agent retry cycles.** Alternating loops (rewrite a file, rerun the same failing command, repeat) got past the repeat guard and used up the whole step budget. The same exact call is now blocked after it has run twice in a task, and the run stops if the agent keeps insisting.
+- **@ComputerUse declared "take me to Microsoft Edge" done without doing anything** when Edge was already open behind another window. Opening or switching to an app now completes only when that app is actually in front.
+- **@ComputerUse refused a vision model** when the OpenRouter model catalog had not loaded yet (it guessed from the model name). The catalog is loaded first, and the Workplace model is known to accept images.
+- The agent's instructions now follow the terminal-agent pattern: look first, build the complete result, verify it, keep going until done, then summarise what was built and how to open or run it.
+
 ## [V1.9.11] - 2026-09-25
 
 In-app updates keep working when the configured update drive is disconnected.

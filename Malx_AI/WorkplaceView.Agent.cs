@@ -183,9 +183,16 @@ namespace Malx_AI
 
         // ───────────────────────────────── activity line
 
+        private string _agentActivityLabel = string.Empty;
+        private string _agentActivityDetail = string.Empty;
+        private DateTime _agentActivityStartedUtc;
+        private System.Windows.Threading.DispatcherTimer? _agentActivityTimer;
+
         /// <summary>
         /// The quiet one-line "what is happening right now" indicator. Null clears it, which is
-        /// what every finished step and every completed run does.
+        /// what every finished step and every completed run does. While a label is showing it
+        /// carries a live elapsed time (and, while a file is being written, its size so far), so
+        /// a long model turn reads as work in progress rather than a frozen "Thinking".
         /// </summary>
         private void ReportAgentActivity(string? label)
         {
@@ -196,20 +203,138 @@ namespace Malx_AI
             {
                 if (string.IsNullOrWhiteSpace(label))
                 {
+                    _agentActivityTimer?.Stop();
+                    _agentActivityLabel = string.Empty;
+                    _agentActivityDetail = string.Empty;
                     AgentActivityLine.Visibility = Visibility.Collapsed;
                     AgentActivityText.Text = string.Empty;
+                    return;
                 }
-                else
+
+                if (!string.Equals(_agentActivityLabel, label, StringComparison.Ordinal))
                 {
-                    AgentActivityText.Text = label;
-                    AgentActivityLine.Visibility = Visibility.Visible;
+                    _agentActivityLabel = label;
+                    _agentActivityDetail = string.Empty;
+                    _agentActivityStartedUtc = DateTime.UtcNow;
                 }
+
+                if (_agentActivityTimer == null)
+                {
+                    _agentActivityTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                    _agentActivityTimer.Tick += (_, _) => RenderAgentActivity();
+                }
+
+                _agentActivityTimer.Start();
+                AgentActivityLine.Visibility = Visibility.Visible;
+                RenderAgentActivity();
             }
 
             if (Dispatcher.CheckAccess())
                 Apply();
             else
                 Dispatcher.Invoke(Apply);
+        }
+
+        /// <summary>Extra detail for the current activity (e.g. "Writing index.html · 3.2 KB").</summary>
+        private void ReportAgentActivityDetail(string detail)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (string.IsNullOrEmpty(_agentActivityLabel))
+                    return;
+                _agentActivityDetail = detail ?? string.Empty;
+                RenderAgentActivity();
+            });
+        }
+
+        private void RenderAgentActivity()
+        {
+            if (AgentActivityText == null || string.IsNullOrEmpty(_agentActivityLabel))
+                return;
+
+            int seconds = (int)(DateTime.UtcNow - _agentActivityStartedUtc).TotalSeconds;
+            string main = string.IsNullOrWhiteSpace(_agentActivityDetail) ? _agentActivityLabel : _agentActivityDetail;
+            AgentActivityText.Text = seconds >= 2 ? $"{main} · {seconds}s" : main;
+        }
+
+        private static string DescribeToolCallProgress(string toolName, int argumentChars)
+        {
+            string size = argumentChars >= 1024 ? $"{argumentChars / 1024.0:0.0} KB" : $"{argumentChars} chars";
+            return toolName switch
+            {
+                AgentToolNames.WriteFile or AgentToolNames.AppendFile => $"Writing a file · {size}",
+                AgentToolNames.EditFile => $"Preparing an edit · {size}",
+                AgentToolNames.RunCommand => "Preparing a command",
+                _ => string.IsNullOrWhiteSpace(toolName) ? "Preparing the next step" : $"Preparing {toolName}"
+            };
+        }
+
+        // ───────────────────────────────── live run card
+
+        private sealed class AgentRunCard
+        {
+            public required WorkplaceChatMessage Card { get; init; }
+            public required string Goal { get; init; }
+            public List<string> StepLines { get; } = new();
+        }
+
+        /// <summary>
+        /// One chat card per run that grows as the agent works: each step appears the moment it
+        /// finishes (✓ / ✗), the way a terminal agent prints its actions, then the card becomes
+        /// the run's final answer with the step list underneath.
+        /// </summary>
+        private AgentRunCard StartAgentRunCard(string goal, string title)
+        {
+            var card = new WorkplaceChatMessage { Role = "agent", Content = $"**{title}**\n\n_Starting..._" };
+            Dispatcher.Invoke(() =>
+            {
+                _chatCards.Add(card);
+                ChatScrollViewer?.ScrollToEnd();
+            });
+            return new AgentRunCard { Card = card, Goal = goal };
+        }
+
+        private void AppendAgentRunCardLine(AgentRunCard run, string line, string title)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                run.StepLines.Add(line);
+                run.Card.Content = $"**{title}**\n\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
+                ChatScrollViewer?.ScrollToEnd();
+            });
+        }
+
+        private static string DescribeAgentStepLine(AgentStep step)
+        {
+            string action = step.Call.DescribeShort();
+            if (step.Result == null)
+                return $"⊘ {action} — {step.Note}";
+            if (step.Result.Succeeded)
+                return $"✓ {action}";
+
+            string reason = (step.Result.Error ?? "failed").Split('\n')[0].Trim();
+            if (reason.Length > 90)
+                reason = reason[..89].TrimEnd() + "…";
+            return $"✗ {action} — {reason}";
+        }
+
+        private void CompleteAgentRunCard(AgentRunCard run, string finalMessage)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                string steps = run.StepLines.Count == 0
+                    ? string.Empty
+                    : $"\n\n**Steps ({run.StepLines.Count})**\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
+                run.Card.Content = (finalMessage ?? string.Empty).Trim() + steps;
+                ChatScrollViewer?.ScrollToEnd();
+            });
+            RequestWorkspaceStateSave();
+        }
+
+        /// <summary>A problem the user must see: shown in the chat, not only in the bell.</summary>
+        private void AppendVisibleNotice(string message)
+        {
+            AppendChat("notice", message);
         }
 
         // ───────────────────────────────── approval gate
@@ -309,7 +434,7 @@ namespace Malx_AI
         {
             if (!_agentScopeEntireComputer && string.IsNullOrWhiteSpace(_agentScopeFolder))
             {
-                AppendChat("error", "Choose a folder for the agent, or switch its scope to the entire computer.");
+                AppendVisibleNotice("Agent Access needs a place to work: choose a folder in the Agent panel, or switch its scope to the entire computer.");
                 FinishAgentRunUi();
                 return;
             }
@@ -374,6 +499,9 @@ namespace Malx_AI
                 effectiveGoal = $"{effectiveGoal}\n\n{fileDetails.ToString().Trim()}";
             }
 
+            const string runTitle = "Agent Access";
+            AgentRunCard runCard = StartAgentRunCard(userQuery, runTitle);
+
             // Council synergy: when Council Mode is active, Architect plans and identifies dependencies
             bool enableCouncilSynergy = !_isSingleModelMode
                 && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Architect) || HasEffectiveLocalRoleModel(CouncilRole.Critic));
@@ -407,6 +535,7 @@ namespace Malx_AI
                         architectPlan = architectResult.Answer.Trim();
                         effectiveGoal = $"{effectiveGoal}\n\n[ARCHITECT BLUEPRINT]\n{architectPlan}";
                         LogActivity("Architect blueprint generated.");
+                        AppendAgentRunCardLine(runCard, "✓ Architect planned the approach", runTitle);
                     }
                 }
                 catch (Exception archEx)
@@ -427,7 +556,7 @@ namespace Malx_AI
             IAgentModel model = BuildAgentModel(tier, systemPrompt, _chatHistory);
             if (!string.IsNullOrWhiteSpace(model.Unavailable))
             {
-                AppendChat("error", model.Unavailable!);
+                CompleteAgentRunCard(runCard, model.Unavailable!);
                 FinishAgentRunUi();
                 return;
             }
@@ -448,12 +577,13 @@ namespace Malx_AI
                     ReportAgentActivity,
                     token,
                     initialHistory,
-                    initialAllowList);
+                    initialAllowList,
+                    onStep: step => AppendAgentRunCardLine(runCard, DescribeAgentStepLine(step), runTitle));
             }
             catch (Exception ex)
             {
                 await BackendLogService.LogErrorAsync("ComputerAgent", ex);
-                AppendChat("error", $"The agent stopped: {ex.Message}");
+                CompleteAgentRunCard(runCard, $"The agent stopped: {ex.Message}");
                 FinishAgentRunUi();
                 return;
             }
@@ -552,7 +682,7 @@ namespace Malx_AI
                 UpdateStageIndicator(null, false, true, false);
             }
 
-            AppendChat("assistant", finalChatMessage);
+            CompleteAgentRunCard(runCard, finalChatMessage);
             _chatHistory.Add(("assistant", finalChatMessage));
             UpdateWorkplaceTokenUsageIndicator();
             FinishAgentRunUi();
@@ -592,6 +722,9 @@ namespace Malx_AI
                     systemPrompt,
                     chatHistory,
                     imageDataUrls);
+                cloudModel.OnToolCallProgress = (toolName, chars) =>
+                    ReportAgentActivityDetail(DescribeToolCallProgress(toolName, chars));
+                cloudModel.OnWaiting = message => ReportAgentActivityDetail(message);
                 cloudModel.OnTokenUsageRecorded = (promptTokens, completionTokens) =>
                 {
                     _lastRolePromptTokenEstimates[CouncilRole.Builder] = promptTokens;
