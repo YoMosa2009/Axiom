@@ -70,7 +70,9 @@ function Get-ChangelogNotes {
         [Parameter(Mandatory = $true)][string]$Version
     )
 
-    $content = Get-Content -LiteralPath $ChangelogPath -Raw
+    # UTF-8 explicitly: Windows PowerShell 5.1 otherwise reads a BOM-less file as the ANSI code page,
+    # turning non-ASCII characters in the changelog (ellipses, check marks) into mojibake in the published notes.
+    $content = Get-Content -LiteralPath $ChangelogPath -Raw -Encoding UTF8
     $escapedVersion = [regex]::Escape($Version)
     $pattern = "(?ms)^##\s+\[V?$escapedVersion\][^\r\n]*\r?\n(?<body>.*?)(?=^##\s+|\z)"
     $match = [regex]::Match($content, $pattern)
