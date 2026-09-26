@@ -49,6 +49,35 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public void ARedirectToADisconnectedDriveFallsBackToTheProfile()
+        {
+            // The reported failure: AXIOM_UPDATE_DIR=F:\OtherStuff\Axiom-Updates with F: unplugged
+            // made every download throw "Could not find a part of the path".
+            char missing = "QRSTUVWXYZ".First(letter => !System.IO.Directory.Exists(letter + @":\"));
+            string? previous = Environment.GetEnvironmentVariable(UpdateStoragePaths.EnvironmentVariableName);
+            try
+            {
+                Environment.SetEnvironmentVariable(UpdateStoragePaths.EnvironmentVariableName, missing + @":\OtherStuff\Axiom-Updates");
+
+                Assert.False(UpdateStoragePaths.IsDriveAvailable(missing + @":\OtherStuff"));
+                Assert.False(UpdateStoragePaths.Root.StartsWith(missing + ":", StringComparison.OrdinalIgnoreCase));
+                Assert.True(UpdateStoragePaths.TryResolveUsableRoot(1024, out string root, out _));
+                Assert.False(root.StartsWith(missing + ":", StringComparison.OrdinalIgnoreCase));
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(UpdateStoragePaths.EnvironmentVariableName, previous);
+            }
+        }
+
+        [Fact]
+        public void StagingFollowsTheFolderTheDownloadActuallyLandedIn()
+        {
+            Assert.Equal(@"C:\Profile\Updates",
+                UpdateStoragePaths.RootForDownloadedPackage(@"C:\Profile\Updates\downloads\1.9.10\Axiom.zip"));
+        }
+
+        [Fact]
         public void AnUnsetVariableUsesTheAppDataProfile()
         {
             string resolved = UpdateStoragePaths.ResolveRoot(null, @"C:\fallback\Updates");

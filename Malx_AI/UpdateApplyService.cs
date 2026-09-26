@@ -58,8 +58,11 @@ namespace Malx_AI
                 throw new FileNotFoundException("The downloaded update package was not found.", zipPath);
 
             string version = UpdateReleaseParser.FormatVersion(update.LatestVersion);
+            // Stage next to the download: when the configured update drive was missing or full,
+            // the package went to the fallback folder, and staging must follow it there.
             string stagingRoot = Path.Combine(
-                UpdateStoragePaths.Staging,
+                UpdateStoragePaths.RootForDownloadedPackage(zipPath),
+                "staging",
                 $"{version}-{Guid.NewGuid():N}");
             string extractRoot = Path.Combine(stagingRoot, "package");
             Directory.CreateDirectory(extractRoot);

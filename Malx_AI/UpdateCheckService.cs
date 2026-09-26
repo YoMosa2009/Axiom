@@ -92,19 +92,12 @@ namespace Malx_AI
                 safeName = update.PackageKind == UpdatePackageKind.Zip ? "AxiomUpdate.zip" : "AxiomUpdate.exe";
 
             string versionFolder = UpdateReleaseParser.FormatVersion(update.LatestVersion);
-            string downloadDirectory = Path.Combine(UpdateStoragePaths.Downloads, versionFolder);
-            Directory.CreateDirectory(downloadDirectory);
 
-            string targetPath = Path.Combine(downloadDirectory, safeName);
-            if (File.Exists(targetPath) && await IsDownloadedPackageValidAsync(targetPath, update, token).ConfigureAwait(false))
-            {
-                progress?.Report(100);
-                return targetPath;
-            }
-
-            // Check the disk before opening a socket. Without this, a full or disconnected drive
-            // surfaced as a bare "Update download failed" after streaming hundreds of megabytes,
-            // with the real cause (an IOException from the final flush) only in the error log.
+            // Resolve a usable folder BEFORE touching the disk. Creating the configured folder
+            // first threw "Could not find a part of the path" whenever AXIOM_UPDATE_DIR named a
+            // disconnected drive, so the fallback below never got a chance to run. This also
+            // checks free space before opening a socket, instead of failing after streaming
+            // hundreds of megabytes.
             if (!UpdateStoragePaths.TryResolveUsableRoot(update.PackageSizeBytes, out string usableRoot, out string? spaceNotice))
             {
                 throw new IOException(
@@ -113,10 +106,16 @@ namespace Malx_AI
             }
 
             if (!string.IsNullOrWhiteSpace(spaceNotice))
-            {
                 await BackendLogService.LogEventAsync("UpdateDownload", spaceNotice).ConfigureAwait(false);
-                targetPath = Path.Combine(usableRoot, "downloads", Path.GetFileName(targetPath));
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+
+            string downloadDirectory = Path.Combine(usableRoot, "downloads", versionFolder);
+            Directory.CreateDirectory(downloadDirectory);
+
+            string targetPath = Path.Combine(downloadDirectory, safeName);
+            if (File.Exists(targetPath) && await IsDownloadedPackageValidAsync(targetPath, update, token).ConfigureAwait(false))
+            {
+                progress?.Report(100);
+                return targetPath;
             }
 
             string partialPath = targetPath + ".partial";

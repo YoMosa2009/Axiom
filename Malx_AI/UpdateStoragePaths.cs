@@ -11,9 +11,56 @@ namespace Malx_AI
     {
         internal const string EnvironmentVariableName = "AXIOM_UPDATE_DIR";
 
-        internal static string Root => ResolveRoot(
-            Environment.GetEnvironmentVariable(EnvironmentVariableName),
-            Path.Combine(AppDataPaths.Root, "Updates"));
+        /// <summary>
+        /// The update folder: AXIOM_UPDATE_DIR when its drive is actually present, otherwise the
+        /// profile default. A redirect to a disconnected drive (a removed USB/external disk) used
+        /// to fail every update with "Could not find a part of the path".
+        /// </summary>
+        internal static string Root
+        {
+            get
+            {
+                string fallback = Path.GetFullPath(Path.Combine(AppDataPaths.Root, "Updates"));
+                string configured = ResolveRoot(Environment.GetEnvironmentVariable(EnvironmentVariableName), fallback);
+                return string.Equals(configured, fallback, StringComparison.OrdinalIgnoreCase) || IsDriveAvailable(configured)
+                    ? configured
+                    : fallback;
+            }
+        }
+
+        internal static bool IsDriveAvailable(string path)
+        {
+            try
+            {
+                string? root = Path.GetPathRoot(Path.GetFullPath(path));
+                return !string.IsNullOrWhiteSpace(root) && new DriveInfo(root).IsReady;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The update root a downloaded package lives under (the parent of its "downloads"
+        /// folder), so staging lands on the same drive the download was placed on.
+        /// </summary>
+        internal static string RootForDownloadedPackage(string packagePath)
+        {
+            try
+            {
+                for (DirectoryInfo? dir = new FileInfo(packagePath).Directory; dir != null; dir = dir.Parent)
+                {
+                    if (string.Equals(dir.Name, "downloads", StringComparison.OrdinalIgnoreCase) && dir.Parent != null)
+                        return dir.Parent.FullName;
+                }
+            }
+            catch
+            {
+            }
+
+            return Root;
+        }
 
         internal static string Downloads => Path.Combine(Root, "downloads");
         internal static string Staging => Path.Combine(Root, "staging");
