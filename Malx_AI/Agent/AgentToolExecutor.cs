@@ -59,8 +59,20 @@ namespace Malx_AI.Agent
         private const int DefaultTimeoutSeconds = 120;
 
         private readonly AgentScope _scope;
+        private readonly AgentFileBackup? _backup;
 
-        public AgentToolExecutor(AgentScope scope) => _scope = scope ?? AgentScope.WholeComputer();
+        public AgentToolExecutor(AgentScope scope, AgentFileBackup? backup = null)
+        {
+            _scope = scope ?? AgentScope.WholeComputer();
+            _backup = backup;
+        }
+
+        /// <summary>Copies a file that already existed before its first change; says where, if it did.</summary>
+        private string BackupNote(string path)
+        {
+            string? copy = _backup?.BeforeChange(path);
+            return copy == null ? string.Empty : $" The previous version was saved to {copy}.";
+        }
 
         public async Task<AgentToolResult> ExecuteAsync(AgentToolCall call, CancellationToken token)
         {
@@ -179,7 +191,7 @@ namespace Malx_AI.Agent
                 string body = string.IsNullOrWhiteSpace(combined)
                     ? "(Command failed with no output)"
                     : combined;
-                return AgentToolResult.Fail($"{exitPrefix}\n{body}");
+                return AgentToolResult.Fail($"{exitPrefix}\n{body}{ShellMismatchHint(command)}");
             }
         }
 
@@ -220,10 +232,11 @@ namespace Malx_AI.Agent
                 Directory.CreateDirectory(directory);
 
             string content = call.Arg("content");
+            string backupNote = BackupNote(path);
             File.WriteAllText(path, content, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
             int lineCount = content.Split('\n').Length;
-            return AgentToolResult.Ok($"Successfully wrote {fileInfo.Length:N0} bytes ({lineCount} lines) to {path}. Verified on disk.");
+            return AgentToolResult.Ok($"Successfully wrote {fileInfo.Length:N0} bytes ({lineCount} lines) to {path}. Verified on disk.{backupNote}");
         }
 
         /// <summary>
@@ -241,10 +254,11 @@ namespace Malx_AI.Agent
                 Directory.CreateDirectory(directory);
 
             string content = call.Arg("content");
+            string backupNote = BackupNote(path);
             File.AppendAllText(path, content, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
             int lineCount = File.ReadAllText(path).Split('\n').Length;
-            return AgentToolResult.Ok($"Appended {content.Length:N0} characters. {path} is now {fileInfo.Length:N0} bytes ({lineCount} lines).");
+            return AgentToolResult.Ok($"Appended {content.Length:N0} characters. {path} is now {fileInfo.Length:N0} bytes ({lineCount} lines).{backupNote}");
         }
 
         private AgentToolResult EditFile(AgentToolCall call)
@@ -291,10 +305,11 @@ namespace Malx_AI.Agent
                 return AgentToolResult.Fail($"old_string appears {occurrences} times. Include more surrounding lines so it is unique.");
 
             string replaced = original.Replace(oldString, newString, StringComparison.Ordinal);
+            string backupNote = BackupNote(path);
             File.WriteAllText(path, replaced, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
             int lineCount = replaced.Split('\n').Length;
-            return AgentToolResult.Ok($"Successfully edited {path} ({fileInfo.Length:N0} bytes, {lineCount} lines). Verified on disk.");
+            return AgentToolResult.Ok($"Successfully edited {path} ({fileInfo.Length:N0} bytes, {lineCount} lines). Verified on disk.{backupNote}");
         }
 
         private AgentToolResult ListDirectory(AgentToolCall call)
@@ -466,6 +481,20 @@ namespace Malx_AI.Agent
                 ? text
                 : text[..MaxOutputChars] + $"\n… output truncated at {MaxOutputChars} characters.";
         }
+
+        private static readonly Regex UnixShellSyntaxRegex = new(
+            @"(?:^|[\s;|])(?:ls|rm|cp|mv|mkdir)\s+-[a-zA-Z]{1,4}\b|/dev/null|(?:^|\s)/mnt/[a-z]\b|&&|\|\||(?:^|[\s;])(?:export\s+\w+=|touch\s|which\s|sudo\s|chmod\s|grep\s|cat\s+<<|head\s+-n|tail\s+-n)",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// A pointer back to PowerShell when a failed command was written for bash. Models trained
+        /// mostly on Linux transcripts open with "ls -la /mnt/F 2>/dev/null", fail, and then
+        /// guess again; one line naming the real shell settles it on the next step.
+        /// </summary>
+        internal static string ShellMismatchHint(string command) =>
+            UnixShellSyntaxRegex.IsMatch(command ?? string.Empty)
+                ? "\n[Hint: commands run in Windows PowerShell 5.1, not bash. Use PowerShell forms: Get-ChildItem -Force 'F:\\', Test-Path, New-Item, Select-String, ';' between commands (not '&&'), '2>$null' (not '2>/dev/null'), and Windows paths such as F:\\folder (not /mnt/f).]"
+                : string.Empty;
 
         /// <summary>
         /// Hands the command to PowerShell byte-for-byte as -EncodedCommand (UTF-16LE Base64).

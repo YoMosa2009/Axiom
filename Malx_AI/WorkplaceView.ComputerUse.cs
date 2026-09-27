@@ -139,7 +139,7 @@ namespace Malx_AI
                         OnChat = message => Dispatcher.Invoke(() =>
                         {
                             LogActivity(message);
-                            AppendAgentRunCardLine(runCard, message, runTitle);
+                            AppendAgentRunCardLine(runCard, message);
                         }),
                         OnStop = () =>
                         {
@@ -441,7 +441,8 @@ namespace Malx_AI
             if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) != ModifierKeys.Shift)
             {
                 e.Handled = true;
-                if (!SendButton.IsEnabled || _isProcessing)
+                // While the agent runs, Enter sends the message to it (see TryPostMessageToRunningAgent).
+                if (!SendButton.IsEnabled || (_isProcessing && _agentInbox == null))
                     return;
 
                 _ = Dispatcher.BeginInvoke(async () =>

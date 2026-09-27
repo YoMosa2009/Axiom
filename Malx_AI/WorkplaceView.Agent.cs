@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using Malx_AI.Agent;
+using Malx_AI.ComputerUse;
 using Microsoft.Win32;
 
 namespace Malx_AI
@@ -20,6 +21,19 @@ namespace Malx_AI
         private AgentApprovalMode _agentApprovalMode = AgentApprovalMode.Manual;
         private TaskCompletionSource<AgentApprovalOutcome>? _agentPendingApproval;
         private AgentActiveTaskState? _activeAgentTaskState;
+
+        /// <summary>Non-null while an agent run is going and can take a message from the user.</summary>
+        private AgentUserMessageInbox? _agentInbox;
+
+        /// <summary>True while the agent loop itself (not the Architect/Critic passes) is running.</summary>
+        private bool _agentSessionRunning;
+
+        /// <summary>
+        /// Ticks (UTC) of a Stop that interrupted a Hybrid Local model turn, or 0. The server keeps
+        /// generating the abandoned reply, so the next request waits behind it; knowing that lets
+        /// the run card say so instead of sitting on "Starting...".
+        /// </summary>
+        private long _agentStoppedMidTurnTicks;
 
         private const string AgentEnabledKey = "workplace_agent_enabled";
         private const string AgentScopeAllKey = "workplace_agent_scope_all";
@@ -238,6 +252,7 @@ namespace Malx_AI
         /// <summary>Extra detail for the current activity (e.g. "Writing index.html · 3.2 KB").</summary>
         private void ReportAgentActivityDetail(string detail)
         {
+            NoteAgentModelResponding();
             Dispatcher.BeginInvoke(() =>
             {
                 if (string.IsNullOrEmpty(_agentActivityLabel))
@@ -254,7 +269,57 @@ namespace Malx_AI
 
             int seconds = (int)(DateTime.UtcNow - _agentActivityStartedUtc).TotalSeconds;
             string main = string.IsNullOrWhiteSpace(_agentActivityDetail) ? _agentActivityLabel : _agentActivityDetail;
-            AgentActivityText.Text = seconds >= 2 ? $"{main} · {seconds}s" : main;
+            if (string.IsNullOrWhiteSpace(_agentActivityDetail)
+                && string.Equals(_agentActivityLabel, AgentThinkingLabel, StringComparison.Ordinal))
+            {
+                main = DescribeModelWait(seconds) ?? main;
+            }
+
+            string text = seconds >= 2 ? $"{main} · {seconds}s" : main;
+            AgentActivityText.Text = text;
+            SetActiveRunCardStatus(text);
+        }
+
+        private const string AgentThinkingLabel = "Thinking";
+
+        /// <summary>
+        /// What a long wait for the model's first output means, so a quiet turn never reads as a
+        /// frozen app. Null keeps the plain "Thinking".
+        /// </summary>
+        private string? DescribeModelWait(int seconds)
+        {
+            bool hybridLocal = _isCloudModeEnabled && _isHybridLocalCouncilSelected;
+            if (!hybridLocal)
+                return seconds >= 45 ? "Waiting for the model to respond" : null;
+
+            long stoppedTicks = Interlocked.Read(ref _agentStoppedMidTurnTicks);
+            if (stoppedTicks != 0
+                && DateTime.UtcNow - new DateTime(stoppedTicks, DateTimeKind.Utc) < TimeSpan.FromMinutes(15)
+                && seconds >= 4)
+            {
+                return "Waiting for your Hybrid Local server: it is still finishing the reply that was stopped";
+            }
+
+            // Self-hosted servers usually send a tool call only once it is complete, so a model
+            // writing a whole file shows no progress until it finishes.
+            if (seconds >= 180)
+                return "Still waiting on your Hybrid Local server (it may also be busy with another request)";
+            return seconds >= 20 ? "Your Hybrid Local model is working on this step" : null;
+        }
+
+        /// <summary>The model is producing output again, so any earlier stopped turn is done.</summary>
+        private void NoteAgentModelResponding() => Interlocked.Exchange(ref _agentStoppedMidTurnTicks, 0);
+
+        /// <summary>Called by Stop: remembers that a Hybrid Local turn was abandoned mid-generation.</summary>
+        private void NoteAgentStopRequested()
+        {
+            if (_agentInbox != null
+                && _isCloudModeEnabled
+                && _isHybridLocalCouncilSelected
+                && string.Equals(_agentActivityLabel, AgentThinkingLabel, StringComparison.Ordinal))
+            {
+                Interlocked.Exchange(ref _agentStoppedMidTurnTicks, DateTime.UtcNow.Ticks);
+            }
         }
 
         private static string DescribeToolCallProgress(string toolName, int argumentChars)
@@ -273,35 +338,119 @@ namespace Malx_AI
 
         private sealed class AgentRunCard
         {
-            public required WorkplaceChatMessage Card { get; init; }
+            public required WorkplaceChatMessage Card { get; set; }
             public required string Goal { get; init; }
+            public required string Title { get; init; }
             public List<string> StepLines { get; } = new();
+
+            /// <summary>What is happening right now, shown in italics under the steps.</summary>
+            public string? Status { get; set; }
+
+            public string Render()
+            {
+                var builder = new StringBuilder();
+                builder.Append("**").Append(Title).Append("**\n\n");
+                if (StepLines.Count > 0)
+                    builder.Append(string.Join("\n", StepLines.Select(l => "- " + l)));
+                if (!string.IsNullOrWhiteSpace(Status))
+                {
+                    if (StepLines.Count > 0)
+                        builder.Append("\n\n");
+                    builder.Append('_').Append(Status).Append('_');
+                }
+                return builder.ToString().TrimEnd();
+            }
         }
+
+        private AgentRunCard? _activeAgentRunCard;
+        private const string StartingStatus = "Starting...";
 
         /// <summary>
         /// One chat card per run that grows as the agent works: each step appears the moment it
-        /// finishes (✓ / ✗), the way a terminal agent prints its actions, then the card becomes
-        /// the run's final answer with the step list underneath.
+        /// finishes (✓ / ✗), the way a terminal agent prints its actions, with a live line saying
+        /// what is happening now; then the card becomes the run's final answer.
         /// </summary>
         private AgentRunCard StartAgentRunCard(string goal, string title)
         {
-            var card = new WorkplaceChatMessage { Role = "agent", Content = $"**{title}**\n\n_Starting..._" };
+            var run = new AgentRunCard
+            {
+                Card = new WorkplaceChatMessage { Role = "agent" },
+                Goal = goal,
+                Title = title,
+                Status = StartingStatus
+            };
+            run.Card.Content = run.Render();
             Dispatcher.Invoke(() =>
             {
-                _chatCards.Add(card);
+                _chatCards.Add(run.Card);
+                _activeAgentRunCard = run;
                 ChatScrollViewer?.ScrollToEnd();
             });
-            return new AgentRunCard { Card = card, Goal = goal };
+            return run;
         }
 
-        private void AppendAgentRunCardLine(AgentRunCard run, string line, string title)
+        private void AppendAgentRunCardLine(AgentRunCard run, string line)
         {
             Dispatcher.BeginInvoke(() =>
             {
                 run.StepLines.Add(line);
-                run.Card.Content = $"**{title}**\n\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
+                if (string.Equals(run.Status, StartingStatus, StringComparison.Ordinal))
+                    run.Status = null;
+                run.Card.Content = run.Render();
                 ChatScrollViewer?.ScrollToEnd();
             });
+        }
+
+        private void SetActiveRunCardStatus(string? status)
+        {
+            AgentRunCard? run = _activeAgentRunCard;
+            if (run == null || string.Equals(run.Status, status, StringComparison.Ordinal))
+                return;
+            run.Status = status;
+            run.Card.Content = run.Render();
+        }
+
+        /// <summary>
+        /// The user wrote while the agent was working. Their message goes into the chat where they
+        /// wrote it, and the run carries on in a fresh card underneath it, so the conversation
+        /// reads in order: steps before the message, the message, steps after it.
+        /// </summary>
+        private bool TryPostMessageToRunningAgent()
+        {
+            if (_agentInbox == null)
+                return false;
+
+            string text = (QueryInput.Text ?? string.Empty).Trim();
+            if (text.Length == 0)
+                return true;
+
+            if (ComputerUseMention.IsInvoked(text))
+            {
+                AppendVisibleNotice("The agent is still working. @ComputerUse can run once it finishes, or after you press Stop.");
+                return true;
+            }
+
+            QueryInput.Text = string.Empty;
+            AppendChat("user", text);
+            _chatHistory.Add(("user", text));
+            _agentInbox.Post(text);
+            LogActivity("Agent Access: message queued for the running agent.");
+
+            AgentRunCard? run = _activeAgentRunCard;
+            if (run != null && _agentSessionRunning)
+            {
+                run.Status = "Continuing below with your message";
+                run.Card.Content = run.Render();
+
+                run.Card = new WorkplaceChatMessage { Role = "agent" };
+                run.StepLines.Clear();
+                run.Status = "Got it. Passing your message to the agent at its next step";
+                run.Card.Content = run.Render();
+                _chatCards.Add(run.Card);
+            }
+
+            ChatScrollViewer?.ScrollToEnd();
+            return true;
         }
 
         private static string DescribeAgentStepLine(AgentStep step)
@@ -325,7 +474,10 @@ namespace Malx_AI
                 string steps = run.StepLines.Count == 0
                     ? string.Empty
                     : $"\n\n**Steps ({run.StepLines.Count})**\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
+                run.Status = null;
                 run.Card.Content = (finalMessage ?? string.Empty).Trim() + steps;
+                if (ReferenceEquals(_activeAgentRunCard, run))
+                    _activeAgentRunCard = null;
                 ChatScrollViewer?.ScrollToEnd();
             });
             RequestWorkspaceStateSave();
@@ -426,11 +578,55 @@ namespace Malx_AI
                 : AgentScope.Folder(_agentScopeFolder);
 
         /// <summary>
+        /// Runs an agent turn, then keeps going with anything the user sent that the run did not
+        /// get to: a message typed as the run was finishing, or together with a Stop ("stop and
+        /// do this instead"). Nothing the user types while the agent works is dropped.
+        /// </summary>
+        private async Task RunComputerAgentTurnAsync(string userQuery)
+        {
+            string? next = userQuery;
+            while (next != null)
+            {
+                _agentInbox = new AgentUserMessageInbox();
+                IReadOnlyList<string> pending;
+                try
+                {
+                    await RunComputerAgentTurnCoreAsync(next);
+                }
+                finally
+                {
+                    pending = _agentInbox?.TakeAll() ?? [];
+                    _agentInbox = null;
+                    _agentSessionRunning = false;
+                }
+
+                next = null;
+                if (pending.Count > 0)
+                {
+                    // Those messages are already in the chat; move them after the run's answer in
+                    // the history so the follow-up run sees them as the latest turn.
+                    foreach (string message in pending)
+                    {
+                        int index = _chatHistory.FindLastIndex(turn => turn.Role == "user" && turn.Content == message);
+                        if (index >= 0)
+                            _chatHistory.RemoveAt(index);
+                    }
+
+                    next = string.Join("\n\n", pending);
+                    _chatHistory.Add(("user", next));
+                    _isProcessing = true;
+                    StopButton.IsEnabled = true;
+                    LogActivity("Agent Access: continuing with the message sent during the last run.");
+                }
+            }
+        }
+
+        /// <summary>
         /// Runs one agent turn. Local, Hybrid Local, and Cloud all arrive here: the model call goes
         /// through the same role executor the rest of the Workplace uses, so whichever backend is
         /// selected is the one that drives the agent.
         /// </summary>
-        private async Task RunComputerAgentTurnAsync(string userQuery)
+        private async Task RunComputerAgentTurnCoreAsync(string userQuery)
         {
             if (!_agentScopeEntireComputer && string.IsNullOrWhiteSpace(_agentScopeFolder))
             {
@@ -459,13 +655,15 @@ namespace Malx_AI
             if (_activeAgentTaskState != null && !AgentContextManager.IsNewTaskPhrase(userQuery))
             {
                 isContinuation = true;
+                _activeAgentTaskState.FileBackup ??= CreateAgentFileBackup();
                 initialAllowList = _activeAgentTaskState.SessionAllowList;
                 effectiveGoal = AgentContextManager.BuildContinuationGoal(
                     _activeAgentTaskState.OriginalGoal,
                     userQuery,
                     _activeAgentTaskState.TouchedFiles,
                     _activeAgentTaskState.LastStatusMessage,
-                    _activeAgentTaskState.VerifiedDependencies);
+                    _activeAgentTaskState.VerifiedDependencies,
+                    _activeAgentTaskState.FileBackup.Saved.Count > 0 ? _activeAgentTaskState.FileBackup.Root : null);
                 initialHistory = AgentContextManager.CompactExchanges(_activeAgentTaskState.AccumulatedExchanges, recentKeepCount: 8);
                 _activeAgentTaskState.LastTurnGoal = userQuery;
             }
@@ -474,9 +672,13 @@ namespace Malx_AI
                 _activeAgentTaskState = new AgentActiveTaskState
                 {
                     OriginalGoal = userQuery,
-                    LastTurnGoal = userQuery
+                    LastTurnGoal = userQuery,
+                    FileBackup = CreateAgentFileBackup()
                 };
             }
+
+            AgentFileBackup fileBackup = _activeAgentTaskState.FileBackup!;
+            int backupsBeforeRun = fileBackup.Saved.Count;
 
             // If documents or images are attached, inform the agent of their paths
             if (_documents.Count > 0)
@@ -502,6 +704,12 @@ namespace Malx_AI
             const string runTitle = "Agent Access";
             AgentRunCard runCard = StartAgentRunCard(userQuery, runTitle);
 
+            // Typing while the agent works is how you steer it, so Send stays available: the
+            // message reaches the agent at its next step (see TryPostMessageToRunningAgent).
+            SendButton.IsEnabled = true;
+            SendButton.Content = "Send";
+            SendButton.ToolTip = "Send a message to the running agent. It reads it at its next step.";
+
             // Council synergy: when Council Mode is active, Architect plans and identifies dependencies
             bool enableCouncilSynergy = !_isSingleModelMode
                 && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Architect) || HasEffectiveLocalRoleModel(CouncilRole.Critic));
@@ -515,11 +723,12 @@ namespace Malx_AI
 
                 string architectSystem = "You are the Council Architect. The Council Builder will execute the user request using Machine Agent Tools (commands, file operations).\n"
                     + "Analyze the goal and provide a concise, grounded architectural blueprint (3-5 bullet points):\n"
-                    + "1. Components/files to create or modify (if modifying existing project, modify in-place; do NOT recreate existing files).\n"
+                    + "1. Components/files to create or modify. Something new goes in a new, descriptively named folder (never inside an unrelated existing project); only when the user asked to change an existing project, modify it in place.\n"
                     + "2. Identify required dependencies/software and instruct Builder to pre-check if they are already installed (e.g. python -c \"import <pkg>\" or pip show) BEFORE attempting installation.\n"
                     + "3. Outline verification steps (e.g. run test or launch with Start-Process).\n"
                     + "Output ONLY the concise blueprint.";
 
+                ReportAgentActivity("Architect is planning");
                 try
                 {
                     ReasoningParser.ParsedResponse architectResult = await ExecuteCouncilRoleAsync(
@@ -535,12 +744,16 @@ namespace Malx_AI
                         architectPlan = architectResult.Answer.Trim();
                         effectiveGoal = $"{effectiveGoal}\n\n[ARCHITECT BLUEPRINT]\n{architectPlan}";
                         LogActivity("Architect blueprint generated.");
-                        AppendAgentRunCardLine(runCard, "✓ Architect planned the approach", runTitle);
+                        AppendAgentRunCardLine(runCard, "✓ Architect planned the approach");
                     }
                 }
                 catch (Exception archEx)
                 {
                     LogActivity($"Architect planning pass skipped: {archEx.Message}");
+                }
+                finally
+                {
+                    ReportAgentActivity(null);
                 }
             }
 
@@ -565,8 +778,9 @@ namespace Malx_AI
             LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, scope {scope.Describe()}.");
             RelayStatusBlock.Text = enableCouncilSynergy ? "Relay: Builder executing agent mission..." : "Relay: Agent running";
 
-            var session = new AgentSession(scope, maxSteps);
+            var session = new AgentSession(scope, maxSteps, new AgentToolExecutor(scope, fileBackup));
             AgentRunResult result;
+            _agentSessionRunning = true;
             try
             {
                 result = await session.RunAsync(
@@ -578,7 +792,12 @@ namespace Malx_AI
                     token,
                     initialHistory,
                     initialAllowList,
-                    onStep: step => AppendAgentRunCardLine(runCard, DescribeAgentStepLine(step), runTitle));
+                    onStep: step =>
+                    {
+                        NoteAgentModelResponding();
+                        AppendAgentRunCardLine(runCard, DescribeAgentStepLine(step));
+                    },
+                    inbox: _agentInbox);
             }
             catch (Exception ex)
             {
@@ -586,6 +805,10 @@ namespace Malx_AI
                 CompleteAgentRunCard(runCard, $"The agent stopped: {ex.Message}");
                 FinishAgentRunUi();
                 return;
+            }
+            finally
+            {
+                _agentSessionRunning = false;
             }
 
             if (_activeAgentTaskState != null)
@@ -650,6 +873,7 @@ namespace Malx_AI
                     + $"Files Touched: {touchedFilesList}\n"
                     + $"Builder Execution Report:\n{result.FinalMessage}";
 
+                ReportAgentActivity("Critic is reviewing");
                 try
                 {
                     ReasoningParser.ParsedResponse criticResult = await ExecuteCouncilRoleAsync(
@@ -672,6 +896,10 @@ namespace Malx_AI
                     LogActivity($"Critic review pass skipped: {criticEx.Message}");
                     UpdateStageIndicator(null, architectPlan != null, true, false);
                 }
+                finally
+                {
+                    ReportAgentActivity(null);
+                }
             }
             else if (enableCouncilSynergy)
             {
@@ -681,6 +909,10 @@ namespace Malx_AI
             {
                 UpdateStageIndicator(null, false, true, false);
             }
+
+            string backupNote = DescribeBackups(fileBackup, backupsBeforeRun);
+            if (backupNote.Length > 0)
+                finalChatMessage = $"{finalChatMessage}\n\n{backupNote}";
 
             CompleteAgentRunCard(runCard, finalChatMessage);
             _chatHistory.Add(("assistant", finalChatMessage));
@@ -725,6 +957,7 @@ namespace Malx_AI
                 cloudModel.OnToolCallProgress = (toolName, chars) =>
                     ReportAgentActivityDetail(DescribeToolCallProgress(toolName, chars));
                 cloudModel.OnWaiting = message => ReportAgentActivityDetail(message);
+                cloudModel.OnText = _ => NoteAgentModelResponding();
                 cloudModel.OnTokenUsageRecorded = (promptTokens, completionTokens) =>
                 {
                     _lastRolePromptTokenEstimates[CouncilRole.Builder] = promptTokens;
@@ -776,8 +1009,32 @@ namespace Malx_AI
             HideAgentApprovalBar();
             _isProcessing = false;
             SendButton.IsEnabled = true;
+            SendButton.Content = _isSingleModelMode ? "Run Agent" : "Run Council";
+            SendButton.ToolTip = null;
             StopButton.IsEnabled = false;
             RelayStatusBlock.Text = "Relay: Idle";
+        }
+
+        /// <summary>A fresh copy folder for one task, after clearing out ones older than two weeks.</summary>
+        private static AgentFileBackup CreateAgentFileBackup()
+        {
+            string folder = Path.Combine(AppDataPaths.Root, "AgentBackups");
+            AgentFileBackup.PruneOld(folder, TimeSpan.FromDays(14));
+            return new AgentFileBackup(Path.Combine(folder, DateTime.Now.ToString("yyyy-MM-dd_HHmmss")));
+        }
+
+        /// <summary>Tells the user which of their existing files were changed and where the originals are.</summary>
+        private static string DescribeBackups(AgentFileBackup backup, int savedBefore)
+        {
+            List<AgentBackedUpFile> saved = backup.Saved.Skip(savedBefore).ToList();
+            if (saved.Count == 0)
+                return string.Empty;
+
+            string names = string.Join(", ", saved.Take(6).Select(file => Path.GetFileName(file.OriginalPath)));
+            if (saved.Count > 6)
+                names += $" and {saved.Count - 6} more";
+            string noun = saved.Count == 1 ? "file that already existed" : "files that already existed";
+            return $"Before changing {saved.Count} {noun} ({names}), Axiom saved the originals in `{backup.Root}`. Ask to undo it if you want them back.";
         }
     }
 

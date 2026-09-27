@@ -1,5 +1,17 @@
 # Changelog
 
+## [V1.9.13] - 2026-09-26
+
+Agent Access takes corrections mid-run, never hangs silently after a Stop, and keeps a copy of any file it overwrites.
+
+### Fixed
+- **Agent Access stuck on "Starting..." after a Stop (Hybrid Local).** A self-hosted server keeps generating the reply you stopped after the connection closes, so the next run waited behind it with no explanation. The run card now shows what it is waiting for, live (for example "Waiting for your Hybrid Local server: it is still finishing the reply that was stopped"), and Hybrid Local turns use a smaller output budget so a stopped turn frees the server sooner.
+- **Correcting a running agent.** You no longer need to press Stop to add or change something: type while the agent works and press Send (or Enter). The message reaches the agent at its next step and takes priority over earlier instructions; the chat shows your message in order, with the run continuing in a new card below it. A message sent together with a Stop starts the follow-up right away.
+- **The agent overwrote files in an existing project.** Asked to make something new on a drive, it wrote into an unrelated project folder there. New work now goes into a new, descriptively named folder, and before the agent changes any file that already existed, Axiom saves a copy (in the AgentBackups folder, kept for 14 days) and says so in the run's answer.
+- **Bash commands on Windows.** The agent is told the shell is Windows PowerShell 5.1, and a failed bash-style command (`ls -la`, `2>/dev/null`, `&&`, `/mnt/f`) comes back with a hint showing the PowerShell form.
+- A follow-up after a stopped run is treated as a correction to the task (for example a different folder), instead of being told to keep editing the existing files.
+- "Already processing..." went only to the notification bell; it now appears in the chat.
+
 ## [V1.9.12] - 2026-09-26
 
 Agent Access works like a terminal coding agent, @ComputerUse runs and reports in the chat, and the Workplace cloud mode moves to one vision-capable model.

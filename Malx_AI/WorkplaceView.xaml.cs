@@ -4496,6 +4496,7 @@ namespace Malx_AI
             RelayStatusBlock.Text = "Relay: Stopping...";
             PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "Stopping the run.");
             StopButton.IsEnabled = false;
+            NoteAgentStopRequested();
             _cancellationTokenSource?.Cancel();
         }
 
@@ -7203,7 +7204,7 @@ namespace Malx_AI
             if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) != ModifierKeys.Shift)
             {
                 e.Handled = true;
-                if (!SendButton.IsEnabled || _isProcessing)
+                if (!SendButton.IsEnabled || (_isProcessing && _agentInbox == null))
                     return;
 
                 _ = Dispatcher.BeginInvoke(async () =>
@@ -11328,7 +11329,10 @@ namespace Malx_AI
         {
             if (_isProcessing)
             {
-                AppendChat("system", "Already processing...");
+                // A running agent takes the message at its next step; anything else says plainly
+                // why nothing happened (a "system" line only reaches the notification bell).
+                if (!TryPostMessageToRunningAgent())
+                    AppendVisibleNotice("Axiom is still working on the last request. Wait for it to finish, or press Stop.");
                 return;
             }
 

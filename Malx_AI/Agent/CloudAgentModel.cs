@@ -172,7 +172,7 @@ namespace Malx_AI.Agent
                         tools: AgentToolSchemas.All(),
                         onToken: OnText == null ? null : chunk => OnText(chunk),
                         cancellationToken: token,
-                        maxTokensOverride: AgentTurnMaxTokens,
+                        maxTokensOverride: _service.IsCustomEndpointModel(_modelId) ? HybridLocalTurnMaxTokens : AgentTurnMaxTokens,
                         allowModelFallback: false,
                         onToolCallProgress: OnToolCallProgress).ConfigureAwait(false);
 
@@ -232,6 +232,14 @@ namespace Malx_AI.Agent
 
         /// <summary>Output budget for one agent turn: enough for a sizeable file in one call.</summary>
         internal const int AgentTurnMaxTokens = 16384;
+
+        /// <summary>
+        /// Output budget for one turn on a Hybrid Local server. Self-hosted servers behind a
+        /// gateway keep generating after the client disconnects, so a stopped turn occupies the
+        /// GPU until it reaches this cap and the next request waits behind it. Writes are asked
+        /// to stay under ~150 lines per call, so 8K tokens is ample and halves that wait.
+        /// </summary>
+        internal const int HybridLocalTurnMaxTokens = 8192;
 
         /// <summary>Streamed reply text, for a live view of the agent's final answer.</summary>
         public Action<string>? OnText { get; set; }
@@ -295,7 +303,11 @@ namespace Malx_AI.Agent
             if (exchange.Call.Tool.StartsWith('('))
             {
                 _pendingToolCall = null;
-                _messages.Add(new OpenRouterMessage("user", "[Axiom] " + exchange.Observation));
+                // A message the user typed mid-run is theirs, not Axiom's: no "[Axiom]" prefix.
+                string text = string.Equals(exchange.Call.Tool, AgentSession.UserMessageTool, StringComparison.Ordinal)
+                    ? exchange.Observation
+                    : "[Axiom] " + exchange.Observation;
+                _messages.Add(new OpenRouterMessage("user", text, PreserveFullText: true));
                 return;
             }
 

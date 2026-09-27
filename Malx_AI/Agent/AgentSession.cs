@@ -69,7 +69,8 @@ namespace Malx_AI.Agent
             CancellationToken token,
             IReadOnlyList<AgentExchange>? initialHistory = null,
             IEnumerable<string>? initialAllowList = null,
-            Action<AgentStep>? onStep = null)
+            Action<AgentStep>? onStep = null,
+            AgentUserMessageInbox? inbox = null)
         {
             ArgumentNullException.ThrowIfNull(model);
             ArgumentNullException.ThrowIfNull(requestApproval);
@@ -105,11 +106,30 @@ namespace Malx_AI.Agent
             int verificationPasses = 0;
             var callCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
+            // What the user typed while the run was working joins the conversation between steps,
+            // the way a terminal agent takes a message mid-task, instead of requiring a Stop.
+            bool DeliverUserMessages(string? draftAnswer = null)
+            {
+                if (inbox == null || !inbox.HasPending)
+                    return false;
+
+                IReadOnlyList<string> messages = inbox.TakeAll();
+                if (messages.Count == 0)
+                    return false;
+
+                string text = AgentUserMessageInbox.FormatForModel(messages);
+                if (!string.IsNullOrWhiteSpace(draftAnswer))
+                    text = $"(You were about to finish with: \"{Clip(draftAnswer.Trim(), 400)}\")\n" + text;
+                history.Add(new AgentExchange(new AgentToolCall(UserMessageTool, new Dictionary<string, string>()), text));
+                return true;
+            }
+
             try
             {
                 for (int step = 0; step < _maxSteps; step++)
                 {
                     token.ThrowIfCancellationRequested();
+                    DeliverUserMessages();
 
                     reportActivity?.Invoke("Thinking");
                     AgentModelReply reply;
@@ -176,6 +196,11 @@ namespace Malx_AI.Agent
                     {
                         string answer = reply.FinalText ?? string.Empty;
 
+                        // A message that arrived while the model was writing this answer has not
+                        // been seen yet; finishing now would silently drop the user's correction.
+                        if (DeliverUserMessages(answer))
+                            continue;
+
                         // Check the claimed result against the disk before accepting it: a
                         // summary listing files that were never written, or a page linking to
                         // missing assets, gets sent back for one more pass (bounded).
@@ -207,6 +232,9 @@ namespace Malx_AI.Agent
                     if (string.Equals(call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))
                     {
                         string summary = call.Arg("summary");
+                        if (DeliverUserMessages(summary))
+                            continue;
+
                         AddStep(new AgentStep(call, AgentPermission.Allow, AgentToolResult.Ok("done"), "finished"));
                         return new AgentRunResult(
                             string.IsNullOrWhiteSpace(summary) ? "Done." : summary,
@@ -347,6 +375,12 @@ namespace Malx_AI.Agent
                 false,
                 history);
         }
+
+        /// <summary>The pseudo-tool name a user's mid-run message is recorded under in the history.</summary>
+        internal const string UserMessageTool = "(user)";
+
+        private static string Clip(string text, int max) =>
+            text.Length <= max ? text : text[..max] + "…";
 
         /// <summary>Commands the user chose to stop being asked about during this run.</summary>
         public IReadOnlyList<string> SessionAllowList => _sessionAllowList;

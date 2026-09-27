@@ -108,6 +108,12 @@ namespace Malx_AI.Agent
             foreach (AgentExchange exchange in history)
             {
                 builder.AppendLine();
+                if (string.Equals(exchange.Call.Tool, AgentSession.UserMessageTool, StringComparison.Ordinal))
+                {
+                    builder.AppendLine(exchange.Observation);
+                    continue;
+                }
+
                 builder.Append("You ran: ").AppendLine(exchange.Call.DescribeShort());
                 string observation = exchange.Observation;
                 if (observation.Length > _observationBudget)

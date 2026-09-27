@@ -526,6 +526,9 @@ namespace Malx_AI
         }
 
         public string CustomEndpointConfiguredModelId => _customEndpointModelId;
+
+        /// <summary>True when <paramref name="modelId"/> is served by the Hybrid Local endpoint.</summary>
+        public bool IsCustomEndpointModel(string modelId) => FindModelProfile(modelId)?.IsCustomEndpoint == true;
         public int CustomEndpointResolvedContextWindowTokens =>
             Math.Max(2048, _customEndpointContextWindowTokens);
 

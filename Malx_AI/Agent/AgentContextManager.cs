@@ -170,7 +170,8 @@ namespace Malx_AI.Agent
             string userQuery,
             IReadOnlyCollection<string> touchedFiles,
             string? lastErrorOrStatus,
-            IReadOnlyCollection<string>? verifiedDependencies = null)
+            IReadOnlyCollection<string>? verifiedDependencies = null,
+            string? backupFolder = null)
         {
             var builder = new StringBuilder();
             builder.AppendLine("[CONTINUING ACTIVE TASK]");
@@ -190,13 +191,21 @@ namespace Malx_AI.Agent
 
             if (!string.IsNullOrWhiteSpace(lastErrorOrStatus))
             {
-                builder.Append("Current state: ").AppendLine(lastErrorOrStatus);
+                builder.Append("Current state: ").AppendLine(
+                    string.Equals(lastErrorOrStatus.Trim(), "Stopped.", StringComparison.Ordinal)
+                        ? "the user stopped the previous run part-way, usually to correct or add something."
+                        : lastErrorOrStatus);
+            }
+
+            if (!string.IsNullOrWhiteSpace(backupFolder))
+            {
+                builder.Append("Copies of files that existed before you changed them are in: ").AppendLine(backupFolder);
             }
 
             if (!IsContinuationPhrase(userQuery))
             {
                 builder.Append("User follow-up / change request: ").AppendLine(userQuery);
-                builder.AppendLine("IMPORTANT: Dependencies and project setup are already completed. Work directly on the existing project files using read_file, edit_file, or write_file. DO NOT re-install packages or re-download dependencies.");
+                builder.AppendLine("The follow-up takes priority over the original task where they conflict (for example a different location, name, or approach): apply it, redoing or moving earlier work if needed. Reuse what is already done when it still fits. DO NOT re-install packages or re-download dependencies that are already set up.");
             }
 
             builder.AppendLine("Resume execution from your current progress and finish the task.");
@@ -217,5 +226,8 @@ namespace Malx_AI.Agent
         public List<string> SessionAllowList { get; } = new();
         public HashSet<string> VerifiedDependencies { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string LastStatusMessage { get; set; } = string.Empty;
+
+        /// <summary>Copies of pre-existing files the agent changed during this task.</summary>
+        public AgentFileBackup? FileBackup { get; set; }
     }
 }

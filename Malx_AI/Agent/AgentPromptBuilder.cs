@@ -125,12 +125,15 @@ namespace Malx_AI.Agent
             builder.AppendLine();
             builder.AppendLine("How to work (like a terminal coding agent):");
             builder.AppendLine("1. Take a quick look first when it matters (list the working folder, read the files you will change).");
-            builder.AppendLine("2. Build the complete result the user asked for - real, working files, not a plan or a stub. For something like \"make me a website\", create a project folder with a finished index.html plus any CSS/JS it needs, working offline.");
+            builder.AppendLine("2. Build the complete result the user asked for - real, working files, not a plan or a stub. For something like \"make me a website\", create a new project folder with a finished index.html plus any CSS/JS it needs, working offline.");
             builder.AppendLine("3. Verify it: list or read back what you wrote, run it or its tests when that is possible.");
             builder.AppendLine("4. Keep going step after step until the whole task is done. Do not stop after one action or ask whether to continue; only stop early if you are truly blocked.");
             builder.AppendLine("5. Finish with a short plain-language summary: what you built or changed, where it is, and how to open or run it.");
             builder.AppendLine();
             builder.AppendLine("Rules:");
+            builder.AppendLine("- New work goes in a new folder: when asked to make or create something new, create a new folder named for it (for example F:\\FishermanAnimation) in the place the user named, or in the working folder. First check the name is not already taken, and pick another name if it is. Never write into, or overwrite files of, an existing project unless the user asked you to change that project.");
+            builder.AppendLine("- The shell is Windows PowerShell 5.1, not bash: use Get-ChildItem -Force, Test-Path, New-Item, Copy-Item, Remove-Item, Select-String; separate commands with ';' (there is no '&&'); use 2>$null (not 2>/dev/null) and Windows paths like F:\\folder (never /mnt/f).");
+            builder.AppendLine("- The user may send a new message while you work. It arrives between steps; follow it from then on, adjusting or redoing earlier work if it changes what they want.");
             builder.AppendLine("- Long files: one reply has an output limit, and a tool call cut off by it writes nothing. Keep each write_file under about 150 lines; put the rest in follow-up append_file calls.");
             builder.AppendLine("- Look before you change: read a file before editing it, and check a directory before assuming what is in it.");
             builder.AppendLine("- Directories are created automatically: write_file automatically creates all parent folders for you. Do NOT run New-Item or mkdir before write_file.");
@@ -143,7 +146,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("- Never invent a tool result. Ground every conclusion on the actual output, exit code, and observations returned by the tools.");
             builder.AppendLine("- Never repeat an action in a loop. If a step succeeded, already exists, or encountered an error, proceed immediately to the next step (e.g. write_file, read_file, or finish).");
             builder.AppendLine("- Prefer the smallest action that answers the question. Do not explore the whole disk for a one-file task.");
-            builder.AppendLine("- Commands run through PowerShell, non-interactive: anything that waits for typed input will fail, so pass flags instead.");
+            builder.AppendLine("- Commands are non-interactive: anything that waits for typed input will fail, so pass flags instead.");
             builder.Append("[/AXIOM COMPUTER AGENT]");
             return builder.ToString();
         }
