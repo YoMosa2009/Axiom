@@ -1,0 +1,35 @@
+name: CI
+
+# Builds and tests every pull request on Windows, since the app is WPF/WinAppSDK and
+# cannot be built or tested on Linux.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check version surfaces
+        shell: powershell
+        run: .\scripts\Test-VersionConsistency.ps1
+
+      - name: Test
+        run: dotnet test Malx_AI.Tests\Malx_AI.Tests.csproj -c Release -p:UseSharedCompilation=false -nodeReuse:false
+
+      - name: Build app
+        run: dotnet build Malx_AI\Malx_AI.csproj -c Release -r win-x64 -p:UseSharedCompilation=false -nodeReuse:false

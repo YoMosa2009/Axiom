@@ -221,6 +221,9 @@ Write-Host "Embedding local OAuth app credentials into release built-ins (gitign
 $generateScript = Join-Path $repoRoot "scripts\Generate-McpOAuthBuiltIns.ps1"
 if (Test-Path -LiteralPath $generateScript) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $generateScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generate-McpOAuthBuiltIns.ps1 failed with exit code $LASTEXITCODE"
+    }
 } else {
     Write-Warning "Generate-McpOAuthBuiltIns.ps1 not found - connectors may require machine SharedOAuth files."
 }

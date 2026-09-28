@@ -1,0 +1,82 @@
+name: Release
+
+# Publishes an OTA update whenever a merge to main carries a version that has no
+# GitHub Release yet. Merges that do not bump <Version> in Malx_AI.csproj are no-ops.
+# Installed copies of Axiom pick the release up through the in-app updater.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never run two publishes at once; a queued run re-checks whether its version exists.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether this version needs a release
+        id: decide
+        shell: powershell
+        run: |
+          [xml]$project = Get-Content -LiteralPath Malx_AI\Malx_AI.csproj -Raw
+          $version = (Select-Xml -Xml $project -XPath "//Project/PropertyGroup/Version" | Select-Object -First 1).Node.InnerText.Trim()
+          $ErrorActionPreference = "SilentlyContinue"
+          & gh release view "v$version" --repo "${{ github.repository }}" *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = "Stop"
+          if ($exists) {
+            Write-Host "Release v$version already exists; nothing to publish."
+            "publish=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            Write-Host "Version $version has no release yet; publishing."
+            "publish=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.decide.outputs.publish == 'true'
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check version surfaces
+        if: steps.decide.outputs.publish == 'true'
+        shell: powershell
+        run: .\scripts\Test-VersionConsistency.ps1
+
+      - name: Test, package, and publish release
+        if: steps.decide.outputs.publish == 'true'
+        shell: powershell
+        env:
+          AXIOM_REQUIRE_OAUTH_BUILTINS: "1"
+          AXIOM_BUILTIN_GOOGLE_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_GOOGLE_CLIENT_ID }}
+          AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET: ${{ secrets.AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET }}
+          AXIOM_BUILTIN_GITHUB_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_GITHUB_CLIENT_ID }}
+          AXIOM_BUILTIN_TODOIST_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_TODOIST_CLIENT_ID }}
+          AXIOM_BUILTIN_TODOIST_CLIENT_SECRET: ${{ secrets.AXIOM_BUILTIN_TODOIST_CLIENT_SECRET }}
+        run: |
+          .\scripts\Publish-GitHubRelease.ps1 -OutputRoot "$env:RUNNER_TEMP\Axiom-Updates" -Repository "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep package for inspection
+        if: steps.decide.outputs.publish == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Axiom-v${{ steps.decide.outputs.version }}-package
+          path: |
+            ${{ runner.temp }}/Axiom-Updates/*.zip
+            ${{ runner.temp }}/Axiom-Updates/*.md
+          if-no-files-found: ignore
+          retention-days: 14
