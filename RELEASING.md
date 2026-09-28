@@ -6,7 +6,32 @@ Axiom 1.7.0 and newer can update itself from stable releases in
 Choose and synchronize the release number using [VERSIONING.md](VERSIONING.md)
 before building a package.
 
-## Publish a release or patch
+## Automatic cloud release (default)
+
+`.github/workflows/release.yml` publishes updates without a local machine:
+
+1. On the change's branch, bump the version per [VERSIONING.md](VERSIONING.md)
+   (`Malx_AI.csproj`, `MainWindow.xaml` label, `README.md` badge) and add the dated
+   `CHANGELOG.md` entry.
+2. Open a pull request. `.github/workflows/ci.yml` runs the version check, unit tests,
+   and a Release build on a Windows runner.
+3. Merge to `main`. If no GitHub Release exists for the new version, the workflow runs
+   `scripts/Publish-GitHubRelease.ps1` on a Windows runner, which tests, packages,
+   tags, and publishes the release. Installed copies receive it as an in-app update.
+
+Merges that do not change `<Version>` publish nothing. The built ZIP and notes are also
+kept as a workflow artifact for 14 days.
+
+The release job fails rather than publishing if any embedded OAuth app value is missing.
+Add these repository secrets (Settings → Secrets and variables → Actions) with the same
+values as the local `%LOCALAPPDATA%\Axiom\SharedOAuth` files:
+
+- `AXIOM_BUILTIN_GOOGLE_CLIENT_ID`, `AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET`
+- `AXIOM_BUILTIN_GITHUB_CLIENT_ID`
+- `AXIOM_BUILTIN_TODOIST_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_SECRET`
+
+## Publish a release or patch locally
+
 
 The normal release workflow is one command from a clean, synchronized `main` branch:
 

@@ -50,6 +50,20 @@ function Read-CredentialFile {
 	return ""
 }
 
+function Read-Credential {
+	param(
+		[string[]]$Roots,
+		[string]$FileName,
+		[string]$EnvName
+	)
+
+	$fromEnv = [Environment]::GetEnvironmentVariable($EnvName)
+	if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+		return $fromEnv.Trim()
+	}
+	return Read-CredentialFile -Roots $Roots -FileName $FileName
+}
+
 function ConvertTo-CSharpVerbatim {
 	param([string]$Value)
 	if ($null -eq $Value) {
@@ -70,11 +84,23 @@ $roots = @(
 	(Join-Path $local "Axiom")
 )
 
-$googleId = Read-CredentialFile -Roots $roots -FileName "google_oauth_client_id.txt"
-$googleSecret = Read-CredentialFile -Roots $roots -FileName "google_oauth_client_secret.txt"
-$githubId = Read-CredentialFile -Roots $roots -FileName "github_oauth_client_id.txt"
-$todoistId = Read-CredentialFile -Roots $roots -FileName "todoist_client_id.txt"
-$todoistSecret = Read-CredentialFile -Roots $roots -FileName "todoist_client_secret.txt"
+$googleId = Read-Credential -Roots $roots -FileName "google_oauth_client_id.txt" -EnvName "AXIOM_BUILTIN_GOOGLE_CLIENT_ID"
+$googleSecret = Read-Credential -Roots $roots -FileName "google_oauth_client_secret.txt" -EnvName "AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET"
+$githubId = Read-Credential -Roots $roots -FileName "github_oauth_client_id.txt" -EnvName "AXIOM_BUILTIN_GITHUB_CLIENT_ID"
+$todoistId = Read-Credential -Roots $roots -FileName "todoist_client_id.txt" -EnvName "AXIOM_BUILTIN_TODOIST_CLIENT_ID"
+$todoistSecret = Read-Credential -Roots $roots -FileName "todoist_client_secret.txt" -EnvName "AXIOM_BUILTIN_TODOIST_CLIENT_SECRET"
+
+if ($env:AXIOM_REQUIRE_OAUTH_BUILTINS -eq "1") {
+	$missing = @()
+	if (-not $googleId) { $missing += "AXIOM_BUILTIN_GOOGLE_CLIENT_ID" }
+	if (-not $googleSecret) { $missing += "AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET" }
+	if (-not $githubId) { $missing += "AXIOM_BUILTIN_GITHUB_CLIENT_ID" }
+	if (-not $todoistId) { $missing += "AXIOM_BUILTIN_TODOIST_CLIENT_ID" }
+	if (-not $todoistSecret) { $missing += "AXIOM_BUILTIN_TODOIST_CLIENT_SECRET" }
+	if ($missing.Count -gt 0) {
+		throw ("AXIOM_REQUIRE_OAUTH_BUILTINS is set but these OAuth values are missing: " + ($missing -join ", "))
+	}
+}
 
 # GitHub's client secret is intentionally never embedded here. Unlike Google's Desktop-app
 # secret (documented non-confidential) and Todoist's (required by its token endpoint), a
