@@ -236,3 +236,27 @@ The owner's Qwen3.6 35B-A3B can implement tasks through **Axiom-CLI** (their Ope
   PascalCase sentences with no underscores), then merge, push and remove the worktree.
 - **Track record (2026-10-01):** fixed the agent line-count off-by-one (`CountLines`) and the compaction "Exception"
   misclassification. Both are correct, minimal and tested.
+
+### Parallel offloading (owner-approved plan, 2026-10-01)
+
+On multi-part jobs, Claude keeps the hard parts and hands medium-easy parts to Qwen in the background, then reviews
+and merges them. Say up front which parts go to Qwen, and finish with one combined summary showing who did what.
+
+- **Send Qwen:** contained single-file fixes, small refactors, tests for existing code, wiring a setting through,
+  text and doc updates, simple UI property changes. Anything with a clear "done" test.
+- **Keep:** debugging, async/threading, cross-file design, WPF layout, the codebase patch pipeline, anything risky or
+  hard to verify.
+
+Limits to plan around:
+- **One Qwen task at a time.** The server handles one request at a time, so tasks queue rather than run in parallel.
+  In practice that's one roughly 10-minute task in the background.
+- **File overlap.** If Qwen and Claude edit the same file, merging gets messy. Only send Qwen tasks that touch files
+  Claude isn't working on.
+- **Same machine.** Its builds and tests compete for CPU and can lock build files. Separate worktrees avoid the locks;
+  builds are just a bit slower while both run.
+- **Review isn't free.** Each Qwen task costs a few minutes to check, so tiny tasks (under 5 minutes of Claude's time)
+  aren't worth sending. The sweet spot is 15–30 minutes of routine work.
+- **Quieter monitoring.** Don't react to every step event. Watch only for "finished" or "error", and check in at the end.
+- **Permissions.** Launching `axiom code --yes` needs Bypass permissions, or a saved permission rule.
+
+Expected gain: offloading one solid medium task per 10–15 minutes of Claude's work, not doubling speed.
