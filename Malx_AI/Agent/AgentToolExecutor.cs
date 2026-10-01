@@ -235,7 +235,7 @@ namespace Malx_AI.Agent
             string backupNote = BackupNote(path);
             File.WriteAllText(path, content, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
-            int lineCount = content.Split('\n').Length;
+            int lineCount = CountLines(content);
             return AgentToolResult.Ok($"Successfully wrote {fileInfo.Length:N0} bytes ({lineCount} lines) to {path}. Verified on disk.{backupNote}");
         }
 
@@ -257,7 +257,7 @@ namespace Malx_AI.Agent
             string backupNote = BackupNote(path);
             File.AppendAllText(path, content, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
-            int lineCount = File.ReadAllText(path).Split('\n').Length;
+            int lineCount = CountLines(File.ReadAllText(path));
             return AgentToolResult.Ok($"Appended {content.Length:N0} characters. {path} is now {fileInfo.Length:N0} bytes ({lineCount} lines).{backupNote}");
         }
 
@@ -308,7 +308,7 @@ namespace Malx_AI.Agent
             string backupNote = BackupNote(path);
             File.WriteAllText(path, replaced, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
-            int lineCount = replaced.Split('\n').Length;
+            int lineCount = CountLines(replaced);
             return AgentToolResult.Ok($"Successfully edited {path} ({fileInfo.Length:N0} bytes, {lineCount} lines). Verified on disk.{backupNote}");
         }
 
@@ -457,6 +457,21 @@ namespace Malx_AI.Agent
             {
                 return false;
             }
+        }
+
+        /// <summary>Counts lines in text the same way a terminal counts them.</summary>
+        internal static int CountLines(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return 0;
+            int newlines = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '\n')
+                    newlines++;
+            }
+            // A trailing newline (\n or \r\n) ends the last line rather than starting a new one.
+            return text[^1] == '\n' ? newlines : newlines + 1;
         }
 
         private static int CountOccurrences(string haystack, string needle)
