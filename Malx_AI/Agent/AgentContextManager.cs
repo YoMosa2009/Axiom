@@ -105,7 +105,7 @@ namespace Malx_AI.Agent
             string tool = call.Tool.ToLowerInvariant();
             string path = call.Arg("path");
 
-            if (observation.StartsWith("ERROR", StringComparison.OrdinalIgnoreCase) || observation.Contains("Exception", StringComparison.OrdinalIgnoreCase))
+            if (observation.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
             {
                 string firstLine = observation.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? observation;
                 return firstLine.Length <= maxChars ? firstLine : firstLine[..maxChars] + "…";
