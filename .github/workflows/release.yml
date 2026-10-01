@@ -45,6 +45,10 @@ jobs:
             "publish=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          # `gh release view` exits 1 when the release does not exist yet, and the runner
+          # reports the last native exit code as the step result, which failed every real
+          # publish (V1.9.14) right after deciding to publish. The decision is in the outputs.
+          exit 0
 
       - uses: actions/setup-dotnet@v4
         if: steps.decide.outputs.publish == 'true'
