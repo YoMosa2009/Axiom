@@ -81,6 +81,13 @@ namespace Malx_AI
             ComposedOutline outline = ParseOutline(responseText);
             switch (smallModelFormat)
             {
+                case SkillSmallModelFormats.Outline when !CanComposeDeck(outline):
+                    outline = ParseLooseOutline(responseText);
+                    if (!CanComposeDeck(outline))
+                        return false;
+                    html = ComposeSlideDeck(outline);
+                    return true;
+
                 case SkillSmallModelFormats.Outline when CanComposeDeck(outline):
                     html = ComposeSlideDeck(outline);
                     return true;
@@ -202,6 +209,104 @@ namespace Malx_AI
                 }
 
                 current.Bullets.Add(bullet);
+            }
+
+            return outline;
+        }
+
+        /// <summary>
+        /// Fallback for a small model that ignored the outline format and answered in Markdown
+        /// bullets ("- **Definition:** text"): each labelled top-level bullet becomes a slide and
+        /// indented bullets become its points. A real 0.6B reply in exactly this shape produced
+        /// no deck at all before.
+        /// </summary>
+        public static ComposedOutline ParseLooseOutline(string? text)
+        {
+            var outline = new ComposedOutline();
+            if (string.IsNullOrWhiteSpace(text))
+                return outline;
+
+            ComposedSlide? current = null;
+            var lines = StripCodeFences(text).Split('\n');
+
+            foreach (string rawLine in lines)
+            {
+                string line = rawLine.Replace("\r", string.Empty);
+                string trimmed = line.Trim();
+                if (trimmed.Length == 0)
+                    continue;
+
+                if (TryReadDirective(trimmed, "TITLE", out string v) && outline.Title.Length == 0)
+                {
+                    outline.Title = CleanLooseText(v);
+                    continue;
+                }
+
+                if (TryReadDirective(trimmed, "SUBTITLE", out v))
+                {
+                    outline.Subtitle = CleanLooseText(v);
+                    continue;
+                }
+
+                bool isBullet = LeadingBulletRegex.IsMatch(trimmed);
+                string content = string.Empty;
+                if (isBullet)
+                {
+                    content = LeadingBulletRegex.Replace(trimmed, "").Trim();
+                }
+
+                bool indented = line.StartsWith('\t') || line.StartsWith("  ", StringComparison.Ordinal);
+
+                if (isBullet && !indented)
+                {
+                    string cleanContent = content.Replace("**", "").Replace("__", "");
+                    int colonIndex = cleanContent.IndexOf(':');
+                    if (colonIndex > 0)
+                    {
+                        string label = cleanContent[..colonIndex].Trim();
+                        string afterColon = cleanContent[(colonIndex + 1)..].Trim();
+                        int wordCount = label.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Length;
+                        bool labelValid = wordCount >= 1 && wordCount <= 6 && label.Length <= 40 && !label.Contains('.');
+                        if (labelValid)
+                        {
+                            current = new ComposedSlide { Title = label };
+                            outline.Slides.Add(current);
+                            if (afterColon.Length > 0)
+                                current.Bullets.Add(CleanBullet(afterColon));
+                            continue;
+                        }
+                    }
+
+                    if (current == null)
+                    {
+                        current = new ComposedSlide { Title = "Overview" };
+                        outline.Slides.Add(current);
+                    }
+
+                    string bullet = CleanBullet(content);
+                    if (bullet.Length > 0)
+                        current.Bullets.Add(bullet);
+                    continue;
+                }
+
+                if (isBullet && indented)
+                {
+                    if (current == null)
+                    {
+                        current = new ComposedSlide { Title = "Overview" };
+                        outline.Slides.Add(current);
+                    }
+                    string bullet = CleanBullet(content);
+                    if (bullet.Length > 0)
+                        current.Bullets.Add(bullet);
+                    continue;
+                }
+
+                if (!isBullet)
+                {
+                    if (current == null && outline.Subtitle.Length == 0)
+                        outline.Subtitle = CleanLooseText(trimmed);
+                }
             }
 
             return outline;
@@ -470,6 +575,8 @@ namespace Malx_AI
             }
             return result.ToString();
         }
+
+        private static string CleanLooseText(string value) => CleanInline(value).Trim('_', '*').Trim();
 
         /// <summary>Strips the Markdown decoration models wrap titles in.</summary>
         private static string CleanInline(string value) => (value ?? string.Empty).Trim().Trim('*', '#', '"').Trim();
