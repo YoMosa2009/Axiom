@@ -68,6 +68,7 @@
     <Compile Include="..\Malx_AI\OllamaStreamChunkConverter.cs" Link="Production\OllamaStreamChunkConverter.cs" />
     <Compile Include="..\Malx_AI\SkillCanvasDirective.cs" Link="Production\SkillCanvasDirective.cs" />
     <Compile Include="..\Malx_AI\SkillArtifactComposer.cs" Link="Production\SkillArtifactComposer.cs" />
+    <Compile Include="..\Malx_AI\SmallModelCanvasPlanner.cs" Link="Production\SmallModelCanvasPlanner.cs" />
     <Compile Include="..\Malx_AI\LocalModelCapabilityProfile.cs" Link="Production\LocalModelCapabilityProfile.cs" />
     <Compile Include="..\Malx_AI\GgufMetadataReader.cs" Link="Production\GgufMetadataReader.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentTool.cs" Link="Production\Agent\AgentTool.cs" />

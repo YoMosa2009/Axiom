@@ -67,6 +67,12 @@ namespace Malx_AI
         private SkillCanvasDirective? ResolveNormalChatCanvasDirective(string userMessage)
             => _capabilityRegistry.ResolveCanvasDirective(userMessage);
 
+        /// <summary>
+        /// The composer directive a small local model's turn was prepared with (see
+        /// SmallModelCanvasPlanner); consumed by the next artifact routing.
+        /// </summary>
+        private SkillCanvasDirective? _activeSmallModelCanvasDirective;
+
         private bool ShouldRouteNormalChatToCanvas(string userMessage)
             => IsProjectCanvasRequested(userMessage) || ResolveNormalChatCanvasDirective(userMessage) != null;
 
@@ -99,7 +105,7 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
         /// </summary>
         private void ApplyNormalChatCanvasRouting(ChatMessage? message, string userMessage, string responseText)
         {
-            ArtifactRenderInfo? artifact = TryRouteNormalChatArtifact(userMessage, responseText);
+            ArtifactRenderInfo? artifact = TryRouteNormalChatArtifact(userMessage, responseText, out bool composedFromOutline);
             if (artifact == null && message?.HasCanvasArtifact == true)
             {
                 // No Skill or @ProjectCanvas asked for it, but the model answered with a whole
@@ -113,7 +119,9 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
             if (message == null || artifact == null)
                 return;
 
-            string reply = ArtifactRenderService.BuildCanvasChatReply(responseText, artifact);
+            // A deck Axiom composed from a small model's outline has no lead-in of its own: the whole
+            // response IS the outline, which would otherwise be echoed back as the "reply".
+            string reply = ArtifactRenderService.BuildCanvasChatReply(composedFromOutline ? null : responseText, artifact);
             message.CanvasReplyText = reply;
 
             foreach (var branch in _branches)
@@ -153,12 +161,17 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
                 ShowTransientStatus("This reply's artifact could not be reopened.");
         }
 
-        private ArtifactRenderInfo? TryRouteNormalChatArtifact(string userMessage, string responseText)
+        private ArtifactRenderInfo? TryRouteNormalChatArtifact(string userMessage, string responseText, out bool composedFromOutline)
         {
+            composedFromOutline = false;
+            // A small local model's plan applies to the one turn it was made for.
+            SkillCanvasDirective? smallModelDirective = _activeSmallModelCanvasDirective;
+            _activeSmallModelCanvasDirective = null;
+
             if (string.IsNullOrWhiteSpace(responseText))
                 return null;
 
-            SkillCanvasDirective? directive = ResolveNormalChatCanvasDirective(userMessage);
+            SkillCanvasDirective? directive = smallModelDirective ?? ResolveNormalChatCanvasDirective(userMessage);
             if (directive == null && !IsProjectCanvasRequested(userMessage))
                 return null;
 
@@ -171,6 +184,7 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
                 && SkillArtifactComposer.TryCompose(directive.SmallModelFormat, responseText, out string composedHtml))
             {
                 artifact = ArtifactRenderService.DetectForNormalChat(composedHtml);
+                composedFromOutline = true;
             }
 
             if (!artifact.SupportsPreview)

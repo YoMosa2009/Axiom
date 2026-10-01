@@ -73,6 +73,9 @@ namespace Malx_AI
             public string CalculatorContext { get; init; } = string.Empty;
             public string ModelUserMessage { get; init; } = string.Empty;
             public bool IsGemma4Model { get; init; }
+
+            /// <summary>Set when a small local model's turn delivers to Project Canvas via Axiom's composer.</summary>
+            public SmallModelCanvasPlan? SmallModelCanvasPlan { get; init; }
         }
 
         private sealed class NormalChatUiSnapshot
@@ -297,6 +300,32 @@ namespace Malx_AI
                     TopP = 0.9f,
                     TopK = 20,
                     RepeatPenalty = 1.18f
+                }
+            };
+        }
+
+        /// <summary>Output budget for a sub-1B model writing a slide outline or chart data.</summary>
+        private const int SubOneBStructuredCanvasMaxTokens = 900;
+
+        /// <summary>
+        /// Sampling for a small model filling in Axiom's outline format. Low temperature keeps it
+        /// on the format; the repeat penalty stays light because the format repeats its own
+        /// keywords ("SLIDE:", "- ") every few lines, which the usual sub-1B penalty of 1.18
+        /// pushes the model away from.
+        /// </summary>
+        private static InferenceParams CreateSmallModelStructuredParams(int maxTokens, IEnumerable<string> antiPrompts)
+        {
+            return new InferenceParams
+            {
+                MaxTokens = Math.Clamp(maxTokens, 256, SubOneBStructuredCanvasMaxTokens),
+                AntiPrompts = antiPrompts?.ToList() ?? new List<string>(),
+                SamplingPipeline = new DefaultSamplingPipeline
+                {
+                    Temperature = 0.3f,
+                    MinP = 0.05f,
+                    TopP = 0.9f,
+                    TopK = 30,
+                    RepeatPenalty = 1.05f
                 }
             };
         }
@@ -3157,6 +3186,15 @@ namespace Malx_AI
             bool capabilityWebResearch = _capabilityRegistry.ShouldUseWebResearch(userMsg);
             string webContext = await TryBuildWebContextAsync(userMsg, capabilityWebResearch, token, uiSnapshot.ChatMessages);
 
+            // Earlier user turns (this one excluded), so a follow-up such as "make it an actual
+            // visual" can inherit the deliverable and topic of the request it refers to.
+            List<string> earlierUserMessages = uiSnapshot.ChatMessages
+                .Where(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))
+                .Select(m => m.Content ?? string.Empty)
+                .ToList();
+            if (earlierUserMessages.Count > 0 && string.Equals(earlierUserMessages[^1].Trim(), userMsg.Trim(), StringComparison.Ordinal))
+                earlierUserMessages.RemoveAt(earlierUserMessages.Count - 1);
+
             return await Task.Run(() =>
             {
                 bool thinkingModeEnabled = thinkingGate.UseThinking;
@@ -3164,6 +3202,22 @@ namespace Malx_AI
                 var localCapability = LocalModelCapabilityProfile.FromModel(
                     string.IsNullOrWhiteSpace(uiSnapshot.ModelPath) ? uiSnapshot.ModelName : uiSnapshot.ModelPath);
                 bool useSubOneBMode = localCapability.IsSubOneB;
+
+                // Small local models cannot author a canvas artifact; they write a short structured
+                // outline and Axiom composes it (see SmallModelCanvasPlanner).
+                SkillCanvasTier canvasTier = LocalModelCapabilityProfile.ResolveCanvasTier(localCapability);
+                SmallModelCanvasPlan? smallCanvasPlan = SmallModelCanvasPlanner.Resolve(
+                    userMsg,
+                    earlierUserMessages,
+                    ResolveNormalChatCanvasDirective,
+                    IsProjectCanvasRequested(userMsg),
+                    canvasTier);
+                if (smallCanvasPlan != null)
+                {
+                    _ = BackendLogService.LogEventAsync(
+                        "SmallModelCanvasPlan",
+                        $"Tier:{canvasTier}\nFormat:{smallCanvasPlan.Directive.SmallModelFormat}\nSkill:{smallCanvasPlan.Directive.SkillName}\nFollowUp:{smallCanvasPlan.IsFollowUp}\nTask:{smallCanvasPlan.Task}");
+                }
                 if (useSubOneBMode)
                     thinkingModeEnabled = false;
                 else if (!ShouldRouteNormalChatToCanvas(userMsg) && EffortPolicy.RequestsReasoning(userEnabled: false))
@@ -3188,21 +3242,34 @@ namespace Malx_AI
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))
                     effectiveSystemPrompt += "\n\n" + capabilityInstruction;
-                string projectCanvasInstruction = BuildNormalChatProjectCanvasInstruction(userMsg, localCapability);
+                string projectCanvasInstruction = smallCanvasPlan != null
+                    ? smallCanvasPlan.Directive.BuildSystemInstruction("Normal Chat", canvasTier)
+                    : BuildNormalChatProjectCanvasInstruction(userMsg, localCapability);
                 if (!string.IsNullOrWhiteSpace(projectCanvasInstruction))
                     effectiveSystemPrompt += "\n\n" + projectCanvasInstruction;
 
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.AttachedDocumentMemory))
                     effectiveSystemPrompt += "\n\n" + uiSnapshot.AttachedDocumentMemory;
 
-                if (sandboxPreparation.IsEligible && !string.IsNullOrWhiteSpace(sandboxPreparation.SystemPromptInjection))
+                // Sandbox tool instructions are copy-bait on a small-model canvas turn: the 0.6B
+                // model answered "@ProjectCanvas" with an invented Python call.
+                if (smallCanvasPlan == null && sandboxPreparation.IsEligible && !string.IsNullOrWhiteSpace(sandboxPreparation.SystemPromptInjection))
                     effectiveSystemPrompt += "\n\n" + sandboxPreparation.SystemPromptInjection;
 
                 effectiveSystemPrompt = AppendSingleTurnSystemTail(effectiveSystemPrompt, webContext, thinkingModeEnabled);
 
                 effectiveSystemPrompt = AppendSystemInstruction(effectiveSystemPrompt, LocalMathLatexInstruction);
                 bool documentAttached = !string.IsNullOrWhiteSpace(uiSnapshot.DocumentContext);
-                if (useSubOneBMode)
+                if (useSubOneBMode && smallCanvasPlan != null)
+                {
+                    // Everything the model must follow goes in the user turn, next to the task;
+                    // a long system prompt is exactly what a 0.6B model loses track of.
+                    effectiveSystemPrompt = SmallModelCanvasPlanner.MicroSystemPrompt;
+                    _ = BackendLogService.LogEventAsync(
+                        "SubOneBLocalMode",
+                        $"Surface:NormalChat (canvas)\nModel:{uiSnapshot.ModelName}\nEvidence:{localCapability.Evidence}\nParams:{localCapability.ParameterCount}");
+                }
+                else if (useSubOneBMode)
                 {
                     effectiveSystemPrompt = BuildSubOneBNormalChatSystemPrompt(
                         effectiveSystemPrompt,
@@ -3220,7 +3287,13 @@ namespace Malx_AI
                 effectiveSystemPrompt = BuildQwen3SystemPrompt(effectiveSystemPrompt, thinkingModeEnabled);
 
                 List<ChatMessage> selectedHistoryMessages = SelectRelevantChatHistory(userMsg, uiSnapshot.ChatMessages, uiSnapshot.ContextSize, uiSnapshot.ChatDocuments);
-                if (useSubOneBMode)
+                if (smallCanvasPlan != null)
+                {
+                    // The task already carries the request a follow-up refers to. Earlier replies
+                    // are copy-bait: the 0.6B model repeated its own failed Python answer.
+                    selectedHistoryMessages = new List<ChatMessage>();
+                }
+                else if (useSubOneBMode)
                 {
                     selectedHistoryMessages = ReduceHistoryForSubOneB(selectedHistoryMessages);
                 }
@@ -3275,12 +3348,18 @@ namespace Malx_AI
                     maxGenerationTokens,
                     localCapability,
                     Math.Max(512, GetLoadedLocalContextSize() / 3));
+                // A 5-7 slide outline needs roughly 400-700 tokens; the plain sub-1B cap of 512
+                // cut decks off part-way.
+                if (useSubOneBMode && smallCanvasPlan != null)
+                    maxGenerationTokens = Math.Max(maxGenerationTokens, SubOneBStructuredCanvasMaxTokens);
 
-                InferenceParams inferenceParams = IsQwen3Model(uiSnapshot.ModelName)
-                    ? ModelInferenceProfiles.CreateQwen3InferenceParams(thinkingModeEnabled, maxGenerationTokens, antiPrompts)
-                    : useSubOneBMode
-                        ? CreateSubOneBInferenceParams(maxGenerationTokens, antiPrompts)
-                        : CreateGenericInferenceParams(maxGenerationTokens, antiPrompts, uiSnapshot.Temperature, uiSnapshot.MinP);
+                InferenceParams inferenceParams = useSubOneBMode && smallCanvasPlan != null
+                    ? CreateSmallModelStructuredParams(maxGenerationTokens, antiPrompts)
+                    : IsQwen3Model(uiSnapshot.ModelName)
+                        ? ModelInferenceProfiles.CreateQwen3InferenceParams(thinkingModeEnabled, maxGenerationTokens, antiPrompts)
+                        : useSubOneBMode
+                            ? CreateSubOneBInferenceParams(maxGenerationTokens, antiPrompts)
+                            : CreateGenericInferenceParams(maxGenerationTokens, antiPrompts, uiSnapshot.Temperature, uiSnapshot.MinP);
 
                 string calculatorContext = sandboxPreparation.CalculatorContext;
                 // Router-triggered calculator fallback: the sandbox eligibility score can miss a
@@ -3296,8 +3375,10 @@ namespace Malx_AI
                     _ = BackendLogService.LogEventAsync("NormalChatRouterCalc", $"Prompt:{userMsg}");
                 }
 
-                string modelUserMsg = userMsg + calculatorContext;
-                if (!string.IsNullOrWhiteSpace(sandboxPreparation.PreInferencePythonContext))
+                string modelUserMsg = smallCanvasPlan != null
+                    ? SmallModelCanvasPlanner.BuildUserTurn(smallCanvasPlan)
+                    : userMsg + calculatorContext;
+                if (smallCanvasPlan == null && !string.IsNullOrWhiteSpace(sandboxPreparation.PreInferencePythonContext))
                     modelUserMsg += "\n\n" + sandboxPreparation.PreInferencePythonContext;
 
                 if (hasWebContext)
@@ -3324,7 +3405,7 @@ namespace Malx_AI
                 // small local model follows most reliably.
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.AttachmentReferenceNote))
                     modelUserMsg = modelUserMsg + "\n\n" + uiSnapshot.AttachmentReferenceNote;
-                if (useSubOneBMode)
+                if (useSubOneBMode && smallCanvasPlan == null)
                     modelUserMsg = BuildSubOneBNormalChatUserTurn(modelUserMsg);
 
                 return new NormalChatRequestContext
@@ -3351,7 +3432,8 @@ namespace Malx_AI
                     InferenceParams = inferenceParams,
                     CalculatorContext = calculatorContext,
                     ModelUserMessage = modelUserMsg,
-                    IsGemma4Model = isGemma4Model
+                    IsGemma4Model = isGemma4Model,
+                    SmallModelCanvasPlan = smallCanvasPlan
                 };
             }, token).ConfigureAwait(false);
         }
@@ -4372,7 +4454,9 @@ namespace Malx_AI
                     : _nextMessageModelOverride;
                 _currentStreamingMessage.IsThinkingInProgress = thinkingModeEnabled;
                 _currentStreamingMessage.IsStreaming = true;
-                _currentStreamingMessage.IsCanvasDeliveryTurn = ShouldRouteNormalChatToCanvas(userMsg);
+                _activeSmallModelCanvasDirective = requestContext.SmallModelCanvasPlan?.Directive;
+                _currentStreamingMessage.IsCanvasDeliveryTurn = ShouldRouteNormalChatToCanvas(userMsg)
+                    || requestContext.SmallModelCanvasPlan != null;
                 _chatMessages.Add(_currentStreamingMessage);
 
                 var responseBuilder = new StringBuilder();

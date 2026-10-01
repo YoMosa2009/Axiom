@@ -46,6 +46,7 @@ namespace Malx_AI
         private static readonly Regex ChartPointRegex = new(
             @"^\s*(?<label>[^|:]{1,60}?)\s*[|:]\s*(?<value>-?\d[\d,_]*(?:\.\d+)?)\s*(?<unit>%|[A-Za-z$€£]{0,6})\s*$",
             RegexOptions.Compiled);
+        private static readonly Regex BoldLeadRegex = new(@"^\*\*(?<label>[^*]{1,80})\*\*(?<rest>.*)$", RegexOptions.Compiled);
         private static readonly Regex MarkdownEmphasisRegex = new(@"\*\*(?<text>[^*]+)\*\*|__(?<text2>[^_]+)__", RegexOptions.Compiled);
 
         /// <summary>The outline format small models are asked to produce. Kept deliberately tiny.</summary>
@@ -114,6 +115,7 @@ namespace Malx_AI
 
             ComposedSlide? current = null;
             bool collectingChart = false;
+            bool titleOpenedSlide = false;
 
             foreach (string rawLine in StripCodeFences(text).Split('\n'))
             {
@@ -124,7 +126,17 @@ namespace Malx_AI
                 if (TryReadDirective(line, "TITLE", out string title))
                 {
                     if (outline.Title.Length == 0)
+                    {
                         outline.Title = title;
+                    }
+                    else
+                    {
+                        // Small models often head every slide with "TITLE:" instead of "SLIDE:".
+                        // A second TITLE is therefore a slide, not a deck title to discard.
+                        current = new ComposedSlide { Title = title };
+                        outline.Slides.Add(current);
+                        titleOpenedSlide = true;
+                    }
                     collectingChart = false;
                     continue;
                 }
@@ -138,8 +150,17 @@ namespace Malx_AI
 
                 if (TryReadDirective(line, "SLIDE", out string slideTitle))
                 {
-                    current = new ComposedSlide { Title = slideTitle };
-                    outline.Slides.Add(current);
+                    // "TITLE: heading" then "SLIDE: point" is one slide written in two lines.
+                    if (titleOpenedSlide && current != null && current.Bullets.Count == 0)
+                    {
+                        current.Bullets.Add(CleanBullet(slideTitle));
+                    }
+                    else
+                    {
+                        current = new ComposedSlide { Title = slideTitle };
+                        outline.Slides.Add(current);
+                    }
+                    titleOpenedSlide = false;
                     collectingChart = false;
                     continue;
                 }
@@ -181,7 +202,11 @@ namespace Malx_AI
                 }
 
                 Match point = ChartPointRegex.Match(line);
-                if (point.Success && (collectingChart || current?.Chart.Count > 0))
+                // "January | 120" before any slide is chart data even when the model skipped the
+                // CHART: line (the 0.6B model dropped it in every live sample). Only the pipe form
+                // counts here, so a "Label: 5%" sentence in a deck is not mistaken for a chart.
+                bool bareChartRow = point.Success && current == null && line.Contains('|');
+                if (point.Success && (collectingChart || bareChartRow || current?.Chart.Count > 0))
                 {
                     var parsed = new ComposedChartPoint(
                         CleanInline(point.Groups["label"].Value),
@@ -259,6 +284,24 @@ namespace Malx_AI
 
                 if (isBullet && !indented)
                 {
+                    // "- **Solar power** converts sunlight..." / "- **What is it?** Energy that...":
+                    // a bold lead-in is a heading even without a colon after it.
+                    Match boldLead = BoldLeadRegex.Match(content);
+                    if (boldLead.Success)
+                    {
+                        string boldLabel = boldLead.Groups["label"].Value.Trim().TrimEnd(':').Trim();
+                        int boldWords = boldLabel.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+                        if (boldWords is >= 1 and <= 8 && boldLabel.Length <= 60)
+                        {
+                            current = new ComposedSlide { Title = boldLabel };
+                            outline.Slides.Add(current);
+                            string rest = boldLead.Groups["rest"].Value.Trim().TrimStart(':', '-', '—').Trim();
+                            if (rest.Length > 0)
+                                current.Bullets.Add(CleanBullet(rest));
+                            continue;
+                        }
+                    }
+
                     string cleanContent = content.Replace("**", "").Replace("__", "");
                     int colonIndex = cleanContent.IndexOf(':');
                     if (colonIndex > 0)
@@ -306,6 +349,19 @@ namespace Malx_AI
                 {
                     if (current == null && outline.Subtitle.Length == 0)
                         outline.Subtitle = CleanLooseText(trimmed);
+                }
+            }
+
+            // Plain bullets with no headings at all still make a deck: three points per slide.
+            if (outline.Slides.Count == 1 && outline.Slides[0].Bullets.Count >= 4)
+            {
+                ComposedSlide only = outline.Slides[0];
+                outline.Slides.Clear();
+                for (int start = 0; start < only.Bullets.Count; start += 3)
+                {
+                    var chunk = new ComposedSlide { Title = start == 0 ? only.Title : only.Title + " (continued)" };
+                    chunk.Bullets.AddRange(only.Bullets.Skip(start).Take(3));
+                    outline.Slides.Add(chunk);
                 }
             }
 

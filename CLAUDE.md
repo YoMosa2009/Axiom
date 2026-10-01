@@ -143,6 +143,17 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
     - every rescue path is fail-closed (no write beats a garbage write);
     - relevance check: a patch that doesn't touch the request is rejected (`TryDetectIrrelevantWorkspacePatch`).
 
+12a. **Small local models and Project Canvas** (`SmallModelCanvasPlanner.cs`, V1.9.14): models under 4B
+    (`SkillCanvasTier.Micro/Compact`) never author HTML. A deck, chart or @ProjectCanvas turn gets a short
+    system prompt, plus a user turn holding the task, a worked example on an unrelated topic, and "Begin with
+    TITLE:". Axiom composes the result (`SkillArtifactComposer`).
+    - Follow-ups inherit the deliverable and topic of an earlier request.
+    - History is dropped on these turns, because tiny models copy their own failed replies.
+    - Measured on Qwen3-0.6B: placeholder templates (`<category> | <number>`) get copied literally, and the
+      model heads slides with `TITLE:` and drops `CHART:` lines. The parsers accept those shapes. Re-test with
+      the real GGUF (`C:\Users\user\Downloads\Qwen3-0.6B-tools-Q5_K_M.gguf`) through the harness
+      `tinydeck` mode before changing these prompts.
+
 ### Agent Access (`Agent/`, `WorkplaceView.Agent.cs`)
 16. **Native tool calling for Cloud and Hybrid:** both use the provider's tools through `CloudAgentModel`, never the
     council executor (which rewrites the system prompt and advertises other tools, making the model think it has no

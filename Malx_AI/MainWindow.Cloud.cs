@@ -1518,6 +1518,8 @@ namespace Malx_AI
 
             await Dispatcher.InvokeAsync(() =>
             {
+                // Cloud models author the artifact themselves; never reuse a small local model's plan.
+                _activeSmallModelCanvasDirective = null;
                 _currentStreamingMessage = new ChatMessage("assistant", string.Empty)
                 {
                     ModelLabel = _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId),

@@ -1,5 +1,17 @@
 # Changelog
 
+## [V1.9.14] - 2026-10-01
+
+Very small local models (under 4B, for example Qwen3 0.6B) now produce real slide decks, charts, and documents in Project Canvas.
+
+### Fixed
+- **Small local models never delivered a slide deck or visual.** Asked for a presentation, a 0.6B model wrote bullet points ending "Let me build the deck."; asked again with @ProjectCanvas, it made up Python code. Small models are no longer asked to write HTML. They now get one short, plain format to fill in (a title, then slides with points, or rows of chart data), shown next to the request with a worked example, and Axiom designs the finished deck or chart itself. In testing with Qwen3 0.6B, 15 out of 15 attempts produced a working deck or chart; before, none did.
+- **Follow-ups like "@ProjectCanvas" or "it must be an actual visual" lost the topic.** They named no deliverable, so no Skill matched and the small model received the long instructions written for large models. A follow-up now carries over the deliverable and topic of the request it refers to.
+- **Small models copied their own earlier wrong answers.** Their previous replies are no longer fed back to them on a canvas turn, and sandbox/Python tool instructions are left out, since tiny models copy them instead of using them.
+- **Replies in the wrong shape are rescued.** Bullets with bold lead-ins ("**Solar power** converts…"), slides headed with "TITLE:" instead of "SLIDE:", chart rows without a header line, and plain bullet lists are all turned into slides or charts instead of producing nothing.
+- When Axiom builds a deck from a small model's outline, the chat shows a short "Here's your deck" reply instead of repeating the outline text.
+- Small models get a larger output budget and steadier sampling for these turns, so decks are no longer cut off part-way.
+
 ## [V1.9.13] - 2026-09-26
 
 Agent Access takes corrections mid-run, never hangs silently after a Stop, and keeps a copy of any file it overwrites.
