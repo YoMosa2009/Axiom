@@ -70,6 +70,7 @@
     <Compile Include="..\Malx_AI\SkillArtifactComposer.cs" Link="Production\SkillArtifactComposer.cs" />
     <Compile Include="..\Malx_AI\SmallModelCanvasPlanner.cs" Link="Production\SmallModelCanvasPlanner.cs" />
     <Compile Include="..\Malx_AI\LocalModelFitAdvisor.cs" Link="Production\LocalModelFitAdvisor.cs" />
+    <Compile Include="..\Malx_AI\FeedbackReport.cs" Link="Production\FeedbackReport.cs" />
     <Compile Include="..\Malx_AI\LocalModelCapabilityProfile.cs" Link="Production\LocalModelCapabilityProfile.cs" />
     <Compile Include="..\Malx_AI\GgufMetadataReader.cs" Link="Production\GgufMetadataReader.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentTool.cs" Link="Production\Agent\AgentTool.cs" />
