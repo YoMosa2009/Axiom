@@ -132,5 +132,55 @@ namespace Malx_AI.Tests
             var report2 = FeedbackReportBuilder.Build(Submission("hi", email: " me@example.com "));
             Assert.Contains("Reply to: me@example.com", report2.Body);
         }
+
+        [Fact]
+        public void GitHubLinkOpensTheBugFormForAProblem()
+        {
+            var uri = FeedbackReportBuilder.BuildGitHubIssueUri(Submission("The app froze"), 2000);
+            Assert.StartsWith("https://github.com/YoMosa2009/Axiom/issues/new?template=bug_report.yml&title=", uri);
+            Assert.Contains("&what-happened=The%20app%20froze", uri);
+            Assert.Contains("&version=1.9.15", uri);
+        }
+
+        [Fact]
+        public void GitHubLinkOpensTheIdeaFormForAnIdea()
+        {
+            var submission = Submission("Add voice input") with { Kind = FeedbackKind.Idea };
+            var uri = FeedbackReportBuilder.BuildGitHubIssueUri(submission, 2000);
+            Assert.Contains("template=feature_request.yml", uri);
+            Assert.Contains("&idea=Add%20voice%20input", uri);
+            Assert.DoesNotContain("what-happened", uri);
+        }
+
+        [Fact]
+        public void GitHubLinkLeavesOutDetailsWhenNotWanted()
+        {
+            var uri = FeedbackReportBuilder.BuildGitHubIssueUri(Submission("hi", diagnostics: false), 2000);
+            Assert.DoesNotContain("&details=", uri);
+        }
+
+        [Fact]
+        public void GitHubLinkCarriesTechnicalDetails()
+        {
+            var uri = FeedbackReportBuilder.BuildGitHubIssueUri(Submission("hi", log: "boom"), 2000);
+            Assert.Contains("&details=", uri);
+            Assert.Contains(Uri.EscapeDataString("RTX 3060"), uri);
+            Assert.Contains("boom", uri);
+            Assert.DoesNotContain(Uri.EscapeDataString("--- Technical details ---"), uri);
+        }
+
+        [Fact]
+        public void GitHubLinkScrubsSecrets()
+        {
+            var uri = FeedbackReportBuilder.BuildGitHubIssueUri(Submission("key sk-or-v1-abcdef0123456789abcdef"), 2000);
+            Assert.DoesNotContain("abcdef0123", uri);
+        }
+
+        [Fact]
+        public void GitHubLinkFieldsAreCapped()
+        {
+            var uri = FeedbackReportBuilder.BuildGitHubIssueUri(Submission(new string('a', 5000)), 100);
+            Assert.DoesNotContain(new string('a', 101), uri);
+        }
     }
 }

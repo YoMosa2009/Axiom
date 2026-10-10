@@ -26,6 +26,7 @@ namespace Malx_AI
         public const int MaxMessageChars = 5000;
         public const int MaxLogLines = 40;
         public const int MaxLogChars = 4000;
+        public const string GitHubRepository = "YoMosa2009/Axiom";
 
         public static FeedbackReport Build(FeedbackSubmission submission)
         {
@@ -131,6 +132,44 @@ namespace Malx_AI
                 body = body.Substring(0, maxBodyChars) + "\n[...trimmed; the full report is on your clipboard]";
 
             return "mailto:" + toAddress + "?subject=" + Uri.EscapeDataString(report.Subject) + "&body=" + Uri.EscapeDataString(body);
+        }
+
+        /// <summary>
+        /// A link that opens GitHub's new-issue form for this report, with the fields filled in.
+        /// GitHub issues are public, so this uses the same scrubbed text as the email report.
+        /// </summary>
+        public static string BuildGitHubIssueUri(FeedbackSubmission submission, int maxFieldChars)
+        {
+            var report = Build(submission);
+            string template = submission.Kind == FeedbackKind.Idea ? "feature_request.yml" : "bug_report.yml";
+            string messageField = submission.Kind == FeedbackKind.Idea ? "idea" : "what-happened";
+            string title = report.Subject;
+            string message = Redact((submission.Message ?? "").Trim());
+            if (message.Length > maxFieldChars)
+                message = message.Substring(0, maxFieldChars);
+
+            string details = "";
+            if (submission.IncludeDiagnostics)
+            {
+                string technicalHeader = "--- Technical details ---";
+                int idx = report.Body.IndexOf(technicalHeader, StringComparison.Ordinal);
+                if (idx >= 0)
+                {
+                    details = report.Body.Substring(idx + technicalHeader.Length).Trim();
+                    if (details.Length > maxFieldChars)
+                        details = details.Substring(0, maxFieldChars);
+                }
+            }
+
+            string uri = "https://github.com/" + GitHubRepository + "/issues/new?template=" + template
+                + "&title=" + Uri.EscapeDataString(title)
+                + "&" + messageField + "=" + Uri.EscapeDataString(message)
+                + "&version=" + Uri.EscapeDataString(submission.AppVersion);
+
+            if (!string.IsNullOrEmpty(details))
+                uri += "&details=" + Uri.EscapeDataString(details);
+
+            return uri;
         }
 
         public static bool IsPlausibleEmail(string? email)
