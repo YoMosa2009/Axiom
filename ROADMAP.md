@@ -8,11 +8,19 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 
 | Item | What to do | Why it matters |
 | --- | --- | --- |
-| **Feedback: direct sending** — key received 2026-10-09, ship in the **next update** (owner's choice) | Put `bc1fcf77-bb2f-401d-a7e1-268b638216e2` into `FeedbackDelivery.Web3FormsAccessKey`, send one real test report to confirm Web3Forms accepts a desktop app's request, update the changelog ("Send feedback now sends directly"), and release. The key is designed to be public: it can only send mail to Malxshrouds@gmail.com (free tier: 250 messages a month). | Until then **Send feedback** opens the user's email app with the report filled in, which fails quietly for people with no mail app set up. |
 | **Code signing** (deferred, owner decision 2026-10-09) | When the user base grows: Azure Trusted Signing (about $10/month, identity validation required), then sign `Malx_AI.exe` and the release ZIP's executables in `release.yml`. | Removes the "Windows protected your PC" SmartScreen warning on first launch. Until then README's Getting started explains **More info → Run anyway**. |
 | **CI release secrets** | Confirmed missing on 2026-10-09 (the V1.10.0 CI run stopped before publishing). In GitHub: repo **Settings → Secrets and variables → Actions → New repository secret**, add `AXIOM_BUILTIN_GOOGLE_CLIENT_ID`, `AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET`, `AXIOM_BUILTIN_GITHUB_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_SECRET` with the same values as the local OAuth files. | Until then every release has to be published from this PC with `scripts/Publish-GitHubRelease.ps1`. |
 
 ## Shipped
+
+### V1.11.0 (2026-10-10)
+- Windows installer (`installer/Axiom.iss`, `scripts/Build-Installer.ps1`), built from the release ZIP's contents.
+- Send feedback sends directly through Web3Forms (key `bc1fcf77-…`, tested 2026-10-10), with the email fallback kept.
+- "Post as a GitHub issue" link, issue forms, PR template, CONTRIBUTING.md, SECURITY.md, CODEOWNERS.
+- License changed to PolyForm Noncommercial 1.0.0.
+- Repository protection: `main` ruleset (pull request + code-owner approval + passing CI for everyone but the
+  owner), outside contributors' workflow runs need approval, private vulnerability reporting on.
+- Local releases go to `F:\Axiom-Releases`, and older local packages are deleted after each upload.
 
 ### V1.10.0 (2026-10-09)
 - First-run guide with hardware-aware model recommendation (`FirstRunGuideWindow`, `LocalModelFitAdvisor`).

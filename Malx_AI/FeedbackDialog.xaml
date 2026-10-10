@@ -101,7 +101,13 @@
         <TextBlock x:Name="StatusText" Visibility="Collapsed" Margin="0,14,0,0" FontSize="12" LineHeight="Auto" TextWrapping="Wrap"/>
 
         <DockPanel Margin="0,20,0,0" LastChildFill="False">
-            <TextBlock x:Name="DeliveryHintText" DockPanel.Dock="Left" Style="{StaticResource HintStyle}" VerticalAlignment="Center" MaxWidth="280"/>
+            <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center" MaxWidth="280">
+                <TextBlock x:Name="DeliveryHintText" Style="{StaticResource HintStyle}"/>
+                <TextBlock Style="{StaticResource HintStyle}" Margin="0,4,0,0">
+                    <Hyperlink x:Name="GitHubIssueLink" Click="GitHubIssueLink_Click" IsEnabled="False" Foreground="{DynamicResource AccentMutedBrush}"
+                               ToolTip="Opens GitHub's issue form with your report filled in. GitHub issues are public.">Post it as a public GitHub issue instead</Hyperlink>
+                </TextBlock>
+            </StackPanel>
             <Button x:Name="SendButton" DockPanel.Dock="Right" Content="Send" Click="Send_Click" IsEnabled="False"
                     Style="{StaticResource PremiumButtonStyle}" Foreground="{DynamicResource OnAccentBrush}" Height="36" MinWidth="110" Padding="18,0"/>
             <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Cancel" Click="Close_Click" Height="36" MinWidth="90" Margin="0,0,8,0"/>

@@ -8,12 +8,16 @@ Run GGUF models on your own hardware, point Axiom at a self-hosted endpoint, or 
 cloud models with your own key. Your chats, models, and data stay on your computer
 unless you deliberately reach out to a cloud model or a connected service.
 
-![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.10.0-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.11.0-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
-[Download](../../releases) · [Getting started](#getting-started) · [Feedback](#feedback)
+### [⬇ Download Axiom for Windows](https://github.com/YoMosa2009/Axiom/releases/latest)
+
+Free · Windows 10/11 (64-bit) · one-click installer, no admin rights needed
+
+[Getting started](#getting-started) · [Report a bug](https://github.com/YoMosa2009/Axiom/issues/new/choose) · [Contributing](#contributing) · [Feedback](#feedback)
 
 </div>
 
@@ -255,14 +259,19 @@ exits normally.
 
 ## Getting started
 
-1. Download the latest Windows ZIP from [Releases](../../releases).
-2. Extract the **whole folder** — don't run the executable from inside the ZIP.
-3. Launch `Malx_AI.exe`.
-4. The first-run guide asks how you want to run AI. For a local model it checks your
+1. Download **`Axiom-Setup-…-win-x64.exe`** from the [latest release](https://github.com/YoMosa2009/Axiom/releases/latest)
+   and run it. It installs for your Windows account only (no admin prompt) and adds Axiom to
+   the Start menu. Prefer no installer? Download the `…-win-x64-clean.zip` instead, extract the
+   **whole folder**, and run `Malx_AI.exe`.
+2. Launch Axiom.
+3. The first-run guide asks how you want to run AI. For a local model it checks your
    processor, memory and graphics card, shows which models fit, and downloads the one it
    recommends. You can also pick a cloud key or your own server, or skip and set things up
    later (reopen the guide from **Download a model** in the sidebar).
-5. Open Chat, or head to Workplace.
+4. Open Chat, or head to Workplace.
+
+To uninstall, use **Settings → Apps** in Windows. Your chats and settings in
+`%LOCALAPPDATA%\Axiom` are kept unless you delete that folder too.
 
 > **"Windows protected your PC"?** Axiom isn't code-signed yet, so Windows SmartScreen shows
 > this warning for new downloads it hasn't seen often. Click **More info**, then **Run anyway**.
@@ -303,17 +312,29 @@ HtmlAgilityPack · AvalonEdit · UglyToad.PdfPig · SQLite · WebView2
 
 ## Feedback
 
-I'd love to hear from you. Bug, feature request, or just how it's going — use
-**Settings → General → Send feedback** in the app (it can attach your app version and recent
-error lines, never your chats, files or keys), or email **malxshrouds@gmail.com**. Your input
-genuinely shapes what gets built next.
+I'd love to hear from you. Bug, feature request, or just how it's going:
+
+- **In the app:** Settings → General → **Send feedback**. It can attach your app version and
+  recent error lines, never your chats, files or keys.
+- **On GitHub:** [open an issue](https://github.com/YoMosa2009/Axiom/issues/new/choose)
+  (bug report or feature request). Issues are public, so leave out keys and personal files.
+- **By email:** malxshrouds@gmail.com.
+
+Your input genuinely shapes what gets built next.
+
+## Contributing
+
+Contributions are welcome. Fork the repo, make your change on a branch, and open a pull
+request; every change is reviewed and only merged with the maintainer's approval. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing and what makes a pull request easy to
+accept. Found a security problem? Please report it privately (see [SECURITY.md](SECURITY.md)).
 
 ## License
 
-CC BY-NC-ND 4.0 — see [LICENSE](LICENSE).
-
-The source is publicly viewable, but it may not be redistributed, modified, or used
-commercially without explicit permission from the author.
+[PolyForm Noncommercial 1.0.0](LICENSE). You may use, study, change and share Axiom for any
+noncommercial purpose, including personal use, research, education and nonprofit work, as long
+as you keep the license and copyright notice with it. Commercial use needs the author's written
+permission. Releases before V1.11.0 were published under CC BY-NC-ND 4.0.
 
 ## Author
 

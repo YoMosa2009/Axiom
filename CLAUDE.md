@@ -55,13 +55,23 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
   which tests, packages, tags and publishes. **Merges that don't change `<Version>` publish nothing.**
 - **Version locations:** `Malx_AI/Malx_AI.csproj` `<Version>`, the `AppVersionLabel` in `MainWindow.xaml`,
   the `README.md` badge, and a dated `CHANGELOG.md` entry, which becomes the release notes. Follow `VERSIONING.md`.
-- **Local path:** `scripts/Publish-GitHubRelease.ps1 -OutputRoot "C:\Users\user\Axiom-Updates"`. Its default output
-  is on E:, which may be full or unmounted. It builds a roughly 415 MB clean ZIP and uploads it, which takes several minutes.
+- **Local path:** `scripts/Publish-GitHubRelease.ps1` (default output `F:\Axiom-Releases`, the owner's choice: keep
+  release builds off C:). It builds the roughly 415 MB clean ZIP, then the installer from the ZIP's extracted contents
+  (`scripts/Build-Installer.ps1` + `installer/Axiom.iss`, Inno Setup 6, about 10 minutes at lzma2/max), uploads both,
+  and deletes older `Axiom-*` packages from the output folder. Run it from bash with
+  `powershell -NoProfile -ExecutionPolicy Bypass -File ...`, not with `*>&1` (PS 5.1 turns git's stderr into errors).
+  CI can't publish until the five `AXIOM_BUILTIN_*` OAuth secrets are added (see ROADMAP.md).
+- **Installer:** per-user install to `%LOCALAPPDATA%\Programs\Axiom` (no admin, so the in-app updater can still write
+  there). Never change its `AppId`. The updater ranks the ZIP asset above the Setup.exe, so updates still use the ZIP.
 - **Encoding:** the script reads CHANGELOG.md as UTF-8. Before that fix, PowerShell 5.1 turned ✓ into `âœ“`.
   After publishing, check the release notes for mojibake (`gh release view vX.Y.Z --json body`).
 - **Shipping rule:** the owner expects each finished fix to be committed, pushed and released so users get it.
   Follow AGENTS.md's ship workflow. Never delete or overwrite a published release.
 - **Concurrent pushes:** `main` sometimes moves in parallel (cloud sessions, PRs). `git fetch` and rebase before pushing.
+- **Repository protection (2026-10-10):** a ruleset on `main` requires a pull request, an approving review from the
+  code owner (`.github/CODEOWNERS`) and a passing `build-test` check, and blocks force pushes and deletion. The owner's
+  admin role bypasses it, so direct pushes from this machine still work. Outside contributors' workflow runs need
+  approval, and `ci.yml` must stay `pull_request` with read-only permissions (never `pull_request_target`, never secrets).
 
 ## 4. Repo map (where things live)
 

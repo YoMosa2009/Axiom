@@ -72,6 +72,8 @@ namespace Malx_AI
             bool hasText = !string.IsNullOrWhiteSpace(MessageInput.Text);
             MessagePlaceholder.Visibility = MessageInput.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
             SendButton.IsEnabled = hasText && _sending == null;
+            if (GitHubIssueLink != null)
+                GitHubIssueLink.IsEnabled = hasText;
             RefreshPreview();
         }
 
@@ -153,6 +155,38 @@ namespace Malx_AI
             {
                 ShowStatus(lead + $"No email app opened. {(copied ? "The report is on your clipboard; " : string.Empty)}please email it to {FeedbackDelivery.FeedbackEmail}.",
                     "WarningBrush");
+            }
+        }
+
+        // GitHub prefills issue forms from the URL; a few thousand characters per field keeps the
+        // whole link well under browsers' URL limits.
+        private const int GitHubFieldLimit = 2500;
+
+        private void GitHubIssueLink_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(MessageInput.Text))
+                return;
+
+            var submission = new FeedbackSubmission(
+                SelectedKind,
+                MessageInput.Text,
+                ReplyEmailBox.Text,
+                IncludeDiagnosticsBox.IsChecked == true,
+                _context.AppVersion,
+                _context.WindowsVersion,
+                _context.HardwareSummary,
+                _context.InferenceMode,
+                _context.RecentErrorLog);
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                    FeedbackReportBuilder.BuildGitHubIssueUri(submission, GitHubFieldLimit)) { UseShellExecute = true });
+                ShowStatus("GitHub's issue form should now be open in your browser with your report filled in. Sign in and press Submit there.", "DarkSecondaryBrush");
+                CloseButton.Content = "Close";
+            }
+            catch (Exception ex)
+            {
+                ShowStatus("Couldn't open the browser: " + ex.Message, "WarningBrush");
             }
         }
 

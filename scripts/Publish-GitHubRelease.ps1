@@ -20,7 +20,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$OutputRoot = "E:\Axiom-Updates",
+    [string]$OutputRoot = "F:\Axiom-Releases",
     [string]$Repository = "YoMosa2009/Axiom",
     [string]$TargetBranch = "main",
     [switch]$PackageOnly,
@@ -138,6 +138,7 @@ if ([string]::IsNullOrWhiteSpace($outputDrive) -or -not (Test-Path -LiteralPath 
 
 $publishFolder = Join-Path $OutputRoot "Axiom-v$version"
 $zipPath = Join-Path $OutputRoot "Axiom-v$version-win-x64-clean.zip"
+$installerPath = Join-Path $OutputRoot "Axiom-Setup-v$version-win-x64.exe"
 $notesPath = Join-Path $OutputRoot "Axiom-v$version-release-notes.md"
 $releaseNotes = Get-ChangelogNotes -ChangelogPath $changelogPath -Version $version
 
@@ -196,6 +197,26 @@ if (-not (Test-Path -LiteralPath $zipPath)) {
     throw "Expected release ZIP was not produced: $zipPath"
 }
 
+# The installer is built from the ZIP's own contents, so both downloads ship identical files.
+Write-Host "Building the installer from the release ZIP..." -ForegroundColor Cyan
+$installerSource = Join-Path $OutputRoot "Axiom-v$version-installer-source"
+if (Test-Path -LiteralPath $installerSource) {
+    Remove-Item -LiteralPath $installerSource -Recurse -Force
+}
+Expand-Archive -LiteralPath $zipPath -DestinationPath $installerSource
+try {
+    Invoke-Checked -Command "powershell" -Arguments @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $repoRoot "scripts\Build-Installer.ps1"),
+        "-Version", $version, "-SourceDir", $installerSource, "-OutputDir", $OutputRoot) | Out-Null
+}
+finally {
+    Remove-Item -LiteralPath $installerSource -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (-not (Test-Path -LiteralPath $installerPath)) {
+    throw "Expected installer was not produced: $installerPath"
+}
+
 $notesDocument = @"
 # Axiom V$version
 
@@ -203,21 +224,22 @@ $releaseNotes
 
 ## Updating
 
-Existing Axiom V1.7.2+ installations can install this release from the in-app update notification. V1.7.0 and V1.7.1 users must manually install V1.7.2 once because those builds contain a download-verification lock defect. New users can download the Windows ZIP, extract the complete folder, and run Malx_AI.exe.
+Existing Axiom V1.7.2+ installations can install this release from the in-app update notification. V1.7.0 and V1.7.1 users must manually install V1.7.2 once because those builds contain a download-verification lock defect. New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Malx_AI.exe. Windows may show "Windows protected your PC" because Axiom isn't code-signed yet: click **More info**, then **Run anyway**.
 "@
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($notesPath, $notesDocument, $utf8WithoutBom)
 
 if ($PackageOnly) {
     Write-Host "Package-only build complete." -ForegroundColor Green
-    Write-Host "ZIP   : $zipPath"
-    Write-Host "Notes : $notesPath"
+    Write-Host "ZIP       : $zipPath"
+    Write-Host "Installer : $installerPath"
+    Write-Host "Notes     : $notesPath"
     exit 0
 }
 
 Write-Host "Creating GitHub Release $tag..." -ForegroundColor Cyan
 Invoke-Checked -Command "gh" -Arguments @(
-    "release", "create", $tag, $zipPath,
+    "release", "create", $tag, $zipPath, $installerPath,
     "--repo", $Repository,
     "--target", $targetCommit,
     "--title", "Axiom V$version",
@@ -229,7 +251,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "The release was created, but its final URL could not be read."
 }
 
+# Published copies live on GitHub; keep only this version's files locally so release builds
+# don't pile up on the drive.
+Get-ChildItem -LiteralPath $OutputRoot -Force |
+    Where-Object { $_.Name -like "Axiom-*" -and $_.Name -notlike "*v$version*" } |
+    ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Removed old local package: $($_.Name)"
+    }
+
 Write-Host "Axiom $version published successfully." -ForegroundColor Green
-Write-Host "Release: $releaseUrl"
-Write-Host "ZIP    : $zipPath"
-Write-Host "Notes  : $notesPath"
+Write-Host "Release  : $releaseUrl"
+Write-Host "ZIP      : $zipPath"
+Write-Host "Installer: $installerPath"
+Write-Host "Notes    : $notesPath"

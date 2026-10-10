@@ -1,5 +1,18 @@
 # Changelog
 
+## [V1.11.0] - 2026-10-10
+
+A one-click installer, feedback that goes straight to the developer, GitHub issues, and an open door for contributors.
+
+### Added
+- **Windows installer.** Each release now includes `Axiom-Setup-…-win-x64.exe` next to the ZIP. It installs Axiom for your Windows account only (no administrator prompt), adds it to the Start menu (and the desktop if you like), closes a running Axiom first, and appears in Windows **Settings → Apps** for uninstalling. Uninstalling keeps your chats, settings and models. In-app updates keep working as before; the ZIP is still there for people who prefer it.
+- **Send feedback now sends directly** to the developer, with no email app needed. If sending fails (for example while offline), it still falls back to a ready email.
+- **Post feedback as a GitHub issue.** The Send feedback dialog can also open GitHub's issue form with your report filled in, for people who want to follow the conversation publicly. The repository now has bug report and feature request forms.
+
+### Changed
+- **New license: PolyForm Noncommercial 1.0.0** (was CC BY-NC-ND 4.0). Axiom stays free and noncommercial, and you may now change it and share your changes for noncommercial purposes, which is what makes outside contributions possible. See README › License.
+- **Contributions welcome.** The repository has a contributing guide, a pull request template and a security policy. Every pull request is built and tested automatically and needs the maintainer's approval before it can be merged.
+
 ## [V1.10.0] - 2026-10-09
 
 A first-run guide that picks a model for your computer, Send feedback, one-click undo for Agent Access, a reply-speed readout in every mode, and a redesigned sidebar.

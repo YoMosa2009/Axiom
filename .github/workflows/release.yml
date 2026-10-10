@@ -81,6 +81,7 @@ jobs:
           name: Axiom-v${{ steps.decide.outputs.version }}-package
           path: |
             ${{ runner.temp }}/Axiom-Updates/*.zip
+            ${{ runner.temp }}/Axiom-Updates/*.exe
             ${{ runner.temp }}/Axiom-Updates/*.md
           if-no-files-found: ignore
           retention-days: 14

@@ -1,0 +1,9 @@
+# Every change needs the maintainer's review before it can merge into main.
+* @YoMosa2009
+
+# Release machinery and repository automation: never merged from outside contributions without
+# the maintainer's explicit review.
+/.github/ @YoMosa2009
+/scripts/ @YoMosa2009
+/installer/ @YoMosa2009
+/Malx_AI/Malx_AI.csproj @YoMosa2009

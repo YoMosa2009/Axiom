@@ -23,8 +23,8 @@ namespace Malx_AI
     {
         public const string FeedbackEmail = "Malxshrouds@gmail.com";
 
-        // Create at https://web3forms.com with FeedbackEmail, then paste the key here.
-        public const string Web3FormsAccessKey = "";
+        // Created at https://web3forms.com for FeedbackEmail. Public by design: it can only send to that inbox.
+        public const string Web3FormsAccessKey = "bc1fcf77-bb2f-401d-a7e1-268b638216e2";
 
         private const string Web3FormsEndpoint = "https://api.web3forms.com/submit";
         private const int MailtoBodyLimit = 1800;
