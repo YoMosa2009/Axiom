@@ -1,0 +1,236 @@
+<Window x:Class="Malx_AI.FirstRunGuideWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Welcome to Axiom"
+        Width="720" Height="640" MinHeight="560"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{DynamicResource NotebookBackgroundBrush}"
+        Foreground="{DynamicResource NotebookTextBrush}"
+        UseLayoutRounding="True">
+    <Window.Resources>
+        <!-- App.xaml's global TextBlock style sets a 22px line height for chat text; dialogs read better at the font's own spacing. -->
+        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="LineHeight" Value="Auto"/>
+        </Style>
+        <FontFamily x:Key="GuideIconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+        <!-- A large clickable card: the three "how do you want to run AI" choices and the model list. -->
+        <Style x:Key="GuideCardButtonStyle" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
+            <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
+            <Setter Property="Padding" Value="16,14"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="card" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                        <Setter Property="LineHeight" Value="Auto"/>
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="card" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                <Setter TargetName="card" Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="card" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="card" Property="Opacity" Value="0.55"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="GuideLinkButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Height" Value="34"/>
+        </Style>
+
+        <Style x:Key="GuidePrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource PremiumButtonStyle}">
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Padding" Value="18,6"/>
+            <Setter Property="MinWidth" Value="160"/>
+            <Setter Property="Foreground" Value="{DynamicResource OnAccentBrush}"/>
+        </Style>
+
+        <Style x:Key="GuideSecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Padding" Value="16,6"/>
+        </Style>
+
+        <Style x:Key="GuideCaptionStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="LineHeight" Value="Auto"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="32,26,32,22">
+        <!-- ═══ PAGE 1: how do you want to run AI ═══ -->
+        <Grid x:Name="WelcomePage">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel>
+                <TextBlock Text="Welcome to Axiom" FontSize="30" FontFamily="Georgia" LineHeight="Auto"/>
+                <TextBlock Text="Choose how Axiom runs AI. You can switch any time in Settings."
+                           FontSize="13" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,8,0,22" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <StackPanel Grid.Row="1">
+                <Button x:Name="ChooseLocalButton" Style="{StaticResource GuideCardButtonStyle}" Click="ChooseLocal_Click"
+                        AutomationProperties.Name="Run AI on this computer">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="44"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE7F4;" FontFamily="{StaticResource GuideIconFont}" FontSize="22" Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="On this computer" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock Text="Private and free. Works offline after a one-time model download. Axiom checks your hardware and suggests a model that fits."
+                                       FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,12,0"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="&#xE76C;" FontFamily="{StaticResource GuideIconFont}" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"/>
+                    </Grid>
+                </Button>
+
+                <Button x:Name="ChooseCloudButton" Style="{StaticResource GuideCardButtonStyle}" Click="ChooseCloud_Click"
+                        AutomationProperties.Name="Use free cloud models">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="44"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE753;" FontFamily="{StaticResource GuideIconFont}" FontSize="22" Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Free cloud models" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock Text="Larger, faster models through OpenRouter. Needs a free account and an API key; your messages are sent to the model provider."
+                                       FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,12,0"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="&#xE76C;" FontFamily="{StaticResource GuideIconFont}" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"/>
+                    </Grid>
+                </Button>
+
+                <Button x:Name="ChooseServerButton" Style="{StaticResource GuideCardButtonStyle}" Click="ChooseServer_Click"
+                        AutomationProperties.Name="Connect your own server">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="44"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE968;" FontFamily="{StaticResource GuideIconFont}" FontSize="22" Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Your own server (Hybrid Local)" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock Text="For people who already run an OpenAI-compatible server, such as llama.cpp or Ollama, on another machine."
+                                       FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,12,0"/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="&#xE76C;" FontFamily="{StaticResource GuideIconFont}" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"/>
+                    </Grid>
+                </Button>
+            </StackPanel>
+
+            <DockPanel Grid.Row="2" LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left" Style="{StaticResource GuideCaptionStyle}" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="420"
+                           Text="Reopen this guide any time from Download a model in the sidebar."/>
+                <Button DockPanel.Dock="Right" Content="Skip for now" Style="{StaticResource GuideLinkButtonStyle}" Click="Skip_Click"/>
+            </DockPanel>
+        </Grid>
+
+        <!-- ═══ PAGE 2: pick a local model ═══ -->
+        <Grid x:Name="LocalPage" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel>
+                <Button x:Name="BackButton" Style="{StaticResource GuideLinkButtonStyle}" HorizontalAlignment="Left" Margin="-12,-6,0,4" Click="Back_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE72B;" FontFamily="{StaticResource GuideIconFont}" FontSize="11" LineHeight="Auto" VerticalAlignment="Center" Margin="0,0,8,0"
+                                   Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                        <TextBlock Text="Back" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="Pick a model for this computer" FontSize="26" FontFamily="Georgia" LineHeight="Auto"/>
+                <TextBlock Text="Bigger models give better answers but need more memory. The recommended one is the largest that runs well here."
+                           FontSize="12" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,14" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- What Axiom found -->
+            <Border Grid.Row="1" Background="{DynamicResource SurfaceSunkenBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
+                    CornerRadius="10" Padding="14,10" Margin="0,0,0,14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="1.6*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Processor" Style="{StaticResource GuideCaptionStyle}"/>
+                        <TextBlock x:Name="CpuSummaryText" Text="Checking…" FontSize="13" FontWeight="SemiBold" LineHeight="Auto" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1">
+                        <TextBlock Text="Memory" Style="{StaticResource GuideCaptionStyle}"/>
+                        <TextBlock x:Name="RamSummaryText" Text="Checking…" FontSize="13" FontWeight="SemiBold" LineHeight="Auto" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Graphics" Style="{StaticResource GuideCaptionStyle}"/>
+                        <TextBlock x:Name="GpuSummaryText" Text="Checking…" FontSize="13" FontWeight="SemiBold" LineHeight="Auto" Margin="0,2,0,0"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="ModelListPanel"/>
+            </ScrollViewer>
+
+            <StackPanel Grid.Row="3" x:Name="DownloadStatusPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                <ProgressBar x:Name="DownloadProgressBar" Height="8" Minimum="0" Maximum="100" Value="0"
+                             Foreground="{DynamicResource PrimaryAccentBrush}" Background="{DynamicResource NotebookBorderBrush}" BorderThickness="0"/>
+                <TextBlock x:Name="DownloadProgressText" Style="{StaticResource GuideCaptionStyle}" FontSize="12" Margin="0,6,0,0"/>
+            </StackPanel>
+            <TextBlock Grid.Row="3" x:Name="DownloadErrorText" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12" LineHeight="Auto"
+                       Foreground="{DynamicResource DangerBrush}" Margin="0,10,0,0"/>
+
+            <DockPanel Grid.Row="4" LastChildFill="False" Margin="0,16,0,0">
+                <Button x:Name="ImportExistingButton" DockPanel.Dock="Left" Style="{StaticResource GuideLinkButtonStyle}" Click="ImportExisting_Click"
+                        Content="I already have a model file…" Margin="-12,0,0,0"/>
+                <Button x:Name="DownloadButton" DockPanel.Dock="Right" Style="{StaticResource GuidePrimaryButtonStyle}" Click="Download_Click"
+                        Content="Download" IsEnabled="False"/>
+                <Button x:Name="CancelButton" DockPanel.Dock="Right" Style="{StaticResource GuideSecondaryButtonStyle}" Click="Cancel_Click"
+                        Content="Not now" Margin="0,0,8,0"/>
+            </DockPanel>
+        </Grid>
+    </Grid>
+</Window>

@@ -438,11 +438,16 @@ namespace Malx_AI
         private CouncilPetWindow? _councilPetWindow;
         private bool _isLoadingCouncilNotificationSetting;
 
+        // Speed of the reply in progress or the last one, shown under the context meter.
+        private readonly GenerationMonitor _generationMonitor = new();
+        private GenerationReadout? _generationReadout;
+
         public MainWindow()
         {
             try
             {
                 InitializeComponent();
+                _generationReadout = new GenerationReadout(_generationMonitor, GenerationStatsRow, GenerationStatsTitle, GenerationStatsLabel);
                 // The native caption is not WPF's to paint, so a dark app otherwise sits under a
                 // bright system title bar.
                 WindowTitleBarTheme.Apply(this);
@@ -526,7 +531,7 @@ namespace Malx_AI
                             "⚠ The previous session crashed inside the local inference backend while processing a prompt. " +
                             recoveryNote);
                     }
-                    ShowFirstRunQwen3PromptIfNeeded();
+                    ShowFirstRunGuideIfNeeded();
                     _chatMessages.CollectionChanged += (_, _) => UpdateEmptyChatGreetingVisibility();
                     UpdateEmptyChatGreetingVisibility();
                 }
@@ -1808,6 +1813,28 @@ namespace Malx_AI
                 ShowSettingsPage("Inference");
                 RefreshMcpConnectorsUi();
                 RefreshAppDataProfileLabel();
+            }
+        }
+
+        /// <summary>Opens Settings on one page and puts the cursor in the given field.</summary>
+        private void OpenSettingsAt(string page, Control? focusTarget = null)
+        {
+            if (SettingsPanel.Visibility != Visibility.Visible && !_isSettingsAnimating)
+            {
+                AnimateSettingsPanel(true);
+                _ = EnsureOpenRouterUsageLoadedAsync();
+                RefreshMcpConnectorsUi();
+                RefreshAppDataProfileLabel();
+            }
+
+            ShowSettingsPage(page);
+            if (focusTarget != null)
+            {
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    focusTarget.BringIntoView();
+                    focusTarget.Focus();
+                }, System.Windows.Threading.DispatcherPriority.Input);
             }
         }
 

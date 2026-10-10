@@ -374,6 +374,19 @@
                                 </DockPanel>
                                 <ProgressBar x:Name="CriticTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
                             </Grid>
+                            <!-- Speed of the reply in progress, or the last one: same readout as Chat. -->
+                            <Grid x:Name="WorkplaceGenerationStatsRow" Width="176" Margin="14,0,0,0" Visibility="Collapsed"
+                                  Background="Transparent" ToolTipService.InitialShowDelay="250">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="4"/>
+                                </Grid.RowDefinitions>
+                                <DockPanel Margin="0,0,0,4">
+                                    <TextBlock x:Name="WorkplaceGenerationStatsTitle" Text="Last reply" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                    <TextBlock x:Name="WorkplaceGenerationStatsLabel" Text="" FontSize="10" HorizontalAlignment="Right" Foreground="{DynamicResource DarkSecondaryBrush}"
+                                               TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
+                                </DockPanel>
+                            </Grid>
                         </StackPanel>
                     </Border>
 
@@ -442,6 +455,29 @@
                                     <Button x:Name="AgentDenyButton" Content="Deny" Click="AgentDeny_Click" Height="26" Padding="12,0" Margin="6,0,0,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
                                 </StackPanel>
                             </StackPanel>
+                        </Border>
+
+                        <!-- After an Agent Access run that changed files: one click puts them back. -->
+                        <Border x:Name="AgentUndoBar" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}"
+                                BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,5,5,5" Margin="0,0,0,6">
+                            <DockPanel>
+                                <Button x:Name="AgentUndoDismissButton" DockPanel.Dock="Right" Click="AgentUndoDismiss_Click" Width="26" Height="26" Margin="4,0,0,0"
+                                        Style="{StaticResource SubtleButtonStyle}" Background="Transparent" BorderBrush="Transparent" Padding="0"
+                                        ToolTip="Keep the changes and hide this" AutomationProperties.Name="Keep the changes">
+                                    <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" LineHeight="Auto"
+                                               Foreground="{DynamicResource MutedTextBrush}"/>
+                                </Button>
+                                <Button x:Name="AgentUndoButton" DockPanel.Dock="Right" Click="AgentUndo_Click" Height="26" Padding="10,0"
+                                        Style="{StaticResource SubtleButtonStyle}" FontSize="11" AutomationProperties.Name="Undo these changes">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE7A7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" LineHeight="Auto"
+                                                   VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                        <TextBlock Text="Undo these changes" LineHeight="Auto" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <TextBlock x:Name="AgentUndoText" Text="" FontSize="11" LineHeight="Auto" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource DarkSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                            </DockPanel>
                         </Border>
 
                         <!-- Quiet running-step line. Present only while a step is in flight. -->

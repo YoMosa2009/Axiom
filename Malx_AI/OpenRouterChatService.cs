@@ -925,16 +925,31 @@ namespace Malx_AI
             CancellationToken cancellationToken = default,
             bool allowModelFallback = true)
         {
-            return await SendMessageInternalAsync(
-                messages,
-                systemPrompt,
-                thinkingEnabled,
-                modelId,
-                tools,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                cancellationToken,
-                allowModelFallback: allowModelFallback);
+            GenerationTelemetry.BeginReply(GenerationModeLabelFor(modelId));
+            OpenRouterChatResponse? response = null;
+            try
+            {
+                response = await SendMessageInternalAsync(
+                    messages,
+                    systemPrompt,
+                    thinkingEnabled,
+                    modelId,
+                    tools,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    cancellationToken,
+                    allowModelFallback: allowModelFallback);
+                GenerationTelemetry.ReportCharacters((response.Text?.Length ?? 0) + (response.Reasoning?.Length ?? 0));
+                return response;
+            }
+            finally
+            {
+                GenerationTelemetry.EndReply(response?.Usage?.CompletionTokens ?? 0);
+            }
         }
+
+        /// <summary>How the speed readout names a request: a custom endpoint is Hybrid Local.</summary>
+        private string GenerationModeLabelFor(string modelId)
+            => IsCustomEndpointModel(modelId) ? "Hybrid Local" : "Cloud";
 
         public async Task<OpenRouterChatResponse> SendConversationStreamAsync(
             List<OpenRouterMessage> messages,
@@ -950,21 +965,31 @@ namespace Malx_AI
             bool requireCompleteResponse = false,
             Action<string, int>? onToolCallProgress = null)
         {
-            return await SendMessageStreamInternalAsync(
-                messages,
-                systemPrompt,
-                thinkingEnabled,
-                modelId,
-                tools,
-                onToken,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                cancellationToken,
-                null,
-                maxTokensOverride,
-                stopSequences,
-                allowModelFallback: allowModelFallback,
-                requireCompleteResponse: requireCompleteResponse,
-                onToolCallProgress: onToolCallProgress);
+            GenerationTelemetry.BeginReply(GenerationModeLabelFor(modelId));
+            OpenRouterChatResponse? response = null;
+            try
+            {
+                response = await SendMessageStreamInternalAsync(
+                    messages,
+                    systemPrompt,
+                    thinkingEnabled,
+                    modelId,
+                    tools,
+                    onToken,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    cancellationToken,
+                    null,
+                    maxTokensOverride,
+                    stopSequences,
+                    allowModelFallback: allowModelFallback,
+                    requireCompleteResponse: requireCompleteResponse,
+                    onToolCallProgress: onToolCallProgress);
+                return response;
+            }
+            finally
+            {
+                GenerationTelemetry.EndReply(response?.Usage?.CompletionTokens ?? 0);
+            }
         }
 
         /// <summary>Loads the OpenRouter model catalog (capabilities, image support) if it is not loaded yet.</summary>
@@ -1484,6 +1509,7 @@ namespace Malx_AI
                         {
                             if (!string.IsNullOrEmpty(parsedJsonResponse.Text))
                                 onToken?.Invoke(parsedJsonResponse.Text);
+                            GenerationTelemetry.ReportCharacters((parsedJsonResponse.Text?.Length ?? 0) + (parsedJsonResponse.Reasoning?.Length ?? 0));
                             return parsedJsonResponse;
                         }
 
@@ -1615,6 +1641,13 @@ namespace Malx_AI
                     {
                         anyDeltaReceived = true;
                     }
+
+                    // Everything the model generates counts toward speed: the answer, its
+                    // reasoning, and tool-call arguments (a whole file, for an agent's write).
+                    int toolArgumentChars = 0;
+                    foreach (StreamingToolCallAccumulator accumulator in toolCallAccumulators.Values)
+                        toolArgumentChars += accumulator.Arguments.Length;
+                    GenerationTelemetry.ReportCharacters(textBuilder.Length + reasoningBuilder.Length + toolArgumentChars);
                 }
                 }
 

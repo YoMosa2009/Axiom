@@ -23,8 +23,12 @@ namespace Malx_AI
         /// NaN logits, producing gibberish output that ends in a native GGML abort.
         /// </summary>
         public double GpuComputeCapability { get; set; }
+        /// <summary>The NVIDIA card's whole memory, or 0 when unknown. Free VRAM changes with what
+        /// else is running; this is what model recommendations are sized against.</summary>
+        public long TotalVramBytes { get; set; }
         public double AvailableRamGb => AvailableRamBytes / 1024d / 1024d / 1024d;
         public double AvailableVramGb => AvailableVramBytes / 1024d / 1024d / 1024d;
+        public double TotalVramGb => TotalVramBytes / 1024d / 1024d / 1024d;
     }
 
     public static class HardwareProfiler
@@ -66,6 +70,7 @@ namespace Malx_AI
                 HasAmdGpu = gpuIdentity.HasAmdGpu,
                 PrimaryGpuName = gpuIdentity.PrimaryGpuName,
                 GpuComputeCapability = gpuIdentity.GpuComputeCapability,
+                TotalVramBytes = gpuIdentity.TotalVramBytes,
                 LogicalProcessorCount = Math.Max(1, Environment.ProcessorCount),
                 AvailableRamBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
                 AvailableVramBytes = GetFreeGpuMemoryBytes()
@@ -454,7 +459,10 @@ namespace Malx_AI
                 profile.HasAmdGpu = names.Any(n => n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Radeon", StringComparison.OrdinalIgnoreCase));
 
                 if (profile.HasNvidiaGpu)
+                {
                     profile.GpuComputeCapability = ProbeNvidiaComputeCapability(profile.PrimaryGpuName);
+                    profile.TotalVramBytes = QueryLargestNvidiaMemoryBytes("memory.total");
+                }
             }
             catch
             {
@@ -791,11 +799,14 @@ namespace Malx_AI
             return logical >= 8 ? logical / 2 : Math.Max(1, logical - 1);
         }
 
-        private static long GetFreeGpuMemoryBytes()
+        private static long GetFreeGpuMemoryBytes() => QueryLargestNvidiaMemoryBytes("memory.free");
+
+        /// <summary>Largest per-GPU value of an nvidia-smi memory field (MiB), in bytes; 0 if unavailable.</summary>
+        private static long QueryLargestNvidiaMemoryBytes(string field)
         {
             foreach (var candidate in NvidiaSmiCandidates)
             {
-                if (!TryRunNvidiaSmi(candidate, "--query-gpu=memory.free --format=csv,noheader,nounits", out string output))
+                if (!TryRunNvidiaSmi(candidate, $"--query-gpu={field} --format=csv,noheader,nounits", out string output))
                 {
                     continue;
                 }

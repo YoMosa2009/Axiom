@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -70,8 +72,16 @@ namespace Malx_AI
         public string DestinationPath => _manifest.DestinationPath;
         public ModelDownloadRecommendation Recommendation { get; }
 
+        /// <summary>The models Axiom can download, smallest first.</summary>
+        public static IReadOnlyList<ModelDownloadRecommendation> AvailableModels => Recommendations;
+
         public DefaultModelDownloadService()
             : this(Http, GetRecommendedModel())
+        {
+        }
+
+        public DefaultModelDownloadService(ModelDownloadRecommendation recommendation)
+            : this(Http, recommendation)
         {
         }
 
@@ -93,33 +103,37 @@ namespace Malx_AI
         }
 
         public static ModelDownloadRecommendation GetRecommendedModel()
+            => GetRecommendedModel(HardwareProfiler.Capture());
+
+        public static ModelDownloadRecommendation GetRecommendedModel(HardwareProfile hardware)
         {
-            HardwareProfile hardware = HardwareProfiler.Capture();
-            double ramGb = hardware.AvailableRamGb;
-            double vramGb = hardware.AvailableVramGb;
+            LocalModelFitHardware fitHardware = ToFitHardware(hardware);
+            LocalModelFitCandidate[] candidates = Recommendations.Select(ToFitCandidate).ToArray();
+            int index = LocalModelFitAdvisor.ChooseRecommendedIndex(candidates, fitHardware);
+            ModelDownloadRecommendation selected = Recommendations[Math.Max(0, index)];
+            LocalModelFitResult fit = LocalModelFitAdvisor.Assess(candidates[Math.Max(0, index)], fitHardware);
 
-            ModelDownloadRecommendation selected = ramGb >= 24
-                && hardware.LogicalProcessorCount >= 8
-                && hardware.HasNvidiaGpu
-                && vramGb >= 8
-                ? Recommendations[3]
-                : ramGb >= 10 && hardware.LogicalProcessorCount >= 4
-                    ? Recommendations[2]
-                    : ramGb >= 6
-                        ? Recommendations[1]
-                        : Recommendations[0];
-
-            string gpuSummary = hardware.HasNvidiaGpu && vramGb > 0
-                ? $"{hardware.PrimaryGpuName} with {vramGb:F1} GB free VRAM"
+            string gpuSummary = hardware.HasNvidiaGpu && fitHardware.TotalVramGb > 0
+                ? $"{hardware.PrimaryGpuName} with {fitHardware.TotalVramGb:F0} GB"
                 : hardware.HasNvidiaGpu
-                    ? $"{hardware.PrimaryGpuName} (free VRAM unavailable)"
-                    : "no CUDA-compatible GPU detected";
+                    ? $"{hardware.PrimaryGpuName} (memory size unavailable)"
+                    : "no graphics card Axiom can use";
             string reason =
-                $"Selected for {ramGb:F1} GB available RAM, {hardware.LogicalProcessorCount} logical CPU cores, and {gpuSummary}. " +
-                "Axiom will apply an additional safe memory and GPU-layer plan when it imports the model.";
+                $"Picked for {fitHardware.TotalRamGb:F0} GB of memory, {hardware.LogicalProcessorCount} processor threads and {gpuSummary}. {fit.Summary}";
 
             return selected with { SelectionReason = reason };
         }
+
+        /// <summary>Total VRAM when known (free VRAM shrinks with whatever else is open), else free VRAM.</summary>
+        internal static LocalModelFitHardware ToFitHardware(HardwareProfile hardware)
+            => new(
+                hardware.AvailableRamGb,
+                hardware.TotalVramGb > 0 ? hardware.TotalVramGb : hardware.AvailableVramGb,
+                hardware.HasNvidiaGpu,
+                hardware.LogicalProcessorCount);
+
+        internal static LocalModelFitCandidate ToFitCandidate(ModelDownloadRecommendation model)
+            => new(model.DisplayName, model.Manifest.ExpectedSizeBytes / 1024d / 1024d / 1024d);
 
         private static ModelDownloadRecommendation CreateRecommendation(
             string displayName,

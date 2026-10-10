@@ -258,17 +258,23 @@ namespace Malx_AI
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token = default)
         {
             SemaphoreSlim gate = GetScopeGate(scope);
+            GenerationMonitor? monitor = GenerationTelemetry.Current;
+            monitor?.BeginReply("Local");
             await gate.WaitAsync(token).ConfigureAwait(false);
             try
             {
+                int pieces = 0;
                 await foreach (string piece in streamFactory().WithCancellation(token).ConfigureAwait(false))
                 {
+                    // Each piece from LLamaSharp's executor is one token.
+                    monitor?.ReportTokens(++pieces);
                     yield return piece;
                 }
             }
             finally
             {
                 gate.Release();
+                monitor?.EndReply();
             }
         }
 

@@ -2123,6 +2123,7 @@ namespace Malx_AI
                 _pendingCodebasePatchBlockSummary = string.Empty;
                 _lastCodebaseUndo = null;
                 _activeAgentTaskState = null;
+                ClearAgentUndo();
             }
 
             QueryInput.Text = string.Empty;
@@ -2841,9 +2842,14 @@ namespace Malx_AI
             return (_isHybridLocalCouncilSelected ? WorkspaceAgentMode.Hybrid : WorkspaceAgentMode.Cloud).ToString();
         }
 
+        // Speed of the reply in progress or the last one, beside the context meters.
+        private readonly GenerationMonitor _generationMonitor = new();
+        private GenerationReadout? _generationReadout;
+
         public WorkplaceView()
         {
             InitializeComponent();
+            _generationReadout = new GenerationReadout(_generationMonitor, WorkplaceGenerationStatsRow, WorkplaceGenerationStatsTitle, WorkplaceGenerationStatsLabel);
             QueryInput.TextArea.TextView.LineTransformers.Add(new ProjectCanvasMentionColorizer());
             QueryInput.TextChanged += (_, _) =>
             {
@@ -11326,6 +11332,14 @@ namespace Malx_AI
         }
 
         private async Task SendQueryAsync()
+        {
+            // Every reply the run produces (architect, builder, agent steps, critic; local, cloud
+            // or Hybrid Local) reports its speed to the header readout.
+            using (GenerationTelemetry.Use(_generationMonitor))
+                await SendQueryCoreAsync();
+        }
+
+        private async Task SendQueryCoreAsync()
         {
             if (_isProcessing)
             {

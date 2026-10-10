@@ -401,29 +401,72 @@ namespace Malx_AI
             }
         }
 
-        private void ShowFirstRunQwen3PromptIfNeeded()
+        private const string FirstRunGuideShownSettingKey = "first_run_guide_shown";
+        // Set by the pre-V1.9.15 first-run prompt; people who saw it are not new.
+        private const string LegacyFirstRunPromptShownSettingKey = "recommended_model_first_run_prompt_shown";
+
+        /// <summary>
+        /// Opens the first-run guide for someone who has nothing set up yet: no model ever loaded,
+        /// no cloud key and no custom endpoint. Shown once.
+        /// </summary>
+        private void ShowFirstRunGuideIfNeeded()
         {
             if (_database == null)
                 return;
 
-            string lastModel = _database.GetUserFact("last_model");
-            string promptShown = _database.GetSetting("recommended_model_first_run_prompt_shown");
-            if (!string.IsNullOrWhiteSpace(lastModel) || string.Equals(promptShown, "true", StringComparison.OrdinalIgnoreCase))
+            bool seenBefore = string.Equals(_database.GetSetting(FirstRunGuideShownSettingKey), "true", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(_database.GetSetting(LegacyFirstRunPromptShownSettingKey), "true", StringComparison.OrdinalIgnoreCase);
+            bool hasSetup = !string.IsNullOrWhiteSpace(_database.GetUserFact("last_model"))
+                || !string.IsNullOrWhiteSpace(_database.LoadOpenRouterApiKey())
+                || !string.IsNullOrWhiteSpace(_database.GetSetting(DatabaseService.CustomEndpointBaseUrlSettingKey));
+            if (seenBefore || hasSetup)
                 return;
 
-            ModelDownloadRecommendation recommendation = DefaultModelDownloadService.GetRecommendedModel();
-            AddChatMessage(
-                "system",
-                $"First run: Axiom recommends {recommendation.DisplayName} for this machine. Download and import {Path.GetFileName(recommendation.Manifest.DestinationPath)} with the built-in downloader, or use Import AI Model to choose a GGUF manually. Approximate download size: {recommendation.Manifest.ExpectedSizeBytes / 1024d / 1024d / 1024d:F1} GB.");
-            _database.SaveSetting("recommended_model_first_run_prompt_shown", "true");
+            _database.SaveSetting(FirstRunGuideShownSettingKey, "true");
 
-            RoutedEventHandler? openDownloadHandler = null;
-            openDownloadHandler = async (_, _) =>
+            // After the main window has painted, so the guide opens over a finished window.
+            EventHandler? openGuide = null;
+            openGuide = async (_, _) =>
             {
-                Loaded -= openDownloadHandler;
-                await OpenDefaultModelDownloadDialogAsync();
+                ContentRendered -= openGuide;
+                await OpenFirstRunGuideAsync(startOnModelPage: false);
             };
-            Loaded += openDownloadHandler;
+            ContentRendered += openGuide;
+        }
+
+        private async Task OpenFirstRunGuideAsync(bool startOnModelPage)
+        {
+            if (_isProcessing && startOnModelPage)
+            {
+                await ShowNonIntrusiveErrorAsync("Wait for the current chat turn to finish before loading a model.");
+                return;
+            }
+
+            var guide = new FirstRunGuideWindow(startOnModelPage) { Owner = this };
+            guide.ShowDialog();
+
+            switch (guide.Outcome)
+            {
+                case FirstRunGuideOutcome.ModelDownloaded when !string.IsNullOrWhiteSpace(guide.DownloadedModelPath):
+                    try
+                    {
+                        await ImportModelFromPathAsync(guide.DownloadedModelPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        HandleModelImportFailure(ex);
+                    }
+                    break;
+                case FirstRunGuideOutcome.ImportExistingModel:
+                    ImportModel_Click(this, new RoutedEventArgs());
+                    break;
+                case FirstRunGuideOutcome.SetUpCloud:
+                    OpenSettingsAt("Cloud", OpenRouterApiKeyPasswordBox);
+                    break;
+                case FirstRunGuideOutcome.SetUpServer:
+                    OpenSettingsAt("Cloud", CustomEndpointBaseUrlBox);
+                    break;
+            }
         }
 
         private static string BuildDefaultAssistantSystemPrompt()
@@ -580,29 +623,7 @@ namespace Malx_AI
 
         private async void DownloadDefaultModel_Click(object sender, RoutedEventArgs e)
         {
-            await OpenDefaultModelDownloadDialogAsync();
-        }
-
-        private async Task OpenDefaultModelDownloadDialogAsync()
-        {
-            if (_isProcessing)
-            {
-                await ShowNonIntrusiveErrorAsync("Wait for the current chat turn to finish before loading a model.");
-                return;
-            }
-
-            var dialog = new DefaultModelDownloadDialog { Owner = this };
-            if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.DownloadedModelPath))
-                return;
-
-            try
-            {
-                await ImportModelFromPathAsync(dialog.DownloadedModelPath);
-            }
-            catch (Exception ex)
-            {
-                HandleModelImportFailure(ex);
-            }
+            await OpenFirstRunGuideAsync(startOnModelPage: true);
         }
 
         private async Task InitializeModelSessionAsync(InferenceBackendPlan plan)
@@ -2228,36 +2249,45 @@ namespace Malx_AI
                     bool suppressThinkLeak = !thinkingModeEnabled
                         && (IsQwen3Model(_modelName) || LocalModelCapabilityProfile.IsLikelyReasoningModel(_modelName));
                     long lastUiFlushAt = Environment.TickCount64;
-
-                    await foreach (var tokenPiece in streamFactory().WithCancellation(token))
+                    GenerationMonitor? monitor = GenerationTelemetry.Current;
+                    monitor?.BeginReply("Local");
+                    try
                     {
-                        responseBuilder.Append(tokenPiece);
-                        localTokenCount++;
-                        localBatch.Append(tokenPiece);
-                        localBatchTokenCount++;
-
-                        bool shouldFlushToUi = localBatchTokenCount >= StreamFlushTokenThreshold
-                            || (Environment.TickCount64 - lastUiFlushAt) >= StreamUiFlushIntervalMs;
-
-                        if (shouldFlushToUi)
+                        await foreach (var tokenPiece in streamFactory().WithCancellation(token))
                         {
-                            string flush = localBatch.ToString();
-                            localBatch.Clear();
-                            localBatchTokenCount = 0;
+                            responseBuilder.Append(tokenPiece);
+                            localTokenCount++;
+                            monitor?.ReportTokens(localTokenCount);
+                            localBatch.Append(tokenPiece);
+                            localBatchTokenCount++;
 
-                            if (!thinkingModeEnabled && !string.IsNullOrEmpty(flush))
+                            bool shouldFlushToUi = localBatchTokenCount >= StreamFlushTokenThreshold
+                                || (Environment.TickCount64 - lastUiFlushAt) >= StreamUiFlushIntervalMs;
+
+                            if (shouldFlushToUi)
                             {
-                                if (!suppressThinkLeak)
-                                    displayedContentBuilder.Append(flush);
+                                string flush = localBatch.ToString();
+                                localBatch.Clear();
+                                localBatchTokenCount = 0;
 
-                                string uiContent = suppressThinkLeak
-                                    ? StripThinkArtifactsForStreaming(CleanOutputTokens(responseBuilder.ToString()))
-                                    : displayedContentBuilder.ToString();
+                                if (!thinkingModeEnabled && !string.IsNullOrEmpty(flush))
+                                {
+                                    if (!suppressThinkLeak)
+                                        displayedContentBuilder.Append(flush);
 
-                                await ApplyStreamingMessageContentAsync(uiContent).ConfigureAwait(false);
-                                lastUiFlushAt = Environment.TickCount64;
+                                    string uiContent = suppressThinkLeak
+                                        ? StripThinkArtifactsForStreaming(CleanOutputTokens(responseBuilder.ToString()))
+                                        : displayedContentBuilder.ToString();
+
+                                    await ApplyStreamingMessageContentAsync(uiContent).ConfigureAwait(false);
+                                    lastUiFlushAt = Environment.TickCount64;
+                                }
                             }
                         }
+                    }
+                    finally
+                    {
+                        monitor?.EndReply();
                     }
 
                     if (localBatch.Length > 0 && !thinkingModeEnabled)
@@ -4319,6 +4349,13 @@ namespace Malx_AI
 
         private async Task SendUserMessageFromInputAsync(string? explicitUserMessage = null, string? temporaryCloudModelId = null)
         {
+            // Every reply this turn produces (local, cloud or Hybrid Local) reports its speed here.
+            using (GenerationTelemetry.Use(_generationMonitor))
+                await SendUserMessageFromInputCoreAsync(explicitUserMessage, temporaryCloudModelId);
+        }
+
+        private async Task SendUserMessageFromInputCoreAsync(string? explicitUserMessage, string? temporaryCloudModelId)
+        {
             string? cloudModelIdToRestore = null;
             try
             {
@@ -4607,8 +4644,6 @@ namespace Malx_AI
                             finalizedResponse.Answer,
                             thinkingModeEnabled);
 
-                        double speedMetric = _tokenCount / Math.Max(_inferenceTimer.Elapsed.TotalSeconds, 0.001);
-                        ShowTransientStatus($"Tokens: {_tokenCount}  •  Speed: {speedMetric:F2} tok/s");
                         _currentStreamingMessage = null;
 
                         // NOTE: a clean turn deliberately does NOT clear the crash strike here.

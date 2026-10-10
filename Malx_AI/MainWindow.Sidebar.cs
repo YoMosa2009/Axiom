@@ -24,8 +24,7 @@ namespace Malx_AI
             var titleText = new TextBlock
             {
                 Text = title,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center,
+                Style = (Style)FindResource("SidebarRowLabelStyle"),
                 ToolTip = title
             };
 

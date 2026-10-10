@@ -778,6 +778,7 @@ namespace Malx_AI
             LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, scope {scope.Describe()}.");
             RelayStatusBlock.Text = enableCouncilSynergy ? "Relay: Builder executing agent mission..." : "Relay: Agent running";
 
+            AgentRunJournal runJournal = BeginAgentRunJournal(fileBackup);
             var session = new AgentSession(scope, maxSteps, new AgentToolExecutor(scope, fileBackup));
             AgentRunResult result;
             _agentSessionRunning = true;
@@ -804,11 +805,13 @@ namespace Malx_AI
                 await BackendLogService.LogErrorAsync("ComputerAgent", ex);
                 CompleteAgentRunCard(runCard, $"The agent stopped: {ex.Message}");
                 FinishAgentRunUi();
+                OfferAgentUndo(runJournal);
                 return;
             }
             finally
             {
                 _agentSessionRunning = false;
+                EndAgentRunJournal(fileBackup, runJournal);
             }
 
             if (_activeAgentTaskState != null)
@@ -918,6 +921,7 @@ namespace Malx_AI
             _chatHistory.Add(("assistant", finalChatMessage));
             UpdateWorkplaceTokenUsageIndicator();
             FinishAgentRunUi();
+            OfferAgentUndo(runJournal);
         }
 
         /// <summary>
@@ -1034,7 +1038,7 @@ namespace Malx_AI
             if (saved.Count > 6)
                 names += $" and {saved.Count - 6} more";
             string noun = saved.Count == 1 ? "file that already existed" : "files that already existed";
-            return $"Before changing {saved.Count} {noun} ({names}), Axiom saved the originals in `{backup.Root}`. Ask to undo it if you want them back.";
+            return $"Before changing {saved.Count} {noun} ({names}), Axiom saved the originals in `{backup.Root}`. Use **Undo these changes** below the chat to put them back.";
         }
     }
 

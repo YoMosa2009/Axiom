@@ -1,0 +1,110 @@
+<Window x:Class="Malx_AI.FeedbackDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Send feedback"
+        Width="600" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{DynamicResource NotebookBackgroundBrush}"
+        Foreground="{DynamicResource NotebookTextBrush}"
+        UseLayoutRounding="True">
+    <Window.Resources>
+        <!-- App.xaml's global TextBlock style sets a 22px line height for chat text; dialogs read better at the font's own spacing. -->
+        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="LineHeight" Value="Auto"/>
+        </Style>
+        <!-- Segmented choice for the kind of feedback. -->
+        <Style x:Key="KindToggleStyle" TargetType="RadioButton">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
+            <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="pill" Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <TextBlock Text="{TemplateBinding Content}" LineHeight="Auto" VerticalAlignment="Center"
+                                       Foreground="{TemplateBinding Foreground}" FontWeight="{TemplateBinding FontWeight}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="pill" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="pill" Property="Background" Value="{DynamicResource AccentSoftBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="FieldLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="LineHeight" Value="Auto"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+        <Style x:Key="HintStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="LineHeight" Value="Auto"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="28,22,28,22">
+        <TextBlock Text="Send feedback" FontSize="26" FontFamily="Georgia" LineHeight="Auto"/>
+        <TextBlock Text="Report a problem or suggest an improvement. It goes straight to the developer."
+                   FontSize="12" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,18" TextWrapping="Wrap"/>
+
+        <Border Background="{DynamicResource SurfaceSunkenBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
+                CornerRadius="9" Padding="3" HorizontalAlignment="Left" Margin="0,0,0,16">
+            <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="KindProblem" GroupName="Kind" Content="Report a problem" Style="{StaticResource KindToggleStyle}" IsChecked="True" Checked="Kind_Checked"/>
+                <RadioButton x:Name="KindIdea" GroupName="Kind" Content="Suggest an idea" Style="{StaticResource KindToggleStyle}" Checked="Kind_Checked"/>
+                <RadioButton x:Name="KindOther" GroupName="Kind" Content="Something else" Style="{StaticResource KindToggleStyle}" Checked="Kind_Checked"/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="MessageLabel" Text="What happened?" Style="{StaticResource FieldLabelStyle}"/>
+        <Grid>
+            <TextBox x:Name="MessageInput" Height="150" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
+                     VerticalScrollBarVisibility="Auto" Padding="10,8" FontSize="13" MaxLength="5000"
+                     TextChanged="MessageInput_TextChanged" AutomationProperties.Name="Feedback message"/>
+            <TextBlock x:Name="MessagePlaceholder" IsHitTestVisible="False" Margin="13,9,13,0" FontSize="13" LineHeight="Auto" TextWrapping="Wrap"
+                       Foreground="{DynamicResource MutedTextBrush}"
+                       Text="Describe what you were doing and what went wrong. Steps to repeat it help a lot."/>
+        </Grid>
+
+        <TextBlock Text="Your email (optional)" Style="{StaticResource FieldLabelStyle}" Margin="0,14,0,6"/>
+        <TextBox x:Name="ReplyEmailBox" Height="34" Padding="10,0" FontSize="13" MaxLength="254" AutomationProperties.Name="Your email"/>
+        <TextBlock Text="Only if you'd like a reply." Style="{StaticResource HintStyle}" Margin="0,5,0,0"/>
+
+        <CheckBox x:Name="IncludeDiagnosticsBox" IsChecked="True" Margin="0,16,0,0" FontSize="12"
+                  Foreground="{DynamicResource NotebookTextBrush}" Checked="IncludeDiagnostics_Changed" Unchecked="IncludeDiagnostics_Changed"
+                  Content="Include technical details (app version, Windows version, hardware, mode, recent error lines)"/>
+        <TextBlock Style="{StaticResource HintStyle}" Margin="22,4,0,0">
+            <Run Text="Never included: your chats, files or API keys."/>
+            <Hyperlink x:Name="PreviewLink" Click="PreviewLink_Click" Foreground="{DynamicResource AccentMutedBrush}">See exactly what will be sent</Hyperlink>
+        </TextBlock>
+
+        <TextBox x:Name="PreviewBox" Visibility="Collapsed" IsReadOnly="True" Height="170" Margin="0,10,0,0" Padding="10,8"
+                 FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
+                 Background="{DynamicResource SurfaceSunkenBrush}"/>
+
+        <TextBlock x:Name="StatusText" Visibility="Collapsed" Margin="0,14,0,0" FontSize="12" LineHeight="Auto" TextWrapping="Wrap"/>
+
+        <DockPanel Margin="0,20,0,0" LastChildFill="False">
+            <TextBlock x:Name="DeliveryHintText" DockPanel.Dock="Left" Style="{StaticResource HintStyle}" VerticalAlignment="Center" MaxWidth="280"/>
+            <Button x:Name="SendButton" DockPanel.Dock="Right" Content="Send" Click="Send_Click" IsEnabled="False"
+                    Style="{StaticResource PremiumButtonStyle}" Foreground="{DynamicResource OnAccentBrush}" Height="36" MinWidth="110" Padding="18,0"/>
+            <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Cancel" Click="Close_Click" Height="36" MinWidth="90" Margin="0,0,8,0"/>
+        </DockPanel>
+    </StackPanel>
+</Window>

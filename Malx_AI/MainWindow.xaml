@@ -82,6 +82,16 @@
             <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
         </Style>
 
+        <!-- Text inside a sidebar button. Content set in XAML or code takes its implicit style from
+             the logical tree, not the button template, so the colour binding has to be explicit. -->
+        <Style x:Key="SidebarRowLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="LineHeight" Value="Auto"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+            <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+        </Style>
+
         <Style x:Key="SidebarRowButtonStyle" TargetType="Button">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
             <Setter Property="Background" Value="Transparent"/>
@@ -927,20 +937,20 @@
                             ToolTip="See which local models fit this computer and download one" AutomationProperties.Name="Download a model">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE896;" Style="{StaticResource SidebarIconTextStyle}"/>
-                            <TextBlock Text="Download a model"/>
+                            <TextBlock Text="Download a model" Style="{StaticResource SidebarRowLabelStyle}"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="ImportModelSidebarButton" Click="ImportModel_Click" Style="{StaticResource SidebarRowButtonStyle}"
                             ToolTip="Load a GGUF model file you already have" AutomationProperties.Name="Import a model file">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE8B5;" Style="{StaticResource SidebarIconTextStyle}"/>
-                            <TextBlock Text="Import a model file"/>
+                            <TextBlock Text="Import a model file" Style="{StaticResource SidebarRowLabelStyle}"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="SettingsSidebarButton" Click="Settings_Click" Style="{StaticResource SidebarRowButtonStyle}" AutomationProperties.Name="Settings">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE713;" Style="{StaticResource SidebarIconTextStyle}"/>
-                            <TextBlock Text="Settings"/>
+                            <TextBlock Text="Settings" Style="{StaticResource SidebarRowLabelStyle}"/>
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -953,14 +963,14 @@
                             ToolTip="Start a new chat" AutomationProperties.Name="New chat">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE710;" Style="{StaticResource SidebarIconTextStyle}" Foreground="{DynamicResource PrimaryAccentBrush}"/>
-                            <TextBlock Text="New chat"/>
+                            <TextBlock Text="New chat" Style="{StaticResource SidebarRowLabelStyle}"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="NewWorkplaceButton" Click="NewWorkplace_Click" Style="{StaticResource SidebarPrimaryRowButtonStyle}" Visibility="Collapsed"
                             ToolTip="Start a new workplace" AutomationProperties.Name="New workplace">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE710;" Style="{StaticResource SidebarIconTextStyle}" Foreground="{DynamicResource PrimaryAccentBrush}"/>
-                            <TextBlock Text="New workplace"/>
+                            <TextBlock Text="New workplace" Style="{StaticResource SidebarRowLabelStyle}"/>
                         </StackPanel>
                     </Button>
 
@@ -1179,6 +1189,7 @@
                                     <RowDefinition Height="4"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
                                 <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,5">
@@ -1236,6 +1247,16 @@
                                            Visibility="Collapsed"
                                            Margin="0,6,0,0"
                                            TextTrimming="CharacterEllipsis"/>
+
+                                <!-- Speed of the reply in progress, or the last one. Same readout in
+                                     Local, Cloud and Hybrid Local, and in the Workplace header. -->
+                                <DockPanel x:Name="GenerationStatsRow" Grid.Row="4" LastChildFill="False" Margin="0,7,0,0"
+                                           Visibility="Collapsed" Background="Transparent" ToolTipService.InitialShowDelay="250">
+                                    <TextBlock x:Name="GenerationStatsTitle" Text="Last reply" DockPanel.Dock="Left" FontSize="10" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI"/>
+                                    <TextBlock x:Name="GenerationStatsLabel" Text="" DockPanel.Dock="Right" FontSize="10"
+                                               Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI" TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
                             </Grid>
                         </Border>
                     </StackPanel>
@@ -2520,6 +2541,26 @@
                                 <StackPanel x:Name="SettingsPageGeneral" Visibility="Collapsed">
                                 <TextBlock Text="General" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,12"/>
 
+                                <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
+                                        CornerRadius="10" Padding="14,12" Margin="0,0,0,16">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="&#xED15;" FontFamily="{StaticResource AxiomIconFont}" FontSize="18" LineHeight="Auto"
+                                                   Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="Send feedback or report a problem" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
+                                            <TextBlock Text="Found a bug or have an idea? Tell the developer directly. Chats, files and keys are never included."
+                                                       FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,12,0"/>
+                                        </StackPanel>
+                                        <Button x:Name="SendFeedbackButton" Grid.Column="2" Content="Send feedback…" Click="SendFeedbackButton_Click"
+                                                Height="32" MinWidth="140" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Border>
+
                                 <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,0,0,16" Margin="0,0,0,16">
                                     <StackPanel>
                                         <TextBlock Text="Theme" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
@@ -2668,7 +2709,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.9.14" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.10.0" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Grid.Column="1" Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>
