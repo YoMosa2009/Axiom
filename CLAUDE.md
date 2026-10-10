@@ -9,6 +9,9 @@ that was not obvious.
 `AGENTS.md` (graphify usage, and the cloud-session "ship it" workflow), `RELEASING.md` and
 `VERSIONING.md` are still authoritative for their topics. This file does not repeat them.
 
+**`ROADMAP.md` is the work tracker:** what shipped, what is waiting on the owner (feedback
+delivery key, code signing), and what comes next. Update it in the same commit as the work.
+
 ---
 
 ## 1. What Axiom is
@@ -32,7 +35,7 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet build Malx_AI/Malx_AI.cspr
 NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj
 ```
 
-- **Tests:** about 660 xUnit tests, about 20 s on this machine (about 2 min inside OpenCode's shell). Keep them green.
+- **Tests:** about 740 xUnit tests, about 35 s on this machine (about 2 min inside OpenCode's shell). Keep them green.
 - **How the tests compile:** `Malx_AI.Tests` targets plain `net10.0` and compiles *linked production files*
   (`<Compile Include="..\Malx_AI\...">`), not a project reference. A new pure-logic file must be added
   to the `.csproj` link list. Code that touches WPF, WebView2 or `AppDataPaths` cannot be linked, so keep
@@ -64,8 +67,11 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
 
 | Area | Files |
 | --- | --- |
-| Main window and Normal chat | `MainWindow.xaml(.cs)` plus partials: `.Cloud.cs` (cloud tool loop), `.Inference.cs`, `.ProjectCanvas.cs`, `.ResponsiveLayout.cs`, `.Mcp.cs`, `.ToolAgents.cs`, `.Theme.cs` |
-| Workplace | `WorkplaceView.xaml.cs` (~19k lines: council pipeline, cloud role tool loop, patch capture), `.Agent.cs` (Agent Access UI and run), `.ComputerUse.cs`, `.SingleModel.cs` |
+| Main window and Normal chat | `MainWindow.xaml(.cs)` plus partials: `.Cloud.cs` (cloud tool loop), `.Inference.cs`, `.ProjectCanvas.cs`, `.ResponsiveLayout.cs`, `.Mcp.cs`, `.ToolAgents.cs`, `.Theme.cs`, `.Sidebar.cs` (chat/workplace list items, menus, groups), `.Feedback.cs` |
+| Workplace | `WorkplaceView.xaml.cs` (~20k lines: council pipeline, cloud role tool loop, patch capture), `.Agent.cs` (Agent Access UI and run), `.AgentUndo.cs` (undo bar), `.ComputerUse.cs`, `.SingleModel.cs` |
+| First run and models | `FirstRunGuideWindow.xaml(.cs)` (Local / Cloud / own server; hardware check; model cards; download), `LocalModelFitAdvisor.cs` (pure fit rating), `DefaultModelDownloadService.cs` (model list, verified download), `HardwareProfiler.cs` |
+| Feedback | `FeedbackDialog.xaml(.cs)`, `FeedbackReport.cs` (pure: report text, secret scrubbing, mailto), `FeedbackDelivery.cs` (Web3Forms send, email fallback) |
+| Reply speed readout | `GenerationStats.cs` (pure tracker/formatter), `GenerationTelemetry.cs` (monitor + AsyncLocal routing), `GenerationReadout.cs` (header text) |
 | Cloud and Hybrid transport | `OpenRouterChatService.cs` (model profiles, streaming, tool calls, fallbacks, custom endpoint), `OllamaStreamChunkConverter.cs`, `CustomEndpointMetadataParser.cs` |
 | Agent Access | `Agent/`: `AgentSession` (loop), `AgentToolExecutor` (tools), `CloudAgentModel` / `TextProtocolAgentModel` (`AgentModel.cs`), `AgentPromptBuilder`, `AgentContextManager` (continuation and compaction), `AgentWorkVerifier`, `AgentRunSupport` (mid-run inbox, file backups), `AgentPermissionPolicy`, `AgentToolSchemas` |
 | Computer Use | `ComputerUse/`: session controller, task contract, application/browser verification, planning, safety |
@@ -179,9 +185,14 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
     (`DescribeModelWait`). Never let a run sit on "Starting...".
 24. **Continuation:** a follow-up message continues the active task (`AgentActiveTaskState`), unless it's a "new task" phrase.
     The follow-up overrides the original plan where they conflict.
-25. **Context compaction:** older steps are compacted to summaries; only observations starting with `ERROR:` count as failures.
-    *Open issue:* refused or blocked steps ("Blocked: …", "The user declined…") are still summarised as if they ran
-    (e.g. "[Read X]").
+25. **Context compaction:** older steps are compacted to summaries. Observations starting with `ERROR:`, `Refused:`,
+    `Blocked:` or `The user declined` keep their first line (`DidNotRun`); anything else is summarised as having run
+    ("[Wrote X]"). A new "didn't run" message needs one of those prefixes.
+25a. **Undo (V1.10.0):** each run gets an `AgentRunJournal` (attached to the task's `AgentFileBackup.Journal`), which
+    records each file's content before the run first changed it, or that the run created it. `Seal()` at run end;
+    `Undo()` skips files changed after the seal, moves the run's versions to `<backup>\runs\<time>\undone\` (never
+    deletes), and removes folders the run created once empty. Only the latest run is offered; a new run, a workplace
+    switch or reset clears it. Shell-command side effects are not tracked.
 
 ### @ComputerUse
 26. **Needs a vision model.** It uses the catalog check above.
@@ -201,6 +212,22 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
     and echo observations).
 31. **Reasoning dialects:** `ReasoningParser` handles closing-only `</think>`, alias tags and GPT-OSS harmony channels.
     Reasoning models get extra generation headroom (`IsLikelyReasoningModel`).
+
+### WPF styling
+30a. **App.xaml's implicit `TextBlock` style** (Segoe UI, `LineHeight` 22, `NotebookTextBrush`) applies to every
+    TextBlock found through the **logical** tree. A `ContentPresenter.Resources` style inside a button template only
+    reaches text the template generates (string `Content`), not TextBlocks you put in `Content` from XAML or code.
+    For those, use an explicit style (`SidebarRowLabelStyle` binds Foreground to the ancestor Button) or a
+    Window-level implicit TextBlock style (`LineHeight="Auto"` in the dialogs). Symptoms: text that ignores the
+    button's hover colour, and loose 22px line spacing in dialogs.
+30b. **Sidebar items are built in code** (`MainWindow.Sidebar.cs`: `CreateSidebarItem`, `SetSidebarItemActive`).
+    The active highlight uses `SetResourceReference`, so theme changes repaint it with no code. Lookups by
+    `Button.Tag is int id` must stay pattern matches: search-result buttons carry a `ChatSearchResult` tag.
+30c. **Reply speed readout:** `GenerationTelemetry.Use(monitor)` wraps each view's send root
+    (`SendUserMessageFromInputAsync`, `WorkplaceView.SendQueryAsync`); the monitor flows through `AsyncLocal` to
+    `OpenRouterChatService.SendConversation(Stream)Async`, `InferenceBackendService.RunScopedExclusiveStream` and
+    `MainWindow.StreamInferenceAsync`, which call Begin / Report / End. A new streaming path must go through one of
+    those or report itself. Counts without provider usage are estimated (chars / 4) and shown with "~".
 
 ### Editing pitfalls (tooling)
 32. **Line endings:** files mix CRLF and LF, and `core.autocrlf=true` normalises on commit. Don't mass-convert.
@@ -230,6 +257,18 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
   - tool-stream probe: whether tool-call arguments stream progressively.
 - **Verifying a fix:** reproduce from the owner's real logs and state first (`backend-events.log`, `workplace_session.json`),
   then confirm in the real app via the UIA-only recipe in §5, not just unit tests.
+- **Screenshots of windows and dialogs without touching the owner's screen:** a render harness (a WPF console app
+  referencing `Malx_AI.dll`, run from a copy of the bin folder) that builds the windows in-process and saves them with
+  `RenderTargetBitmap`. Rules learned the hard way (V1.10.0 work):
+  - **Start it on a hidden desktop** (`CreateDesktop` + `CreateProcess` with `STARTUPINFO.lpDesktop = "WinSta0\\<name>"`).
+    A plain off-screen window is not enough: any error MessageBox lands on the owner's screen, which happened once.
+    `SetThreadDesktop` from inside the process fails (error 170) because COM already made a window on the STA thread.
+  - Don't call `App.InitializeComponent()`: it sets `StartupUri`, and the app's own startup then opens a MainWindow.
+    Load only the resources: `Application.LoadComponent(app, new Uri("/Malx_AI;component/app.xaml", UriKind.Relative))`.
+  - Point pack URIs at Axiom (`Application._resourceAssembly` via reflection; the public setter refuses), or
+    MainWindow's icon fails to load.
+  - Use a throwaway `AXIOM_DATA_DIR`, and set `first_run_guide_shown` so the guide doesn't open modally.
+  - Render `VisualTreeHelper.GetChild(window, 0)`, not `window.Content`, or the content margins are cropped.
 
 ## 9. Delegating implementation to local Qwen (planner/implementer)
 
@@ -247,6 +286,12 @@ The owner's Qwen3.6 35B-A3B can implement tasks through **Axiom-CLI** (their Ope
   PascalCase sentences with no underscores), then merge, push and remove the worktree.
 - **Track record (2026-10-01):** fixed the agent line-count off-by-one (`CountLines`) and the compaction "Exception"
   misclassification. Both are correct, minimal and tested.
+- **Track record (2026-10-09, V1.10.0):** five tasks, all merged: `LocalModelFitAdvisor` (8 tests), `FeedbackReport`
+  (14 tests; one regex deviation caught in review), `GenerationStats` (10 tests), the "didn't run" compaction fix,
+  and 9 tests for `AgentRunJournal` (passed first time against unseen code). About 3 to 8 minutes each.
+- **NuGet path through bash:** when Qwen sets `NUGET_PACKAGES=C:\Users\...` in its bash shell the backslashes vanish and
+  it creates an 80 MB `Usersuser.nugetpackages` folder in the worktree. Tell it to use the PowerShell form
+  (`$env:NUGET_PACKAGES='C:\Users\user\.nuget\packages'`) and check `git status` for stray folders before committing.
 
 ### Parallel offloading (owner-approved plan, 2026-10-01)
 

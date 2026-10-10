@@ -10,7 +10,7 @@ unless you deliberately reach out to a cloud model or a connected service.
 
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![Release](https://img.shields.io/badge/release-V1.9.14-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.10.0-brightgreen)
 ![.NET](https://img.shields.io/badge/.NET-10-purple)
 
 [Download](../../releases) · [Getting started](#getting-started) · [Feedback](#feedback)
@@ -258,8 +258,16 @@ exits normally.
 1. Download the latest Windows ZIP from [Releases](../../releases).
 2. Extract the **whole folder** — don't run the executable from inside the ZIP.
 3. Launch `Malx_AI.exe`.
-4. Import or install a GGUF model, configure Hybrid Local, or add an OpenRouter key.
+4. The first-run guide asks how you want to run AI. For a local model it checks your
+   processor, memory and graphics card, shows which models fit, and downloads the one it
+   recommends. You can also pick a cloud key or your own server, or skip and set things up
+   later (reopen the guide from **Download a model** in the sidebar).
 5. Open Chat, or head to Workplace.
+
+> **"Windows protected your PC"?** Axiom isn't code-signed yet, so Windows SmartScreen shows
+> this warning for new downloads it hasn't seen often. Click **More info**, then **Run anyway**.
+> The release ZIP is built and published by this repository's own GitHub Actions workflow, and
+> the in-app updater verifies each update package before installing it.
 
 ## Updating
 
@@ -295,8 +303,10 @@ HtmlAgilityPack · AvalonEdit · UglyToad.PdfPig · SQLite · WebView2
 
 ## Feedback
 
-I'd love to hear from you. Bug, feature request, or just how it's going — reach me at
-**malxshrouds@gmail.com**. Your input genuinely shapes what gets built next.
+I'd love to hear from you. Bug, feature request, or just how it's going — use
+**Settings → General → Send feedback** in the app (it can attach your app version and recent
+error lines, never your chats, files or keys), or email **malxshrouds@gmail.com**. Your input
+genuinely shapes what gets built next.
 
 ## License
 

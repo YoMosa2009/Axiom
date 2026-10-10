@@ -1,5 +1,23 @@
 # Changelog
 
+## [V1.10.0] - 2026-10-09
+
+A first-run guide that picks a model for your computer, Send feedback, one-click undo for Agent Access, a reply-speed readout in every mode, and a redesigned sidebar.
+
+### Added
+- **First-run guide.** On a new install Axiom asks how you want to run AI: on this computer, with free cloud models, or on your own server. For a local model it checks your processor, memory and graphics card, rates each downloadable model ("Fast: fits on your graphics card", "Runs on your processor", "Too large for this computer"), recommends the largest that runs well, and downloads and loads it with a progress bar. Cloud and server choices open the right Settings page with the cursor in the key field. **Download a model** in the sidebar reopens the model page any time. Recommendations now use your graphics card's full memory rather than whatever happened to be free at that moment.
+- **Send feedback or report a problem** (Settings › General). Choose problem, idea or something else, write a message, and optionally add your email for a reply. Technical details (app version, Windows version, hardware, mode, recent error lines) can be included, with a preview of exactly what will be sent. API keys, tokens and your Windows user name are scrubbed out; chats and files are never included. The report opens as a ready email to the developer, with the full text also on your clipboard.
+- **Undo for Agent Access.** After a run that changed files, a bar above the message box says what it changed ("The agent changed 1 file and created 2 files") with **Undo these changes**. Undo puts each file back the way it was before the run and removes files the run created, plus any folder it made once that folder is empty. Nothing is destroyed: the run's versions are moved to a folder you can open. A file you edited yourself after the run is left alone and listed. Changes made by commands the agent ran (installs, deletions) can't be undone this way.
+- **Reply speed in every mode.** Chat (under the context meter) and the Workplace header now show the reply in progress or the last one, for example "31 tok/s · 412 tokens", the same way for Local, Cloud and Hybrid Local. Hover for details: time to first text and whether the count is exact. Hybrid Local servers don't report token counts, so those are estimated from the text and marked "~". This replaces the "Tokens / Speed" pop-up that local replies used to show.
+
+### Changed
+- **Redesigned sidebar** for Chat and Workplace. Both now share one layout: a **New chat** / **New workplace** button, search, the list, and a short footer (Download a model, Import a model file, Settings). Chats are grouped into Pinned, Today, Yesterday, Previous 7 days, Previous 30 days and Older. Each item has a ⋯ menu (also on right-click) to rename, pin or delete it, so the separate Delete buttons are gone. Workplaces can now be renamed and searched, and the collapsible "Workplace Chats" header and the empty gap above the list are gone. Deleting asks first.
+
+### Fixed
+- Agent Access: when older steps were summarised to save space, a step that never ran (refused, blocked as a repeat, or declined by you) could be summarised as if it had, for example "[Wrote C:\Windows\x.txt]". These now keep their real outcome.
+- Choosing a chat while search results were showing could throw an error.
+- The highlighted chat or workplace now follows theme changes correctly.
+
 ## [V1.9.14] - 2026-10-01
 
 Very small local models (under 4B, for example Qwen3 0.6B) now produce real slide decks, charts, and documents in Project Canvas.
