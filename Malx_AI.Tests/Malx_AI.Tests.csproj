@@ -85,5 +85,6 @@
     <Compile Include="..\Malx_AI\CanvasFileArtifact.cs" Link="Production\CanvasFileArtifact.cs" />
     <Compile Include="..\Malx_AI\CanvasFileRequest.cs" Link="Production\CanvasFileRequest.cs" />
     <Compile Include="..\Malx_AI\EffortPolicy.cs" Link="Production\EffortPolicy.cs" />
+    <Compile Include="..\Malx_AI\SidebarHistoryGroups.cs" Link="Production\SidebarHistoryGroups.cs" />
   </ItemGroup>
 </Project>

@@ -89,24 +89,10 @@ namespace Malx_AI
         }
 
         /// <summary>
-        /// Re-applies the highlight colours that are set from code rather than by a style, so a
-        /// theme change does not leave the previous accent on the selected chat or workplace.
+        /// Re-applies colours that are set from code rather than by a style or resource reference.
         /// </summary>
         private void RepaintCodePaintedSelections()
         {
-            if (_activeChatButton != null)
-            {
-                _activeChatButton.Background = AppTheme.Brush(p => p.AccentSoft);
-                _activeChatButton.BorderBrush = AppTheme.Brush(p => p.Accent);
-            }
-
-            if (_activeWorkplaceButton != null)
-            {
-                _activeWorkplaceButton.Background = AppTheme.Brush(p => p.AccentSoft);
-                _activeWorkplaceButton.BorderBrush = AppTheme.Brush(p => p.Accent);
-                _activeWorkplaceButton.Foreground = AppTheme.Brush(p => p.Text);
-            }
-
             RefreshCloudModeToggleUi();
             RefreshNormalWebToggleUi();
         }

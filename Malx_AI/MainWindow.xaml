@@ -65,64 +65,35 @@
             <Setter Property="Padding" Value="14,2"/>
         </Style>
 
-        <Style x:Key="SidebarFlatButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+        <!-- ═══ Sidebar ═══
+             One visual language for the Chat and Workplace sidebars: flat icon rows, a quiet search
+             field, and list items that show their actions (⋯) on hover. Icons come from the Windows
+             icon font, so they recolour with the theme like text. -->
+        <FontFamily x:Key="AxiomIconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+        <Style x:Key="SidebarIconTextStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource AxiomIconFont}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="LineHeight" Value="Auto"/>
+            <Setter Property="Width" Value="18"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+        </Style>
+
+        <Style x:Key="SidebarRowButtonStyle" TargetType="Button">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
             <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
-            <Setter Property="HorizontalContentAlignment" Value="Left"/>
-            <Setter Property="Padding" Value="12,2"/>
-        </Style>
-
-        <Style x:Key="SidebarOutlineButtonStyle" TargetType="Button" BasedOn="{StaticResource SidebarFlatButtonStyle}">
-            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
-            <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
-        </Style>
-
-        <Style x:Key="ChatHistoryItemButtonStyle" TargetType="Button">
-            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
-            <Setter Property="BorderBrush" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Margin" Value="0,1"/>
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="border"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="10">
-                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
-                                <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Opacity" Value="0.88"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="WorkplaceActionButtonStyle" TargetType="Button">
-            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
-            <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Padding" Value="11,0"/>
-            <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -135,20 +106,26 @@
                                 SnapsToDevicePixels="True">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalAlignment="Center"
-                                              Margin="{TemplateBinding Padding}"/>
+                                              Margin="{TemplateBinding Padding}">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                        <Setter Property="LineHeight" Value="Auto"/>
+                                        <Setter Property="VerticalAlignment" Value="Center"/>
+                                        <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
-                                <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceSunkenBrush}"/>
-                                <Setter TargetName="border" Property="Opacity" Value="0.9"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.85"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}"/>
-                                <Setter TargetName="border" Property="Opacity" Value="0.58"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -156,60 +133,138 @@
             </Setter>
         </Style>
 
-        <Style x:Key="WorkplaceDeleteButtonStyle" TargetType="Button" BasedOn="{StaticResource WorkplaceActionButtonStyle}">
-            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="Background" Value="#231C1C"/>
-            <Setter Property="Foreground" Value="#D9A29A"/>
-            <Setter Property="BorderBrush" Value="#5A3631"/>
-            <Setter Property="FontSize" Value="11"/>
-        </Style>
-
-        <Style x:Key="WorkplaceHistoryItemButtonStyle" TargetType="Button">
-            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="Background" Value="{DynamicResource SurfaceSunkenBrush}"/>
-            <Setter Property="Foreground" Value="#DCD5CB"/>
+        <!-- "New chat" / "New workplace": the one emphasised row at the top of the sidebar. -->
+        <Style x:Key="SidebarPrimaryRowButtonStyle" TargetType="Button" BasedOn="{StaticResource SidebarRowButtonStyle}">
+            <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Padding" Value="14,0"/>
-            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Height" Value="40"/>
+        </Style>
+
+        <!-- Chat and workplace list items. The left rail shows the BorderBrush, which code sets to
+             the accent on the active item and leaves transparent otherwise. -->
+        <Style x:Key="SidebarListItemButtonStyle" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="Padding" Value="12,0,4,0"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="border"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8"
-                                SnapsToDevicePixels="True">
-                            <Grid>
-                                <Border x:Name="accentRail"
-                                        Width="3"
-                                        HorizontalAlignment="Left"
-                                        Background="{TemplateBinding BorderBrush}"
-                                        CornerRadius="8,0,0,8"
-                                        Opacity="0.45"/>
-                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                                  VerticalAlignment="Center"
-                                                  Margin="{TemplateBinding Padding}"/>
-                            </Grid>
-                        </Border>
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="8"/>
+                            <Border Width="3" Height="16" HorizontalAlignment="Left" Margin="1,0,0,0" CornerRadius="2"
+                                    Background="{TemplateBinding BorderBrush}"/>
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                        <Setter Property="LineHeight" Value="Auto"/>
+                                        <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
-                                <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Opacity" Value="0.9"/>
+                                <Setter TargetName="border" Property="Opacity" Value="0.85"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!-- The ⋯ button inside a list item: hidden until the item is hovered or focused. -->
+        <Style x:Key="SidebarItemMoreButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="26"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Visibility" Value="Hidden"/>
+            <Setter Property="ToolTip" Value="More actions"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="6">
+                            <TextBlock Text="&#xE712;" FontFamily="{StaticResource AxiomIconFont}" FontSize="13" LineHeight="Auto"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource BorderStrongBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Button}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsKeyboardFocused, RelativeSource={RelativeSource AncestorType=Button}}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SidebarGroupHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="LineHeight" Value="Auto"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+            <Setter Property="Margin" Value="12,14,0,4"/>
+        </Style>
+
+        <Style x:Key="SidebarSearchBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource NotebookTextBrush}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SidebarSearchFieldStyle" TargetType="Border">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceSunkenBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
+            <Style.Triggers>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="ChatInputIconButtonStyle" TargetType="Button">
@@ -859,85 +914,154 @@
             </Grid>
         </Border>
 
-        <!-- LEFT SIDEBAR -->
+        <!-- LEFT SIDEBAR
+             Same layout on every tab: wordmark, one "New …" row, search, the list, and a short
+             footer. Chat and Workplace each own their row, search field and list; the tab switch
+             only flips which set is visible. Per-item actions (rename, pin, delete) live in the
+             item's ⋯ menu, so there are no separate Delete buttons. -->
         <Border x:Name="SidebarBorder" Grid.Row="1" Grid.Column="0" Background="{DynamicResource NotebookBackgroundBrush}" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource NotebookBorderBrush}">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Bottom" Margin="20,12,20,20">
-                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,0,0,14"/>
-                    <Button x:Name="ImportModelSidebarButton" Content="+ Import AI Model" Click="ImportModel_Click" Height="40"
-                            Margin="0,0,0,8" Style="{StaticResource PremiumButtonStyle}" FontSize="12" Background="{DynamicResource PrimaryAccentBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" Foreground="{DynamicResource NotebookBackgroundBrush}"/>
-                    <Button x:Name="DownloadDefaultModelSidebarButton" Content="↓ Download recommended model" Click="DownloadDefaultModel_Click" Height="36"
-                            Margin="0,0,0,8" Style="{StaticResource SidebarOutlineButtonStyle}" FontSize="12"/>
-                    <Button Content="⚙ Settings" Click="Settings_Click" Height="36" Margin="0,0,0,8"
-                            Style="{StaticResource SidebarOutlineButtonStyle}" FontSize="12"/>
-                    <Button x:Name="DeleteChatSidebarButton" Content="Delete chat" Click="DeleteChat_Click" Height="34"
-                            Style="{StaticResource SidebarFlatButtonStyle}" FontSize="11" Foreground="{DynamicResource MutedTextBrush}"/>
+                <StackPanel DockPanel.Dock="Bottom" Margin="12,6,12,14">
+                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="4,0,4,8"/>
+                    <Button x:Name="DownloadDefaultModelSidebarButton" Click="DownloadDefaultModel_Click" Style="{StaticResource SidebarRowButtonStyle}"
+                            ToolTip="See which local models fit this computer and download one" AutomationProperties.Name="Download a model">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE896;" Style="{StaticResource SidebarIconTextStyle}"/>
+                            <TextBlock Text="Download a model"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="ImportModelSidebarButton" Click="ImportModel_Click" Style="{StaticResource SidebarRowButtonStyle}"
+                            ToolTip="Load a GGUF model file you already have" AutomationProperties.Name="Import a model file">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8B5;" Style="{StaticResource SidebarIconTextStyle}"/>
+                            <TextBlock Text="Import a model file"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="SettingsSidebarButton" Click="Settings_Click" Style="{StaticResource SidebarRowButtonStyle}" AutomationProperties.Name="Settings">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" Style="{StaticResource SidebarIconTextStyle}"/>
+                            <TextBlock Text="Settings"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
 
-                <StackPanel DockPanel.Dock="Top" Margin="20,24,20,0">
-                    <TextBlock Text="Axiom" FontSize="28" FontWeight="Normal" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Georgia"/>
-                    <Button x:Name="NewChatButton" DockPanel.Dock="Top" Content="+ New chat" Click="NewChat_Click" Height="40" Margin="0,20,0,0"
-                            Style="{StaticResource SidebarOutlineButtonStyle}" FontSize="14" Padding="14,2"/>
-                    <Grid x:Name="ChatHistorySearchPanel" Margin="0,12,0,0">
-                        <TextBox x:Name="ChatHistorySearchBox" Height="34" Padding="10,6,30,6"
-                                 Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
-                                 FontSize="12" TextChanged="ChatHistorySearchBox_TextChanged" ToolTip="Search chat titles and messages"/>
-                        <TextBlock Text="Search chats" Foreground="{DynamicResource MutedTextBrush}" FontSize="11" Margin="11,0,32,0" VerticalAlignment="Center" IsHitTestVisible="False">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding ElementName=ChatHistorySearchBox, Path=Text}" Value="">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                        <Button Content="x" Click="ClearChatHistorySearch_Click" Width="24" Height="24" HorizontalAlignment="Right" Margin="0,0,5,0"
-                                Style="{StaticResource SidebarFlatButtonStyle}" Foreground="{DynamicResource MutedTextBrush}" ToolTip="Clear search"/>
-                    </Grid>
+                <StackPanel DockPanel.Dock="Top" Margin="12,20,12,0">
+                    <TextBlock Text="Axiom" FontSize="26" FontWeight="Normal" FontFamily="Georgia" LineHeight="Auto"
+                               Foreground="{DynamicResource NotebookTextBrush}" Margin="8,0,0,16"/>
+
+                    <Button x:Name="NewChatButton" Click="NewChat_Click" Style="{StaticResource SidebarPrimaryRowButtonStyle}"
+                            ToolTip="Start a new chat" AutomationProperties.Name="New chat">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE710;" Style="{StaticResource SidebarIconTextStyle}" Foreground="{DynamicResource PrimaryAccentBrush}"/>
+                            <TextBlock Text="New chat"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="NewWorkplaceButton" Click="NewWorkplace_Click" Style="{StaticResource SidebarPrimaryRowButtonStyle}" Visibility="Collapsed"
+                            ToolTip="Start a new workplace" AutomationProperties.Name="New workplace">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE710;" Style="{StaticResource SidebarIconTextStyle}" Foreground="{DynamicResource PrimaryAccentBrush}"/>
+                            <TextBlock Text="New workplace"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Border x:Name="ChatHistorySearchPanel" Style="{StaticResource SidebarSearchFieldStyle}" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE721;" FontFamily="{StaticResource AxiomIconFont}" FontSize="12" LineHeight="Auto"
+                                       Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="11,0,8,0"/>
+                            <TextBox x:Name="ChatHistorySearchBox" Grid.Column="1" Style="{StaticResource SidebarSearchBoxStyle}"
+                                     TextChanged="ChatHistorySearchBox_TextChanged" ToolTip="Search chat titles and messages"
+                                     AutomationProperties.Name="Search chats"/>
+                            <TextBlock Grid.Column="1" Text="Search chats" FontSize="12" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}"
+                                       VerticalAlignment="Center" Margin="2,0,0,0" IsHitTestVisible="False">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ElementName=ChatHistorySearchBox, Path=Text}" Value="">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Button Grid.Column="2" Click="ClearChatHistorySearch_Click" Width="24" Height="24" Margin="0,0,5,0"
+                                    ToolTip="Clear search" AutomationProperties.Name="Clear search">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="border" Background="Transparent" CornerRadius="6">
+                                            <TextBlock Text="&#xE711;" FontFamily="{StaticResource AxiomIconFont}" FontSize="10" LineHeight="Auto"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource MutedTextBrush}"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Setter Property="Cursor" Value="Hand"/>
+                                        <Setter Property="Focusable" Value="False"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ElementName=ChatHistorySearchBox, Path=Text}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="WorkplaceSearchPanel" Style="{StaticResource SidebarSearchFieldStyle}" Margin="0,8,0,0" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="&#xE721;" FontFamily="{StaticResource AxiomIconFont}" FontSize="12" LineHeight="Auto"
+                                       Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="11,0,8,0"/>
+                            <TextBox x:Name="WorkplaceSearchBox" Grid.Column="1" Style="{StaticResource SidebarSearchBoxStyle}" Margin="0,0,8,0"
+                                     TextChanged="WorkplaceSearchBox_TextChanged" ToolTip="Filter workplaces by name"
+                                     AutomationProperties.Name="Search workplaces"/>
+                            <TextBlock Grid.Column="1" Text="Search workplaces" FontSize="12" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}"
+                                       VerticalAlignment="Center" Margin="2,0,0,0" IsHitTestVisible="False">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ElementName=WorkplaceSearchBox, Path=Text}" Value="">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </Border>
                 </StackPanel>
 
-                <Button x:Name="WorkplaceHistorySectionToggle" DockPanel.Dock="Top" Content="▾ Workplace Chats" Click="WorkplaceSidebarHistoryToggle_Click" Height="34"
-                        Margin="14,10,14,0" Style="{StaticResource SidebarFlatButtonStyle}" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" Padding="0,6" Visibility="Collapsed"/>
-
-                <!-- Chat history is always shown and fills the space between search and the
-                     bottom actions; no collapsible "Recents" header above it. -->
-                <Border x:Name="ChatHistorySectionContainer" DockPanel.Dock="Top" Opacity="1">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,16,0,0">
-                        <StackPanel Margin="14,0,14,0">
-                            <TextBlock x:Name="ChatHistorySearchStatusText" Visibility="Collapsed" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" Margin="2,0,2,6" TextWrapping="Wrap"/>
+                <Grid Margin="0,6,0,0">
+                    <ScrollViewer x:Name="ChatHistorySectionContainer" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,0,12,8">
+                            <TextBlock x:Name="ChatHistorySearchStatusText" Visibility="Collapsed" Style="{StaticResource SidebarGroupHeaderStyle}" TextWrapping="Wrap"/>
                             <StackPanel x:Name="ChatHistoryStack"/>
                         </StackPanel>
                     </ScrollViewer>
-                </Border>
-
-                <Border x:Name="WorkplaceHistorySectionContainer" DockPanel.Dock="Top" Opacity="1" MaxHeight="420" Visibility="Collapsed">
-                    <StackPanel Margin="14,8,14,0">
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="78"/>
-                            </Grid.ColumnDefinitions>
-                            <Button x:Name="NewWorkplaceButton" Click="NewWorkplace_Click" Height="36" Margin="0,0,8,0" Style="{StaticResource WorkplaceActionButtonStyle}" ToolTip="Create a new workplace chat">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="+" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource PrimaryAccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="New Workplace" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="DeleteWorkplaceButton" Grid.Column="1" Click="DeleteWorkplace_Click" Height="36" Style="{StaticResource WorkplaceDeleteButtonStyle}" ToolTip="Delete the current workplace chat">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="x" FontSize="12" FontWeight="Bold" Margin="0,0,5,0" VerticalAlignment="Center"/>
-                                    <TextBlock Text="Delete" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                        </Grid>
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="320">
+                    <ScrollViewer x:Name="WorkplaceHistorySectionContainer" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                        <StackPanel Margin="12,0,12,8">
+                            <TextBlock x:Name="WorkplaceListHeaderText" Text="Workplaces" Style="{StaticResource SidebarGroupHeaderStyle}" TextWrapping="Wrap"/>
                             <StackPanel x:Name="WorkplaceHistoryStack"/>
-                        </ScrollViewer>
-                    </StackPanel>
-                </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
             </DockPanel>
         </Border>
 

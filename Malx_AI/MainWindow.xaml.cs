@@ -231,8 +231,6 @@ namespace Malx_AI
             if (ContextLengthValueText != null)
                 ContextLengthValueText.Text = _savedLocalContextLength.ToString("F0", CultureInfo.InvariantCulture) + " tokens";
         }
-        private bool _isWorkplaceHistorySectionExpanded = true;
-        private bool _isWorkplaceHistorySectionAnimating = false;
         private readonly RotateTransform _inlineSpinnerRotate = new();
         private readonly System.Windows.Threading.DispatcherTimer _neuronTimer = new();
         private readonly System.Windows.Threading.DispatcherTimer _toolActivityTimer = new();
@@ -896,12 +894,12 @@ namespace Malx_AI
             return (int)Math.Max(512, CtxSlider?.Value ?? 2048);
         }
 
-        private async void DeleteChat_Click(object sender, RoutedEventArgs e)
+        private async Task DeleteChatAsync(int deleteId)
         {
-            if (_currentChatId < 0)
+            if (deleteId < 0)
                 return;
 
-            int deleteId = _currentChatId;
+            bool deletingCurrent = deleteId == _currentChatId;
             _chatContent.Remove(deleteId);
             _chatNames.Remove(deleteId);
             _pinnedChatIds.Remove(deleteId);
@@ -922,18 +920,20 @@ namespace Malx_AI
                 Debug.WriteLine($"Delete chat KV cleanup warning: {ex.Message}");
             }
 
-            var toRemove = ChatHistoryStack.Children
-                .OfType<Button>()
-                .FirstOrDefault(b => b.Tag is int id && id == deleteId);
-            if (toRemove != null)
-                ChatHistoryStack.Children.Remove(toRemove);
-
-            if (_chatContent.Count == 0)
+            if (!deletingCurrent)
             {
-                NewChat_Click(sender, e);
+                RebuildNormalChatHistoryUi();
+            }
+            else if (_chatContent.Count == 0)
+            {
+                NewChat_Click(this, new RoutedEventArgs());
             }
             else
             {
+                // Forget the deleted id first: the rebuild re-adds the current chat if it is
+                // missing from the index, which would resurrect the row just deleted.
+                _currentChatId = -1;
+                RebuildNormalChatHistoryUi();
                 int nextId = _chatContent.Keys.OrderBy(k => k).First();
                 string nextName = _chatNames.TryGetValue(nextId, out string? storedName) ? storedName : $"Chat{nextId}";
                 await LoadChatAsync(nextId, nextName);
@@ -2054,7 +2054,9 @@ namespace Malx_AI
                 }));
             }
 
-            AddChatToHistory(chatName, _currentChatId);
+            if (!string.IsNullOrEmpty(ChatHistorySearchBox.Text))
+                ChatHistorySearchBox.Text = string.Empty;
+            RebuildNormalChatHistoryUi();
             InputBox.Focus();
             UpdateNormalChatChrome();
         }
@@ -2086,58 +2088,6 @@ namespace Malx_AI
                     : Visibility.Collapsed;
 
             UpdateNormalChatChrome();
-        }
-
-        private void WorkplaceSidebarHistoryToggle_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isWorkplaceHistorySectionAnimating)
-                return;
-
-            _isWorkplaceHistorySectionExpanded = !_isWorkplaceHistorySectionExpanded;
-            AnimateWorkplaceSidebarHistorySection(_isWorkplaceHistorySectionExpanded);
-        }
-
-        private void AnimateWorkplaceSidebarHistorySection(bool expand)
-        {
-            _isWorkplaceHistorySectionAnimating = true;
-
-            if (expand)
-            {
-                WorkplaceHistorySectionContainer.Visibility = Visibility.Visible;
-                WorkplaceHistorySectionToggle.Content = "▾ Workplace Chats";
-            }
-            else
-            {
-                WorkplaceHistorySectionToggle.Content = "▸ Workplace Chats";
-            }
-
-            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-            var maxHeightAnim = new DoubleAnimation
-            {
-                Duration = TimeSpan.FromMilliseconds(180),
-                From = expand ? 0 : 420,
-                To = expand ? 420 : 0,
-                EasingFunction = ease
-            };
-
-            var opacityAnim = new DoubleAnimation
-            {
-                Duration = TimeSpan.FromMilliseconds(150),
-                From = expand ? 0 : 1,
-                To = expand ? 1 : 0,
-                EasingFunction = ease
-            };
-
-            opacityAnim.Completed += (_, _) =>
-            {
-                if (!expand)
-                    WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
-
-                _isWorkplaceHistorySectionAnimating = false;
-            };
-
-            WorkplaceHistorySectionContainer.BeginAnimation(FrameworkElement.MaxHeightProperty, maxHeightAnim);
-            WorkplaceHistorySectionContainer.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
         }
 
         private void InitializeWorkplaceChats()
@@ -2179,12 +2129,12 @@ namespace Malx_AI
             await QueueCoordinatedChatPersistenceAsync(false, false, true, false);
         }
 
-        private async void DeleteWorkplace_Click(object sender, RoutedEventArgs e)
+        private async Task DeleteWorkplaceAsync(int deleteId)
         {
-            if (_currentWorkplaceChatId < 0 || _workplaceChats.Count <= 1)
+            if (deleteId < 0 || _workplaceChats.Count <= 1 || !_workplaceChats.ContainsKey(deleteId))
                 return;
 
-            int deleteId = _currentWorkplaceChatId;
+            bool deletingCurrent = deleteId == _currentWorkplaceChatId;
             _workplaceChats.Remove(deleteId);
             _workplaceChatNames.Remove(deleteId);
 
@@ -2193,6 +2143,12 @@ namespace Malx_AI
                 .FirstOrDefault(b => b.Tag is int id && id == deleteId);
             if (toRemove != null)
                 WorkplaceHistoryStack.Children.Remove(toRemove);
+
+            if (!deletingCurrent)
+            {
+                await QueueCoordinatedChatPersistenceAsync(false, false, true, false);
+                return;
+            }
 
             // CRITICAL: Invalidate _currentWorkplaceChatId BEFORE calling LoadWorkplaceChat.
             // LoadWorkplaceChat calls SaveCurrentWorkplaceChat() at its top, which does
@@ -2212,22 +2168,16 @@ namespace Malx_AI
 
         private void AddWorkplaceToHistory(string name, int workplaceId)
         {
-            var button = new Button
-            {
-                Content = name,
-                Style = (Style)FindResource("WorkplaceHistoryItemButtonStyle"),
-                Height = 40,
-                MinHeight = 40,
-                Margin = new Thickness(0, 0, 0, 6),
-                Tag = workplaceId,
-                Background = BrushFromHex("#1C1A18"),
-                BorderBrush = BrushFromHex("#302D2A"),
-                Foreground = BrushFromHex("#DCD5CB"),
-                BorderThickness = new Thickness(1),
-                HorizontalContentAlignment = HorizontalAlignment.Left
-            };
+            Button button = CreateSidebarItem(name, workplaceId, pinned: false,
+            [
+                new SidebarMenuAction("Rename", "\uE8AC", RenameWorkplaceMenuItem_Click, workplaceId),
+                new SidebarMenuAction("Delete", "\uE74D", DeleteWorkplaceMenuItem_Click, workplaceId, IsDestructive: true)
+            ]);
 
-            button.Click += (_, _) => LoadWorkplaceChat(workplaceId, name);
+            // Reads the name at click time so a rename is picked up.
+            button.Click += (_, _) => LoadWorkplaceChat(
+                workplaceId,
+                _workplaceChatNames.TryGetValue(workplaceId, out string? currentName) ? currentName : name);
             WorkplaceHistoryStack.Children.Add(button);
             SetActiveWorkplaceButton(button);
             RefreshWorkplaceHistoryActions();
@@ -2249,25 +2199,12 @@ namespace Malx_AI
 
         private void RefreshWorkplaceHistoryActions()
         {
-            if (DeleteWorkplaceButton != null)
-                DeleteWorkplaceButton.IsEnabled = _workplaceChats.Count > 1;
+            ApplyWorkplaceSearchFilter();
         }
 
         private void SetActiveWorkplaceButton(Button button)
         {
-            if (_activeWorkplaceButton != null)
-            {
-                _activeWorkplaceButton.Background = BrushFromHex("#1C1A18");
-                _activeWorkplaceButton.BorderBrush = BrushFromHex("#302D2A");
-                _activeWorkplaceButton.Foreground = BrushFromHex("#DCD5CB");
-                _activeWorkplaceButton.BorderThickness = new Thickness(1);
-            }
-
-            button.Background = BrushFromHex("#2A241B");
-            button.BorderBrush = BrushFromHex("#B8924A");
-            button.Foreground = BrushFromHex("#EDE8E3");
-            button.BorderThickness = new Thickness(1);
-
+            SetSidebarItemActive(_activeWorkplaceButton, button);
             _activeWorkplaceButton = button;
         }
 
@@ -2305,30 +2242,13 @@ namespace Malx_AI
 
         private void AddChatToHistory(string chatName, int chatId)
         {
-            Button chatButton = new Button
-            {
-                Content = FormatChatHistoryLabel(chatName, _pinnedChatIds.Contains(chatId)),
-                Style = (Style)this.Resources["ChatHistoryItemButtonStyle"],
-                Height = 38,
-                Margin = new Thickness(0, 2, 0, 2),
-                Tag = chatId,
-                ToolTip = "Right-click to rename or pin"
-            };
-
-            var renameItem = new MenuItem { Header = "Rename", Tag = chatId };
-            renameItem.Click += RenameChatMenuItem_Click;
-            var pinItem = new MenuItem
-            {
-                Header = _pinnedChatIds.Contains(chatId) ? "Unpin" : "Pin to top",
-                Tag = chatId
-            };
-            pinItem.Click += PinChatMenuItem_Click;
-            chatButton.ContextMenu = new ContextMenu
-            {
-                Background = BrushFromHex("#211F1D"),
-                Foreground = BrushFromHex("#EDE8E3"),
-                Items = { renameItem, pinItem }
-            };
+            bool pinned = _pinnedChatIds.Contains(chatId);
+            Button chatButton = CreateSidebarItem(chatName, chatId, pinned,
+            [
+                new SidebarMenuAction("Rename", "\uE8AC", RenameChatMenuItem_Click, chatId),
+                new SidebarMenuAction(pinned ? "Unpin" : "Pin to top", pinned ? "\uE77A" : "\uE718", PinChatMenuItem_Click, chatId),
+                new SidebarMenuAction("Delete", "\uE74D", DeleteChatMenuItem_Click, chatId, IsDestructive: true)
+            ]);
 
             _chatNames[chatId] = chatName;
             
@@ -2351,17 +2271,7 @@ namespace Malx_AI
 
             try
             {
-                if (_activeChatButton != null)
-                {
-                    _activeChatButton.Background = Brushes.Transparent;
-                    _activeChatButton.BorderBrush = Brushes.Transparent;
-                    _activeChatButton.BorderThickness = new Thickness(1);
-                }
-
-                button.Background = AppTheme.Brush(p => p.AccentSoft);
-                button.BorderBrush = AppTheme.Brush(p => p.Accent);
-                button.BorderThickness = new Thickness(1);
-
+                SetSidebarItemActive(_activeChatButton, button);
                 _activeChatButton = button;
             }
             catch (Exception ex)
@@ -2435,7 +2345,7 @@ namespace Malx_AI
             {
                 foreach (UIElement child in ChatHistoryStack.Children)
                 {
-                    if (child is Button btn && (int)btn.Tag == chatId)
+                    if (child is Button btn && btn.Tag is int id && id == chatId)
                     {
                         SetActiveChatButton(btn);
                         break;
@@ -2486,11 +2396,7 @@ namespace Malx_AI
                 .FirstOrDefault(b => b.Tag is int id && id == _currentChatId);
 
             if (chatButton != null)
-            {
-                chatButton.Content = FormatChatHistoryLabel(title, _pinnedChatIds.Contains(_currentChatId));
-                chatButton.Click -= ChatHistoryButton_Click;
-                chatButton.Click += ChatHistoryButton_Click;
-            }
+                SetSidebarItemTitle(chatButton, title);
         }
 
         private async void ChatHistoryButton_Click(object sender, RoutedEventArgs e)
@@ -2557,16 +2463,10 @@ namespace Malx_AI
             foreach (ChatIndexEntry entry in index.Where(item => item.IsPinned))
                 _pinnedChatIds.Add(entry.Id);
 
-            ChatHistoryStack.Children.Clear();
-            _activeChatButton = null;
-            foreach (ChatIndexEntry entry in index
-                .OrderByDescending(item => item.IsPinned)
-                .ThenByDescending(item => item.UpdatedAt))
-            {
-                string name = string.IsNullOrWhiteSpace(entry.Name) ? $"Chat{entry.Id}" : entry.Name;
-                _chatNames[entry.Id] = name;
-                AddChatToHistory(name, entry.Id);
-            }
+            foreach (ChatIndexEntry entry in index)
+                _chatNames[entry.Id] = string.IsNullOrWhiteSpace(entry.Name) ? $"Chat{entry.Id}" : entry.Name;
+
+            RenderChatHistoryList(index);
         }
 
         private async void ChatHistorySearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -2619,31 +2519,29 @@ namespace Malx_AI
                 var title = new TextBlock
                 {
                     Text = FormatChatHistoryLabel(result.ChatName, result.IsPinned),
-                    FontSize = 11,
+                    FontSize = 12,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = BrushFromHex("#EDE8E3"),
                     TextTrimming = TextTrimming.CharacterEllipsis
                 };
+                title.SetResourceReference(TextBlock.ForegroundProperty, "NotebookTextBrush");
                 var snippet = new TextBlock
                 {
                     Text = result.Snippet,
-                    FontSize = 10,
-                    Foreground = BrushFromHex("#B0A89F"),
+                    FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
-                    MaxHeight = 34
+                    MaxHeight = 36,
+                    Margin = new Thickness(0, 2, 0, 0)
                 };
+                snippet.SetResourceReference(TextBlock.ForegroundProperty, "MutedTextBrush");
                 var content = new StackPanel();
                 content.Children.Add(title);
                 content.Children.Add(snippet);
                 var button = new Button
                 {
                     Content = content,
-                    Style = (Style)Resources["ChatHistoryItemButtonStyle"],
-                    Height = double.NaN,
+                    Style = (Style)FindResource("SidebarListItemButtonStyle"),
                     MinHeight = 56,
-                    Margin = new Thickness(0, 2, 0, 4),
-                    Padding = new Thickness(10, 7, 8, 7),
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    Padding = new Thickness(12, 8, 10, 8),
                     Tag = result
                 };
                 button.Click += ChatSearchResult_Click;
@@ -2767,21 +2665,18 @@ namespace Malx_AI
                     return;
                 }
 
-                ChatHistoryStack.Children.Clear();
-                _activeChatButton = null;
                 _chatContent.Clear();
                 _pinnedChatIds.Clear();
 
-                foreach (var entry in index
-                    .OrderByDescending(item => item.IsPinned)
-                    .ThenByDescending(item => item.UpdatedAt))
+                foreach (var entry in index)
                 {
                     _chatCounter = Math.Max(_chatCounter, entry.Id);
                     _chatContent[entry.Id] = string.Empty;
                     if (entry.IsPinned)
                         _pinnedChatIds.Add(entry.Id);
-                    AddChatToHistory(string.IsNullOrWhiteSpace(entry.Name) ? $"Chat{entry.Id}" : entry.Name, entry.Id);
                 }
+
+                RenderChatHistoryList(index);
 
                 int idToLoad = _currentChatId > 0 && index.Any(i => i.Id == _currentChatId)
                     ? _currentChatId
@@ -4245,9 +4140,7 @@ namespace Malx_AI
             // Attachments are global, so a change made on the other tab has to show here.
             RefreshCapabilityUi();
             SetWorkplaceTabActive(false);
-            ChatHistorySectionContainer.Visibility = Visibility.Visible;
-            WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
-            WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
+            ShowSidebarSection(workplace: false);
 
             // If a local council run freed the chat model to make room on the GPU, bring it back
             // now that the user is returning to chat.
@@ -4274,9 +4167,7 @@ namespace Malx_AI
             SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.Workplace);
             WorkplaceViewControl.RefreshCapabilityCounts();
             SetWorkplaceTabActive(true);
-            ChatHistorySectionContainer.Visibility = Visibility.Collapsed;
-            WorkplaceHistorySectionToggle.Visibility = Visibility.Visible;
-            WorkplaceHistorySectionContainer.Visibility = _isWorkplaceHistorySectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+            ShowSidebarSection(workplace: true);
 
             // Initialize Workplace with its own session via the executor
             if (_executor != null)
@@ -4303,9 +4194,7 @@ namespace Malx_AI
             SetNormalChatSidebarActionsVisible(false);
             SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.None);
             SetWorkplaceTabActive(false);
-            ChatHistorySectionContainer.Visibility = Visibility.Visible;
-            WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
-            WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
+            ShowSidebarSection(workplace: false);
         }
 
         private void SwitchToNeuron_Click(object sender, RoutedEventArgs e)
@@ -4326,9 +4215,7 @@ namespace Malx_AI
             SetNormalChatSidebarActionsVisible(false);
             SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.None);
             SetWorkplaceTabActive(false);
-            ChatHistorySectionContainer.Visibility = Visibility.Visible;
-            WorkplaceHistorySectionToggle.Visibility = Visibility.Collapsed;
-            WorkplaceHistorySectionContainer.Visibility = Visibility.Collapsed;
+            ShowSidebarSection(workplace: false);
 
             UpdateNeuronMap();
             _neuronTimer.Start();
@@ -4340,7 +4227,6 @@ namespace Malx_AI
             NewChatButton.Visibility = visibility;
             ChatHistorySearchPanel.Visibility = visibility;
             ImportModelSidebarButton.Visibility = visibility;
-            DeleteChatSidebarButton.Visibility = visibility;
         }
 
         private UIElement GetActiveContentView()
