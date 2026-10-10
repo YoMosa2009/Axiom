@@ -1,0 +1,48 @@
+name: "Bug report"
+description: "Something in Axiom doesn't work the way it should."
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for reporting this! Please don't paste API keys, passwords or private files: issues are public."
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: "What happened?"
+      description: "What did you do, what did you expect, and what happened instead?"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Steps to reproduce"
+      placeholder: "1. Open Workplace\n2. ..."
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: "Axiom version"
+      description: "Shown at the bottom of Settings (for example 1.10.0)."
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: "Which mode were you using?"
+      options:
+        - "Local"
+        - "Cloud"
+        - "Hybrid Local"
+        - "Not sure"
+    validations:
+      required: false
+  - type: textarea
+    id: details
+    attributes:
+      label: "Technical details"
+      description: "Windows version, hardware, and any error lines. Axiom's Send feedback fills this in for you."
+      render: "text"
+    validations:
+      required: false
