@@ -8,6 +8,7 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 
 | Item | What to do | Why it matters |
 | --- | --- | --- |
+| **winget listing** | In PowerShell: `wingetcreate submit --token (gh auth token) F:\Axiom-Releases\winget-1.11.0` (manifests validated 2026-10-10). Microsoft reviews it within a few days; then `winget install YoMosa2009.Axiom` works. Afterwards each release: `wingetcreate update YoMosa2009.Axiom --version X.Y.Z --urls <Setup.exe URL> --submit --token (gh auth token)`. | People find and install Axiom from the Windows package manager. |
 | **Code signing** (deferred, owner decision 2026-10-09) | When the user base grows: Azure Trusted Signing (about $10/month, identity validation required), then sign `Malx_AI.exe` and the release ZIP's executables in `release.yml`. | Removes the "Windows protected your PC" SmartScreen warning on first launch. Until then README's Getting started explains **More info → Run anyway**. |
 | **CI release secrets** | Confirmed missing on 2026-10-09 (the V1.10.0 CI run stopped before publishing). In GitHub: repo **Settings → Secrets and variables → Actions → New repository secret**, add `AXIOM_BUILTIN_GOOGLE_CLIENT_ID`, `AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET`, `AXIOM_BUILTIN_GITHUB_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_SECRET` with the same values as the local OAuth files. | Until then every release has to be published from this PC with `scripts/Publish-GitHubRelease.ps1`. |
 

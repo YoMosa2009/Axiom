@@ -67,6 +67,10 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
   After publishing, check the release notes for mojibake (`gh release view vX.Y.Z --json body`).
 - **Shipping rule:** the owner expects each finished fix to be committed, pushed and released so users get it.
   Follow AGENTS.md's ship workflow. Never delete or overwrite a published release.
+- **winget (package `YoMosa2009.Axiom`):** `scripts/New-WingetManifest.ps1` writes and `winget validate` checks the
+  manifests. Submitting opens a public PR on microsoft/winget-pkgs from the owner's account, which Claude Code's auto
+  mode blocks, so the owner runs it: first listing `wingetcreate submit --token (gh auth token) <manifest dir>`; once
+  listed, each release is `wingetcreate update YoMosa2009.Axiom --version X.Y.Z --urls <Setup.exe URL> --submit --token (gh auth token)`.
 - **Concurrent pushes:** `main` sometimes moves in parallel (cloud sessions, PRs). `git fetch` and rebase before pushing.
 - **Repository protection (2026-10-10):** a ruleset on `main` requires a pull request, an approving review from the
   code owner (`.github/CODEOWNERS`) and a passing `build-test` check, and blocks force pushes and deletion. The owner's

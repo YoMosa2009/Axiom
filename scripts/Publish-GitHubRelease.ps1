@@ -253,8 +253,10 @@ if ($LASTEXITCODE -ne 0) {
 
 # Published copies live on GitHub; keep only this version's files locally so release builds
 # don't pile up on the drive.
+# The unpacked build folder (about 900 MB) is only needed to make the ZIP.
+Remove-Item -LiteralPath $publishFolder -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem -LiteralPath $OutputRoot -Force |
-    Where-Object { $_.Name -like "Axiom-*" -and $_.Name -notlike "*v$version*" } |
+    Where-Object { ($_.Name -like "Axiom-*" -or $_.Name -like "winget-*") -and $_.Name -notlike "*$version*" } |
     ForEach-Object {
         Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
         Write-Host "Removed old local package: $($_.Name)"
