@@ -105,7 +105,7 @@ namespace Malx_AI.Agent
             string tool = call.Tool.ToLowerInvariant();
             string path = call.Arg("path");
 
-            if (observation.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+            if (DidNotRun(observation))
             {
                 string firstLine = observation.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? observation;
                 return firstLine.Length <= maxChars ? firstLine : firstLine[..maxChars] + "…";
@@ -124,6 +124,16 @@ namespace Malx_AI.Agent
                 _ => observation.Length <= maxChars ? observation : observation[..maxChars] + "…"
             };
         }
+
+        /// <summary>
+        /// Errors and steps that never ran (refused by policy, blocked as a repeat, declined by the
+        /// user) keep their first line, so a compacted history never claims they happened.
+        /// </summary>
+        private static bool DidNotRun(string observation)
+            => observation.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase)
+                || observation.StartsWith("Refused:", StringComparison.OrdinalIgnoreCase)
+                || observation.StartsWith("Blocked:", StringComparison.OrdinalIgnoreCase)
+                || observation.StartsWith("The user declined", StringComparison.OrdinalIgnoreCase);
 
         private static readonly Regex DepCheckRegex = new(
             @"(?:import\s+([a-zA-Z0-9_\-]+)|pip\s+show\s+([a-zA-Z0-9_\-]+)|pip\s+install\s+([a-zA-Z0-9_\-]+))",

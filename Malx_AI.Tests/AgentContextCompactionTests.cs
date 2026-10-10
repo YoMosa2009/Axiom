@@ -180,4 +180,76 @@ public sealed class AgentContextCompactionTests
         Assert.Single(result);
         Assert.Equal("(no output)", result[0].Observation);
     }
+
+    [Fact]
+    public void ARefusedWriteIsNotSummarisedAsWritten()
+    {
+        var call = new AgentToolCall(AgentToolNames.WriteFile, new Dictionary<string, string>
+        {
+            ["path"] = "C:\\Windows\\x.txt"
+        });
+        var observation = "Refused: Blocked: writing inside protected Windows system folders is refused in both modes.";
+
+        var history = new List<AgentExchange> { new AgentExchange(call, observation) };
+
+        var result = AgentContextManager.CompactExchanges(history, recentKeepCount: 0);
+
+        Assert.Single(result);
+        Assert.StartsWith("Refused:", result[0].Observation);
+        Assert.DoesNotContain("[Wrote", result[0].Observation);
+    }
+
+    [Fact]
+    public void ABlockedRepeatIsNotSummarisedAsRun()
+    {
+        var call = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string>
+        {
+            ["command"] = "npm test"
+        });
+        var observation = "Blocked: this exact run_command call has already been made 3 times in this task, and repeating it will not change the result.\nUse the earlier results.";
+
+        var history = new List<AgentExchange> { new AgentExchange(call, observation) };
+
+        var result = AgentContextManager.CompactExchanges(history, recentKeepCount: 0);
+
+        Assert.Single(result);
+        Assert.StartsWith("Blocked:", result[0].Observation);
+        Assert.DoesNotContain("Use the earlier results", result[0].Observation);
+    }
+
+    [Fact]
+    public void ADeclinedStepIsNotSummarisedAsRead()
+    {
+        var call = new AgentToolCall(AgentToolNames.ReadFile, new Dictionary<string, string>
+        {
+            ["path"] = "C:\\secret.txt"
+        });
+        var observation = "The user declined this step. Do not retry it; work around it or explain what you need.";
+
+        var history = new List<AgentExchange> { new AgentExchange(call, observation) };
+
+        var result = AgentContextManager.CompactExchanges(history, recentKeepCount: 0);
+
+        Assert.Single(result);
+        Assert.StartsWith("The user declined", result[0].Observation);
+        Assert.DoesNotContain("[Read", result[0].Observation);
+    }
+
+    [Fact]
+    public void ALongRefusalIsTrimmedToTheLimit()
+    {
+        var call = new AgentToolCall(AgentToolNames.WriteFile, new Dictionary<string, string>
+        {
+            ["path"] = "C:\\a.txt"
+        });
+        var observation = "Refused: " + new string('x', 500);
+
+        var history = new List<AgentExchange> { new AgentExchange(call, observation) };
+
+        var result = AgentContextManager.CompactExchanges(history, recentKeepCount: 0, olderMaxChars: 50);
+
+        Assert.Single(result);
+        Assert.Equal(51, result[0].Observation.Length);
+        Assert.EndsWith("…", result[0].Observation);
+    }
 }
