@@ -15,7 +15,7 @@ unless you deliberately reach out to a cloud model or a connected service.
 
 ### [⬇ Download Axiom for Windows](https://github.com/YoMosa2009/Axiom/releases/latest)
 
-Free · Windows 10/11 (64-bit) · one-click installer, no admin rights needed
+Free · Windows 10/11 (64-bit) · one-click installer
 
 [Getting started](#getting-started) · [Report a bug](https://github.com/YoMosa2009/Axiom/issues/new/choose) · [Contributing](#contributing) · [Feedback](#feedback)
 
@@ -220,7 +220,7 @@ OpenRouter with your own key.
 |---|---|---|
 | **Edios 1.5** | Google Gemma 4 31B (free) | General chat, reasoning, documents, tool use |
 | **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Repository-aware coding |
-| **Workplace cloud model** | Dots Studio Dots3-Note Preview (free) | The one model behind every Workplace cloud run: Council, Single Model, Agent Access, and Computer Use. Text + image input, 512K context, built for coding, tool use, and long-horizon agent work |
+| **Workplace cloud model** | Dots Studio Dots3-Note Preview (free) | The one model behind every Workplace cloud run: Council, Single Model, Agent Access, and Computer Use. Text + image input, 51[...]
 | **Kestral 1** | Your self-hosted endpoint | Hybrid Local inference |
 
 The Workplace deliberately runs on exactly one cloud model, with no silent fallback to
