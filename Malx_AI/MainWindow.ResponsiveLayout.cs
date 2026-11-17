@@ -56,7 +56,7 @@ namespace Malx_AI
                 SidebarColumn.Width = new GridLength(sidebarWidth);
 
             NavigationBar.Padding = new Thickness(0);
-            double chatLeftPad = _isSidebarCollapsed ? 42 : (compact ? 20 : 28);
+            double chatLeftPad = compact ? 20 : 28;
             ChatHeaderBorder.Padding = compact ? new Thickness(chatLeftPad, 10, 20, 2) : new Thickness(chatLeftPad, 14, 28, 4);
             TokenUsagePanel.Width = compact ? 300 : wide ? 380 : 340;
             // Bottom padding stays small: it is a dead band inside the scroll viewport where

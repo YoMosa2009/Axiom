@@ -1047,47 +1047,53 @@
                 <!-- Right Sidebar Content Views -->
                 <Grid Grid.Row="1">
                     <!-- VIEW A: Context & Environment + Background Tasks (Images 3 & 4) -->
-                    <ScrollViewer x:Name="ContextEnvironmentPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <StackPanel Margin="2,0,4,8">
+                    <ScrollViewer x:Name="ContextEnvironmentPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">                        <ScrollViewer.Resources>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                                <Setter Property="FontSize" Value="13"/>
+                                <Setter Property="LineHeight" Value="19"/>
+                            </Style>
+                        </ScrollViewer.Resources>
+                        <StackPanel Margin="4,6,8,16">
                             <!-- Environment (Image 3 top) -->
-                            <TextBlock Text="Environment" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,8" LineHeight="16"/>
-                            <Grid Margin="0,0,0,6">
+                            <TextBlock Text="Environment" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8" LineHeight="21"/>
+                            <Grid Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="&#xE7F4;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="This computer" FontSize="11" LineHeight="15" VerticalAlignment="Center"/>
-                                <Button Grid.Column="2" Content="Save" Click="ExportContextEnvironment_Click" Background="Transparent" BorderThickness="0" Padding="4,1" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" Cursor="Hand"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="EnvProjectPathText" Grid.Column="1" Text="Unscoped" FontSize="11" LineHeight="15" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                <TextBlock Text="&#xE7F4;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="This computer" FontSize="13" LineHeight="19" VerticalAlignment="Center"/>
+                                <Button Grid.Column="2" Content="Save" Click="ExportContextEnvironment_Click" Background="Transparent" BorderThickness="0" Padding="4,1" FontSize="13" Foreground="{DynamicResource DarkSecondaryBrush}" Cursor="Hand"/>
                             </Grid>
                             <Grid Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="EnvGitBranchText" Grid.Column="1" Text="No git repo" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="EnvProjectPathText" Grid.Column="1" Text="Unscoped" FontSize="13" LineHeight="19" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="EnvGitBranchText" Grid.Column="1" Text="No git repo" FontSize="13" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="19" VerticalAlignment="Center"/>
                             </Grid>
 
-                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,2,0,10"/>
+                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,8,0,16"/>
 
                             <!-- Context Breakdown (Image 3 center) -->
-                            <TextBlock Text="Context" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,6" LineHeight="16"/>
+                            <TextBlock Text="Context" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10" LineHeight="21"/>
                             <Grid Margin="0,0,0,5">
-                                <TextBlock x:Name="ContextUsedPercentText" Text="0% used" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Left" LineHeight="15"/>
-                                <TextBlock x:Name="ContextUsedFractionText" Text="0 / 128k" FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Right" LineHeight="15"/>
+                                <TextBlock x:Name="ContextUsedPercentText" Text="0% used" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Left" LineHeight="19"/>
+                                <TextBlock x:Name="ContextUsedFractionText" Text="0 / 128k" FontSize="13" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Right" LineHeight="19"/>
                             </Grid>
                             <!-- Multi-color segmented progress bar -->
-                            <Border CornerRadius="3" Height="6" Background="{DynamicResource NotebookBackgroundBrush}" ClipToBounds="True" Margin="0,0,0,10">
+                            <Border CornerRadius="4" Height="8" Background="{DynamicResource NotebookBackgroundBrush}" ClipToBounds="True" Margin="0,0,0,10">
                                 <Grid x:Name="ContextSegmentedBarGrid">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition x:Name="CtxBarMessagesCol" Width="0*"/>
@@ -1106,36 +1112,36 @@
 
                             <StackPanel x:Name="ContextBreakdownRowsPanel" Margin="0,0,0,8"/>
 
-                            <TextBlock x:Name="CtxExpandMcpText" Text="> MCP tools  0" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,2" LineHeight="15"/>
-                            <TextBlock x:Name="CtxExpandMemoryText" Text="> Memory files (.md tracker)  0" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,10" LineHeight="15"/>
+                            <TextBlock x:Name="CtxExpandMcpText" Text="> MCP tools  0" FontSize="13" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,2" LineHeight="19"/>
+                            <TextBlock x:Name="CtxExpandMemoryText" Text="> Memory files (.md tracker)  0" FontSize="13" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,10" LineHeight="19"/>
 
                             <Grid Margin="0,0,0,12">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock x:Name="CtxUntilCompactText" Text="Compact ready" FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" LineHeight="14"/>
-                                <Button Grid.Column="1" Content="Compact session" Click="CompactSessionNow_Click" Height="26" Padding="10,0" FontSize="10.5" Style="{StaticResource SubtleButtonStyle}"/>
+                                <TextBlock x:Name="CtxUntilCompactText" Text="Compact ready" FontSize="13" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" LineHeight="19" TextWrapping="Wrap" Margin="0,0,8,0"/>
+                                <Button Grid.Column="1" Content="Compact session" Click="CompactSessionNow_Click" Height="32" Padding="12,0" FontSize="13" Style="{StaticResource SubtleButtonStyle}"/>
                             </Grid>
 
-                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,2,0,10"/>
+                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,8,0,16"/>
 
                             <!-- Outputs section (Image 4) -->
-                            <TextBlock Text="Outputs" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,6" LineHeight="16"/>
+                            <TextBlock Text="Outputs" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10" LineHeight="21"/>
                             <StackPanel x:Name="RightSidebarOutputsPanel" Margin="0,0,0,10">
-                                <TextBlock Text="No files modified yet." FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
+                                <TextBlock Text="No files modified yet." FontSize="13" Foreground="{DynamicResource MutedTextBrush}" LineHeight="19"/>
                             </StackPanel>
 
-                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,2,0,10"/>
+                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,8,0,16"/>
 
                             <!-- Background tasks section (Image 4 red circle) -->
-                            <TextBlock Text="Background tasks" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,6" LineHeight="16"/>
+                            <TextBlock Text="Background tasks" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10" LineHeight="21"/>
                             <StackPanel x:Name="RightSidebarBackgroundTasksPanel"/>
                             <Button x:Name="BackgroundFinishedToggleButton" Click="BackgroundFinishedToggle_Click"
                                     Visibility="Collapsed" Background="Transparent" BorderThickness="0" Padding="0,4" HorizontalContentAlignment="Left" Margin="0,4,0,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE81C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10.5" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                    <TextBlock x:Name="BackgroundFinishedCountText" Text="0 finished" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="&#xE81C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="BackgroundFinishedCountText" Text="0 finished" FontSize="13" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="19" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </Button>
                             <StackPanel x:Name="RightSidebarFinishedTasksPanel" Visibility="Collapsed" Margin="14,2,0,0"/>

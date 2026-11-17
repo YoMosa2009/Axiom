@@ -985,9 +985,11 @@
                                 Click="SidebarCollapseButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0"
                                 Background="Transparent" BorderBrush="Transparent"
                                 ToolTip="Hide sidebar (Ctrl+B)" AutomationProperties.Name="Hide sidebar">
-                            <Path Width="6" Height="10" Stretch="Uniform" Data="M5.5,1 L1.5,5 L5.5,9"
+                            <Path x:Name="SidebarNavigationToggleGlyph" Width="6" Height="10" Stretch="Uniform" Data="M5.5,1 L1.5,5 L5.5,9" RenderTransformOrigin="0.5,0.5"
                                   StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}">
+                                <Path.RenderTransform><ScaleTransform ScaleX="1"/></Path.RenderTransform>
+                            </Path>
                         </Button>
                     </Grid>
 
@@ -1146,14 +1148,6 @@
 
         <!-- CONTENT CONTAINER -->
         <Grid x:Name="ContentContainer" Grid.Row="1" Grid.Column="1" Background="{DynamicResource NotebookBackgroundBrush}">
-            <Button x:Name="SidebarExpandButton" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,9,0,0"
-                    Width="26" Height="26" Panel.ZIndex="25" Visibility="Collapsed"
-                    Click="SidebarCollapseButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0"
-                    ToolTip="Show sidebar (Ctrl+B)" AutomationProperties.Name="Show sidebar">
-                <Path Width="6" Height="10" Stretch="Uniform" Data="M1.5,1 L5.5,5 L1.5,9"
-                      StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-            </Button>
             <!-- CHAT VIEW (default) -->
             <DockPanel x:Name="ChatView" Background="{DynamicResource NotebookBackgroundBrush}">
                 <!-- Docked first so the canvas runs the full height of the chat view, beside the

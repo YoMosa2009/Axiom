@@ -58,12 +58,6 @@ namespace Malx_AI
 
         internal BrowserControlService BrowserControl => _browserControl;
 
-        internal void SetLeftSidebarCollapsedOffset(bool collapsed)
-        {
-            if (WorkplaceHeaderBorder != null)
-                WorkplaceHeaderBorder.Padding = collapsed ? new Thickness(42, 7, 20, 7) : new Thickness(20, 7, 20, 7);
-        }
-
         private void InitializeOverhaulFeatures()
         {
             _overhaulLiveTimer.Interval = TimeSpan.FromSeconds(1);
@@ -848,27 +842,27 @@ namespace Malx_AI
             void AddRow(string colorHex, string label, int tok)
             {
                 double pct = (tok / (double)totalCap) * 100.0;
-                var row = new Grid { Margin = new Thickness(0, 1.5, 0, 1.5) };
+                var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) });
 
                 var dot = new Border
                 {
-                    Width = 7,
-                    Height = 7,
+                    Width = 8,
+                    Height = 8,
                     CornerRadius = new CornerRadius(2),
                     Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 8, 0)
                 };
-                var nameTb = new TextBlock { Text = label, FontSize = 10.5, LineHeight = 14, VerticalAlignment = VerticalAlignment.Center };
+                var nameTb = new TextBlock { Text = label, FontSize = 13, LineHeight = 19, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
                 var tokTb = new TextBlock
                 {
                     Text = FormatCompactTokenCount(tok),
-                    FontSize = 10.5,
-                    LineHeight = 14,
+                    FontSize = 13,
+                    LineHeight = 19,
                     Foreground = AppTheme.Brush("#B0A89F"),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(6, 0, 0, 0)
@@ -876,8 +870,8 @@ namespace Malx_AI
                 var pctTb = new TextBlock
                 {
                     Text = $"{pct:0.0}%",
-                    FontSize = 10.5,
-                    LineHeight = 14,
+                    FontSize = 13,
+                    LineHeight = 19,
                     HorizontalAlignment = HorizontalAlignment.Right,
                     Foreground = AppTheme.Brush("#B0A89F"),
                     VerticalAlignment = VerticalAlignment.Center
@@ -918,8 +912,8 @@ namespace Malx_AI
                     RightSidebarOutputsPanel.Children.Add(new TextBlock
                     {
                         Text = "No files written yet.",
-                        FontSize = 10.5,
-                        LineHeight = 14,
+                        FontSize = 13,
+                        LineHeight = 19,
                         Foreground = AppTheme.Brush("#8A8279")
                     });
                 }
@@ -934,25 +928,29 @@ namespace Malx_AI
 
                     foreach (string file in items)
                     {
-                        var fileRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 1.5, 0, 1.5), ToolTip = file };
+                        var fileRow = new Grid { Margin = new Thickness(0, 4, 0, 4), ToolTip = file };
+                        fileRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                        fileRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                         fileRow.Children.Add(new TextBlock
                         {
                             Text = "\uE8A5",
                             FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
-                            FontSize = 10.5,
+                            FontSize = 13,
                             LineHeight = double.NaN,
                             Foreground = AppTheme.Brush("#8A8279"),
                             Margin = new Thickness(0, 0, 7, 0),
                             VerticalAlignment = VerticalAlignment.Center
                         });
-                        fileRow.Children.Add(new TextBlock
+                        var fileName = new TextBlock
                         {
                             Text = Path.GetFileName(file),
-                            FontSize = 10.5,
-                            LineHeight = 14,
+                            FontSize = 13,
+                            LineHeight = 19,
                             VerticalAlignment = VerticalAlignment.Center,
                             TextTrimming = TextTrimming.CharacterEllipsis
-                        });
+                        };
+                        Grid.SetColumn(fileName, 1);
+                        fileRow.Children.Add(fileName);
                         RightSidebarOutputsPanel.Children.Add(fileRow);
                     }
                 }
@@ -976,8 +974,8 @@ namespace Malx_AI
                 RightSidebarBackgroundTasksPanel.Children.Add(new TextBlock
                 {
                     Text = "No background tasks running.",
-                    FontSize = 10.5,
-                    LineHeight = 14,
+                    FontSize = 13,
+                    LineHeight = 19,
                     Foreground = AppTheme.Brush("#8A8279")
                 });
             }
@@ -994,8 +992,8 @@ namespace Malx_AI
                 {
                     Text = ">_",
                     FontFamily = new FontFamily("Cascadia Mono, Consolas"),
-                    FontSize = 10,
-                    LineHeight = 14,
+                    FontSize = 13,
+                    LineHeight = 19,
                     Foreground = AppTheme.Brush("#B0A89F"),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 7, 0)
@@ -1003,16 +1001,16 @@ namespace Malx_AI
                 var titleTb = new TextBlock
                 {
                     Text = task.Title,
-                    FontSize = 11,
-                    LineHeight = 15,
+                    FontSize = 13,
+                    LineHeight = 19,
                     VerticalAlignment = VerticalAlignment.Center,
                     TextTrimming = TextTrimming.CharacterEllipsis
                 };
                 var elapsedTb = new TextBlock
                 {
                     Text = $"{Math.Max(0, (int)Math.Floor(task.Elapsed.TotalSeconds))}s",
-                    FontSize = 10.5,
-                    LineHeight = 14,
+                    FontSize = 13,
+                    LineHeight = 19,
                     Foreground = AppTheme.Brush("#8A8279"),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(6, 0, 6, 0)
@@ -1026,8 +1024,8 @@ namespace Malx_AI
                         CornerRadius = new CornerRadius(1.5),
                         Background = AppTheme.Brush("#EDE8E3")
                     },
-                    Width = 18,
-                    Height = 18,
+                    Width = 28,
+                    Height = 28,
                     Padding = new Thickness(0),
                     Background = Brushes.Transparent,
                     BorderThickness = new Thickness(0),
@@ -1062,8 +1060,8 @@ namespace Malx_AI
                 RightSidebarFinishedTasksPanel.Children.Add(new TextBlock
                 {
                     Text = $"• {done.Title} ({statusText}, {Math.Max(0, (int)Math.Round(done.Elapsed.TotalSeconds))}s)",
-                    FontSize = 10,
-                    LineHeight = 14,
+                    FontSize = 13,
+                    LineHeight = 19,
                     Foreground = AppTheme.Brush("#8A8279"),
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     Margin = new Thickness(0, 1, 0, 1),

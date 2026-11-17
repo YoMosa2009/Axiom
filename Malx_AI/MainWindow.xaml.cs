@@ -632,10 +632,10 @@ namespace Malx_AI
             _isSidebarCollapsed = collapse;
             ((ScaleTransform)SidebarCollapseGlyph.RenderTransform).ScaleX = collapse ? -1 : 1;
             SidebarCollapseButton.ToolTip = collapse ? "Show sidebar (Ctrl+B)" : "Hide sidebar (Ctrl+B)";
-            if (SidebarExpandButton != null)
-                SidebarExpandButton.Visibility = collapse ? Visibility.Visible : Visibility.Collapsed;
-            WorkplaceViewControl?.SetLeftSidebarCollapsedOffset(collapse);
-            double chatLeftPad = collapse ? 42 : (ActualWidth < CompactDesktopBreakpoint ? 20 : 28);
+            ((ScaleTransform)SidebarNavigationToggleGlyph.RenderTransform).ScaleX = collapse ? -1 : 1;
+            SidebarHideButton.ToolTip = collapse ? "Show sidebar (Ctrl+B)" : "Hide sidebar (Ctrl+B)";
+            System.Windows.Automation.AutomationProperties.SetName(SidebarHideButton, collapse ? "Show sidebar" : "Hide sidebar");
+            double chatLeftPad = ActualWidth < CompactDesktopBreakpoint ? 20 : 28;
             ChatHeaderBorder.Padding = ActualWidth < CompactDesktopBreakpoint
                 ? new Thickness(chatLeftPad, 10, 20, 2)
                 : new Thickness(chatLeftPad, 14, 28, 4);

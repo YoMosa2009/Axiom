@@ -25,6 +25,9 @@ Additional UI/context fixes after the 22:23–22:29 owner test:
 - Simplified the Workplace composer: review policy, web search and skills live in the
   attachments/tools menu. The idle Stop button is hidden; effort uses its compact selector.
   Normal chat model choices and run controls use separate aligned rows when space is tight.
+- Enlarged Workplace Context/Environment typography and row spacing, with wrapping budget
+  labels and responsive output filenames. Removed the duplicate floating sidebar arrow;
+  the navigation toggle changes direction and accessibility label for show/hide states.
 - Messages and composer share a centered 960-pixel conversation region when sidebars collapse.
 - Computer Use remains the active surface across follow-ups, carries its prior goal/result/app,
   and restores that per-chat context from snapshots. A visible composer control exits desktop
