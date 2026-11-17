@@ -20,7 +20,10 @@ namespace Malx_AI.Agent
         Question,
 
         /// <summary>A change, fix or addition to the existing work.</summary>
-        Change
+        Change,
+
+        /// <summary>The model interprets the message using the task record and conversation.</summary>
+        Contextual
     }
 
     /// <summary>Limits one agent turn runs under, chosen from what the user asked for.</summary>
@@ -32,7 +35,8 @@ namespace Malx_AI.Agent
     /// How many steps in a row may pass without changing a file once the run has changed one,
     /// before the run is told to wrap up. 0 turns the limit off.
     /// </param>
-    public sealed record AgentTurnPolicy(bool AnswerOnly = false, int VerificationBudget = 0)
+    public sealed record AgentTurnPolicy(bool AnswerOnly = false, int VerificationBudget = 0,
+        bool LimitFileInspection = true)
     {
         /// <summary>Steps a question turn gets: two quick looks and the answer.</summary>
         public const int QuestionTurnSteps = 3;
@@ -50,7 +54,10 @@ namespace Malx_AI.Agent
                 AgentTier.Micro => 4,
                 AgentTier.Compact => 7,
                 _ => 12
-            });
+            },
+            // The small flat-protocol tiers do not expose search_text. Their reads are already
+            // smaller; do not block them with advice to use an unavailable tool.
+            LimitFileInspection: tier == AgentTier.Full);
     }
 
     /// <summary>
@@ -142,7 +149,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("[RECORD OF THE PREVIOUS RUN — written by Axiom from the steps that actually ran]");
             builder.AppendLine(stoppedOnStepLimit
                 ? "How it ended: it ran out of steps before the model declared the task finished."
-                : "How it ended: the model finished and gave its summary.");
+                : "How it ended: the run returned the message below. This alone does not prove the requested result works.");
             facts.AppendTo(builder);
             if (backgroundTasks is { Count: > 0 })
                 builder.Append("Background tasks now: ").AppendLine(string.Join("; ", backgroundTasks.Take(6)));

@@ -19,6 +19,10 @@ namespace Malx_AI.ComputerUse
         public required Func<string, string, ComputerUseCapture, CancellationToken, Task<string>> VerifyAsync { get; init; }
         public required Func<string, string, ComputerUseCapture, CancellationToken, Task<string>> PlanAsync { get; init; }
         public string NavigationContext { get; init; } = "";
+        public string InitialApplication { get; init; } = "";
+        public Action<string>? OnApplication { get; init; }
+        public Action<string, string>? OnEvidence { get; init; }
+        public Action<ComputerUseCapture>? OnCapture { get; init; }
         public Action<string>? OnChat { get; init; }
         public Action? OnStop { get; init; }
     }
@@ -72,9 +76,8 @@ namespace Malx_AI.ComputerUse
         private static async Task<ComputerUseSessionResult> RunCoreAsync(ComputerUseSessionRequest request, CancellationToken token)
         {
             ArgumentNullException.ThrowIfNull(request);
-            Window host = request.HostWindow;
-            WindowState previousState = host.WindowState;
-            bool previousTopmost = host.Topmost;
+            // Keep the host visible throughout the session. Captures can read the external
+            // work window behind it; only executing an action activates the target application.
             ComputerUseSessionWindow? hud = null;
             ComputerUsePointerWindow? pointer = null;
             ComputerUseMode mode = request.InitialMode;
@@ -84,7 +87,6 @@ namespace Malx_AI.ComputerUse
 
             try
             {
-                host.WindowState = WindowState.Minimized;
                 hud = new ComputerUseSessionWindow();
                 if (mode == ComputerUseMode.Autopilot)
                     hud.AutopilotModeRadio.IsChecked = true;
@@ -158,7 +160,12 @@ namespace Malx_AI.ComputerUse
                     try
                     {
                     hud.SetStatus($"Step {steps}/{MaxSteps} · capturing");
-                    ComputerUseCapture capture = ComputerUseScreenCapture.CaptureDesktop(visionDetailLevel, hud, pointer);
+                    ComputerUseCapture capture = ComputerUseScreenCapture.CaptureDesktopForApplication(
+                        visionDetailLevel, lastExecuted == null ? request.InitialApplication : "", hud, pointer);
+                    request.OnCapture?.Invoke(capture);
+                    if (!string.IsNullOrWhiteSpace(capture.ForegroundProcessName)
+                        && (lastExecuted != null || !string.IsNullOrWhiteSpace(request.InitialApplication)))
+                        request.OnApplication?.Invoke(capture.ForegroundProcessName);
                     if (taskContract == null)
                     {
                         hud.BeginWait("Defining requested outcomes");
@@ -201,6 +208,7 @@ namespace Malx_AI.ComputerUse
 
                         hud.AppendLog(taskContract.Describe());
                         await BackendLogService.LogEventAsync("ComputerUse.Plan", plan.RawPlan).ConfigureAwait(true);
+                        request.OnEvidence?.Invoke("plan", plan.RawPlan);
                         // Planning may take time. Refresh the screen before asking for input.
                         continue;
                     }
@@ -477,6 +485,7 @@ namespace Malx_AI.ComputerUse
                             ? $" [{turn.Action.X},{turn.Action.Y} -> {turn.Action.X2},{turn.Action.Y2}]\nRaw: {Clip(ExtractActionJson(raw), 500)}"
                             : "")
                         + $"\nThinking: {Clip(turn.Thinking, 400)}").ConfigureAwait(true);
+                    request.OnEvidence?.Invoke("model action", ExtractActionJson(raw));
 
                     if (!turn.Parsed)
                     {
@@ -486,6 +495,13 @@ namespace Malx_AI.ComputerUse
                     }
 
                     taskProgress = MergeTaskProgress(taskProgress, turn.Progress);
+                    if (turn.Action.Type == ComputerUseActionType.RecallContext)
+                    {
+                        lastObservation = ConversationEvidence.Current?.Read(turn.Action.Text, turn.Action.ContextOffset)
+                            ?? "No earlier evidence archive is available for this chat.";
+                        hud.AppendLog("Recalled earlier task evidence; no desktop input sent.");
+                        continue;
+                    }
                     if (!taskProgress.PlanInitialized && turn.Action.Type != ComputerUseActionType.Done)
                     {
                         lastObservation = "[PLAN REQUIRED] Enumerate the requested outcomes in task_progress.current, next, and remaining before acting.";
@@ -675,6 +691,7 @@ namespace Malx_AI.ComputerUse
                     try
                     {
                         lastObservation = await ExecuteActionAsync(turn.Action, capture, hud, pointer, isAddressTypeAction, token).ConfigureAwait(true);
+                        request.OnEvidence?.Invoke("action result", lastObservation);
                         if (isAddressTypeAction
                             && !lastObservation.StartsWith("[ACTION NOT SENT]", StringComparison.Ordinal)
                             && TryLookLikeNavigationAddress(turn.Action.Text))
@@ -805,16 +822,6 @@ namespace Malx_AI.ComputerUse
             {
                 try { pointer?.Close(); } catch { }
                 try { hud?.ClearPermission(); hud?.Close(); } catch { }
-                try
-                {
-                    host.Topmost = previousTopmost;
-                    if (host.WindowState == WindowState.Minimized)
-                        host.WindowState = previousState == WindowState.Minimized ? WindowState.Normal : previousState;
-                    host.Activate();
-                }
-                catch
-                {
-                }
             }
         }
 
@@ -840,6 +847,9 @@ namespace Malx_AI.ComputerUse
             bool replaceAndCommitAddress,
             CancellationToken token)
         {
+            if (capture.TargetWindowHandle == IntPtr.Zero
+                && action.Type is not (ComputerUseActionType.Open or ComputerUseActionType.Wait or ComputerUseActionType.Screenshot))
+                return "[ACTION NOT SENT] The intended work application is unavailable. Restore/open that application first; no input was sent to an unrelated foreground window.";
             int actionX = action.X;
             int actionY = action.Y;
             // Only a pointer action aims at a control. Ctrl+T has nowhere to land and a drag is

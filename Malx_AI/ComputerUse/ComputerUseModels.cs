@@ -23,7 +23,8 @@ namespace Malx_AI.ComputerUse
         Wait,
         Zoom,
         Open,
-        Done
+        Done,
+        RecallContext
     }
 
     public sealed class ComputerUseAction
@@ -50,6 +51,7 @@ namespace Malx_AI.ComputerUse
         public string Text { get; init; } = "";
         public string Keys { get; init; } = "";
         public int Ms { get; init; }
+        public int ContextOffset { get; init; }
         public string Button { get; init; } = "left";
         public string TargetId { get; init; } = "";
         public string ExpectedState { get; init; } = "";
@@ -63,6 +65,7 @@ namespace Malx_AI.ComputerUse
 
         public string ShortLabel => Type switch
         {
+            ComputerUseActionType.RecallContext => "Recall earlier task evidence",
             ComputerUseActionType.Move => $"Move to ({X}, {Y})",
             // A click aimed by target_id usually carries no coordinates. Labelled "at (0, 0)" it
             // read, in the log and in the observer's payload, like a click in the screen corner.

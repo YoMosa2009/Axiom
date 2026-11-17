@@ -16,6 +16,8 @@ namespace Malx_AI
         private string? _formattedContentCache;
         private IReadOnlyList<string> _attachedImagePaths = Array.Empty<string>();
         private IReadOnlyList<ImageSource>? _attachedImagesCache;
+        private IReadOnlyList<string> _viewedImagePaths = Array.Empty<string>();
+        private IReadOnlyList<ImageSource>? _viewedImagesCache;
 
         public string Role { get; init; } = "system";
 
@@ -34,9 +36,25 @@ namespace Malx_AI
 
         public IReadOnlyList<ImageSource> AttachedImages => _attachedImagesCache ??= LoadImageSources(_attachedImagePaths);
 
+        // Transient activity only. Snapshot persistence intentionally uses AttachedImagePaths,
+        // never these screenshot previews, and completion clears them before final output.
+        public IReadOnlyList<string> ViewedImagePaths
+        {
+            get => _viewedImagePaths;
+            set
+            {
+                _viewedImagePaths = value ?? Array.Empty<string>();
+                _viewedImagesCache = null;
+                OnPropertyChanged(nameof(ViewedImages));
+                OnPropertyChanged(nameof(HasViewedImages));
+            }
+        }
+        public IReadOnlyList<ImageSource> ViewedImages => _viewedImagesCache ??= LoadImageSources(_viewedImagePaths, 160);
+        public bool HasViewedImages => ViewedImages.Count > 0;
+
         public bool HasAttachedImages => AttachedImages.Count > 0;
 
-        internal static IReadOnlyList<ImageSource> LoadImageSources(IEnumerable<string>? sources)
+        internal static IReadOnlyList<ImageSource> LoadImageSources(IEnumerable<string>? sources, int decodePixelWidth = 320)
         {
             if (sources == null)
                 return Array.Empty<ImageSource>();
@@ -59,7 +77,7 @@ namespace Malx_AI
                             bmp.BeginInit();
                             bmp.CacheOption = BitmapCacheOption.OnLoad;
                             bmp.StreamSource = ms;
-                            bmp.DecodePixelWidth = 320;
+                            bmp.DecodePixelWidth = decodePixelWidth;
                             bmp.EndInit();
                             bmp.Freeze();
                             list.Add(bmp);
@@ -71,7 +89,7 @@ namespace Malx_AI
                         bmp.BeginInit();
                         bmp.CacheOption = BitmapCacheOption.OnLoad;
                         bmp.UriSource = new Uri(raw, UriKind.Absolute);
-                        bmp.DecodePixelWidth = 320;
+                        bmp.DecodePixelWidth = decodePixelWidth;
                         bmp.EndInit();
                         bmp.Freeze();
                         list.Add(bmp);

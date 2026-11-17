@@ -4387,6 +4387,8 @@ namespace Malx_AI
 
                 if (_currentChatId < 0)
                     NewChat_Click(null, null);
+                using var evidence = new ConversationEvidence(AppDataPaths.Root, "chat-" + _currentChatId,
+                    string.Join("\n\n", _chatMessages.Select(c => c.Role + ":\n" + c.Content)) + "\nCurrent user request:\n" + pendingUserMessage);
 
                 if (!_cloudModeActive && !_useGemma4LocalCliMode && _chatSession == null)
                 {

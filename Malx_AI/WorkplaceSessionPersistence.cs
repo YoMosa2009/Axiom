@@ -8,6 +8,10 @@ namespace Malx_AI
     public sealed class WorkplaceSessionSnapshot
     {
         public string SessionTitle { get; set; } = "";
+        public string ComputerUseGoal { get; set; } = "";
+        public bool? ComputerUseActive { get; set; }
+        public string ComputerUseSummary { get; set; } = "";
+        public string ComputerUseApplication { get; set; } = "";
         public string ProjectFolderPath { get; set; } = "";
         public DateTime UpdatedAt { get; set; } = DateTime.Now;
         public string CommandReviewMode { get; set; } = "AutoReview";

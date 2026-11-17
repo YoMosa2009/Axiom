@@ -55,7 +55,10 @@ namespace Malx_AI.Agent
     public sealed class AgentToolExecutor
     {
         private const int MaxOutputChars = 20000;
-        private const int MaxReadChars = 60000;
+        // Tool observations are capped at 6000 characters. Report the actual stopping line
+        // here rather than silently losing most of a 60K read when it reaches the model.
+        private readonly int _maxReadChars;
+        private readonly string _screenshotDirectory;
         private const int DefaultTimeoutSeconds = 120;
 
         private readonly AgentScope _scope;
@@ -71,7 +74,9 @@ namespace Malx_AI.Agent
             AgentBackgroundTaskManager? backgroundTasks = null,
             BrowserControlService? browserControl = null,
             Func<int, CancellationToken, Task<(byte[] PngBytes, int Width, int Height)>>? screenCaptureAsync = null,
-            Func<string, int, CancellationToken, Task<AgentScreenshot>>? windowCaptureAsync = null)
+            Func<string, int, CancellationToken, Task<AgentScreenshot>>? windowCaptureAsync = null,
+            int readBudgetChars = 5000,
+            string? screenshotDirectory = null)
         {
             _scope = scope ?? AgentScope.WholeComputer();
             _backup = backup;
@@ -79,6 +84,8 @@ namespace Malx_AI.Agent
             _browserControl = browserControl ?? new BrowserControlService();
             _screenCaptureAsync = screenCaptureAsync;
             _windowCaptureAsync = windowCaptureAsync;
+            _maxReadChars = Math.Clamp(readBudgetChars, 256, 5000);
+            _screenshotDirectory = screenshotDirectory ?? Path.Combine(Path.GetTempPath(), "AxiomScreenshots");
         }
 
         public AgentBackgroundTaskManager BackgroundTasks => _backgroundTasks;
@@ -94,10 +101,18 @@ namespace Malx_AI.Agent
 
         public async Task<AgentToolResult> ExecuteAsync(AgentToolCall call, CancellationToken token)
         {
+            // Also enforce at the execution boundary: direct callers and background commands
+            // must not bypass the session guard, even after approval.
+            if ((call.Tool.Equals(AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                    || call.Tool.Equals(AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase))
+                && AgentSession.IsUiFocusAutomationCommand(call.Arg("command")))
+                return AgentToolResult.Fail(AgentSession.DesktopIsolationMessage);
             try
             {
                 return call.Tool.ToLowerInvariant() switch
                 {
+                    AgentToolNames.RecallContext => AgentToolResult.Ok(ConversationEvidence.Current?.Read(call.Arg("query"),
+                        int.TryParse(call.Arg("offset"), out int offset) ? offset : 0, _maxReadChars - 128) ?? "No active conversation evidence archive."),
                     AgentToolNames.RunCommand => await RunCommandAsync(call, token),
                     AgentToolNames.ReadFile => ReadFile(call),
                     AgentToolNames.WriteFile => WriteFile(call),
@@ -355,7 +370,8 @@ namespace Malx_AI.Agent
 
         private async Task<AgentToolResult> TakeScreenshotAsync(AgentToolCall call, CancellationToken token)
         {
-            if (_screenCaptureAsync == null && _windowCaptureAsync == null)
+            string requestedUrl = call.Arg("url");
+            if (string.IsNullOrWhiteSpace(requestedUrl) && _screenCaptureAsync == null && _windowCaptureAsync == null)
                 return AgentToolResult.Fail("Screenshot capture is not available in this session.");
 
             int delayMs = int.TryParse(call.Arg("delay_ms"), out int parsedDelay)
@@ -373,7 +389,7 @@ namespace Malx_AI.Agent
             }
             else
             {
-                string folder = Path.Combine(Path.GetTempPath(), "AxiomScreenshots");
+                string folder = _screenshotDirectory;
                 Directory.CreateDirectory(folder);
                 outputPath = Path.Combine(folder, $"screenshot_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png");
             }
@@ -388,16 +404,23 @@ namespace Malx_AI.Agent
             byte[] pngBytes;
             int width;
             int height;
-            if (_windowCaptureAsync != null)
+            if (!string.IsNullOrWhiteSpace(requestedUrl))
+            {
+                AgentScreenshot shot = await AgentPageCapture.CaptureAsync(requestedUrl, _scope, token).ConfigureAwait(false);
+                (pngBytes, width, height, subject) = (shot.PngBytes, shot.Width, shot.Height, shot.Description);
+            }
+            else if (_windowCaptureAsync != null)
             {
                 AgentScreenshot shot = await _windowCaptureAsync(requestedWindow, 1280, token).ConfigureAwait(false);
                 windowList = AgentScreenshot.DescribeOpenWindows(shot.OpenWindows);
                 if (shot.PngBytes == null || shot.PngBytes.Length == 0)
                 {
-                    return AgentToolResult.Fail(string.IsNullOrWhiteSpace(requestedWindow)
+                    return AgentToolResult.Fail(!string.IsNullOrWhiteSpace(shot.Description)
+                        ? shot.Description + " " + windowList
+                        : string.IsNullOrWhiteSpace(requestedWindow)
                         ? "Screenshot capture returned an empty image."
                         : $"No open window matches '{requestedWindow}'. {windowList} "
-                          + "Call take_screenshot again with window set to part of one of those titles, or leave window out to capture the whole screen.");
+                          + "Call take_screenshot with window set to part of one of those titles.");
                 }
 
                 (pngBytes, width, height, subject) = (shot.PngBytes, shot.Width, shot.Height, shot.Description);
@@ -420,7 +443,7 @@ namespace Malx_AI.Agent
                 + (windowList.Length == 0
                     ? string.Empty
                     : $" {windowList} If this is not the app you meant to check, call take_screenshot ONCE more with window set to part of its title. Never use AppActivate, SendKeys or WScript.Shell to bring a window forward: the window argument captures it wherever it is."),
-                dataUrl);
+                dataUrl, outputPath);
         }
 
         private static bool ParseBool(string value)
@@ -433,7 +456,11 @@ namespace Malx_AI.Agent
 
         private AgentToolResult ReadFile(AgentToolCall call)
         {
-            if (!TryResolve(call.Arg("path"), out string path, out string error))
+            string requested = call.Arg("path");
+            bool archivedImage = ConversationEvidence.Current?.OwnsImage(requested) == true;
+            string path = archivedImage ? requested : "";
+            string error = "";
+            if (!archivedImage && !TryResolve(requested, out path, out error))
                 return AgentToolResult.Fail(error);
             if (!File.Exists(path))
                 return AgentToolResult.Fail($"No such file: {path}");
@@ -468,10 +495,16 @@ namespace Malx_AI.Agent
             int number = start;
             foreach (string line in slice)
             {
-                builder.Append(number++).Append('\t').AppendLine(line);
-                if (builder.Length > MaxReadChars)
+                if (builder.Length > 0 && builder.Length + line.Length + 16 > _maxReadChars)
                 {
-                    builder.AppendLine($"… truncated at {MaxReadChars} characters. Read a line range to see more.");
+                    builder.AppendLine($"[Read stopped before line {number}; {lines.Length} total lines. Use search_text on this file to locate the relevant function, or start_line={number} to continue.]");
+                    break;
+                }
+                builder.Append(number++).Append('\t').AppendLine(line);
+                if (builder.Length > _maxReadChars)
+                {
+                    builder.Length = _maxReadChars;
+                    builder.AppendLine($"\n[Line {number - 1} is longer than the output budget and was truncated. Use search_text to locate specific text.]");
                     break;
                 }
             }
@@ -621,8 +654,9 @@ namespace Malx_AI.Agent
                 return AgentToolResult.Fail("No search pattern supplied.");
             if (!TryResolve(call.Arg("path", "."), out string root, out string error))
                 return AgentToolResult.Fail(error);
-            if (!Directory.Exists(root))
-                return AgentToolResult.Fail($"No such directory: {root}");
+            bool singleFile = File.Exists(root);
+            if (!singleFile && !Directory.Exists(root))
+                return AgentToolResult.Fail($"No such file or directory: {root}");
 
             string glob = call.Arg("file_pattern", "*");
             var options = new EnumerationOptions
@@ -634,7 +668,7 @@ namespace Malx_AI.Agent
 
             var builder = new StringBuilder();
             int hits = 0;
-            foreach (string file in Directory.EnumerateFiles(root, glob, options))
+            foreach (string file in singleFile ? new[] { root } : Directory.EnumerateFiles(root, glob, options))
             {
                 if (hits >= 100 || IsNoiseDirectory(file) || !LooksTextual(file))
                     continue;
@@ -744,6 +778,8 @@ namespace Malx_AI.Agent
 
         private static string Combine(StringBuilder stdout, StringBuilder stderr)
         {
+            ConversationEvidence.Current?.Record("Full command stdout", stdout.ToString());
+            ConversationEvidence.Current?.Record("Full command stderr", stderr.ToString());
             var builder = new StringBuilder();
             builder.Append(stdout);
             if (stderr.Length > 0)

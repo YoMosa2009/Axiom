@@ -521,6 +521,9 @@ internal static class ComputerUseSim
             }
 
             steps++;
+            // SimDesktop already preserves its active app between captures. Production now
+            // also supplies the prior session's preferred app before the first action; capture
+            // itself must not activate a different app or reset an existing drawing.
             ComputerUseCapture capture = desktop.Capture();
             if (contract == null)
             {
@@ -709,6 +712,12 @@ internal static class ComputerUseSim
             Log($"Step {steps}: ACTOR chose {turn.Action.ShortLabel}" + (turn.Action.TargetId.Length > 0 ? $" [target_id {turn.Action.TargetId}]" : "")
                 + $" | thinking: {turn.Thinking}");
             taskProgress = ComputerUseSessionController.MergeTaskProgress(taskProgress, turn.Progress);
+            if (turn.Action.Type == ComputerUseActionType.RecallContext)
+            {
+                lastObservation = Malx_AI.ConversationEvidence.Current?.Read(turn.Action.Text, turn.Action.ContextOffset)
+                    ?? "No earlier evidence archive is available for this chat.";
+                continue;
+            }
             if (!taskProgress.PlanInitialized && turn.Action.Type != ComputerUseActionType.Done)
             {
                 lastObservation = "[PLAN REQUIRED] Enumerate the requested outcomes in task_progress.current, next, and remaining before acting.";

@@ -7,6 +7,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -17,11 +19,40 @@ namespace Malx_AI.ComputerUse
     internal static class ComputerUseScreenCapture
     {
         private const int MonitorDefaultToNearest = 2;
+        private static readonly SemaphoreSlim AgentCaptureGate = new(1, 1);
+
+        public static async Task<Malx_AI.Agent.AgentScreenshot> CaptureForAgentAsync(
+            string? window, int maxWidth, CancellationToken token)
+        {
+            // PrintWindow is synchronous and cannot be cancelled. The worker owns its bitmap
+            // until it returns; keep the gate held even after a timeout so retries cannot leak
+            // an unbounded number of blocked workers/GDI handles.
+            if (!AgentCaptureGate.Wait(0))
+                throw new InvalidOperationException("A previous window capture is still waiting for the target app. Continue with a different verification method.");
+            var capture = Task.Run(() =>
+            {
+                try { return CaptureForAgent(window, maxWidth); }
+                finally { AgentCaptureGate.Release(); }
+            });
+            _ = capture.ContinueWith(done => { _ = done.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            try
+            {
+                return await capture.WaitAsync(TimeSpan.FromSeconds(5), token).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                throw new TimeoutException("The target app did not render a screenshot within 5 seconds. No window was hidden or minimized. Use another verification method.");
+            }
+        }
 
         public static ComputerUseCapture CaptureDesktop(params Window[] hideWindows)
             => CaptureDesktop(0, hideWindows);
 
         public static ComputerUseCapture CaptureDesktop(int detailLevel, params Window[] hideWindows)
+            => CaptureDesktopForApplication(detailLevel, "", hideWindows);
+
+        public static ComputerUseCapture CaptureDesktopForApplication(int detailLevel, string application, params Window[] hideWindows)
         {
             int level = ComputerUseImageGeometry.ClampDetailLevel(detailLevel);
             long jpegQuality = ComputerUseImageGeometry.JpegQualityForDetailLevel(level);
@@ -42,7 +73,43 @@ namespace Malx_AI.ComputerUse
                 List<string> visibleWindows = EnumerateVisibleWindows();
                 IntPtr targetWindow = GetForegroundWindow();
                 (string windowTitle, string processName) = GetForegroundWindowIdentity(targetWindow);
-                if (IsShellWindow(processName, windowTitle))
+                GetWindowThreadProcessId(targetWindow, out uint foregroundProcessId);
+                bool hostInFront = foregroundProcessId == Environment.ProcessId;
+                bool preferredFound = false;
+                if (!string.IsNullOrWhiteSpace(application))
+                {
+                    IntPtr preferred = IntPtr.Zero;
+                    EnumWindows((handle, _) =>
+                    {
+                        GetWindowThreadProcessId(handle, out uint candidateProcessId);
+                        if (candidateProcessId != Environment.ProcessId && IsActivatableApplicationWindow(handle)
+                            && GetForegroundWindowIdentity(handle).ProcessName.Equals(application, StringComparison.OrdinalIgnoreCase))
+                        { preferred = handle; return false; }
+                        return true;
+                    }, IntPtr.Zero);
+                    if (preferred != IntPtr.Zero)
+                    {
+                        preferredFound = true;
+                        hostInFront = preferred != targetWindow;
+                        targetWindow = preferred;
+                        (windowTitle, processName) = GetForegroundWindowIdentity(preferred);
+                    }
+                }
+                if (preferredFound && IsIconic(targetWindow))
+                {
+                    targetWindow = IntPtr.Zero;
+                    hostInFront = true;
+                    (windowTitle, processName) = ($"Previous work application '{application}' is minimized. Use open to restore that application before sending input.", "");
+                }
+                else if (!preferredFound && !string.IsNullOrWhiteSpace(application))
+                {
+                    // A missing work app is not permission to operate whichever unrelated app
+                    // happens to be in front. Give the actor an empty target and an honest state.
+                    targetWindow = IntPtr.Zero;
+                    hostInFront = true;
+                    (windowTitle, processName) = ($"Previous work application '{application}' is not available. Restore/open the intended application before sending input.", "");
+                }
+                else if (!preferredFound && (hostInFront || IsShellWindow(processName, windowTitle)))
                 {
                     // Focus landed on the desktop rather than on any application. Aiming input
                     // there would send it to the shell; prefer the top visible application window,
@@ -52,6 +119,13 @@ namespace Malx_AI.ComputerUse
                     {
                         targetWindow = fallback;
                         (windowTitle, processName) = GetForegroundWindowIdentity(fallback);
+                    }
+                    else if (hostInFront)
+                    {
+                        // No work app is open yet. Keep Axiom out of the target catalog while
+                        // allowing the actor to launch the requested application.
+                        targetWindow = IntPtr.Zero;
+                        (windowTitle, processName) = ("No external application is open", "");
                     }
                 }
                 RECT bounds = GetMonitorBounds(targetWindow);
@@ -63,7 +137,21 @@ namespace Malx_AI.ComputerUse
                 using var source = new Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
                 using (var graphics = Graphics.FromImage(source))
                 {
-                    graphics.CopyFromScreen(originX, originY, 0, 0, source.Size, CopyPixelOperation.SourceCopy);
+                    if (hostInFront)
+                    {
+                        graphics.Clear(Drawing.Color.Black);
+                        if (targetWindow != IntPtr.Zero)
+                        {
+                            using var targetImage = CaptureWindowBitmapBounded(targetWindow);
+                            if (targetImage == null || !GetWindowRect(targetWindow, out RECT targetRect))
+                                throw new InvalidOperationException("The work window could not be captured behind Axiom. No window was hidden or minimized.");
+                            graphics.DrawImageUnscaled(targetImage, targetRect.Left - originX, targetRect.Top - originY);
+                        }
+                    }
+                    else
+                    {
+                        graphics.CopyFromScreen(originX, originY, 0, 0, source.Size, CopyPixelOperation.SourceCopy);
+                    }
                 }
 
                 var imageSize = ComputerUseImageGeometry.GetSizeForDetailLevel(width, height, level);
@@ -318,6 +406,10 @@ namespace Malx_AI.ComputerUse
                     if (!IsActivatableApplicationWindow(handle))
                         return true;
 
+                    GetWindowThreadProcessId(handle, out uint processId);
+                    if (processId == Environment.ProcessId)
+                        return true;
+
                     found = handle;
                     return false;
                 }, IntPtr.Zero);
@@ -434,7 +526,7 @@ namespace Malx_AI.ComputerUse
         }
 
         /// <summary>
-        /// Takes the agent's screenshot: one named window when asked for, otherwise the screen.
+        /// Takes the agent's screenshot: a named window, or the top external application.
         /// </summary>
         /// <remarks>
         /// A named window is drawn straight from the window itself (PrintWindow), so it comes out
@@ -471,9 +563,11 @@ namespace Malx_AI.ComputerUse
             List<string> names = windows.Select(window => window.Process + ": " + window.Title).ToList();
             if (query.Length == 0)
             {
-                (byte[] png, int width, int height) = CapturePrimaryScreenPng(maxWidth, hideWindows);
-                string front = names.Count > 0 ? $"the whole screen; the window in front is '{windows[0].Title}' ({windows[0].Process})" : "the whole screen";
-                return new Malx_AI.Agent.AgentScreenshot(png, width, height, front, names);
+                // The top external application is the default work window. Never hide Axiom to
+                // uncover it, and never label an image of a covering window as the requested app.
+                if (windows.Count == 0)
+                    return new Malx_AI.Agent.AgentScreenshot([], 0, 0, "No external application window is available.", names);
+                query = windows[0].Title;
             }
 
             var match = windows.FirstOrDefault(window =>
@@ -484,7 +578,8 @@ namespace Malx_AI.ComputerUse
 
             using Drawing.Bitmap? window = CaptureWindowBitmap(match.Handle);
             if (window == null)
-                return new Malx_AI.Agent.AgentScreenshot([], 0, 0, "", names);
+                return new Malx_AI.Agent.AgentScreenshot([], 0, 0,
+                    $"Window '{match.Title}' could not render a capture (it may be minimized or use an unsupported surface). No window was moved, restored, hidden or minimized.", names);
 
             (byte[] bytes, int outWidth, int outHeight) = EncodePng(window, maxWidth);
             return new Malx_AI.Agent.AgentScreenshot(bytes, outWidth, outHeight,
@@ -493,13 +588,9 @@ namespace Malx_AI.ComputerUse
 
         private static Drawing.Bitmap? CaptureWindowBitmap(IntPtr handle)
         {
-            // A minimised window has nothing drawn. Showing it without activating it lets it
-            // render while leaving the user's focus where it was.
+            // Capturing must not change window state, including the target's state.
             if (IsIconic(handle))
-            {
-                ShowWindow(handle, ShowNoActivate);
-                System.Threading.Thread.Sleep(450);
-            }
+                return null;
 
             if (!GetWindowRect(handle, out RECT rect))
                 return null;
@@ -532,17 +623,32 @@ namespace Malx_AI.ComputerUse
             if (drawn && !IsSingleColor(bitmap))
                 return bitmap;
 
-            // Some windows refuse to draw off-screen. Fall back to what is on screen at the
-            // window's position, which is right whenever nothing covers it.
+            bitmap.Dispose();
+            return null;
+        }
+
+        private static Drawing.Bitmap? CaptureWindowBitmapBounded(IntPtr handle)
+        {
+            if (!AgentCaptureGate.Wait(0))
+                return null;
+            var pending = Task.Run(() =>
+            {
+                try { return CaptureWindowBitmap(handle); }
+                finally { AgentCaptureGate.Release(); }
+            });
             try
             {
-                using var graphics = Graphics.FromImage(bitmap);
-                graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
-                return bitmap;
+                return pending.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
             }
             catch
             {
-                bitmap.Dispose();
+                // A timed-out PrintWindow still owns its GDI resources. Dispose the result if
+                // it eventually returns, and observe any eventual exception.
+                _ = pending.ContinueWith(done =>
+                {
+                    if (done.Status == TaskStatus.RanToCompletion) done.Result?.Dispose();
+                    else _ = done.Exception;
+                }, TaskScheduler.Default);
                 return null;
             }
         }
@@ -585,7 +691,6 @@ namespace Malx_AI.ComputerUse
         }
 
         private const uint PrintWindowRenderFullContent = 2;
-        private const int ShowNoActivate = 4;
 
         [DllImport("user32.dll")]
         private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
@@ -593,105 +698,66 @@ namespace Malx_AI.ComputerUse
         [DllImport("user32.dll")]
         private static extern bool IsIconic(IntPtr hwnd);
 
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindow(IntPtr hwnd, int command);
 
         public static (byte[] PngBytes, int Width, int Height) CapturePrimaryScreenPng(int maxWidth = 1280, params Window[] hideWindows)
         {
-            Window[] windows = (hideWindows ?? []).Where(w => w != null).ToArray();
-            bool[] wasVisible = new bool[windows.Length];
+            // Legacy callers may still supply windows. Screen capture never changes their state.
+            IntPtr targetWindow = GetForegroundWindow();
+            (string windowTitle, string processName) = GetForegroundWindowIdentity(targetWindow);
+            if (targetWindow == IntPtr.Zero || IsShellWindow(processName, windowTitle))
+            {
+                IntPtr fallback = FindTopmostApplicationWindow();
+                if (fallback != IntPtr.Zero)
+                    targetWindow = fallback;
+            }
+
+            RECT bounds = targetWindow != IntPtr.Zero
+                ? GetMonitorBounds(targetWindow)
+                : new RECT
+                {
+                    Left = 0,
+                    Top = 0,
+                    Right = Math.Max(1, (int)Math.Round(SystemParameters.PrimaryScreenWidth)),
+                    Bottom = Math.Max(1, (int)Math.Round(SystemParameters.PrimaryScreenHeight))
+                };
+
+            int originX = bounds.Left;
+            int originY = bounds.Top;
+            int srcWidth = Math.Max(1, bounds.Right - bounds.Left);
+            int srcHeight = Math.Max(1, bounds.Bottom - bounds.Top);
+
+            using var source = new Drawing.Bitmap(srcWidth, srcHeight, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            using (var graphics = Graphics.FromImage(source))
+            {
+                graphics.CopyFromScreen(originX, originY, 0, 0, source.Size, CopyPixelOperation.SourceCopy);
+            }
+
+            int outWidth = srcWidth;
+            int outHeight = srcHeight;
+            Drawing.Bitmap finalBitmap = source;
+            Drawing.Bitmap? resized = null;
+            if (maxWidth > 0 && srcWidth > maxWidth)
+            {
+                outWidth = maxWidth;
+                outHeight = Math.Max(1, (int)Math.Round(srcHeight * (maxWidth / (double)srcWidth)));
+                resized = new Drawing.Bitmap(outWidth, outHeight, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                using (var graphics = Graphics.FromImage(resized))
+                {
+                    graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    graphics.DrawImage(source, 0, 0, outWidth, outHeight);
+                }
+                finalBitmap = resized;
+            }
+
             try
             {
-                for (int i = 0; i < windows.Length; i++)
-                {
-                    Window w = windows[i];
-                    if (w.Dispatcher.HasShutdownStarted)
-                        continue;
-                    w.Dispatcher.Invoke(() =>
-                    {
-                        wasVisible[i] = w.IsVisible;
-                        if (wasVisible[i])
-                        {
-                            try { w.Hide(); } catch { }
-                        }
-                    });
-                }
-
-                if (wasVisible.Any(v => v))
-                    System.Threading.Thread.Sleep(150);
-
-                IntPtr targetWindow = GetForegroundWindow();
-                (string windowTitle, string processName) = GetForegroundWindowIdentity(targetWindow);
-                if (targetWindow == IntPtr.Zero || IsShellWindow(processName, windowTitle))
-                {
-                    IntPtr fallback = FindTopmostApplicationWindow();
-                    if (fallback != IntPtr.Zero)
-                        targetWindow = fallback;
-                }
-
-                RECT bounds = targetWindow != IntPtr.Zero
-                    ? GetMonitorBounds(targetWindow)
-                    : new RECT
-                    {
-                        Left = 0,
-                        Top = 0,
-                        Right = Math.Max(1, (int)Math.Round(SystemParameters.PrimaryScreenWidth)),
-                        Bottom = Math.Max(1, (int)Math.Round(SystemParameters.PrimaryScreenHeight))
-                    };
-
-                int originX = bounds.Left;
-                int originY = bounds.Top;
-                int srcWidth = Math.Max(1, bounds.Right - bounds.Left);
-                int srcHeight = Math.Max(1, bounds.Bottom - bounds.Top);
-
-                using var source = new Drawing.Bitmap(srcWidth, srcHeight, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-                using (var graphics = Graphics.FromImage(source))
-                {
-                    graphics.CopyFromScreen(originX, originY, 0, 0, source.Size, CopyPixelOperation.SourceCopy);
-                }
-
-                int outWidth = srcWidth;
-                int outHeight = srcHeight;
-                Drawing.Bitmap finalBitmap = source;
-                Drawing.Bitmap? resized = null;
-                if (maxWidth > 0 && srcWidth > maxWidth)
-                {
-                    outWidth = maxWidth;
-                    outHeight = Math.Max(1, (int)Math.Round(srcHeight * (maxWidth / (double)srcWidth)));
-                    resized = new Drawing.Bitmap(outWidth, outHeight, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-                    using (var graphics = Graphics.FromImage(resized))
-                    {
-                        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                        graphics.DrawImage(source, 0, 0, outWidth, outHeight);
-                    }
-                    finalBitmap = resized;
-                }
-
-                try
-                {
-                    using var ms = new MemoryStream();
-                    finalBitmap.Save(ms, ImageFormat.Png);
-                    return (ms.ToArray(), outWidth, outHeight);
-                }
-                finally
-                {
-                    resized?.Dispose();
-                }
+                using var ms = new MemoryStream();
+                finalBitmap.Save(ms, ImageFormat.Png);
+                return (ms.ToArray(), outWidth, outHeight);
             }
             finally
             {
-                for (int i = 0; i < windows.Length; i++)
-                {
-                    if (!wasVisible[i])
-                        continue;
-                    Window w = windows[i];
-                    if (w.Dispatcher.HasShutdownStarted)
-                        continue;
-                    w.Dispatcher.Invoke(() =>
-                    {
-                        try { w.Show(); } catch { }
-                    });
-                }
+                resized?.Dispose();
             }
         }
     }

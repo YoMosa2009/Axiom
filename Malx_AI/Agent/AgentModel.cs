@@ -97,8 +97,7 @@ namespace Malx_AI.Agent
                     if (string.IsNullOrWhiteSpace(content))
                         continue;
                     string label = string.Equals(role, "user", StringComparison.OrdinalIgnoreCase) ? "User" : "Assistant";
-                    string preview = content.Length > 250 ? content[..250] + "…" : content;
-                    builder.AppendLine($"{label}: {preview}");
+                    builder.AppendLine($"{label}: {content}");
                 }
                 builder.AppendLine();
             }
@@ -117,7 +116,7 @@ namespace Malx_AI.Agent
                 builder.Append("You ran: ").AppendLine(exchange.Call.DescribeForModel());
                 string observation = exchange.Observation;
                 if (observation.Length > _observationBudget)
-                    observation = observation[.._observationBudget] + "\n… truncated.";
+                    observation = observation[.._observationBudget] + "\n[Observation shortened for the prompt. Use recall_context to recover the full tool result.]";
                 builder.Append("Result: ").AppendLine(observation);
             }
 

@@ -8,6 +8,22 @@ namespace Malx_AI
 {
     public partial class WorkplaceView
     {
+        private string _computerUseGoal = "";
+        private string _computerUseSummary = "";
+        private string _computerUseApplication = "";
+
+        private void ClearComputerUseContext()
+        {
+            _computerUseGoal = _computerUseSummary = _computerUseApplication = "";
+            if (ComputerUseContextButton != null) ComputerUseContextButton.Visibility = Visibility.Collapsed;
+        }
+
+        private void ComputerUseContextButton_Click(object sender, RoutedEventArgs e)
+        {
+            ClearComputerUseContext();
+            AppendVisibleNotice("Returned to Agent Access. The previous desktop work remains in this chat.");
+            RequestWorkspaceStateSave();
+        }
         private List<DocumentInfo>? _computerUseTurnImages;
         private string _activeComputerUseNavigationContext = string.Empty;
         private bool _workplaceMentionPopupOpen;
@@ -59,6 +75,11 @@ namespace Malx_AI
 
             ComputerUseCapabilityResult capability = ProbeComputerUseCapability();
             string goal = ComputerUseMention.StripMentions(userQuery);
+            string continuation = string.IsNullOrWhiteSpace(_computerUseGoal) ? "" :
+                $"[PREVIOUS COMPUTER USE TASK]\n{_computerUseGoal}\n[PREVIOUS RESULT]\n{_computerUseSummary}\n"
+                + $"[WORK APPLICATION]\n{_computerUseApplication}\n"
+                + "The current user message takes priority. Interpret it using this context. Preserve existing work; do not search unrelated applications or project files to reconstruct it.";
+            ConversationEvidence.Current?.Record("Computer Use request", goal + "\n" + continuation);
             if (!capability.CanRun)
             {
                 AppendVisibleNotice(capability.Reason);
@@ -86,6 +107,11 @@ namespace Malx_AI
             CancellationToken token = _cancellationTokenSource.Token;
             string navigationContext = await ResolveComputerUseNavigationContextAsync(goal, token);
             _activeComputerUseNavigationContext = navigationContext;
+            navigationContext = continuation + "\n[RECENT CHAT]\n"
+                + string.Join("\n\n", _chatCards.TakeLast(6).Select(c => c.Role + ": " + c.Content)) + "\n" + navigationContext;
+            _activeComputerUseNavigationContext = navigationContext;
+            _computerUseGoal = goal;
+            ComputerUseContextButton.Visibility = Visibility.Visible;
             if (_isCloudModeEnabled && _isHybridLocalCouncilSelected)
             {
                 LoadCustomEndpointForWorkplace();
@@ -135,6 +161,10 @@ namespace Malx_AI
                         ActingModelLabel = capability.ActingModelLabel,
                         ExecutionSurface = capability.ExecutionSurface,
                         NavigationContext = navigationContext,
+                        InitialApplication = _computerUseApplication,
+                        OnApplication = application => _computerUseApplication = application,
+                        OnEvidence = (kind, content) => ConversationEvidence.Current?.Record("Computer Use " + kind, content),
+                        OnCapture = capture => ConversationEvidence.Current?.SaveImage(capture.JpegBytes, ".jpg"),
                         InferAsync = InferComputerUseTurnAsync,
                         VerifyAsync = InferComputerUseVerificationAsync,
                         PlanAsync = InferComputerUsePlanAsync,
@@ -150,12 +180,16 @@ namespace Malx_AI
                     },
                     token);
 
+                _computerUseSummary = result.Summary;
+                ConversationEvidence.Current?.Record("Computer Use result", result.Summary);
                 CompleteAgentRunCard(runCard, result.Summary);
                 _chatHistory.Add(("assistant", result.Summary));
                 LogActivity($"Computer Use {(result.Completed ? "completed" : "stopped unfinished")} after {result.Steps} step(s). {result.Summary}");
             }
             catch (OperationCanceledException)
             {
+                _computerUseSummary = "Computer Use stopped by the user; the requested change was not verified complete.";
+                ConversationEvidence.Current?.Record("Computer Use stopped", _computerUseSummary);
                 CompleteAgentRunCard(runCard, "Computer Use stopped by the user.");
             }
             catch (Exception ex)

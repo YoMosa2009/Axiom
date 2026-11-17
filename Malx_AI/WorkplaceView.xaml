@@ -497,9 +497,12 @@
             <!-- Composer: one flat card (no box-in-a-box) with a tighter radius. Prompt on top,
                  tool toggles on the left of the control row, Stop/Run on the right. Run status
                  lives in the header (Relay line + context meters), not in here. -->
-            <StackPanel DockPanel.Dock="Bottom" Margin="24,6,24,14" MaxWidth="640" HorizontalAlignment="Stretch">
+            <StackPanel DockPanel.Dock="Bottom" Margin="24,6,24,14" MaxWidth="960" HorizontalAlignment="Stretch">
+                <Button x:Name="ComputerUseContextButton" Content="Computer Use · follow-ups stay on the desktop   ×" Visibility="Collapsed"
+                        Click="ComputerUseContextButton_Click" HorizontalAlignment="Left" Margin="0,0,0,5" Padding="8,3"
+                        FontSize="10" Style="{StaticResource SubtleButtonStyle}" ToolTip="Return to Agent Access"/>
                 <Border x:Name="InputAreaContainer" CornerRadius="12" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}"
-                        MaxWidth="640" HorizontalAlignment="Stretch"
+                        MaxWidth="960" HorizontalAlignment="Stretch"
                         AllowDrop="True" PreviewDragOver="InputAreaContainer_PreviewDragOver" PreviewDrop="InputAreaContainer_PreviewDrop">
                     <StackPanel>
                         <!-- Attachment preview tray: thumbnail chips for the files loaded into this
@@ -845,7 +848,7 @@
 
             <!-- Chat display (fills remaining space — shows only user/architect/builder/critic/sandbox) -->
             <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{DynamicResource NotebookBackgroundBrush}" Padding="16,14" PreviewMouseWheel="ChatScrollViewer_PreviewMouseWheel">
-                <StackPanel>
+                <StackPanel MaxWidth="960" HorizontalAlignment="Stretch">
                 <Button x:Name="ShowEarlierWorkplaceMessagesButton"
                         Content="Show earlier messages"
                         Click="ShowEarlierWorkplaceMessages_Click"
@@ -861,7 +864,7 @@
                         <DataTemplate>
                             <!-- Clean structured card for AI/agent output; compact right-aligned surface bubble for user -->
                             <Border x:Name="CardShell" Margin="4,6,20,6" Padding="16,12" CornerRadius="12"
-                                    HorizontalAlignment="Left" MinWidth="360" MaxWidth="820"
+                                    HorizontalAlignment="Stretch" MinWidth="0" MaxWidth="960"
                                     Background="#1C1A18" BorderBrush="#2C2926" BorderThickness="1">
                                 <StackPanel>
                                     <DockPanel x:Name="CardMetaRow" Margin="0,0,0,8">
@@ -881,13 +884,49 @@
                                                             ShimmerDurationSeconds="2"
                                                             TextTrimming="CharacterEllipsis"
                                                             Visibility="Collapsed"/>
+                                    <ItemsControl ItemsSource="{Binding ViewedImages}"
+                                                  Visibility="{Binding HasViewedImages, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                  Margin="0,0,0,8">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Expander IsExpanded="True" HorizontalAlignment="Left" Margin="0,0,0,6">
+                                                    <Expander.Template>
+                                                        <ControlTemplate TargetType="Expander">
+                                                            <StackPanel>
+                                                                <ToggleButton IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                                                              HorizontalAlignment="Left" AutomationProperties.Name="Viewed an image" FocusVisualStyle="{x:Null}">
+                                                                    <ToggleButton.Template>
+                                                                        <ControlTemplate TargetType="ToggleButton">
+                                                                            <ContentPresenter Opacity="0.75"/>
+                                                                        </ControlTemplate>
+                                                                    </ToggleButton.Template>
+                                                                    <StackPanel Orientation="Horizontal">
+                                                                        <TextBlock Text="&#xE91B;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                                        <TextBlock Text="Viewed an image" FontSize="12" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                                                        <TextBlock Text="⌄" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="7,0,0,0"/>
+                                                                    </StackPanel>
+                                                                </ToggleButton>
+                                                                <ContentPresenter x:Name="ScreenshotContent" ContentSource="Content" HorizontalAlignment="Left" Margin="0,7,0,0" Visibility="Collapsed"/>
+                                                            </StackPanel>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsExpanded" Value="True">
+                                                                    <Setter TargetName="ScreenshotContent" Property="Visibility" Value="Visible"/>
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Expander.Template>
+                                                    <Border Width="80" Height="80" CornerRadius="8" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Background="{DynamicResource NotebookSurfaceBrush}" ClipToBounds="True">
+                                                        <Image Source="{Binding}" Stretch="Uniform" AutomationProperties.Name="Work screenshot"/>
+                                                    </Border>
+                                                </Expander>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                     <ItemsControl ItemsSource="{Binding AttachedImages}"
                                                   Visibility="{Binding HasAttachedImages, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                   Margin="0,0,0,6">
                                         <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <WrapPanel Orientation="Horizontal"/>
-                                            </ItemsPanelTemplate>
+                                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>

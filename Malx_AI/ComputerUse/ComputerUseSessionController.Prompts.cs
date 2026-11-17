@@ -41,7 +41,7 @@ namespace Malx_AI.ComputerUse
                 "    \"reason\": \"why it is okay or not\"\n" +
                 "  },\n" +
                 "  \"action\": {\n" +
-                "    \"type\": \"screenshot|move|click|double_click|right_click|drag|scroll|type|key|wait|zoom|open|done\",\n" +
+                "    \"type\": \"screenshot|move|click|double_click|right_click|drag|scroll|type|key|wait|zoom|open|recall_context|done\",\n" +
                 "    \"x\": 0, \"y\": 0, \"x2\": 0, \"y2\": 0, \"dx\": 0, \"dy\": 0,\n" +
                 "    \"text\": \"\", \"keys\": \"\", \"ms\": 0, \"expected_state\": \"visible result expected in the next screenshot\",\n" +
                 "    \"button\": \"left\", \"target_id\": \"\", \"strokes\": [],\n" +
@@ -59,6 +59,7 @@ namespace Malx_AI.ComputerUse
                 "- [EXECUTION LEDGER] is controller-owned action evidence for every application. pending means wait for the fresh screenshot; verified or delivered means that step is done and you move on; failed means choose a different recovery action.\n" +
                 "- [RECENT ACTIONS] is the controller's record of the work already done on the current outcome. An outcome that needs several actions is finished by doing the NEXT one, not by redoing earlier ones.\n" +
                 "- To open an app, use type=open with text set to the exact app name (example: Microsoft Edge, File Explorer, Notepad). Never click taskbar icons.\n" +
+                "- Earlier task, tool and screenshot evidence is retained. If context is missing, use type=recall_context with text as a literal search query and optional offset to page. This reads the record without desktop input. Do not click unrelated windows to rediscover prior work.\n" +
                 "- An app launch is complete only when the controller reports [APP LAUNCH VERIFIED] from the real foreground window identity. A pixel change, a launch request, or an assumption is not proof that an app is open.\n" +
                 "- For browser navigation, avoid tiny browser chrome: key Ctrl+T for a new tab, key Ctrl+L to focus the address bar, type the complete URL, then key Enter. A new tab is complete only when [BROWSER STATE] shows a higher tab count. A URL is complete only when [BROWSER STATE] shows the expected address and no error page.\n" +
                 "- A [VERIFIED NAVIGATION URL] is controller-owned evidence. Type it exactly; never substitute a guessed account, path, or query. If an owned resource has no verified URL, do not manufacture one: finish that sub-goal as blocked and ask for its URL.\n" +

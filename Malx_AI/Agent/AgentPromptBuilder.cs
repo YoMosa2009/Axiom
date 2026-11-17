@@ -116,6 +116,7 @@ namespace Malx_AI.Agent
         {
             var builder = new StringBuilder();
             builder.AppendLine("[AXIOM COMPUTER AGENT]");
+            builder.AppendLine(ConversationEvidence.Instructions);
             builder.AppendLine($"You are operating the user's Windows computer directly. Scope: {scope.Describe()}.");
             if (!scope.EntireComputer && !string.IsNullOrWhiteSpace(scope.RootPath))
             {
@@ -127,6 +128,7 @@ namespace Malx_AI.Agent
             }
             if (visionCapable)
             {
+                builder.AppendLine("BACKGROUND PAGE PREVIEW: For HTML/web work, call take_screenshot with url set to the page's file:/// or HTTP URL. It renders in an isolated headless browser and shows the image inside Axiom while Axiom stays visible and active. Do not open, activate, minimize or reposition desktop apps just to verify your page. Shell UI automation is blocked from the first attempt. An initial screenshot proves rendering only; do not claim interactions or playback were tested unless you actually tested them.");
                 builder.AppendLine("VISION & SCREENSHOT INSPECTION: You have vision capability enabled and access to `take_screenshot` (and visual `read_file` on image files). To look at one app, pass window with part of its title or process name (for example window='Edge'): it is captured even when other windows are in front, and the result tells you which window the image shows. NEVER run WScript.Shell, AppActivate, SendKeys or Start-Sleep loops to bring a window forward. One screenshot normally settles a visual check; take a second only after you changed something. Then fix any issue with `edit_file`/`write_file`, or give your final summary.");
             }
             if (!string.IsNullOrWhiteSpace(trackerFilePath))
@@ -156,11 +158,15 @@ namespace Malx_AI.Agent
             builder.AppendLine("3. For long builds/servers/installs, use start_background_task with an appropriate wake_seconds duration: set wait='false' to keep doing other work while notified later, or wait='true' to pause until completion or wake_seconds expires.");
             builder.AppendLine("4. Verify it ONCE, with the cheapest check that proves it works: a command's exit code, an HTTP status, a test run, or a single screenshot. Checking is the short part of the job.");
             builder.AppendLine("5. STOP as soon as the check passes. Do not re-verify what already passed, re-read files you just wrote, or keep looking for more to check. If a check fails, fix the cause, check again once, then stop.");
+            if (!flat)
+            {
+                builder.AppendLine("DIAGNOSIS: Treat a user's report that the result is broken as unresolved until a relevant check passes. A successful launch or syntax check does not prove that a browser animation renders or plays. A blank screenshot is a failed visual check, not proof of a stale tab. Never dismiss a runtime error as a test-stub artefact without reproducing that distinction. Prefer a real browser runtime check when available; otherwise report the limitation plainly and do not claim success. Search for the failing function before reading more file slices; search_text accepts a file path and a literal search term (not a regex). Do not expand the feature set while fixing a reported failure.");
+            }
             builder.AppendLine(flat
                 // A flat-protocol model ends with TOOL finish in plain text; also asking it for a
                 // "structured Markdown summary" contradicted the protocol it had just been given.
                 ? "6. When the work is done, reply with TOOL finish. In summary write a few plain sentences: what you made or changed, the full path of each file, the check you ran and what it showed, and how to run it. Never just 'Done.'"
-                : "6. End EVERY finished turn with a thorough, cleanly structured Markdown summary of everything you actually did in THIS turn: (1) Summary of changes, fixes, or creations made, (2) Exact files created, edited, or inspected, (3) Verification commands/screenshots/checks performed and what they showed, and (4) How to run or verify the result. Never respond with just 'Done.' or repeat an older turn's summary.");
+                : "6. End the turn with a concise Markdown summary: what changed, the file paths, what the check actually proved, and what remains broken or unverified. Include how to run it when useful. Do not repeat an older turn's summary or explain every internal step.");
             builder.AppendLine("7. When the user asks a question (\"Is it done?\", \"What did you do?\", \"How do I run it?\"), ANSWER it in words straight away from what you already know. A question is not a request to rebuild, re-read or re-verify anything.");
             builder.AppendLine();
             builder.AppendLine("Rules:");
@@ -245,6 +251,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("- search_text           with: pattern");
             builder.AppendLine("- write_file            with: path, content (the whole file, in the shape below)");
             builder.AppendLine("- finish                with: summary");
+            builder.AppendLine("- recall_context        with: query (literal text), optional offset; use it for earlier conversation/tool evidence");
 
             // Both flat tiers write files this way. Micro had no write tool at all, so a simulated
             // sub-1B model packed a Python file into one Set-Content line to create it.

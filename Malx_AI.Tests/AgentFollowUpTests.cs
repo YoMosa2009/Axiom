@@ -104,11 +104,30 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
-        public void AFollowUpIsClassifiedWhenTheCallerDoesNotSay()
+        public void AFollowUpIsInterpretedByTheModelWhenTheCallerDoesNotSay()
         {
             string goal = AgentContextManager.BuildContinuationGoal("build a site", "Is it done?", [], null);
 
-            Assert.Contains("QUESTION", goal);
+            Assert.Contains("Interpret this message from its meaning", goal);
+            Assert.Contains("Is it done?", goal);
+            Assert.DoesNotContain("The user is asking a QUESTION", goal);
+        }
+
+        [Theory]
+        [InlineData("Pick up wherever you left off.")]
+        [InlineData("Before going further, tell me what actually works.")]
+        [InlineData("This still shows nothing when I press play.")]
+        [InlineData("Let's leave this and work on something else.")]
+        public void FollowUpsReachTheModelWithoutAKeywordSelectedToolRestriction(string request)
+        {
+            string goal = AgentContextManager.BuildContinuationGoal("build a site", request,
+                ["index.html"], "Visual check failed", previousRunDigest: "The canvas was blank.");
+            Assert.Contains(request, goal);
+            Assert.Contains("The canvas was blank.", goal);
+            Assert.Contains("Interpret this message from its meaning", goal);
+            Assert.DoesNotContain("This turn is for answering, not for working", goal);
+            Assert.DoesNotContain("Resume execution from your current progress and finish the task.", goal);
+            Assert.False(AgentTurnPolicy.For(AgentFollowUpKind.Contextual, AgentTier.Full).AnswerOnly);
         }
 
         [Fact]
@@ -348,6 +367,103 @@ namespace Malx_AI.Tests
 
         // ───────────────────────────── the loop guards
 
+        [Fact]
+        public async Task DifferentSlicesOfOneUnchangedFileCannotConsumeTheWholeRun()
+        {
+            File.WriteAllLines(Path.Combine(_folder, "index.html"), Enumerable.Range(1, 100).Select(i => "line " + i));
+            var replies = Enumerable.Range(1, 9).Select(i => AgentModelReply.Tool(
+                Call(AgentToolNames.ReadFile, ("path", "index.html"), ("start_line", i.ToString()), ("line_count", "1")))).ToList();
+            replies.Add(AgentModelReply.Answer("The animation remains unverified."));
+            var result = await Run(new AgentSession(AgentScope.Folder(_folder), 60), new ScriptedAgentModel(replies.ToArray()));
+
+            Assert.Equal(6, result.Steps.Count(s => s.Result?.Succeeded == true));
+            Assert.Equal(3, result.Steps.Count(s => s.Note == "repeated file inspection"));
+            Assert.Contains("remains unverified", result.FinalMessage);
+        }
+
+        [Fact]
+        public async Task EditingTheFileAllowsFreshInspection()
+        {
+            File.WriteAllLines(Path.Combine(_folder, "index.html"), Enumerable.Repeat("before", 10));
+            var replies = Enumerable.Range(1, 6).Select(i => AgentModelReply.Tool(
+                Call(AgentToolNames.ReadFile, ("path", "index.html"), ("start_line", i.ToString()), ("line_count", "1")))).ToList();
+            replies.Add(AgentModelReply.Tool(Write("index.html")));
+            replies.Add(AgentModelReply.Tool(Call(AgentToolNames.ReadFile, ("path", "./index.html"))));
+            replies.Add(AgentModelReply.Answer("Changed the file; visual playback remains unverified."));
+            var result = await Run(new AgentSession(AgentScope.Folder(_folder), 20), new ScriptedAgentModel(replies.ToArray()));
+            Assert.Equal(7, result.Steps.Count(s => s.Call.Tool == AgentToolNames.ReadFile && s.Result?.Succeeded == true));
+            Assert.DoesNotContain(result.Steps, s => s.Note == "repeated file inspection");
+        }
+
+        [Fact]
+        public async Task PathAliasesDoNotBypassTheInspectionLimit()
+        {
+            File.WriteAllLines(Path.Combine(_folder, "index.html"), Enumerable.Repeat("same file", 10));
+            var replies = Enumerable.Range(1, 7).Select(i => AgentModelReply.Tool(
+                Call(AgentToolNames.ReadFile, ("path", i % 2 == 0 ? "./index.html" : "index.html"),
+                    ("start_line", i.ToString()), ("line_count", "1")))).ToList();
+            replies.Add(AgentModelReply.Answer("I need a targeted search to continue diagnosing."));
+            var result = await Run(new AgentSession(AgentScope.Folder(_folder), 20), new ScriptedAgentModel(replies.ToArray()));
+            Assert.Equal(6, result.Steps.Count(s => s.Result?.Succeeded == true));
+            Assert.Contains(result.Steps, s => s.Note == "repeated file inspection");
+        }
+
+        [Fact]
+        public async Task SearchAcceptsAFilePathAndStillConfinesItToTheProject()
+        {
+            File.WriteAllText(Path.Combine(_folder, "index.html"), "header\nfunction forward() { broken(); }\nfooter");
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+            var found = await executor.ExecuteAsync(Call(AgentToolNames.SearchText,
+                ("path", "index.html"), ("pattern", "forward")), CancellationToken.None);
+            Assert.True(found.Succeeded, found.Error);
+            Assert.Contains("index.html:2:", found.Output);
+            var denied = await executor.ExecuteAsync(Call(AgentToolNames.SearchText,
+                ("path", "../outside.html"), ("pattern", "forward")), CancellationToken.None);
+            Assert.False(denied.Succeeded);
+            Assert.Contains("outside", denied.Error);
+        }
+
+        [Fact]
+        public async Task LongReadsReportWhereTheModelActuallyStopped()
+        {
+            File.WriteAllLines(Path.Combine(_folder, "index.html"), Enumerable.Repeat(new string('x', 500), 100));
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+            var result = await executor.ExecuteAsync(Call(AgentToolNames.ReadFile,
+                ("path", "index.html")), CancellationToken.None);
+            Assert.True(result.Succeeded);
+            string observation = result.ToObservation();
+            Assert.Contains("Read stopped before line 10", observation);
+            Assert.Contains("100 total lines", observation);
+            Assert.DoesNotContain("output truncated", observation);
+        }
+
+        [Theory]
+        [InlineData(AgentTier.Micro, 1200)]
+        [InlineData(AgentTier.Compact, 3000)]
+        public async Task SmallModelReadsFitTheirTranscriptBudgetWithoutAdviceToUseMissingTools(AgentTier tier, int budget)
+        {
+            File.WriteAllLines(Path.Combine(_folder, "index.html"), Enumerable.Repeat(new string('x', 100), 100));
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder), readBudgetChars: budget - 256);
+            var result = await executor.ExecuteAsync(Call(AgentToolNames.ReadFile, ("path", "index.html")), CancellationToken.None);
+            Assert.True(result.Succeeded);
+            Assert.True(result.ToObservation().Length <= budget);
+            Assert.Contains("Read stopped before line", result.Output);
+            Assert.False(AgentTurnPolicy.For(AgentFollowUpKind.Contextual, tier).LimitFileInspection);
+        }
+
+        [Fact]
+        public async Task UnsupportedWindowCaptureReportsItsRealFailure()
+        {
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder),
+                windowCaptureAsync: (_, _, _) => Task.FromResult(new AgentScreenshot([], 0, 0,
+                    "Window is minimized; no window state was changed.", ["msedge: Test"])));
+            var result = await executor.ExecuteAsync(Call(AgentToolNames.TakeScreenshot,
+                ("window", "Edge"), ("delay_ms", "0")), CancellationToken.None);
+            Assert.False(result.Succeeded);
+            Assert.Contains("minimized", result.Error);
+            Assert.DoesNotContain("No open window matches", result.Error);
+        }
+
         [Theory]
         [InlineData("Start-Sleep -Seconds 2", true)]
         [InlineData("start-sleep 5", true)]
@@ -372,6 +488,53 @@ namespace Malx_AI.Tests
 
         // ───────────────────────────── screenshots say what they show
 
+        [Theory]
+        [InlineData("$ws = New-Object -ComObject WScript.Shell; $ws.AppActivate('Edge')")]
+        [InlineData("[Native]::ShowWindow($handle, 2)")]
+        [InlineData("[Native]::ShowWindowAsync($handle, 0)")]
+        [InlineData("[Native]::SetForegroundWindow($handle)")]
+        [InlineData("[Native]::SetWindowPos($handle, 0, 0, 0, 0, 0, 0)")]
+        [InlineData("(New-Object -ComObject Shell.Application).MinimizeAll()")]
+        [InlineData("$app.CloseMainWindow()")]
+        public async Task WindowControlCommandsAreBlockedBeforeTheirFirstExecution(string command)
+        {
+            foreach (string tool in new[] { AgentToolNames.RunCommand, AgentToolNames.StartBackgroundTask })
+            {
+                var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+                var result = await executor.ExecuteAsync(Call(tool, ("command", command)), CancellationToken.None);
+                Assert.False(result.Succeeded);
+                Assert.Contains("must not hide, minimize", result.Error);
+            }
+        }
+
+        [Fact]
+        public async Task TheSessionDoesNotAskApprovalForAWindowControlCommand()
+        {
+            var model = new ScriptedAgentModel(
+                AgentModelReply.Tool(Call(AgentToolNames.RunCommand, ("command", "[Native]::ShowWindow($h, 2)"))),
+                AgentModelReply.Answer("I will use a background page capture."));
+            int approvals = 0;
+            var session = new AgentSession(AgentScope.Folder(_folder), 5);
+            var result = await session.RunAsync("Check the page", AgentApprovalMode.Manual, model,
+                (_, _, _) => { approvals++; return Task.FromResult(AgentApprovalOutcome.Approve); },
+                _ => { }, CancellationToken.None);
+            Assert.Equal(0, approvals);
+            Assert.Single(result.Steps);
+            Assert.False(result.Steps[0].Result!.Succeeded);
+        }
+
+        [Fact]
+        public void PageCaptureAcceptsLocalProjectFilesAndRejectsScopeEscapes()
+        {
+            string path = Path.Combine(_folder, "index.html");
+            File.WriteAllText(path, "<h1>Test</h1>");
+            var scope = AgentScope.Folder(_folder);
+            Assert.Equal(path, AgentPageCapture.ResolveUrl(new Uri(path).AbsoluteUri, scope).LocalPath);
+            Assert.Throws<ArgumentException>(() => AgentPageCapture.ResolveUrl("file:///C:/outside/index.html", scope));
+            Assert.Throws<ArgumentException>(() => AgentPageCapture.ResolveUrl("file://server/share/index.html", scope));
+            Assert.Throws<ArgumentException>(() => AgentPageCapture.ResolveUrl("javascript:alert(1)", scope));
+        }
+
         [Fact]
         public async Task AScreenshotOfANamedWindowSaysWhichWindowItShows()
         {
@@ -395,6 +558,8 @@ namespace Malx_AI.Tests
             Assert.Contains("Open windows: msedge: Rocket Visualizer", result.Output);
             Assert.Contains("Never use AppActivate", result.Output);
             Assert.NotNull(result.ImageDataUrl);
+            Assert.NotNull(result.ImagePath);
+            Assert.True(File.Exists(result.ImagePath));
         }
 
         [Fact]

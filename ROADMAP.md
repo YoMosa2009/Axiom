@@ -14,6 +14,71 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 
 ## Committed, not yet released (2026-11-16)
 
+### Local reliability, UI and context work (2026-11-16, not released)
+
+Additional UI/context fixes after the 22:23–22:29 owner test:
+- Unified 40-pixel window header: moved navigation, Workplace title and controls into the
+  caption area; Windows WindowChrome handles dragging/resizing, with explicit caption buttons.
+- Messages and composer share a centered 960-pixel conversation region when sidebars collapse.
+- Computer Use remains the active surface across follow-ups, carries its prior goal/result/app,
+  and restores that per-chat context from snapshots. A visible composer control exits desktop
+  mode. It captures the prior app before acting; a missing/minimized app is not substituted
+  with whichever unrelated app is in front, and desktop input is refused until a target exists.
+- Added durable per-chat full conversation/tool evidence and read-only `recall_context` paging.
+  Hooks cover native Chat/Council calls, MCP, Python, local council pause tools, Agent calls
+  (including refused actions), full command/background output, and Computer Use plans/actions/
+  results/screenshots. Local Agent messages no longer have the arbitrary 250-character cut.
+  Models still have finite prompt windows; full retained evidence can be recalled instead of
+  assuming the shortened prompt contains everything. Earlier versions' discarded raw tool
+  output cannot be reconstructed retroactively.
+- Validation: 900 tests passed; Debug app and simulation harness builds passed; actual-window
+  private-desktop render confirmed the unified caption and centered collapsed-sidebar layout.
+  See `docs/WORKPLACE_LAYOUT_CONTEXT_20261116.md` for evidence and acceptance limits.
+
+Follow-up after owner testing (20:24–20:32): the latest visualizer task used 13 steps,
+with fast file writes and bounded screenshots; playback was explicitly left unverified.
+The model still used shell focus/window-control workarounds between captures. These are
+now blocked from the first attempt in both the session and tool executor, including background
+commands and native ShowWindow/SetForegroundWindow variants. This is an execution guard,
+not a keyword router for interpreting user messages.
+
+Generated pages can now use `take_screenshot(url=...)` to render in an isolated headless
+browser without opening a visible browser or changing desktop focus. Per the owner's reference,
+captures appear as compact "Viewed an image" dropdowns with 80-pixel thumbnails only in the
+live thinking/activity card. Completion, cancellation or interruption removes the previews;
+they are excluded from final responses and saved chat snapshots.
+Default saved captures live in the app profile's `WorkplaceCaptures` folder. The background
+browser uses its own temporary profile and a 25-second timeout. An initial render does not
+establish that interactions or animation playback work.
+
+Verification and latest log analysis: `docs/WORKPLACE_CAPTURE_FOLLOWUP_20261116.md`.
+
+- Reviewed the latest saved Workplace conversation (18:48–19:03): a transformer animation
+  remained blank after 20-step and 44-step follow-ups; the model asserted a stale-tab cause
+  without establishing it and spent many turns reading small slices of the same file.
+- Live follow-ups now give the model the current message and factual prior-run context to
+  interpret. Phrase matching no longer selects question/change/resume routing, tool access,
+  or replay of old steps. Status questions, corrections and task switches are interpreted by
+  the model. Legacy classifier helpers are retained for compatibility, outside the live path.
+- `read_file` now fits the observation budget and states its actual continuation line;
+  `search_text` accepts a single file as well as a directory. Repeated inspection of one
+  unchanged file is limited in Full tier, with fresh inspection allowed after an edit.
+  Micro/Compact reads fit their smaller transcript budgets; their flat protocol does not
+  receive the search-based inspection guard because it does not expose `search_text`.
+- Browser diagnosis instructions distinguish syntax/launch success from working playback and
+  forbid presenting an unproved stale-tab or test-stub explanation as a confirmed cause.
+- Agent captures default to an external work window without hiding Axiom. Unsupported or
+  minimized targets return an explicit failure; there is no fallback to pixels from a covering
+  window. Capture waits are bounded to five seconds with at most one native worker in flight.
+- Computer Use no longer minimizes/restores/activates Axiom at session boundaries. When Axiom
+  is in front, its capture uses the external target's image with screen coordinates preserved.
+- Cloud/Hybrid agent decisions have a three-minute deadline across retries. Separate model
+  and tool timing logs identify which part is slow; completed slow steps show their duration.
+- Passive `tools/axsim capturecheck <workdir> <window>` probe captured an existing Edge window
+  in 183 ms with visibility/minimized state and foreground focus unchanged (seven windows
+  checked). Axiom was not running: full in-app and live-model acceptance remain unverified.
+- Regression/build results and limits: `docs/WORKPLACE_RELIABILITY_20261116.md`.
+
 Agent mode and Computer Use reliability work, on `main` without a version bump, so no OTA
 update has gone out. Ship it as the next MINOR version when the owner says so.
 

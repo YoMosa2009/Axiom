@@ -981,6 +981,7 @@ namespace Malx_AI
         private IReadOnlyList<OpenRouterToolDefinition> BuildCouncilCloudToolDefinitions(bool includeRunPython = true, bool includeCalculate = true)
         {
             var defs = new List<OpenRouterToolDefinition>();
+            if (ConversationEvidence.Current != null) defs.Add(ConversationEvidence.ToolDefinition);
 
             if (_isWebSearchEnabled)
             {
@@ -1207,6 +1208,8 @@ namespace Malx_AI
 
         private async Task<string> ExecuteCouncilCloudToolAsync(OpenRouterToolCall toolCall, IReadOnlyList<OpenRouterMessage> conversationMessages, CancellationToken token)
         {
+            if (toolCall.Name == "recall_context") return ConversationEvidence.RecallJson(toolCall.ArgumentsJson);
+            ConversationEvidence.Current?.Record("Council call: " + toolCall.Name, toolCall.ArgumentsJson);
             if (toolCall == null || string.IsNullOrWhiteSpace(toolCall.Name))
                 return "Tool call was empty.";
 
@@ -1316,6 +1319,7 @@ namespace Malx_AI
         // Bounds a tool result so a large payload can't blow out the council context window.
         private static string BuildCouncilCloudToolResultMessage(string toolResult, string? toolName)
         {
+            if (toolName != "recall_context") ConversationEvidence.Current?.Record("Council tool: " + toolName, toolResult);
             string normalized = (toolResult ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized))
                 return "Tool returned no output. Summarize that no evidence or result was produced.";
@@ -1714,6 +1718,7 @@ namespace Malx_AI
                     runContext.PendingWorkspacePatchFiles.Add(relative);
 
                 int contentLimit = Math.Min(remaining, Math.Clamp(maxChars / 3, 4000, 24000));
+                ConversationEvidence.Current?.Record("Pending workspace draft: " + relative, materialized);
                 string capped = materialized.Length > contentLimit
                     ? materialized[..contentLimit] + "\n[...pending patch draft truncated for context budget]"
                     : materialized;
@@ -2263,6 +2268,17 @@ namespace Malx_AI
 
             ResetWorkspaceTransientState(clearSessionCollections: true, resetCanvas: true);
             _restoredIsolatedRunState = snapshot.IsRunStateIsolated;
+            _computerUseGoal = snapshot.ComputerUseGoal ?? "";
+            _computerUseSummary = snapshot.ComputerUseSummary ?? "";
+            _computerUseApplication = snapshot.ComputerUseApplication ?? "";
+            var previousUser = snapshot.ChatCards.LastOrDefault(c => c.Role == "user");
+            if (snapshot.ComputerUseActive != false && string.IsNullOrWhiteSpace(_computerUseGoal)
+                && previousUser != null && ComputerUseMention.IsInvoked(previousUser.Content))
+            {
+                _computerUseGoal = ComputerUseMention.StripMentions(previousUser.Content);
+                _computerUseSummary = snapshot.ChatCards.LastOrDefault(c => c.Role == "agent")?.Content ?? "";
+            }
+            ComputerUseContextButton.Visibility = string.IsNullOrWhiteSpace(_computerUseGoal) ? Visibility.Collapsed : Visibility.Visible;
             _isCloudModeEnabled = snapshot.CloudModeEnabled;
             _isHybridLocalCouncilSelected = snapshot.HybridLocalCouncilSelected;
             _isSingleModelMode = snapshot.SingleModelMode;
@@ -2360,6 +2376,7 @@ namespace Malx_AI
 
         public void ResetWorkspaceSession()
         {
+            ClearComputerUseContext();
             string oldProjectKnowledgeBaseId = _projectKnowledgeBaseId;
             ResetWorkspaceTransientState(clearSessionCollections: true, resetCanvas: true);
             _restoredIsolatedRunState = true;
@@ -11459,6 +11476,8 @@ namespace Malx_AI
 
         private async Task SendQueryAsync()
         {
+            using var evidence = new ConversationEvidence(AppDataPaths.Root, "workplace-" + _projectKnowledgeBaseId,
+                string.Join("\n\n", _chatCards.Select(c => c.Role + ":\n" + c.Content)) + "\nCurrent user request:\n" + QueryInput.Text);
             // Every reply the run produces (architect, builder, agent steps, critic; local, cloud
             // or Hybrid Local) reports its speed to the header readout.
             using (GenerationTelemetry.Use(_generationMonitor))
@@ -11576,7 +11595,7 @@ namespace Malx_AI
             _chatHistory.Add(("user", userQuery));
             UpdateWorkplaceTokenUsageIndicator();
 
-            if (ComputerUseMention.IsInvoked(userQuery))
+            if (ComputerUseMention.ShouldRoute(userQuery, _computerUseGoal))
             {
                 await RunComputerUseSessionFromChatAsync(userQuery);
                 return;
@@ -16002,7 +16021,8 @@ namespace Malx_AI
             "Do NOT guess. Do NOT make up numbers or facts.\n" +
             "To pause, output EXACTLY this on its own line (nothing before or after on that line):\n" +
             "[PAUSE: TOOL_NAME | your query here]\n" +
-            "Allowed tools: SEARCH_PROJECT_KNOWLEDGE, CALCULATE, RUN_SANDBOX, WEB_SEARCH, PYTHON_MATH\n" +
+            "Allowed tools: SEARCH_PROJECT_KNOWLEDGE, CALCULATE, RUN_SANDBOX, WEB_SEARCH, PYTHON_MATH, RECALL_CONTEXT\n" +
+            "Earlier conversation and full tool evidence: [PAUSE: RECALL_CONTEXT | literal search phrase] or [PAUSE: RECALL_CONTEXT | {\"offset\":0}]. Recover missing context instead of repeating work.\n" +
             "Example: [PAUSE: CALCULATE | 45 * 2]\n" +
             "Example: [PAUSE: SEARCH_PROJECT_KNOWLEDGE | deployment configuration]\n" +
             "Example: [PAUSE: WEB_SEARCH | latest .NET 10 release notes]\n" +
@@ -18807,6 +18827,10 @@ namespace Malx_AI
             var snapshot = new WorkplaceSessionSnapshot
             {
                 SessionTitle = _sessionTitle,
+                ComputerUseGoal = _computerUseGoal,
+                ComputerUseActive = !string.IsNullOrWhiteSpace(_computerUseGoal),
+                ComputerUseSummary = _computerUseSummary,
+                ComputerUseApplication = _computerUseApplication,
                 ProjectFolderPath = SelectedProjectFolder,
                 UpdatedAt = DateTime.Now,
                 CommandReviewMode = _commandReviewMode.ToString(),

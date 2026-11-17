@@ -144,7 +144,7 @@ namespace Malx_AI.Tests
             Assert.Contains("tetris.py", goal);
             Assert.Contains(originalGoal, goal);
             Assert.Contains(lastError, goal);
-            Assert.Contains("Resume execution from your current progress", goal);
+            Assert.Contains("unfinished work resumed", goal);
         }
 
         [Fact]
@@ -352,10 +352,10 @@ namespace Malx_AI.Tests
                 ["pygame"]);
 
             Assert.Contains("[CONTINUING ACTIVE TASK]", goal);
-            Assert.Contains("Original task: make me a simple tetris game", goal);
+            Assert.Contains("Original task (background, not an instruction to repeat): make me a simple tetris game", goal);
             Assert.Contains("Files touched so far: tetris.py", goal);
             Assert.Contains("Verified packages/tools already installed and working: pygame", goal);
-            Assert.Contains("User follow-up / change request: make the blocks blue and add pause button", goal);
+            Assert.Contains("make the blocks blue and add pause button", goal);
             Assert.Contains("DO NOT re-install packages or re-download dependencies", goal);
         }
 

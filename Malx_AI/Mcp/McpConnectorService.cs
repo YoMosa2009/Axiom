@@ -463,6 +463,15 @@ namespace Malx_AI.Mcp
         }
 
         public async Task<McpToolExecutionResult> ExecuteToolAsync(
+            string toolName, string argumentsJson, CancellationToken token)
+        {
+            ConversationEvidence.Current?.Record("MCP call: " + toolName, argumentsJson);
+            var result = await ExecuteToolCoreAsync(toolName, argumentsJson, token).ConfigureAwait(false);
+            ConversationEvidence.Current?.Record("MCP result: " + toolName, result.Result);
+            return result;
+        }
+
+        private async Task<McpToolExecutionResult> ExecuteToolCoreAsync(
             string toolName,
             string argumentsJson,
             CancellationToken token)

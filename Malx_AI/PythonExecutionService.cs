@@ -237,6 +237,14 @@ def axiom_now_iso():
 
         public async Task<PythonExecutionResult> ExecuteMathScriptAsync(string code, string preamble, int timeoutMs = DefaultTimeoutMs, CancellationToken token = default, bool sanitizeInput = true)
         {
+            ConversationEvidence.Current?.Record("Python code", preamble + "\n" + code);
+            var result = await ExecuteMathScriptCoreAsync(code, preamble, timeoutMs, token, sanitizeInput).ConfigureAwait(false);
+            ConversationEvidence.Current?.Record("Python result", System.Text.Json.JsonSerializer.Serialize(result));
+            return result;
+        }
+
+        private async Task<PythonExecutionResult> ExecuteMathScriptCoreAsync(string code, string preamble, int timeoutMs, CancellationToken token, bool sanitizeInput)
+        {
             if (string.IsNullOrWhiteSpace(code))
                 return PythonExecutionResult.Fail("Python code is empty.", TimeSpan.Zero);
 

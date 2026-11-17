@@ -91,6 +91,8 @@
     <Compile Include="..\Malx_AI\Agent\AgentRunSupport.cs" Link="Production\Agent\AgentRunSupport.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentBackgroundTaskManager.cs" Link="Production\Agent\AgentBackgroundTaskManager.cs" />
     <Compile Include="..\Malx_AI\Agent\BrowserControlService.cs" Link="Production\Agent\BrowserControlService.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentPageCapture.cs" Link="Production\Agent\AgentPageCapture.cs" />
+    <Compile Include="..\Malx_AI\ConversationEvidence.cs" Link="Production\ConversationEvidence.cs" />
     <Compile Include="..\Malx_AI\Agent\WorkplaceTaskTrackerFileService.cs" Link="Production\Agent\WorkplaceTaskTrackerFileService.cs" />
     <Compile Include="..\Malx_AI\Agent\CommandSafetyReviewer.cs" Link="Production\Agent\CommandSafetyReviewer.cs" />
     <Compile Include="..\Malx_AI\CanvasFileArtifact.cs" Link="Production\CanvasFileArtifact.cs" />

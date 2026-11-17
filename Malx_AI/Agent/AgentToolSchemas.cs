@@ -18,6 +18,7 @@ namespace Malx_AI.Agent
     {
         public static IReadOnlyList<OpenRouterToolDefinition> All() =>
         [
+            ConversationEvidence.ToolDefinition,
             Define(
                 AgentToolNames.RunCommand,
                 "Run a shell command on the user's Windows computer through PowerShell and return its output. "
@@ -71,7 +72,7 @@ namespace Malx_AI.Agent
                 AgentToolNames.SearchText,
                 "Search file contents for a piece of text and return the matching lines with their file and line number.",
                 ("pattern", "string", "The text to search for.", true),
-                ("path", "string", "Directory to search from. Defaults to the working folder.", false),
+                ("path", "string", "File or directory to search. Defaults to the working folder.", false),
                 ("file_pattern", "string", "Restrict to files matching this name pattern, e.g. *.cs.", false)),
 
             Define(
@@ -105,7 +106,8 @@ namespace Malx_AI.Agent
             Define(
                 AgentToolNames.TakeScreenshot,
                 "Capture a screenshot and attach the image to the next step for visual inspection. Set window to capture one specific app (for example the browser showing your page): it is captured even when other windows are in front, so never refocus it with AppActivate or SendKeys first. The result says which window the image shows. One or two screenshots are enough to verify a page.",
-                ("window", "string", "Optional. Part of the title or process name of the window to capture, e.g. 'Edge', 'Chrome' or your page's title. Leave empty for the whole screen.", false),
+                ("window", "string", "Optional. Part of the title or process name of the window to capture, e.g. 'Edge', 'Chrome' or your page's title. Defaults to the top external app window. Axiom stays visible; unsupported/minimized targets return an error.", false),
+                ("url", "string", "For a generated HTML page, set its file:/// or HTTP URL. Renders in an isolated background browser without opening, focusing or minimizing any desktop window; the screenshot also appears inside Axiom. Prefer this over opening a browser for verification.", false),
                 ("delay_ms", "integer", "Optional delay in milliseconds before capturing (0-5000, default 600).", false),
                 ("save_path", "string", "Optional file path where the PNG screenshot should be saved.", false)),
         ];

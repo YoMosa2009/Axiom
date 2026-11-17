@@ -54,6 +54,7 @@ namespace Malx_AI.Agent
             public bool TimerWakeNotified { get; set; }
             public Process? Process { get; set; }
             public StringBuilder Output { get; } = new();
+            public ConversationEvidence? Evidence { get; init; }
             public TaskCompletionSource<bool> ExitSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public object Gate { get; } = new();
         }
@@ -109,6 +110,7 @@ namespace Malx_AI.Agent
 
             var entry = new TaskEntry
             {
+                Evidence = ConversationEvidence.Current,
                 Id = id,
                 Title = resolvedTitle,
                 Command = normalizedCommand,
@@ -349,6 +351,7 @@ namespace Malx_AI.Agent
             lock (entry.Gate)
             {
                 entry.Output.AppendLine(line);
+                entry.Evidence?.Record("Background " + entry.Id, line);
                 if (entry.Output.Length > MaxStoredOutputChars)
                 {
                     int remove = entry.Output.Length - MaxStoredOutputChars;

@@ -2,12 +2,16 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Malx_AI"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Axiom - Chat" Height="900" Width="1600" MinWidth="1040" MinHeight="640" WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/AxiomLogo.ico"
         AllowsTransparency="False" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
 
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="40" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
     <Window.Resources>
         <QuadraticEase x:Key="FastEaseOut" EasingMode="EaseOut"/>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
@@ -798,6 +802,26 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
+        <Border x:Name="UnifiedTitleBar" Grid.Row="0" Grid.ColumnSpan="2" Height="40"
+                Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="268"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <ContentControl x:Name="TitleBarNavigationHost" Margin="8,0" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" VerticalAlignment="Center" Margin="12,0" FontSize="12">
+                    <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
+                        <DataTrigger Binding="{Binding Visibility, ElementName=WorkplaceViewControl}" Value="Visible"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                    </Style.Triggers></Style></TextBlock.Style>
+                </TextBlock>
+                <ContentControl x:Name="WorkplaceTitleBarHost" Grid.Column="1" HorizontalContentAlignment="Stretch"
+                                Visibility="{Binding Visibility, ElementName=WorkplaceViewControl}"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button Width="44" Height="38" Content="—" Click="CaptionMinimize_Click" Style="{StaticResource SubtleButtonStyle}" ToolTip="Minimize" AutomationProperties.Name="Minimize Axiom"/>
+                    <Button Width="44" Height="38" Content="□" Click="CaptionMaximize_Click" Style="{StaticResource SubtleButtonStyle}" ToolTip="Maximize or restore" AutomationProperties.Name="Maximize or restore Axiom"/>
+                    <Button Width="44" Height="38" Content="×" Click="CaptionClose_Click" Style="{StaticResource SubtleButtonStyle}" ToolTip="Close" AutomationProperties.Name="Close Axiom"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <!-- MODE TABS (relocated into SidebarBorder top header; kept collapsed so UI expands to top edge) -->
         <Border x:Name="NavigationBar" Grid.Row="0" Grid.ColumnSpan="2" Visibility="Collapsed" Height="0" Padding="0" Margin="0" BorderThickness="0">
             <Grid>
@@ -950,7 +974,7 @@
                 </StackPanel>
 
                 <StackPanel DockPanel.Dock="Top" Margin="8,12,8,0">
-                    <Grid Margin="0,0,0,10">
+                    <Grid x:Name="SidebarNavigationHeader" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>

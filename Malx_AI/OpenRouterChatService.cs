@@ -979,6 +979,13 @@ namespace Malx_AI
             bool requireCompleteResponse = false,
             Action<string, int>? onToolCallProgress = null)
         {
+            if (ConversationEvidence.Current != null)
+            {
+                foreach (var message in messages)
+                    if (message.Role == "tool") ConversationEvidence.Current.Record("Transport tool evidence", message.Text);
+                if (tools?.Any(t => t.Name == "recall_context") == true)
+                    systemPrompt = (systemPrompt ?? "") + "\n" + ConversationEvidence.Instructions;
+            }
             GenerationTelemetry.BeginReply(GenerationModeLabelFor(modelId));
             OpenRouterChatResponse? response = null;
             try

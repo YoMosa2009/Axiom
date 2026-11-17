@@ -423,6 +423,7 @@ namespace Malx_AI
             ["SEARCH_KNOWLEDGE"] = ToolProjectKnowledge,
             ["SEARCHKNOWLEDGE"] = ToolProjectKnowledge,
             ["RUN_SANDBOX"] = ToolRunSandbox,
+            ["RECALL_CONTEXT"] = "RECALL_CONTEXT",
             ["RUNSANDBOX"] = ToolRunSandbox,
             ["SANDBOX"] = ToolRunSandbox,
             ["RUN_CODE"] = ToolRunSandbox,

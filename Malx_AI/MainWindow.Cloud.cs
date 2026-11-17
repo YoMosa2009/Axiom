@@ -1018,6 +1018,7 @@ namespace Malx_AI
             bool includeRunJava = false)
         {
             var tools = new List<OpenRouterToolDefinition>();
+            if (ConversationEvidence.Current != null) tools.Add(ConversationEvidence.ToolDefinition);
 
             // Only offered when the user has switched Web Search on (or explicitly asked for it
             // this turn) -- exposing the tool unconditionally left the model to decide for itself
@@ -1372,6 +1373,7 @@ namespace Malx_AI
 
         private static string BuildCloudToolResultMessage(string toolResult, string toolName)
         {
+            if (toolName != "recall_context") ConversationEvidence.Current?.Record("Chat tool: " + toolName, toolResult);
             string normalized = (toolResult ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(normalized))
                 return "Tool returned no output. If needed, summarize that no evidence or result was produced.";
@@ -1399,6 +1401,8 @@ namespace Malx_AI
                 return new CloudToolExecutionResult { Result = "Tool call was empty." };
 
             string normalizedName = toolCall.Name.Trim();
+            if (normalizedName == "recall_context") return new CloudToolExecutionResult { Result = ConversationEvidence.RecallJson(toolCall.ArgumentsJson) };
+            ConversationEvidence.Current?.Record("Chat call: " + normalizedName, toolCall.ArgumentsJson);
 
             try
             {

@@ -26,6 +26,7 @@ namespace Malx_AI.Agent
         public const string BrowserControl = "browser_control";
         public const string TakeScreenshot = "take_screenshot";
         public const string Finish = "finish";
+        public const string RecallContext = "recall_context";
 
         public static readonly IReadOnlyList<string> All =
         [
@@ -42,14 +43,14 @@ namespace Malx_AI.Agent
             StopBackgroundTask,
             BrowserControl,
             TakeScreenshot,
-            Finish
+            Finish, RecallContext
         ];
 
         /// <summary>Tools that only observe. Everything else can change the machine.</summary>
         public static readonly IReadOnlySet<string> ReadOnly =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                ReadFile, ListDirectory, FindFiles, SearchText, CheckBackgroundTask, TakeScreenshot, Finish
+                ReadFile, ListDirectory, FindFiles, SearchText, CheckBackgroundTask, TakeScreenshot, Finish, RecallContext
             };
 
         public static bool IsReadOnly(string? tool) => tool != null && ReadOnly.Contains(tool);
@@ -228,9 +229,11 @@ namespace Malx_AI.Agent
     }
 
     /// <summary>The outcome of running one tool, as fed back to the model.</summary>
-    public sealed record AgentToolResult(bool Succeeded, string Output, string? Error = null, string? ImageDataUrl = null)
+    public sealed record AgentToolResult(bool Succeeded, string Output, string? Error = null, string? ImageDataUrl = null,
+        string? ImagePath = null)
     {
-        public static AgentToolResult Ok(string output, string? imageDataUrl = null) => new(true, output ?? string.Empty, null, imageDataUrl);
+        public static AgentToolResult Ok(string output, string? imageDataUrl = null, string? imagePath = null) =>
+            new(true, output ?? string.Empty, null, imageDataUrl, imagePath);
         public static AgentToolResult Fail(string error) => new(false, string.Empty, error);
 
         /// <summary>Renders the result as the observation text appended to the transcript.</summary>

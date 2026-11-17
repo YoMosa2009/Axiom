@@ -107,6 +107,7 @@ namespace Malx_AI
 
         private void AgentEnableButton_Click(object sender, RoutedEventArgs e)
         {
+            ClearComputerUseContext();
             if (!_agentEnabled)
             {
                 var confirm = MessageBox.Show(
@@ -460,6 +461,7 @@ namespace Malx_AI
                 run.Status = "Continuing below with your message";
                 run.Card.Content = run.Render();
 
+                run.Card.ViewedImagePaths = Array.Empty<string>();
                 run.Card = new WorkplaceChatMessage { Role = "agent" };
                 run.StepLines.Clear();
                 run.Status = "Got it. Passing your message to the agent at its next step";
@@ -474,6 +476,8 @@ namespace Malx_AI
         private static string DescribeAgentStepLine(AgentStep step)
         {
             string action = step.Call.DescribeShort();
+            if (step.ElapsedMilliseconds >= 1000)
+                action += $" ({step.ElapsedMilliseconds / 1000d:0.0}s)";
             if (step.Result == null)
                 return $"⊘ {action} — {step.Note}";
             if (step.Result.Succeeded)
@@ -508,6 +512,7 @@ namespace Malx_AI
                     ? string.Empty
                     : $"\n\n### Steps Executed ({run.StepLines.Count})\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
                 run.Status = null;
+                run.Card.ViewedImagePaths = Array.Empty<string>();
                 run.Card.Content = trimmed + steps;
                 if (ReferenceEquals(_activeAgentRunCard, run))
                     _activeAgentRunCard = null;
@@ -699,26 +704,20 @@ namespace Malx_AI
             string effectiveGoal = userQuery;
             IReadOnlyList<AgentExchange>? initialHistory = null;
             List<string>? initialAllowList = null;
-            // What the message is asking for decides how much the turn may do: a question is
-            // answered from the record of the last run, a change touches only what it names.
-            AgentFollowUpKind followUpKind = AgentFollowUp.Classify(userQuery, _activeAgentTaskState != null);
+            // The model interprets intent from the message and record, without a phrase router
+            // choosing whether tools are allowed or whether previous progress is relevant.
+            AgentFollowUpKind followUpKind = _activeAgentTaskState == null
+                ? AgentFollowUpKind.NewTask : AgentFollowUpKind.Contextual;
 
-            if (_activeAgentTaskState != null && followUpKind != AgentFollowUpKind.NewTask)
+            if (_activeAgentTaskState != null)
             {
                 isContinuation = true;
                 _activeAgentTaskState.FileBackup ??= CreateAgentFileBackup();
                 initialAllowList = _activeAgentTaskState.SessionAllowList;
-                bool resumeTruncatedRun = _activeAgentTaskState.StoppedOnStepLimit
-                    && AgentContextManager.IsContinuationPhrase(userQuery);
-                string? carryStatus = (resumeTruncatedRun
-                    || string.Equals(_activeAgentTaskState.LastStatusMessage?.Trim(), "Stopped.", StringComparison.Ordinal))
-                    ? _activeAgentTaskState.LastStatusMessage
-                    : null;
+                string? carryStatus = _activeAgentTaskState.LastStatusMessage;
                 // The previous run's tool history is not replayed on a follow-up, so without this
                 // record the model knows nothing of what it did and has to rediscover all of it.
-                string previousRunDigest = resumeTruncatedRun
-                    ? string.Empty
-                    : AgentFollowUp.BuildRunDigest(
+                string previousRunDigest = AgentFollowUp.BuildRunDigest(
                         _activeAgentTaskState.AccumulatedExchanges,
                         _activeAgentTaskState.LastStatusMessage,
                         _activeAgentTaskState.StoppedOnStepLimit,
@@ -734,9 +733,7 @@ namespace Malx_AI
                     _activeAgentTaskState.FileBackup.Saved.Count > 0 ? _activeAgentTaskState.FileBackup.Root : null,
                     followUpKind,
                     previousRunDigest);
-                initialHistory = resumeTruncatedRun
-                    ? AgentContextManager.CompactExchanges(_activeAgentTaskState.AccumulatedExchanges, recentKeepCount: 8)
-                    : null;
+                initialHistory = null;
                 _activeAgentTaskState.LastTurnGoal = userQuery;
             }
             else
@@ -815,7 +812,6 @@ namespace Malx_AI
             RelayStatusBlock.Text = enableCouncilSynergy ? "Relay: Builder executing agent mission..." : "Relay: Agent running";
 
             AgentRunJournal runJournal = BeginAgentRunJournal(fileBackup);
-            Window? hostWindow = Window.GetWindow(this);
             var session = new AgentSession(
                 scope,
                 maxSteps,
@@ -825,11 +821,11 @@ namespace Malx_AI
                     _backgroundTaskManager,
                     _browserControl,
                     screenCaptureAsync: (maxWidth, ct) => Task.Run(
-                        () => ComputerUseScreenCapture.CapturePrimaryScreenPng(maxWidth, hostWindow != null ? [hostWindow] : []),
+                        () => ComputerUseScreenCapture.CapturePrimaryScreenPng(maxWidth),
                         ct),
-                    windowCaptureAsync: (window, maxWidth, ct) => Task.Run(
-                        () => ComputerUseScreenCapture.CaptureForAgent(window, maxWidth, hostWindow != null ? [hostWindow] : []),
-                        ct)));
+                    windowCaptureAsync: ComputerUseScreenCapture.CaptureForAgentAsync,
+                    readBudgetChars: ObservationBudgetFor(tier) - 256,
+                    screenshotDirectory: Path.Combine(AppDataPaths.Root, "WorkplaceCaptures")));
             var trackedSteps = new List<string>();
             AgentRunResult result;
             _agentSessionRunning = true;
@@ -847,7 +843,20 @@ namespace Malx_AI
                     onStep: step =>
                     {
                         NoteAgentModelResponding();
+                        _ = BackendLogService.LogEventAsync("ComputerAgent.Tool",
+                            $"tool:{step.Call.Tool} elapsedMs:{step.ElapsedMilliseconds} succeeded:{step.Result?.Succeeded}");
                         AppendAgentRunCardLine(runCard, DescribeAgentStepLine(step));
+                        if (step.Call.Tool == AgentToolNames.TakeScreenshot && step.Result is { Succeeded: true, ImagePath: { } imagePath })
+                        {
+                            Dispatcher.BeginInvoke(() =>
+                            {
+                                // A late UI callback must not reintroduce a thumbnail after the
+                                // final response has cleared the transient thinking activity.
+                                if (!ReferenceEquals(_activeAgentRunCard, runCard)) return;
+                                runCard.Card.ViewedImagePaths = runCard.Card.ViewedImagePaths
+                                    .Append(imagePath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                            });
+                        }
                         RecordTrackedAgentFileStep(step, scope.WorkingDirectory);
                         trackedSteps.Add(step.Call.DescribeShort());
                         EnsureSessionTrackerUpdated(userQuery, step.Call.DescribeShort(), trackedSteps);

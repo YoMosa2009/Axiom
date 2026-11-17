@@ -186,11 +186,25 @@ namespace Malx_AI.Agent
             string? previousRunDigest = null)
         {
             var builder = new StringBuilder();
-            AgentFollowUpKind followUp = kind ?? AgentFollowUp.Classify(userQuery, hasActiveTask: true);
-            bool isContinuationOnly = followUp == AgentFollowUpKind.Resume || IsContinuationPhrase(userQuery);
+            AgentFollowUpKind followUp = kind ?? AgentFollowUpKind.Contextual;
+            bool contextual = followUp == AgentFollowUpKind.Contextual;
+            bool isContinuationOnly = followUp == AgentFollowUpKind.Resume;
             bool isQuestion = !isContinuationOnly && followUp == AgentFollowUpKind.Question;
 
-            if (isQuestion)
+            if (contextual)
+            {
+                builder.AppendLine("[CURRENT USER REQUEST — HIGHEST PRIORITY]");
+                builder.AppendLine(userQuery);
+                builder.AppendLine("The current request takes priority over the original task and any earlier plan.");
+                builder.AppendLine("Interpret this message from its meaning and the conversation, not from matching particular words. Decide whether the user wants an answer, unfinished work resumed, a targeted change, or unrelated new work.");
+                builder.AppendLine("If they want information or status, answer directly from the previous run record; do not restart work. If they want action, perform that action and verify the relevant result. A report that the result is broken calls for diagnosis and repair, not additional features. If they switch tasks, treat the previous task only as background and leave its files alone unless relevant.");
+                builder.AppendLine("Keep completed work and verified dependencies. Do not repeat inspection just to reconstruct facts already recorded below. Explain uncertainty instead of claiming an unverified result works.");
+                builder.AppendLine();
+                builder.AppendLine("[EXISTING WORKSPACE CONTEXT]");
+                builder.AppendLine("[CONTINUING ACTIVE TASK]");
+                builder.Append("Original task (background, not an instruction to repeat): ").AppendLine(originalGoal);
+            }
+            else if (isQuestion)
             {
                 // A question is answered, not worked on. The old wording told the model to
                 // "inspect, modify, or verify" whatever the user sent, which turned "Is it done?"
@@ -257,7 +271,11 @@ namespace Malx_AI.Agent
                 builder.Append("Backups of modified pre-existing files: ").AppendLine(backupFolder);
             }
 
-            if (isQuestion)
+            if (contextual)
+            {
+                builder.AppendLine("Respond to the CURRENT USER REQUEST according to its meaning. Answer when an answer is requested; act when action is requested. Keep your result concise and distinguish completed work from unverified claims.");
+            }
+            else if (isQuestion)
             {
                 builder.AppendLine("Now answer the user's question directly. Start with the answer itself (for example \"Yes — …\" or \"Not yet — …\"), then the few facts that support it.");
             }

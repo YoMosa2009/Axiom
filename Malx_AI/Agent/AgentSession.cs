@@ -19,7 +19,8 @@ namespace Malx_AI.Agent
         Deny
     }
 
-    public sealed record AgentStep(AgentToolCall Call, AgentPermission Permission, AgentToolResult? Result, string Note);
+    public sealed record AgentStep(AgentToolCall Call, AgentPermission Permission, AgentToolResult? Result, string Note,
+        long ElapsedMilliseconds = 0);
 
     public sealed record AgentRunResult(
         string FinalMessage,
@@ -97,6 +98,19 @@ namespace Malx_AI.Agent
             void AddStep(AgentStep step)
             {
                 steps.Add(step);
+                if (step.Call.Tool != AgentToolNames.RecallContext)
+                {
+                    ConversationEvidence.Current?.Record("Agent call: " + step.Call.Tool,
+                        System.Text.Json.JsonSerializer.Serialize(step.Call.Arguments));
+                    ConversationEvidence.Current?.Record("Agent result: " + step.Call.Tool,
+                        step.Result?.Succeeded == true ? step.Result.Output : "ERROR: " + (step.Result?.Error ?? step.Note));
+                    if (step.Result?.ImageDataUrl is { } image)
+                    {
+                        int comma = image.IndexOf(',');
+                        if (comma >= 0) ConversationEvidence.Current?.SaveImage(Convert.FromBase64String(image[(comma + 1)..]),
+                            image.StartsWith("data:image/jpeg", StringComparison.OrdinalIgnoreCase) ? ".jpg" : ".png");
+                    }
+                }
                 try { onStep?.Invoke(step); }
                 catch { /* a UI callback failure must never stop the run */ }
             }
@@ -109,8 +123,8 @@ namespace Malx_AI.Agent
             int verificationPasses = 0;
             int screenshotsSinceLastMutation = 0;
             int totalScreenshots = 0;
-            int uiFocusCommandCount = 0;
             var callCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            var fileReadCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             bool changedSomething = false;
             int stepsSinceLastChange = 0;
             int blockedInARow = 0;
@@ -324,6 +338,21 @@ namespace Malx_AI.Agent
                         continue;
                     }
 
+                    if (policy.LimitFileInspection && call.Tool.Equals(AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string path = InspectionPath(call.Arg("path"));
+                        // Different line ranges are still reads of the same unchanged file.
+                        // Exact-call repetition guards alone let the logged run spend 18 turns
+                        // paging through one HTML file without attempting a fix.
+                        if (fileReadCounts.TryGetValue(path, out int reads) && reads >= 6)
+                        {
+                            NoteBlocked(call, decision.Permission,
+                                "Blocked: this file has already been read six times without a change. Use search_text with a specific literal on the file path to find the relevant code, then make a targeted fix. Do not reread the file through run_command or invent a diagnosis from an inconclusive check.",
+                                "repeated file inspection");
+                            continue;
+                        }
+                    }
+
                     if (string.Equals(call.Tool, AgentToolNames.TakeScreenshot, StringComparison.OrdinalIgnoreCase)
                         && (screenshotsSinceLastMutation >= 2 || totalScreenshots >= 4))
                     {
@@ -333,13 +362,14 @@ namespace Malx_AI.Agent
                         continue;
                     }
 
-                    if (string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                    if ((string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(call.Tool, AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase))
                         && IsUiFocusAutomationCommand(call.Arg("command"))
-                        && ++uiFocusCommandCount > 1)
+                        )
                     {
                         NoteBlocked(call, decision.Permission,
-                            "Blocked: Do not use WScript.Shell, AppActivate, or SendKeys in a loop. To look at a specific app, call take_screenshot with window set to part of its title; it does not need the window focused. Proceed to editing files or finishing your turn with a complete summary.",
-                            "ui focus loop blocked");
+                            DesktopIsolationMessage,
+                            "desktop window control blocked");
                         continue;
                     }
 
@@ -429,6 +459,7 @@ namespace Malx_AI.Agent
                     }
 
                     reportActivity?.Invoke(call.DescribeShort());
+                    var toolTimer = System.Diagnostics.Stopwatch.StartNew();
                     AgentToolResult result;
                     try
                     {
@@ -439,11 +470,18 @@ namespace Malx_AI.Agent
                         reportActivity?.Invoke(null);
                     }
 
-                    AddStep(new AgentStep(call, decision.Permission, result, decision.Reason));
+                    AddStep(new AgentStep(call, decision.Permission, result, decision.Reason, toolTimer.ElapsedMilliseconds));
+                    if (result.Succeeded && call.Tool.Equals(AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string path = InspectionPath(call.Arg("path"));
+                        fileReadCounts[path] = fileReadCounts.GetValueOrDefault(path) + 1;
+                    }
                     if (result.Succeeded && IsProgressTool(call.Tool))
                     {
                         changedSomething = true;
                         stepsSinceLastChange = 0;
+                        if (!call.Tool.Equals(AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase))
+                            fileReadCounts.Remove(InspectionPath(call.Arg("path")));
                     }
                     else
                     {
@@ -528,6 +566,16 @@ namespace Malx_AI.Agent
         }
 
         private const string CancelledMarker = "\u0001cancelled";
+
+        private string InspectionPath(string requested)
+        {
+            try
+            {
+                return System.IO.Path.GetFullPath(System.IO.Path.Combine(_scope.WorkingDirectory,
+                    Environment.ExpandEnvironmentVariables(requested.Trim().Trim('"'))));
+            }
+            catch { return requested; }
+        }
 
         /// <summary>How many refused tool calls in a row end the tool-calling part of a run.</summary>
         private const int MaxBlockedCallsInARow = 3;
@@ -623,11 +671,17 @@ namespace Malx_AI.Agent
         /// <summary>Commands the user chose to stop being asked about during this run.</summary>
         public IReadOnlyList<string> SessionAllowList => _sessionAllowList;
 
+        internal const string DesktopIsolationMessage =
+            "Blocked: Agent Access commands must not hide, minimize, close, reposition, or focus desktop windows (including Axiom). "
+            + "Do not use WScript.Shell, AppActivate, SendKeys or native window-control APIs. "
+            + "For a generated page, use take_screenshot with url set to its file:/// or HTTP URL; it renders in a background browser and appears inside Axiom. "
+            + "For an existing app, use take_screenshot with window set to its title. Neither requires changing focus. Desktop input belongs to explicit @ComputerUse sessions.";
+
         internal static bool IsUiFocusAutomationCommand(string? command) =>
             !string.IsNullOrWhiteSpace(command)
-            && (command.Contains("WScript.Shell", StringComparison.OrdinalIgnoreCase)
-                || command.Contains("AppActivate", StringComparison.OrdinalIgnoreCase)
-                || command.Contains("SendKeys", StringComparison.OrdinalIgnoreCase));
+            && System.Text.RegularExpressions.Regex.IsMatch(command,
+                @"\b(?:WScript\.Shell|AppActivate|SendKeys|ShowWindow(?:Async)?|SetForegroundWindow|SetWindowPlacement|SetWindowPos|BringWindowToTop|SwitchToThisWindow|ShowDesktop|ToggleDesktop|MinimizeAll|CloseMainWindow|SendInput|mouse_event|keybd_event)\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
         internal static string CallSignature(AgentToolCall call)
         {

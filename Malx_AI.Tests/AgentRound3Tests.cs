@@ -51,7 +51,7 @@ namespace Malx_AI.Tests
             Assert.True(currentHeaderIdx >= 0, "Expected current user request header");
             Assert.True(queryIdx > currentHeaderIdx, "Expected follow-up query under current request header");
             Assert.True(existingContextIdx > queryIdx, "Expected existing workspace context after follow-up query");
-            Assert.Contains("Do NOT repeat", goal, StringComparison.Ordinal);
+            Assert.Contains("Do not repeat inspection", goal, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -221,7 +221,7 @@ namespace Malx_AI.Tests
             Assert.True(run.Steps[1].Result!.Succeeded);
             Assert.False(run.Steps[2].Result!.Succeeded);
             Assert.Contains("Screenshot limit reached", run.Steps[2].Result!.Error, StringComparison.Ordinal);
-            Assert.True(run.Steps[3].Result!.Succeeded);
+            Assert.False(run.Steps[3].Result!.Succeeded);
             Assert.False(run.Steps[4].Result!.Succeeded);
             Assert.Contains("WScript.Shell", run.Steps[4].Result!.Error, StringComparison.Ordinal);
         }

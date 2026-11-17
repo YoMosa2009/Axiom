@@ -429,6 +429,7 @@ namespace Malx_AI
             try
             {
                 InitializeComponent();
+                InitializeUnifiedTitleBar();
                 _generationReadout = new GenerationReadout(_generationMonitor, GenerationStatsRow, GenerationStatsTitle, GenerationStatsLabel);
                 // The native caption is not WPF's to paint, so a dark app otherwise sits under a
                 // bright system title bar.

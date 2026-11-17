@@ -56,6 +56,9 @@ internal static class Program
                 "paintshot" => PaintShot.Run(work),
                 "dragprobe" => await DragProbe.RunAsync(work),
                 "edgeshot" => EdgeShot(work),
+                "capturecheck" => await CaptureCheck.RunAsync(work, args.ElementAtOrDefault(2)),
+                "pagecheck" => await CaptureCheck.RunPageAsync(work),
+                "applicationcheck" => CaptureCheck.CheckApplication(work, args[2]),
                 _ => 1
             };
         }

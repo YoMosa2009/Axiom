@@ -429,6 +429,17 @@ namespace Malx_AI
         // ── Tool router ───────────────────────────────────────────────────────
         private async Task<ToolDispatchResult> DispatchToolAsync(PauseCommand cmd, CancellationToken token)
         {
+            if (cmd.Tool == "RECALL_CONTEXT")
+                return ToolDispatchResult.Ok(cmd.Query.TrimStart().StartsWith("{", StringComparison.Ordinal)
+                    ? ConversationEvidence.RecallJson(cmd.Query) : ConversationEvidence.Current?.Read(cmd.Query) ?? "No active conversation evidence archive.");
+            ConversationEvidence.Current?.Record("Local tool: " + cmd.Tool, cmd.Query);
+            var result = await DispatchToolCoreAsync(cmd, token).ConfigureAwait(true);
+            ConversationEvidence.Current?.Record("Local result: " + cmd.Tool, result.IsSuccess ? result.Data : "ERROR: " + result.ErrorMessage);
+            return result;
+        }
+
+        private async Task<ToolDispatchResult> DispatchToolCoreAsync(PauseCommand cmd, CancellationToken token)
+        {
             // Structural validation only: a mid-generation pause legitimately computes with
             // values the model derived itself, so no request-grounding is enforced here —
             // just shape sanity (length caps, READ_FILE path hygiene).

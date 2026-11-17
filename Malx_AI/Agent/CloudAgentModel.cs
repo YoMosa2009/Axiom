@@ -87,7 +87,30 @@ namespace Malx_AI.Agent
                 _renderedExchanges = history.Count;
             }
 
-            OpenRouterChatResponse? response = await SendWithRetryAsync(token).ConfigureAwait(false);
+            OpenRouterChatResponse? response;
+            // Bound the complete decision, including retries. Transport deadlines can allow
+            // eight minutes of silent tool composition per attempt on a custom endpoint.
+            using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(token))
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                deadline.CancelAfter(TurnTimeout);
+                try
+                {
+                    response = await SendWithRetryAsync(deadline.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    throw new AgentFatalException(
+                        "The model did not finish its next step within 3 minutes, so this run stopped. "
+                        + "Completed tool steps are preserved; the pending tool call was not executed. Try smaller file changes or continue later.");
+                }
+                finally
+                {
+                    await BackendLogService.LogEventAsync("ComputerAgent.ModelTurn",
+                        $"model:{_modelId} elapsedMs:{timer.ElapsedMilliseconds} deadlineExpired:{deadline.IsCancellationRequested && !token.IsCancellationRequested}")
+                        .ConfigureAwait(false);
+                }
+            }
             if (response == null)
             {
                 if (_lastTurnWasTruncatedToolCall)
@@ -141,6 +164,7 @@ namespace Malx_AI.Agent
 
         /// <summary>Attempts per turn before the turn is reported as failed.</summary>
         private const int MaxAttempts = 3;
+        internal TimeSpan TurnTimeout { get; init; } = TimeSpan.FromMinutes(3);
 
         /// <summary>Overridable so tests do not actually wait.</summary>
         internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;

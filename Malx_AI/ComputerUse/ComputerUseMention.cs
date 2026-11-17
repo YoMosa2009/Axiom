@@ -26,6 +26,9 @@ namespace Malx_AI.ComputerUse
 
         public static IReadOnlyCollection<string> KnownHandles => Handles;
 
+        public static bool ShouldRoute(string? message, string? activeDesktopGoal)
+            => IsInvoked(message) || !string.IsNullOrWhiteSpace(activeDesktopGoal);
+
         public static bool IsKnownHandle(string? handle)
             => !string.IsNullOrWhiteSpace(handle) && HandleSet.Contains(handle.Trim());
 
