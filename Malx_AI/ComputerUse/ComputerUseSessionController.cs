@@ -32,7 +32,6 @@ namespace Malx_AI.ComputerUse
 
     internal static partial class ComputerUseSessionController
     {
-        public const int MaxSteps = 64;
         private const int RepeatAbortCount = 3;
         // Outer watchdog only. The chat transport already enforces its own first-byte, idle and
         // no-content limits (and a local runner reports its own failures), so this must sit ABOVE
@@ -48,68 +47,6 @@ namespace Malx_AI.ComputerUse
         // server accepts the connection and never sends response headers at all. Nothing is
         // visible on screen during planning, so a long silent wait here reads as a dead app.
         private static readonly TimeSpan PlanningTurnTimeout = TimeSpan.FromSeconds(120);
-
-        public static string BuildSystemPrompt(ComputerUseCapture capture, ComputerUseMode mode)
-        {
-            return
-                "You are Axiom Computer Use. You operate a real Windows desktop with screenshots and GUI actions — not a terminal, not MCP, not shell commands.\n" +
-                "You receive one JPEG of the active app's monitor. Use image pixel coordinates; the controller maps them to native screen pixels. Origin is top-left of THIS image.\n" +
-                $"Screenshot size: {capture.ImageWidth}x{capture.ImageHeight}. Native monitor pixels: {capture.ScreenWidth}x{capture.ScreenHeight} at origin ({capture.ScreenX},{capture.ScreenY}).\n" +
-                "x and y MUST be screenshot pixels from this JPEG (0..width-1, 0..height-1). Read the yellow grid labels. Do not invent coordinates.\n" +
-                "Always look at the screenshot before acting.\n" +
-                "Return EXACTLY one JSON object and nothing else. Schema:\n" +
-                "{\n" +
-                "  \"thinking\": \"short description of what you see and will do\",\n" +
-                "  \"task_progress\": {\n" +
-                "    \"completed\": [\"controller-verified completions echoed from the previous turn only\"],\n" +
-                "    \"current\": \"one next unfinished sub-goal\",\n" +
-                "    \"next\": \"the sub-goal after current, if any\",\n" +
-                "    \"remaining\": [\"all further user outcomes in order\"]\n" +
-                "  },\n" +
-                "  \"safety\": {\n" +
-                "    \"ok\": true,\n" +
-                "    \"dangerous\": false,\n" +
-                "    \"risk\": \"low|medium|high\",\n" +
-                "    \"causes\": \"what this action does\",\n" +
-                "    \"effects\": \"what will change on screen or in the OS\",\n" +
-                "    \"reason\": \"why it is okay or not\"\n" +
-                "  },\n" +
-                "  \"action\": {\n" +
-                "    \"type\": \"screenshot|move|click|double_click|right_click|drag|scroll|type|key|wait|zoom|open|done\",\n" +
-                "    \"x\": 0, \"y\": 0, \"x2\": 0, \"y2\": 0, \"dx\": 0, \"dy\": 0,\n" +
-                "    \"text\": \"\", \"keys\": \"\", \"ms\": 0, \"expected_state\": \"visible result expected in the next screenshot\",\n" +
-                "    \"button\": \"left\", \"target_id\": \"ui1\",\n" +
-                "    \"explanation\": \"one concise sentence of the intended GUI action\",\n" +
-                "    \"outcome\": \"completed|blocked (required for done)\",\n" +
-                "    \"summary\": \"final result when type=done\"\n" +
-                "  }\n" +
-                "}\n" +
-                "Rules:\n" +
-                "- One action per turn. After click/type/scroll/key, the next turn will include a fresh screenshot.\n" +
-                "- Every GUI action must state its expected_state. The controller compares the next screenshot with the prior one. Pixel differences alone cannot prove success or failure; the separate visual assessment must establish the expected state.\n" +
-                "- Before each action, reconcile the screenshot with [TASK PROGRESS] and [EXECUTION LEDGER]. Keep every verified sub-goal completed forever; do not revisit any completed task outcome in any app.\n" +
-                "- task_progress.completed is controller-owned evidence. Echo it unchanged; do not add or remove entries. The controller has already fixed the ordered outcomes and their required evidence. Echo current/next/remaining; do not replace or skip them. Work only on CURRENT and its constraints.\n" +
-                "- [EXECUTION LEDGER] is controller-owned action evidence for every application. pending means wait for the fresh screenshot; failed means choose a different recovery action; observed change means inspect whether the expected state is actually visible. Only verified means the expected state is supported; observed change alone does not permit completion.\n" +
-                "- To open an app, use type=open with text set to the exact app name (example: Microsoft Edge, File Explorer, Notepad). Never click taskbar icons.\n" +
-                "- An app launch is complete only when the controller reports [APP LAUNCH VERIFIED] from the real foreground window identity. A pixel change, a launch request, or an assumption is not proof that an app is open.\n" +
-                "- For browser navigation, avoid tiny browser chrome: key Ctrl+T for a new tab, key Ctrl+L to focus the address bar, type the complete URL, then key Enter. A new tab is complete only when [BROWSER STATE] shows a higher tab count. A URL is complete only when [BROWSER STATE] shows the expected address and no error page.\n" +
-                "- A [VERIFIED NAVIGATION URL] is controller-owned evidence. Type it exactly; never substitute a guessed account, path, or query. If an owned resource has no verified URL, do not manufacture one: finish that sub-goal as blocked and ask for its URL.\n" +
-                "- A failed new-tab verification is a hard barrier: never navigate the existing tab as a fallback. Retry Ctrl+T after focus is restored, or use an accessible control explicitly named New tab. After typing a complete URL, press Enter before any further type action; never append a search query to an uncommitted address.\n" +
-                "- When [ACCESSIBLE TARGETS] are provided, choose target_id for a named control; it is an exact control center and is more reliable than estimating x,y.\n" +
-                "- Allowed launch keys: Win+S (Search), Win+E (Explorer), Win+I (Settings), Win+D (Desktop). Win+R and Win+X are blocked.\n" +
-                "- Click only large, clearly labeled UI (buttons, links, window chrome). Tiny clustered icons will miss neighboring apps.\n" +
-                "- Use type=drag with x,y as the start and x2,y2 as the end for anything done by holding the mouse button: drawing a stroke, dragging a shape out to size, selecting a region, moving a window by its title bar, or moving a slider. A click cannot do any of these — it presses and releases in one place. To draw, first select the tool, then drag; one stroke per turn.\n" +
-                "- The two points of a drag must differ. A shape tool draws the box between them, so drag corner to corner: {\"type\":\"drag\",\"x\":500,\"y\":300,\"x2\":780,\"y2\":560} draws a shape about 280 by 260 pixels. A line or freehand stroke runs from the first point to the second.\n" +
-                "- If an action missed or nothing changed, do NOT repeat the same target blindly. Inspect the new screenshot and choose a different recovery method appropriate to the active application.\n" +
-                "- Many outcomes are built from several actions (a drawing from several strokes, a form from several fields). A partial result is PROGRESS, not failure: when the screenshot shows part of the work done, keep it and do the next missing part. Never redo a part that is already visible, and do not re-select a tool that is already selected.\n" +
-                "- Use type=done with outcome=completed only after all user outcomes are verified; use outcome=blocked with an honest explanation when recovery cannot proceed.\n" +
-                "- Never type secrets you cannot see. Never dump credentials. Never format disks, shut down, or send money.\n" +
-                "- key uses combos like Enter, Tab, Ctrl+S, Win+E, Alt+Tab.\n" +
-                "- scroll dy is wheel steps; negative scrolls up. zoom dy>0 zooms in (Ctrl+wheel).\n" +
-                (mode == ComputerUseMode.Autopilot
-                    ? "- Autopilot is on: you may act without a person clicking Allow, but you MUST fill safety.causes, safety.effects, and safety.dangerous on every action.\n"
-                    : "- Ask mode is on: keep explanation short; the user must approve each action before it runs.\n");
-        }
 
         public static async Task<ComputerUseSessionResult> RunAsync(ComputerUseSessionRequest request, CancellationToken token)
         {
@@ -171,7 +108,17 @@ namespace Malx_AI.ComputerUse
 
                 string? lastObservation = null;
                 ComputerUseAction? lastExecuted = null;
-                var recentActions = new List<string>();
+                var recentActions = new List<RecentAction>();
+                // What the controller itself reported for the most recent executed action, kept
+                // apart from lastObservation because that is rebuilt every turn.
+                string lastActionResult = "";
+                StepVerdict lastStepVerdict = StepVerdict.Confirmed;
+                // An assessment is owed once per executed action. Re-running it on a turn where
+                // nothing was sent costs a model request and, worse, used to overwrite the reason
+                // an action had just been refused, so the model never learned why.
+                bool assessmentDue = false;
+                bool taskVisuallyComplete = false;
+                string? trackedOutcome = null;
                 var taskProgress = new ComputerUseTaskProgress();
                 ComputerUseTaskContract? taskContract = null;
                 string? pendingApplicationLaunch = null;
@@ -193,7 +140,7 @@ namespace Malx_AI.ComputerUse
                 int repeatCount = 0;
                 int turnsWithoutInput = 0;
                 int inferenceFailures = 0;
-                int actionsWithoutVerifiedEffect = 0;
+                int actionsWithoutEffect = 0;
                 int visionDetailLevel = 0;
                 int turnsSinceDetailReduction = 0;
                 int? lastKnownTabCount = null;
@@ -310,6 +257,14 @@ namespace Malx_AI.ComputerUse
 
                     ComputerUseTaskContract.Outcome? completedOutcome = taskContract.Current;
                     string outcomeObservation = taskContract.ObserveCurrentOutcome(capture);
+                    // The work log and the no-effect count belong to one outcome. Carrying them
+                    // into the next would charge it with the previous outcome's misses.
+                    if (!string.Equals(trackedOutcome, taskContract.Current?.Description, StringComparison.Ordinal))
+                    {
+                        trackedOutcome = taskContract.Current?.Description;
+                        recentActions.Clear();
+                        actionsWithoutEffect = 0;
+                    }
                     if (!string.IsNullOrWhiteSpace(outcomeObservation))
                     {
                         if (outcomeObservation.StartsWith("[OUTCOME VERIFIED]", StringComparison.Ordinal))
@@ -317,7 +272,9 @@ namespace Malx_AI.ComputerUse
                             if (completedOutcome != null)
                             {
                                 taskProgress = AddVerifiedCompletion(taskProgress, completedOutcome.Description);
-                                taskProgress = AddVerifiedCompletion(taskProgress, "Opened " + completedOutcome.Destination);
+                                // A desktop outcome has no destination; "Opened " alone landed in the completed list.
+                                if (!string.IsNullOrWhiteSpace(completedOutcome.Destination))
+                                    taskProgress = AddVerifiedCompletion(taskProgress, "Opened " + completedOutcome.Destination);
                             }
 
                             taskProgress = taskContract.Progress(taskProgress.Completed);
@@ -364,9 +321,10 @@ namespace Malx_AI.ComputerUse
                         hud.AppendLog(actionEvidence);
                     }
 
-                    bool taskVisuallyComplete = false;
-                    if (executionLedger.State != ComputerUseActionEvidenceState.None)
+                    if (executionLedger.State != ComputerUseActionEvidenceState.None && assessmentDue)
                     {
+                        assessmentDue = false;
+                        taskVisuallyComplete = false;
                         hud.BeginWait($"Step {steps}/{MaxSteps} · verifying visible outcome");
                         // The observer is told never to override an unresolved controller
                         // constraint, so only constraints bearing on the CURRENT outcome may be
@@ -379,7 +337,8 @@ namespace Malx_AI.ComputerUse
                         string assessmentRaw = await InferTurnWithTimeoutAsync(request,
                                 ComputerUseVisualAssessment.SystemPrompt,
                                 ComputerUseVisualAssessment.BuildPayload(request.Goal, taskProgress, capture,
-                                    executionLedger, assessmentConstraints),
+                                    executionLedger, assessmentConstraints, lastActionResult,
+                                    recentActions.Select(action => action.Render()).ToList()),
                                 capture, token, verification: true).ConfigureAwait(true);
                         hud.EndWait();
                         var assessment = ComputerUseVisualAssessment.Parse(assessmentRaw);
@@ -391,16 +350,39 @@ namespace Malx_AI.ComputerUse
                             || (pendingNewTabCount.HasValue && taskContract.Current?.SeparateTab == true)
                             || !string.IsNullOrWhiteSpace(pendingBrowserUrl)
                             || capture.BrowserState?.IsErrorPage == true;
-                        executionLedger.AssessExpectedState(assessment.ActionSucceeded && !unresolved, assessment.Evidence);
-                        lastActionProducedVisualEvidence = executionLedger.CanFinish;
-                        if (lastActionProducedVisualEvidence)
-                            actionsWithoutVerifiedEffect = 0;
-                        else if (!string.IsNullOrWhiteSpace(actionEvidence) && ++actionsWithoutVerifiedEffect >= 6)
-                            return new ComputerUseSessionResult { Completed = false, Steps = steps,
-                                Summary = "Computer Use stopped after six actions without a verified effect. " + assessment.Evidence };
-                        lastObservation = "[VISUAL ASSESSMENT] " + assessment.Evidence +
-                            (unresolved ? " Controller constraints remain unresolved; no completion accepted." : "");
+                        // Judged once per executed action (actionEvidence is only present on the
+                        // turn right after one), from the strongest evidence available: what the
+                        // controller measured, then what the observer saw, then whether the screen
+                        // reacted at all. See JudgeStep for why the observer alone is not enough.
+                        if (!string.IsNullOrWhiteSpace(actionEvidence))
+                        {
+                            lastStepVerdict = JudgeStep(lastActionResult, screenChangedAfterLastAction,
+                                assessment.ActionSucceeded && !unresolved);
+                            if (lastStepVerdict == StepVerdict.Confirmed)
+                                executionLedger.AssessExpectedState(true, FirstNonEmpty(assessment.Evidence, lastActionResult));
+                            else if (lastStepVerdict == StepVerdict.Delivered)
+                                executionLedger.MarkDelivered();
+                            else
+                                executionLedger.AssessExpectedState(false, assessment.Evidence);
+
+                            if (recentActions.Count > 0)
+                                recentActions[^1] = recentActions[^1] with { Verdict = VerdictWord(lastStepVerdict) };
+
+                            if (lastStepVerdict != StepVerdict.NoEffect)
+                                actionsWithoutEffect = 0;
+                            else if (++actionsWithoutEffect >= 6)
+                                return new ComputerUseSessionResult { Completed = false, Steps = steps,
+                                    Summary = "Computer Use stopped after six actions in a row that changed nothing on screen. " + assessment.Evidence };
+                        }
+
+                        lastActionProducedVisualEvidence = lastStepVerdict != StepVerdict.NoEffect;
+                        lastObservation = DescribeStepVerdict(lastStepVerdict, executionLedger.ActionLabel)
+                            + (string.IsNullOrWhiteSpace(lastActionResult) ? "" : "\n" + lastActionResult)
+                            + (string.IsNullOrWhiteSpace(assessment.Evidence) ? "" : "\n[WHAT THE SCREENSHOT SHOWS] " + assessment.Evidence)
+                            + (unresolved ? "\nController constraints remain unresolved; no completion accepted." : "");
                         hud.AppendLog(lastObservation);
+                        await BackendLogService.LogEventAsync("ComputerUse.StepVerdict",
+                            $"Step {steps}; {executionLedger.ActionLabel}; verdict:{lastStepVerdict}; screenChanged:{screenChangedAfterLastAction}; observer:{assessment.ActionSucceeded}; noEffectStreak:{actionsWithoutEffect}").ConfigureAwait(true);
                         var requiredOutcome = taskContract.Current;
                         if (!unresolved && string.IsNullOrWhiteSpace(typedBrowserUrl) && requiredOutcome != null)
                         {
@@ -433,7 +415,10 @@ namespace Malx_AI.ComputerUse
                                 }
                             }
                             hud.AppendLog(outcomeEvidence);
-                            lastObservation += "\n" + outcomeEvidence;
+                            // The outcome check repeats the observer's description; say it once.
+                            lastObservation += "\n" + (accepted || string.IsNullOrWhiteSpace(assessment.Evidence)
+                                ? outcomeEvidence
+                                : "[OUTCOME PROGRESS] The current outcome is not complete yet, which is expected while steps remain. Everything already done stays done — do not redo it. Do the next missing part now.");
                             if (accepted)
                             {
                                 taskProgress = AddVerifiedCompletion(taskProgress, requiredOutcome.Description);
@@ -452,7 +437,8 @@ namespace Malx_AI.ComputerUse
                     }
 
                     string userPayload = BuildUserPayload(request.Goal, request.NavigationContext, capture,
-                        taskContract.Describe() + "\n" + lastObservation, recentActions, taskProgress, executionLedger, steps, mode);
+                        taskContract.Describe() + "\n" + lastObservation,
+                        recentActions.Select(action => action.Render()).ToList(), taskProgress, executionLedger, steps, mode);
                     hud.BeginWait($"Step {steps}/{MaxSteps} · thinking");
                     string raw;
                     try
@@ -563,6 +549,7 @@ namespace Malx_AI.ComputerUse
                     if (turn.Action.Type == ComputerUseActionType.Screenshot)
                     {
                         lastObservation = "Screenshot captured. Choose the next GUI action.";
+                        assessmentDue = true;
                         continue;
                     }
 
@@ -609,13 +596,23 @@ namespace Malx_AI.ComputerUse
                         continue;
                     }
 
-                    bool incompleteAutopilotPass = mode == ComputerUseMode.Autopilot
-                        && (string.IsNullOrWhiteSpace(turn.Safety.Causes) || string.IsNullOrWhiteSpace(turn.Safety.Effects));
-                    if (incompleteAutopilotPass)
+                    // In Autopilot mode, if the action is safe and not flagged dangerous, synthesize
+                    // missing safety causes/effects from the action metadata instead of halting the run.
+                    if (mode == ComputerUseMode.Autopilot && !safety.Dangerous
+                        && (string.IsNullOrWhiteSpace(turn.Safety.Causes) || string.IsNullOrWhiteSpace(turn.Safety.Effects)))
                     {
-                        lastObservation = "[COMPUTER USE SAFETY PASS REQUIRED]\nAutopilot refused to run this action because causes/effects were missing. Resend JSON with a complete safety object.";
-                        hud.AppendLog("Autopilot held the action for a missing safety pass.");
-                        continue;
+                        string synthesizedCause = FirstNonEmpty(turn.Action.Explanation, turn.Action.ShortLabel, "Executes the next GUI step");
+                        string synthesizedEffect = FirstNonEmpty(turn.Action.ExpectedState, "Updates the focused window");
+                        safety = new ComputerUseSafetyVerdict
+                        {
+                            Ok = true,
+                            Dangerous = false,
+                            RequiresAsk = false,
+                            Risk = safety.Risk == "unknown" ? "low" : safety.Risk,
+                            Causes = FirstNonEmpty(turn.Safety.Causes, synthesizedCause),
+                            Effects = FirstNonEmpty(turn.Safety.Effects, synthesizedEffect),
+                            Reason = FirstNonEmpty(turn.Safety.Reason, "Synthesized from action intent in Autopilot mode.")
+                        };
                     }
 
                     if (safety.Dangerous)
@@ -672,9 +669,18 @@ namespace Malx_AI.ComputerUse
                     }
 
                     hud.SetStatus($"Step {steps}/{MaxSteps} · {turn.Action.Type}");
+                    bool isAddressTypeAction = turn.Action.Type == ComputerUseActionType.Type
+                        && (addressEntryExpected || capture.BrowserState?.AddressHasFocus == true);
+                    bool autoCommittedAddress = false;
                     try
                     {
-                        lastObservation = await ExecuteActionAsync(turn.Action, capture, hud, pointer, token).ConfigureAwait(true);
+                        lastObservation = await ExecuteActionAsync(turn.Action, capture, hud, pointer, isAddressTypeAction, token).ConfigureAwait(true);
+                        if (isAddressTypeAction
+                            && !lastObservation.StartsWith("[ACTION NOT SENT]", StringComparison.Ordinal)
+                            && TryLookLikeNavigationAddress(turn.Action.Text))
+                        {
+                            autoCommittedAddress = true;
+                        }
                         await BackendLogService.LogEventAsync("ComputerUse.Action",
                             $"Step {steps}; {turn.Action.ShortLabel}; target window: {capture.ForegroundProcessName}: {Clip(capture.ForegroundWindowTitle, 80)}"
                             + $"\nResult: {Clip(lastObservation, 400)}").ConfigureAwait(true);
@@ -698,19 +704,31 @@ namespace Malx_AI.ComputerUse
                         hud.AppendLog(lastObservation);
                         continue;
                     }
+                    lastActionResult = lastObservation;
+                    assessmentDue = true;
                     if (RequiresVisualEvidence(turn.Action))
                         turnsWithoutInput = 0;
                     TrackApplicationLaunch(turn.Action, ref pendingApplicationLaunch);
                     TrackBrowserIntent(turn.Action, capture, ref pendingNewTabCount, ref typedBrowserUrl,
                         ref pendingBrowserUrl, addressEntryExpected, lastKnownTabCount);
+                    if (autoCommittedAddress)
+                    {
+                        TrackBrowserIntent(new ComputerUseAction { Type = ComputerUseActionType.Key, Keys = "Enter" },
+                            capture, ref pendingNewTabCount, ref typedBrowserUrl, ref pendingBrowserUrl, addressEntryExpected, lastKnownTabCount);
+                        addressEntryExpected = false;
+                    }
+                    else
+                    {
+                        addressEntryExpected = UpdateAddressEntryIntent(addressEntryExpected, turn.Action, capture);
+                    }
                     tabCountBeforeAction = lastKnownTabCount;
-                    addressEntryExpected = UpdateAddressEntryIntent(addressEntryExpected, turn.Action, capture);
                     pendingActionEvidence = RequiresVisualEvidence(turn.Action)
                         ? new PendingActionEvidence
                         {
                             BeforeScreenshot = capture.JpegBytes,
                             ActionLabel = turn.Action.ShortLabel,
-                            ExpectedState = GetImmediateExpectedState(turn.Action)
+                            ExpectedState = GetImmediateExpectedState(turn.Action),
+                            ControllerResult = lastActionResult
                         }
                         : null;
                     if (RequiresVisualEvidence(turn.Action))
@@ -718,8 +736,9 @@ namespace Malx_AI.ComputerUse
                     lastExecuted = turn.Action;
                     repeatCount = 0;
                     transcript.AppendLine(turn.Action.ShortLabel);
-                    recentActions.Add($"{steps}. {turn.Action.ShortLabel} -> {lastObservation}");
-                    if (recentActions.Count > 8)
+                    recentActions.Add(new RecentAction(steps, turn.Action.ShortLabel, Clip(lastObservation, 220),
+                        RequiresVisualEvidence(turn.Action) ? "pending" : "done"));
+                    if (recentActions.Count > 10)
                         recentActions.RemoveAt(0);
                     await Task.Delay(GetPostActionSettleDelay(turn.Action), token).ConfigureAwait(true);
                     if (RequiresVisualEvidence(turn.Action))
@@ -813,103 +832,38 @@ namespace Malx_AI.ComputerUse
                 planning ? PlanningTurnTimeout : ModelTurnTimeout, token).ConfigureAwait(true);
         }
 
-        private static string BuildUserPayload(string goal, string navigationContext, ComputerUseCapture capture, string? observation, IReadOnlyList<string> recentActions, ComputerUseTaskProgress taskProgress, ComputerUseExecutionLedger executionLedger, int step, ComputerUseMode mode)
-        {
-            var builder = new StringBuilder();
-            builder.AppendLine("[COMPUTER USE GOAL]");
-            builder.AppendLine(goal);
-            builder.AppendLine();
-            builder.AppendLine("[TASK PROGRESS — PRESERVE COMPLETED GOALS]");
-            if (taskProgress.Completed.Count == 0)
-                builder.AppendLine("COMPLETED: none verified yet");
-            else
-            {
-                builder.AppendLine("COMPLETED:");
-                foreach (string completed in taskProgress.Completed)
-                    builder.AppendLine("- " + completed);
-            }
-            builder.AppendLine("CURRENT: " + FirstNonEmpty(taskProgress.Current, taskProgress.PlanInitialized ? "All planned outcomes are verified; report the final result." : "Identify the first unfinished goal."));
-            foreach (string remaining in taskProgress.Remaining)
-                builder.AppendLine("LATER: " + remaining);
-            if (!string.IsNullOrWhiteSpace(taskProgress.Next))
-                builder.AppendLine("NEXT: " + taskProgress.Next);
-            builder.AppendLine("COMPLETED is controller-verified evidence only. Do not claim a completion in it yourself. Do not type, delete, or navigate to a completed destination.");
-            builder.AppendLine();
-            builder.AppendLine("[EXECUTION LEDGER — CONTROLLER OWNED]");
-            builder.AppendLine(executionLedger.Describe());
-            builder.AppendLine("If evidence state is failed, select a different recovery action. If it is pending, inspect the fresh screenshot before taking another action. Do not report done while it is pending or failed.");
-            builder.AppendLine();
-            if (!string.IsNullOrWhiteSpace(navigationContext)
-                && !HasVerifiedNavigationContext(navigationContext, taskProgress))
-            {
-                builder.AppendLine("[TRUSTED NAVIGATION CONTEXT]");
-                builder.AppendLine(navigationContext.Trim());
-                builder.AppendLine();
-            }
-            builder.AppendLine($"[TURN] {step}/{MaxSteps}  [MODE] {mode}");
-            builder.AppendLine($"[SCREENSHOT] JPEG is {capture.ImageWidth}x{capture.ImageHeight} in image coordinates (scaled from the native monitor). Yellow labels are the x,y you must use.");
-            builder.AppendLine($"[FOREGROUND WINDOW] Process: {FirstNonEmpty(capture.ForegroundProcessName, "unknown")}; title: {FirstNonEmpty(capture.ForegroundWindowTitle, "unknown")}");
-            builder.AppendLine("[BROWSER STATE]");
-            builder.AppendLine(ComputerUseBrowserVerification.Describe(capture.BrowserState));
-            builder.AppendLine("[LAUNCH] To open an app, return {\"action\":{\"type\":\"open\",\"text\":\"Microsoft Edge\"}}. Do not click the taskbar.");
-            if (capture.UiTargets.Count > 0)
-            {
-                builder.AppendLine("[ACCESSIBLE TARGETS]");
-                foreach (ComputerUseUiTarget target in capture.UiTargets)
-                    builder.AppendLine(target.Describe());
-            }
-            if (recentActions.Count > 0)
-            {
-                builder.AppendLine("[RECENT ACTIONS]");
-                foreach (string action in recentActions)
-                    builder.AppendLine(action);
-                builder.AppendLine("[VERIFY] Check the new screenshot for the expected visible result before advancing the plan. If it did not happen, choose a different method rather than repeating a click.");
-            }
-            if (!string.IsNullOrWhiteSpace(observation))
-            {
-                builder.AppendLine();
-                builder.AppendLine("[PREVIOUS ACTION RESULT]");
-                builder.AppendLine(observation.Trim());
-            }
-
-            builder.AppendLine();
-            builder.AppendLine("Return the next JSON action now.");
-            return builder.ToString();
-        }
-
         private static async Task<string> ExecuteActionAsync(
             ComputerUseAction action,
             ComputerUseCapture capture,
             ComputerUseSessionWindow hud,
             ComputerUsePointerWindow pointer,
+            bool replaceAndCommitAddress,
             CancellationToken token)
         {
             int actionX = action.X;
             int actionY = action.Y;
-            // Only a pointer action aims at a control. Ctrl+T has nowhere to land, so a target id
-            // that arrived on a keystroke is noise and must not be able to veto the keystroke.
-            bool targetApplies = RequiresPointerTarget(action);
-            string requestedTargetId = action.TargetId.Trim();
-            string resolvedTargetName = capture.UiTargets
-                .FirstOrDefault(target => string.Equals(target.Id, requestedTargetId, StringComparison.OrdinalIgnoreCase))?.Name
-                ?? requestedTargetId;
-            bool useTarget = targetApplies && requestedTargetId.Length > 0;
-            if (useTarget && !ComputerUseUiCatalog.TryResolve(capture, requestedTargetId, out actionX, out actionY))
+            // Only a pointer action aims at a control. Ctrl+T has nowhere to land and a drag is
+            // aimed by its own points, so a target id that arrived on either is noise: it must not
+            // be able to veto the keystroke or move the stroke onto a toolbar button.
+            ComputerUseUiTarget? aimTarget = null;
+            bool aimNamed = false;
+            string aimNote = "";
+            if (RequiresPointerTarget(action))
             {
-                bool wasNeverIssued = !ComputerUseTargetId.IsIssued(requestedTargetId);
-                bool coordinatesUsable = actionX > 0 || actionY > 0;
-                if (!wasNeverIssued || !coordinatesUsable)
+                if (!TryResolvePointerAim(action, capture, out PointerAim aim, out string refusal))
+                    return refusal;
+                if (IsRedundantSelection(action, aim) && aim.Target!.Role is "Button" or "RadioButton" or "TabItem")
                 {
-                    return $"[ACTION NOT SENT] Target id '{requestedTargetId}' is stale or unavailable. Inspect the fresh screenshot and choose a current target or coordinates.";
+                    return $"[ACTION NOT SENT] '{aim.Target!.Name}' ({aim.Target.Id}) is ALREADY selected — the application itself reports it. "
+                        + "Clicking it again does nothing. Use it now: for a drawing tool, send a drag with strokes on the canvas.";
                 }
 
-                // The model named the control it meant rather than quoting an id the controller
-                // issued. That is not a claim about the screen, so it is dropped and the
-                // coordinates it supplied alongside are used — the post-action screenshot still has
-                // to show the expected result, so a bad aim is caught the same way any other is.
-                useTarget = false;
+                (actionX, actionY, aimTarget, aimNamed, aimNote) = (aim.ImageX, aim.ImageY, aim.Target, aim.Named, aim.Note);
             }
 
+            bool useTarget = aimTarget != null;
+            string requestedTargetId = aimTarget?.Id ?? "";
+            string resolvedTargetName = aimTarget?.Name ?? "";
             (int x, int y) = ComputerUseCoordinateMapper.MapToScreen(capture, actionX, actionY);
             bool hudWasVisible = hud.IsVisible;
             bool pointerWasVisible = pointer.IsVisible;
@@ -928,13 +882,18 @@ namespace Malx_AI.ComputerUse
 
                 if (useTarget)
                 {
-                    var original = capture.UiTargets.First(target => string.Equals(target.Id, requestedTargetId, StringComparison.OrdinalIgnoreCase));
+                    // Re-read the control just before clicking: it may have moved since the
+                    // screenshot. The fresh catalog is in screen pixels relative to the monitor.
                     var matches = ComputerUseUiCatalog.Capture(capture.TargetWindowHandle,
                         capture.ScreenX, capture.ScreenY, capture.ScreenWidth, capture.ScreenHeight)
-                        .Where(target => target.Name == original.Name && target.Role == original.Role).ToList();
-                    if (matches.Count != 1)
+                        .Where(target => target.Name == aimTarget!.Name && target.Role == aimTarget.Role).ToList();
+                    ComputerUseUiTarget? live = PickLiveTarget(matches, x - capture.ScreenX, y - capture.ScreenY);
+                    if (live != null)
+                        (x, y) = (capture.ScreenX + live.ImageX, capture.ScreenY + live.ImageY);
+                    else if (aimNamed)
                         return "[ACTION NOT SENT] The accessible target changed or is ambiguous. Capture again before clicking.";
-                    (x, y) = (capture.ScreenX + matches[0].ImageX, capture.ScreenY + matches[0].ImageY);
+                    else
+                        useTarget = false; // Inferred from coordinates only; the coordinates still stand.
                 }
 
                 switch (action.Type)
@@ -946,8 +905,8 @@ namespace Malx_AI.ComputerUse
                         await MovePointerAsync(pointer, x, y, token).ConfigureAwait(true);
                         ComputerUseNativeInput.LeftClickAt(x, y);
                         return useTarget
-                            ? $"[TARGET CLICKED] The click was delivered to the centre of the accessible control '{resolvedTargetName}' ({requestedTargetId}) at image ({actionX},{actionY}). The control was hit; do not click it again to make sure. If its effect is not visible yet, continue with the next step."
-                            : $"Clicked at image ({actionX},{actionY}) / screen ({x},{y}).";
+                            ? $"[TARGET CLICKED] The click was delivered to the centre of the accessible control '{resolvedTargetName}' ({requestedTargetId}) at image ({actionX},{actionY}). The control was hit; do not click it again to make sure. If its effect is not visible yet, continue with the next step.{aimNote}"
+                            : $"Clicked at image ({actionX},{actionY}) / screen ({x},{y}).{aimNote}";
                     case ComputerUseActionType.DoubleClick:
                         await MovePointerAsync(pointer, x, y, token).ConfigureAwait(true);
                         ComputerUseNativeInput.DoubleClickAt(x, y);
@@ -961,7 +920,16 @@ namespace Malx_AI.ComputerUse
                         int endImageX = Math.Clamp(action.X2, 0, Math.Max(0, capture.ImageWidth - 1));
                         int endImageY = Math.Clamp(action.Y2, 0, Math.Max(0, capture.ImageHeight - 1));
                         (int endX, int endY) = ComputerUseCoordinateMapper.MapToScreen(capture, endImageX, endImageY);
-                        if (endX == x && endY == y)
+                        // Every path in screen pixels. A path whose points all map to one pixel
+                        // would press and release in place, so it is dropped rather than sent.
+                        var screenPaths = action.DragPaths
+                            .Select(path => (IReadOnlyList<(int X, int Y)>)path
+                                .Select(point => ComputerUseCoordinateMapper.MapToScreen(capture, point.X, point.Y))
+                                .Select(point => (X: point.ScreenX, Y: point.ScreenY))
+                                .ToList())
+                            .Where(path => path.Count >= 2 && path.Any(point => point != path[0]))
+                            .ToList();
+                        if (screenPaths.Count == 0)
                         {
                             // The same abstract rule, repeated, changed nothing: the model sent the
                             // identical zero-length drag three times running. A worked example built
@@ -979,10 +947,46 @@ namespace Malx_AI.ComputerUse
                                 + "Pick the corners for the size you want.";
                         }
 
-                        await MovePointerAsync(pointer, x, y, token).ConfigureAwait(true);
-                        await ComputerUseNativeInput.DragAsync(x, y, endX, endY,
-                            PointerStep(pointer), token).ConfigureAwait(true);
-                        return $"Dragged from image ({actionX},{actionY}) to ({endImageX},{endImageY}) / screen ({x},{y}) to ({endX},{endY}).";
+                        // Measure the area the strokes cross, before and after, at native
+                        // resolution. This is the controller's own proof that the drag drew
+                        // something — the model's screenshot is too coarse to show a thin line,
+                        // and an observer that could not see one reported real strokes as failed.
+                        var area = ComputerUseStrokeGeometry.Bounds(screenPaths, 14,
+                            capture.ScreenX, capture.ScreenY, capture.ScreenWidth, capture.ScreenHeight);
+                        int[]? before = ComputerUseScreenCapture.CaptureRegionArgb(area.Left, area.Top, area.Width, area.Height);
+                        bool accepted = true;
+                        foreach (IReadOnlyList<(int X, int Y)> path in screenPaths)
+                        {
+                            await MovePointerAsync(pointer, path[0].X, path[0].Y, token).ConfigureAwait(true);
+                            accepted &= await ComputerUseNativeInput.DragPathAsync(path, PointerStep(pointer), token).ConfigureAwait(true);
+                            await Task.Delay(70, token).ConfigureAwait(true);
+                        }
+
+                        if (!accepted)
+                        {
+                            return "[ACTION NOT SENT] Windows refused the mouse input for this drag. The target application may be running as administrator, "
+                                + "which blocks input from Axiom. Report this as blocked rather than repeating the drag.";
+                        }
+
+                        await Task.Delay(220, token).ConfigureAwait(true);
+                        int[]? after = ComputerUseScreenCapture.CaptureRegionArgb(area.Left, area.Top, area.Width, area.Height);
+                        int changedPixels = ComputerUseObservationEvidence.CountChangedPixels(before, after);
+                        double pathLength = screenPaths.Sum(ComputerUseStrokeGeometry.Length);
+                        string what = screenPaths.Count == 1
+                            ? $"the drag from image ({actionX},{actionY}) to ({endImageX},{endImageY})"
+                            : $"{screenPaths.Count} strokes starting at image ({actionX},{actionY})";
+                        if (ComputerUseObservationEvidence.IsDragEffectVisible(changedPixels, pathLength))
+                        {
+                            return $"{DragVerifiedTag} The controller sent {what} and measured {(changedPixels < 0 ? "a change" : changedPixels + " changed pixels")} along the path, "
+                                + "so it left a visible mark. These strokes are DONE — do not draw them again. Add only what is still missing, or finish.";
+                        }
+
+                        string surface = capture.Regions.Count > 0
+                            ? "The application reports this work area: " + capture.Regions[0].Describe() + ". Keep every point inside it."
+                            : "Check where the blank canvas really is in this screenshot and keep clear of toolbars and panels.";
+                        return $"{DragNoEffectTag} The controller sent {what}, but nothing changed along the path ({Math.Max(0, changedPixels)} pixels). "
+                            + "Either the points are not on the drawing surface, or no drawing tool is active (select a brush once, using its target_id). "
+                            + surface + " Fix that, then send the strokes again.";
                     }
                     case ComputerUseActionType.Scroll:
                         if (actionX != 0 || actionY != 0)
@@ -995,7 +999,18 @@ namespace Malx_AI.ComputerUse
                         ComputerUseNativeInput.Zoom(action.Dy == 0 ? 1 : action.Dy);
                         return $"Zoomed {(action.Dy < 0 ? "out" : "in")} at screen ({x},{y}).";
                     case ComputerUseActionType.Type:
+                        if (replaceAndCommitAddress)
+                        {
+                            ComputerUseNativeInput.PressCombo("Ctrl+A");
+                            await Task.Delay(40, token).ConfigureAwait(true);
+                        }
                         await ComputerUseNativeInput.TypeTextAsync(action.Text, token).ConfigureAwait(true);
+                        if (replaceAndCommitAddress && TryLookLikeNavigationAddress(action.Text))
+                        {
+                            await Task.Delay(50, token).ConfigureAwait(true);
+                            ComputerUseNativeInput.PressCombo("Enter");
+                            return $"Entered address ({action.Text.Length} character(s)) and pressed Enter.";
+                        }
                         return $"Typed {action.Text.Length} character(s).";
                     case ComputerUseActionType.Key:
                         ComputerUseNativeInput.PressCombo(action.Keys);
@@ -1020,6 +1035,12 @@ namespace Malx_AI.ComputerUse
                 if (hudWasVisible)
                     hud.Show();
             }
+        }
+
+        /// <summary>One executed action in the per-outcome work log, with its verdict once judged.</summary>
+        private sealed record RecentAction(int Step, string Label, string Result, string Verdict)
+        {
+            public string Render() => $"{Step}. {Label} -> {Verdict}: {Result}";
         }
 
         // Just the "action" object from a model reply, for the log. The whole reply is long, and the

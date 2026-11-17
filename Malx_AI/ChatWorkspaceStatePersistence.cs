@@ -33,6 +33,7 @@ namespace Malx_AI
         public int CloudPromptTokens { get; set; }
         public int CloudCompletionTokens { get; set; }
         public int CloudTotalTokens { get; set; }
+        public List<string> AttachedImageSources { get; set; } = new();
     }
 
     public sealed class ChatWorkspaceStatePersistence

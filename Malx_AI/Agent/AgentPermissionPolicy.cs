@@ -88,7 +88,8 @@ namespace Malx_AI.Agent
             if (!AgentToolNames.IsKnown(call.Tool))
                 return new AgentPermissionDecision(AgentPermission.Deny, $"'{call.Tool}' is not an Axiom agent tool.");
 
-            if (string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(call.Tool, AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase))
             {
                 string command = call.Arg("command");
                 if (string.IsNullOrWhiteSpace(command))
@@ -109,6 +110,27 @@ namespace Malx_AI.Agent
                     return new AgentPermissionDecision(AgentPermission.Allow, "You allowed this command for this session.");
 
                 return new AgentPermissionDecision(AgentPermission.Ask, "Manual mode: commands need your approval.");
+            }
+
+            if (string.Equals(call.Tool, AgentToolNames.StopBackgroundTask, StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(call.Arg("task_id")))
+                    return new AgentPermissionDecision(AgentPermission.Deny, "No background task_id was supplied.");
+
+                return mode == AgentApprovalMode.Auto
+                    ? new AgentPermissionDecision(AgentPermission.Allow, "Auto mode.")
+                    : new AgentPermissionDecision(AgentPermission.Ask, "Manual mode: stopping a background task needs your approval.");
+            }
+
+            if (string.Equals(call.Tool, AgentToolNames.BrowserControl, StringComparison.OrdinalIgnoreCase))
+            {
+                string action = call.Arg("action", "open").Trim().ToLowerInvariant();
+                if (action is "detect" or "status" or "read" or "read_page" or "fetch")
+                    return new AgentPermissionDecision(AgentPermission.Allow, "Read-only browser inspection.");
+
+                return mode == AgentApprovalMode.Auto
+                    ? new AgentPermissionDecision(AgentPermission.Allow, "Auto mode.")
+                    : new AgentPermissionDecision(AgentPermission.Ask, $"Manual mode: browser action '{action}' needs your approval.");
             }
 
             if (AgentToolNames.IsReadOnly(call.Tool))

@@ -115,6 +115,7 @@ namespace Malx_AI
         public List<SystemPromptPresetEntry> SystemPromptPresets { get; set; } = new();
         public string ActiveSystemPrompt { get; set; } = "";
         public List<WorkplaceChatStateEntry> WorkplaceChats { get; set; } = new();
+        public List<string> PinnedProjectFolders { get; set; } = new();
         public int CurrentWorkplaceChatId { get; set; }
         public int WorkplaceChatCounter { get; set; }
     }
@@ -123,6 +124,8 @@ namespace Malx_AI
     {
         public int Id { get; set; }
         public string Name { get; set; } = "";
+        public string ProjectFolderPath { get; set; } = "";
+        public DateTime UpdatedAt { get; set; } = DateTime.Now;
         public WorkplaceSessionSnapshot Snapshot { get; set; } = new();
     }
 

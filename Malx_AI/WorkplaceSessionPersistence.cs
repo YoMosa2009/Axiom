@@ -7,6 +7,10 @@ namespace Malx_AI
 {
     public sealed class WorkplaceSessionSnapshot
     {
+        public string SessionTitle { get; set; } = "";
+        public string ProjectFolderPath { get; set; } = "";
+        public DateTime UpdatedAt { get; set; } = DateTime.Now;
+        public string CommandReviewMode { get; set; } = "AutoReview";
         public string ObjectiveText { get; set; } = "";
         public string ProjectCanvasText { get; set; } = "";
         public bool CloudModeEnabled { get; set; }
@@ -48,6 +52,7 @@ namespace Malx_AI
         public string Role { get; set; } = "system";
         public string Content { get; set; } = "";
         public DateTime Timestamp { get; set; }
+        public List<string> AttachedImagePaths { get; set; } = new();
     }
 
     public sealed class WorkplaceDocumentDto

@@ -2314,7 +2314,11 @@ namespace Malx_AI
                 if (_currentStreamingMessage != null)
                 {
                     if (!string.IsNullOrWhiteSpace(content))
+                    {
                         _currentStreamingMessage.IsThinkingInProgress = false;
+                        if (string.Equals(_activeToolIndicatorLabel, "Thinking", StringComparison.Ordinal))
+                            StartToolActivityIndicator("Writing response");
+                    }
 
                     _currentStreamingMessage.SetStreamingContent(content);
                     ScrollChatToEnd();
@@ -4151,7 +4155,7 @@ namespace Malx_AI
                     {
                         string tempDir = Path.Combine(AppDataPaths.ChatHistory, "PastedAttachments");
                         Directory.CreateDirectory(tempDir);
-                        string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..4]}.png";
+                        string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..4]}.png";
                         string filePath = Path.Combine(tempDir, fileName);
 
                         using (var fileStream = new FileStream(filePath, FileMode.Create))
@@ -4373,8 +4377,9 @@ namespace Malx_AI
                     return;
                 }
 
+                bool hasPendingAttachments = _chatDocuments.Any(d => d.IsPending);
                 string pendingUserMessage = explicitUserMessage ?? InputBox.Text;
-                if (string.IsNullOrWhiteSpace(pendingUserMessage))
+                if (string.IsNullOrWhiteSpace(pendingUserMessage) && !hasPendingAttachments)
                 {
                     AppendSystemMessage("ERROR: Input is empty.");
                     return;
@@ -4401,7 +4406,14 @@ namespace Malx_AI
                     UpdateHeaderDisplay();
                 }
 
-                string userMsg = pendingUserMessage.Trim();
+                List<string> pendingImageSources = _chatDocuments
+                    .Where(d => d.IsPending && d.IsImage && !string.IsNullOrWhiteSpace(d.Base64Data))
+                    .Select(d => $"data:{(string.IsNullOrWhiteSpace(d.MimeType) ? "image/png" : d.MimeType)};base64,{d.Base64Data}")
+                    .ToList();
+
+                string userMsg = (pendingUserMessage ?? string.Empty).Trim();
+                if (userMsg.Length == 0)
+                    userMsg = pendingImageSources.Count > 0 ? "Analyze the attached image(s)." : "Analyze the attached file(s).";
                 if (explicitUserMessage == null)
                     InputBox.Clear();
                 _nextMessageModelOverride = "Default";
@@ -4420,7 +4432,7 @@ namespace Malx_AI
                 if (hadPendingAttachments)
                     RefreshAttachmentTray();
 
-                AddChatMessage("user", userMsg);
+                AddChatMessage("user", userMsg, pendingImageSources);
 
                 // Classify importance for the new user message and run compaction if needed
                 if (_chatMessages.Count > 0)
@@ -4435,6 +4447,7 @@ namespace Malx_AI
                     }
                 }
                 _cancellationTokenSource = new CancellationTokenSource();
+                StartToolActivityIndicator("Thinking");
                 await RunSmartCompactionIfNeededAsync(_cancellationTokenSource.Token);
 
                 if (_cloudModeActive)
@@ -4709,6 +4722,7 @@ namespace Malx_AI
                     UpdateHeaderDisplay();
                 }
 
+                StopToolActivityIndicator();
                 UpdateResponseLoadingIndicator(false);
                 _isProcessing = false;
                 UpdateUIState(true);

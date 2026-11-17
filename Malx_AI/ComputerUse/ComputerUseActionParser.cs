@@ -196,11 +196,23 @@ namespace Malx_AI.ComputerUse
                 y = dragStartY;
             }
 
+            IReadOnlyList<IReadOnlyList<(int X, int Y)>> strokes = type == ComputerUseActionType.Drag
+                ? ReadStrokes(element)
+                : Array.Empty<IReadOnlyList<(int X, int Y)>>();
+            if (strokes.Count > 0)
+            {
+                // The label and the repeat guard read the action's own endpoints, so they follow
+                // the drawing: where the first stroke starts and where the last one ends.
+                (x, y) = strokes[0][0];
+                (dragEndX, dragEndY) = strokes[^1][^1];
+            }
+
             return new ComputerUseAction
             {
                 Type = type,
                 X = x,
                 Y = y,
+                Strokes = strokes,
                 Dx = ReadInt(element, 0, "dx", "scroll_x"),
                 Dy = ReadInt(element, 0, "dy", "scroll_y", "amount"),
                 // A drag needs an end point. Models name it several ways, and some express it only
@@ -486,6 +498,121 @@ namespace Malx_AI.ComputerUse
             endY = ReadInt(element, startY + dy, "y2", "to_y", "end_y", "target_y");
             return (startX, startY, endX, endY);
         }
+
+        /// <summary>
+        /// The held-button paths of a drawing action, when the model sent more than one line.
+        /// </summary>
+        /// <remarks>
+        /// One stroke per turn made "draw a person" a fifteen-turn task, each turn re-judged by an
+        /// observer, and the logged run never got past its second stroke. A list of strokes lets a
+        /// whole figure go out in one action. Shapes may be named instead of listed point by
+        /// point, because a small model cannot reliably write the twenty points of a circle.
+        /// </remarks>
+        private static IReadOnlyList<IReadOnlyList<(int X, int Y)>> ReadStrokes(JsonElement element)
+        {
+            var strokes = new List<IReadOnlyList<(int X, int Y)>>();
+            foreach (string name in new[] { "strokes", "paths", "lines", "shapes", "segments" })
+            {
+                if (!element.TryGetProperty(name, out JsonElement list) || list.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                foreach (JsonElement item in list.EnumerateArray())
+                {
+                    if (strokes.Count >= ComputerUseStrokeGeometry.MaxStrokesPerAction)
+                        break;
+                    if (TryReadStroke(item, out IReadOnlyList<(int X, int Y)> stroke))
+                        strokes.Add(stroke);
+                }
+
+                if (strokes.Count > 0)
+                    return strokes;
+            }
+
+            // A single path of three or more points is one stroke that bends. Keeping only its
+            // two ends would flatten a curve into a straight line.
+            foreach (string name in new[] { "path", "points", "stroke" })
+            {
+                if (element.TryGetProperty(name, out JsonElement path) && path.ValueKind == JsonValueKind.Array
+                    && TryReadPolyline(path, out IReadOnlyList<(int X, int Y)> polyline) && polyline.Count >= 3)
+                    return [polyline];
+            }
+
+            return strokes;
+        }
+
+        private static bool TryReadStroke(JsonElement item, out IReadOnlyList<(int X, int Y)> stroke)
+        {
+            stroke = Array.Empty<(int X, int Y)>();
+            if (item.ValueKind == JsonValueKind.Array)
+            {
+                var values = item.EnumerateArray().ToList();
+                // [x1, y1, x2, y2] is a line written flat.
+                if (values.Count == 4 && values.All(value => value.ValueKind is JsonValueKind.Number or JsonValueKind.String)
+                    && TryReadNumber(values[0], out int x1) && TryReadNumber(values[1], out int y1)
+                    && TryReadNumber(values[2], out int x2) && TryReadNumber(values[3], out int y2))
+                {
+                    stroke = [(x1, y1), (x2, y2)];
+                    return IsDrawable(stroke);
+                }
+
+                return TryReadPolyline(item, out stroke) && IsDrawable(stroke);
+            }
+
+            if (item.ValueKind != JsonValueKind.Object)
+                return false;
+
+            foreach (string name in new[] { "points", "path" })
+            {
+                if (item.TryGetProperty(name, out JsonElement points) && points.ValueKind == JsonValueKind.Array
+                    && TryReadPolyline(points, out stroke) && IsDrawable(stroke))
+                    return true;
+            }
+
+            string shape = (ReadString(item, "type", "shape", "kind") ?? "line").Trim().ToLowerInvariant();
+            if (shape is "circle" or "ellipse" or "oval")
+            {
+                if (!TryReadPoint(item, out int centerX, out int centerY, "center", "centre"))
+                {
+                    centerX = ReadInt(item, int.MinValue, "cx", "x", "center_x");
+                    centerY = ReadInt(item, int.MinValue, "cy", "y", "center_y");
+                }
+
+                int radius = ReadInt(item, 0, "r", "radius");
+                int radiusX = ReadInt(item, radius, "rx", "radius_x");
+                int radiusY = ReadInt(item, radius, "ry", "radius_y");
+                if (centerX == int.MinValue || centerY == int.MinValue || radiusX <= 0 || radiusY <= 0)
+                    return false;
+
+                stroke = ComputerUseStrokeGeometry.Ellipse(centerX, centerY, radiusX, radiusY);
+                return true;
+            }
+
+            (int startX, int startY, int endX, int endY) = ReadDragEndpoints(item, ReadInt(item, 0, "x", "x1"), ReadInt(item, 0, "y", "y1"));
+            if (shape is "rect" or "rectangle" or "box" or "square")
+            {
+                stroke = ComputerUseStrokeGeometry.Rectangle(startX, startY, endX, endY);
+                return startX != endX && startY != endY;
+            }
+
+            stroke = [(startX, startY), (endX, endY)];
+            return IsDrawable(stroke);
+        }
+
+        private static bool TryReadPolyline(JsonElement array, out IReadOnlyList<(int X, int Y)> polyline)
+        {
+            var points = new List<(int X, int Y)>();
+            foreach (JsonElement item in array.EnumerateArray())
+            {
+                if (TryReadPointValue(item, out int px, out int py) && (points.Count == 0 || points[^1] != (px, py)))
+                    points.Add((px, py));
+            }
+
+            polyline = ComputerUseStrokeGeometry.Thin(points);
+            return points.Count >= 2;
+        }
+
+        private static bool IsDrawable(IReadOnlyList<(int X, int Y)> stroke)
+            => stroke.Count >= 2 && stroke.Any(point => point != stroke[0]);
 
         private static bool ReadBool(JsonElement element, bool fallback, params string[] names)
         {

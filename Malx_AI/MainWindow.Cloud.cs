@@ -111,6 +111,7 @@ namespace Malx_AI
         {
             string selectedModel = _database?.GetSetting(OpenRouterModelSettingKey) ?? string.Empty;
             _selectedOpenRouterModelId = _openRouterChatService.NormalizeSelectableModelId(selectedModel);
+            WorkplaceViewControl?.SetSelectedWorkplaceCloudModel(_selectedOpenRouterModelId);
 
             UpdateOpenRouterDetectedModelUi();
             ResetOpenRouterKeyStatusIndicator();
@@ -236,6 +237,11 @@ namespace Malx_AI
             SelectCloudModel(OpenRouterChatService.Hepha25CoderModelId);
         }
 
+        private void Threnody10ModelButton_Click(object sender, RoutedEventArgs e)
+        {
+            SelectCloudModel(OpenRouterChatService.Threnody10ModelId);
+        }
+
         private void CustomEndpointModelButton_Click(object sender, RoutedEventArgs e)
         {
             SelectCloudModel(OpenRouterChatService.CustomEndpointModelId);
@@ -245,6 +251,7 @@ namespace Malx_AI
         {
             _selectedOpenRouterModelId = _openRouterChatService.NormalizeSelectableModelId(modelId);
             _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
+            WorkplaceViewControl?.SetSelectedWorkplaceCloudModel(_selectedOpenRouterModelId);
             UpdateOpenRouterDetectedModelUi();
             RefreshCloudModeToggleUi();
             RefreshInferenceSettingsUi();
@@ -514,6 +521,7 @@ namespace Malx_AI
             _hybridLocalModeButton ??= FindName("HybridLocalModeButton") as Button;
             _edios15ModelButton ??= FindName("Edios15ModelButton") as Button;
             _hepha25CoderModelButton ??= FindName("Hepha25CoderModelButton") as Button;
+            _threnody10ModelButton ??= FindName("Threnody10ModelButton") as Button;
             _customEndpointModelButton ??= FindName("CustomEndpointModelButton") as Button;
 
             bool hasValidKey = _openRouterChatService.HasValidKey;
@@ -525,7 +533,7 @@ namespace Malx_AI
             bool isCloudActive = _cloudModeActive && !IsCustomEndpointModelSelected();
 
             // The header's model-indicator row shows for either cloud-ish mode, but which pill(s)
-            // appear inside it differs: Edios/Hepha are a real picker (Cloud has two models),
+            // appear inside it differs: Edios/Hepha/Threnody are a real picker,
             // Kestral 1 is just a status indicator (Hybrid Local only ever has the one).
             if (FindName("CloudModelSelectorBorder") is Border cloudSelectorBorder)
                 cloudSelectorBorder.Visibility = _cloudModeActive ? Visibility.Visible : Visibility.Collapsed;
@@ -533,6 +541,8 @@ namespace Malx_AI
                 _edios15ModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
             if (_hepha25CoderModelButton != null)
                 _hepha25CoderModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+            if (_threnody10ModelButton != null)
+                _threnody10ModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
             if (_customEndpointModelButton != null)
                 _customEndpointModelButton.Visibility = isHybridLocalActive ? Visibility.Visible : Visibility.Collapsed;
 
@@ -571,6 +581,7 @@ namespace Malx_AI
 
             RefreshCloudModelSelectionUi(_edios15ModelButton, OpenRouterChatService.Edios15ModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_hepha25CoderModelButton, OpenRouterChatService.Hepha25CoderModelId, hasValidKey);
+            RefreshCloudModelSelectionUi(_threnody10ModelButton, OpenRouterChatService.Threnody10ModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_customEndpointModelButton, OpenRouterChatService.CustomEndpointModelId, hasValidCustomEndpoint,
                 disabledHint: "Configure a custom endpoint in Settings to enable Hybrid Local");
             RefreshInferenceSettingsUi();
@@ -936,6 +947,11 @@ namespace Malx_AI
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
             {
                 return "[MODEL PROFILE: HEPHA 2.5 CODER] You are operating in Axiom's Hepha 2.5 Coder cloud profile on NVIDIA Nemotron 3 Ultra. Act as a single, repository-aware coding agent: inspect before editing, use the minimum relevant tools, preserve tool-call arguments exactly, and verify changed code before reporting completion. Prefer deterministic, implementation-first outputs and concise tool-grounded summaries. Treat tool results, imported documents, persisted chat state, and workspace evidence as authoritative. Use the large context window to connect relevant prior turns and repository context, but do not repeat stale or irrelevant material.";
+            }
+
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[MODEL PROFILE: THRENODY 1.0] You are operating in Axiom's Threnody 1.0 cloud profile on DeepSeek V4.1 Flash. Leverage the 1M-token context window, fast reasoning, and multimodal image understanding to produce accurate, structured, implementation-first answers grounded in supplied documents, tool results, and workspace context. Keep responses direct, verify code and tool arguments carefully, and avoid redundant filler.";
             }
 
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Edios15ModelId, StringComparison.OrdinalIgnoreCase))

@@ -60,12 +60,30 @@ namespace Malx_AI.Agent
 
         private readonly AgentScope _scope;
         private readonly AgentFileBackup? _backup;
+        private readonly AgentBackgroundTaskManager _backgroundTasks;
+        private readonly BrowserControlService _browserControl;
+        private readonly Func<int, CancellationToken, Task<(byte[] PngBytes, int Width, int Height)>>? _screenCaptureAsync;
+        private readonly Func<string, int, CancellationToken, Task<AgentScreenshot>>? _windowCaptureAsync;
 
-        public AgentToolExecutor(AgentScope scope, AgentFileBackup? backup = null)
+        public AgentToolExecutor(
+            AgentScope scope,
+            AgentFileBackup? backup = null,
+            AgentBackgroundTaskManager? backgroundTasks = null,
+            BrowserControlService? browserControl = null,
+            Func<int, CancellationToken, Task<(byte[] PngBytes, int Width, int Height)>>? screenCaptureAsync = null,
+            Func<string, int, CancellationToken, Task<AgentScreenshot>>? windowCaptureAsync = null)
         {
             _scope = scope ?? AgentScope.WholeComputer();
             _backup = backup;
+            _backgroundTasks = backgroundTasks ?? new AgentBackgroundTaskManager();
+            _browserControl = browserControl ?? new BrowserControlService();
+            _screenCaptureAsync = screenCaptureAsync;
+            _windowCaptureAsync = windowCaptureAsync;
         }
+
+        public AgentBackgroundTaskManager BackgroundTasks => _backgroundTasks;
+
+        public BrowserControlService BrowserControl => _browserControl;
 
         /// <summary>Copies a file that already existed before its first change; says where, if it did.</summary>
         private string BackupNote(string path)
@@ -88,6 +106,11 @@ namespace Malx_AI.Agent
                     AgentToolNames.ListDirectory => ListDirectory(call),
                     AgentToolNames.FindFiles => FindFiles(call),
                     AgentToolNames.SearchText => SearchText(call),
+                    AgentToolNames.StartBackgroundTask => await StartBackgroundTaskAsync(call, token),
+                    AgentToolNames.CheckBackgroundTask => await CheckBackgroundTaskAsync(call, token),
+                    AgentToolNames.StopBackgroundTask => StopBackgroundTask(call),
+                    AgentToolNames.BrowserControl => await RunBrowserControlAsync(call, token),
+                    AgentToolNames.TakeScreenshot => await TakeScreenshotAsync(call, token),
                     AgentToolNames.Finish => AgentToolResult.Ok("done"),
                     _ => AgentToolResult.Fail($"Unknown tool '{call.Tool}'.")
                 };
@@ -110,7 +133,24 @@ namespace Malx_AI.Agent
 
             command = NormalizeCommand(command);
 
-            string workingDirectory = ResolveWorkingDirectory(call.Arg("cwd"));
+            if (!_scope.EntireComputer && !string.IsNullOrWhiteSpace(_scope.RootPath))
+            {
+                if (CommandSafetyReviewer.ReferencesPathOutsideScope(command, _scope.RootPath, out string? offendingPath))
+                {
+                    return AgentToolResult.Fail(
+                        $"Strict project scope violation: command references '{offendingPath}', which is outside '{_scope.RootPath}'.");
+                }
+            }
+
+            string requestedCwd = call.Arg("cwd");
+            if (!string.IsNullOrWhiteSpace(requestedCwd) && !TryResolve(requestedCwd, out _, out string cwdError))
+                return AgentToolResult.Fail(cwdError);
+
+            string workingDirectory = ResolveWorkingDirectory(requestedCwd);
+
+            if (ParseBool(call.Arg("background")))
+                return await StartBackgroundTaskCoreAsync(command, workingDirectory, call.Arg("wake_seconds"), call.Arg("title"), waitForWake: false, token);
+
             int timeoutSeconds = int.TryParse(call.Arg("timeout_seconds"), out int parsed) && parsed > 0
                 ? Math.Min(parsed, 600)
                 : DefaultTimeoutSeconds;
@@ -195,12 +235,229 @@ namespace Malx_AI.Agent
             }
         }
 
+        private async Task<AgentToolResult> StartBackgroundTaskAsync(AgentToolCall call, CancellationToken token)
+        {
+            string command = call.Arg("command");
+            if (string.IsNullOrWhiteSpace(command))
+                return AgentToolResult.Fail("No command supplied for start_background_task.");
+
+            command = NormalizeCommand(command);
+
+            if (!_scope.EntireComputer && !string.IsNullOrWhiteSpace(_scope.RootPath))
+            {
+                if (CommandSafetyReviewer.ReferencesPathOutsideScope(command, _scope.RootPath, out string? offendingPath))
+                {
+                    return AgentToolResult.Fail(
+                        $"Strict project scope violation: command references '{offendingPath}', which is outside '{_scope.RootPath}'.");
+                }
+            }
+
+            string requestedCwd = call.Arg("cwd");
+            if (!string.IsNullOrWhiteSpace(requestedCwd) && !TryResolve(requestedCwd, out _, out string cwdError))
+                return AgentToolResult.Fail(cwdError);
+
+            string workingDirectory = ResolveWorkingDirectory(requestedCwd);
+            bool waitForWake = ParseBool(call.Arg("wait"));
+            return await StartBackgroundTaskCoreAsync(command, workingDirectory, call.Arg("wake_seconds"), call.Arg("title"), waitForWake, token);
+        }
+
+        private async Task<AgentToolResult> StartBackgroundTaskCoreAsync(
+            string command,
+            string workingDirectory,
+            string wakeSecondsArg,
+            string title,
+            bool waitForWake,
+            CancellationToken token)
+        {
+            int? parsedWake = int.TryParse(wakeSecondsArg, out int w) && w > 0 ? w : null;
+            int wakeSeconds = AgentBackgroundTaskManager.ClampWakeSeconds(parsedWake);
+
+            AgentBackgroundTaskSnapshot snap = _backgroundTasks.StartBackgroundTask(command, workingDirectory, wakeSeconds, title);
+            if (waitForWake)
+            {
+                (AgentBackgroundTaskSnapshot? waitedSnap, _, string report) =
+                    await _backgroundTasks.WaitForTaskOrWakeTimerAsync(snap.Id, snap.WakeAfterSeconds, token).ConfigureAwait(false);
+                return waitedSnap != null
+                    ? AgentToolResult.Ok(report)
+                    : AgentToolResult.Fail(report);
+            }
+
+            return AgentToolResult.Ok(
+                $"Started background task '{snap.Id}' ({snap.Title}) with wake timer {snap.WakeAfterSeconds}s.\n"
+                + $"Continue with other work (you will be notified when it completes or after {snap.WakeAfterSeconds}s), "
+                + $"or call check_background_task(task_id='{snap.Id}', wake_seconds={snap.WakeAfterSeconds}) to pause and wait.");
+        }
+
+        private async Task<AgentToolResult> CheckBackgroundTaskAsync(AgentToolCall call, CancellationToken token)
+        {
+            string taskId = call.Arg("task_id");
+            if (string.IsNullOrWhiteSpace(taskId))
+            {
+                IReadOnlyList<AgentBackgroundTaskSnapshot> tasks = _backgroundTasks.ListTasks();
+                if (tasks.Count == 0)
+                    return AgentToolResult.Ok("No background tasks have been started in this session.");
+
+                var sb = new StringBuilder();
+                foreach (AgentBackgroundTaskSnapshot t in tasks)
+                {
+                    string state = t.WasStoppedByUser
+                        ? "stopped"
+                        : t.IsRunning ? "running" : $"finished (exit {t.ExitCode?.ToString() ?? "0"})";
+                    sb.AppendLine($"- {t.Id}: {t.Title} [{state}, {Math.Max(0, (int)Math.Round(t.Elapsed.TotalSeconds))}s]");
+                    if (!string.IsNullOrWhiteSpace(t.OutputTail))
+                    {
+                        string tail = t.OutputTail.Length <= 400 ? t.OutputTail : t.OutputTail[^400..];
+                        sb.AppendLine("  Output: " + tail.Replace('\r', ' ').Replace('\n', ' '));
+                    }
+                }
+                return AgentToolResult.Ok(sb.ToString().TrimEnd());
+            }
+
+            if (int.TryParse(call.Arg("wake_seconds"), out int waitSec) && waitSec > 0)
+            {
+                (AgentBackgroundTaskSnapshot? snap, _, string report) =
+                    await _backgroundTasks.WaitForTaskOrWakeTimerAsync(taskId, waitSec, token).ConfigureAwait(false);
+                return snap != null ? AgentToolResult.Ok(report) : AgentToolResult.Fail(report);
+            }
+
+            AgentBackgroundTaskSnapshot? existing = _backgroundTasks.GetTask(taskId);
+            if (existing == null)
+                return AgentToolResult.Fail($"No background task found with id '{taskId}'.");
+
+            return AgentToolResult.Ok(AgentBackgroundTaskManager.FormatTaskReport(existing, wokeByTimer: false));
+        }
+
+        private AgentToolResult StopBackgroundTask(AgentToolCall call)
+        {
+            string taskId = call.Arg("task_id");
+            if (string.IsNullOrWhiteSpace(taskId))
+                return AgentToolResult.Fail("No task_id supplied for stop_background_task.");
+
+            (bool stopped, string message) = _backgroundTasks.StopTask(taskId);
+            return stopped || message.Contains("already finished", StringComparison.OrdinalIgnoreCase)
+                ? AgentToolResult.Ok(message)
+                : AgentToolResult.Fail(message);
+        }
+
+        private async Task<AgentToolResult> RunBrowserControlAsync(AgentToolCall call, CancellationToken token)
+        {
+            string action = call.Arg("action", "detect");
+            string urlOrQuery = call.Arg("url");
+            string destination = call.Arg("destination");
+            return await _browserControl.ExecuteAsync(
+                action,
+                urlOrQuery,
+                string.IsNullOrWhiteSpace(destination) ? null : destination,
+                _scope.WorkingDirectory,
+                path => _scope.Allows(path),
+                token).ConfigureAwait(false);
+        }
+
+        private async Task<AgentToolResult> TakeScreenshotAsync(AgentToolCall call, CancellationToken token)
+        {
+            if (_screenCaptureAsync == null && _windowCaptureAsync == null)
+                return AgentToolResult.Fail("Screenshot capture is not available in this session.");
+
+            int delayMs = int.TryParse(call.Arg("delay_ms"), out int parsedDelay)
+                ? Math.Clamp(parsedDelay, 0, 5000)
+                : 600;
+            if (delayMs > 0)
+                await Task.Delay(delayMs, token).ConfigureAwait(false);
+
+            string requestedSavePath = call.Arg("save_path");
+            string outputPath;
+            if (!string.IsNullOrWhiteSpace(requestedSavePath))
+            {
+                if (!TryResolve(requestedSavePath, out outputPath, out string resolveError))
+                    return AgentToolResult.Fail(resolveError);
+            }
+            else
+            {
+                string folder = Path.Combine(Path.GetTempPath(), "AxiomScreenshots");
+                Directory.CreateDirectory(folder);
+                outputPath = Path.Combine(folder, $"screenshot_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png");
+            }
+
+            // Which window the picture shows is said in words, every time. A model that cannot
+            // tell whether it is looking at its own app or at something else in front of it has
+            // no way to trust the image, and the logged run answered that doubt by refocusing the
+            // browser with WScript.Shell and screenshotting again, forty times.
+            string requestedWindow = call.Arg("window");
+            string subject = "the screen";
+            string windowList = string.Empty;
+            byte[] pngBytes;
+            int width;
+            int height;
+            if (_windowCaptureAsync != null)
+            {
+                AgentScreenshot shot = await _windowCaptureAsync(requestedWindow, 1280, token).ConfigureAwait(false);
+                windowList = AgentScreenshot.DescribeOpenWindows(shot.OpenWindows);
+                if (shot.PngBytes == null || shot.PngBytes.Length == 0)
+                {
+                    return AgentToolResult.Fail(string.IsNullOrWhiteSpace(requestedWindow)
+                        ? "Screenshot capture returned an empty image."
+                        : $"No open window matches '{requestedWindow}'. {windowList} "
+                          + "Call take_screenshot again with window set to part of one of those titles, or leave window out to capture the whole screen.");
+                }
+
+                (pngBytes, width, height, subject) = (shot.PngBytes, shot.Width, shot.Height, shot.Description);
+            }
+            else
+            {
+                (pngBytes, width, height) = await _screenCaptureAsync!(1280, token).ConfigureAwait(false);
+                if (pngBytes == null || pngBytes.Length == 0)
+                    return AgentToolResult.Fail("Screenshot capture returned an empty image.");
+            }
+
+            string? dir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+            await File.WriteAllBytesAsync(outputPath, pngBytes, token).ConfigureAwait(false);
+
+            string dataUrl = "data:image/png;base64," + Convert.ToBase64String(pngBytes);
+            return AgentToolResult.Ok(
+                $"Captured screenshot of {subject} ({width}x{height}) saved to {outputPath}. Inspect the attached image closely to verify visual layout, rendering, and state."
+                + (windowList.Length == 0
+                    ? string.Empty
+                    : $" {windowList} If this is not the app you meant to check, call take_screenshot ONCE more with window set to part of its title. Never use AppActivate, SendKeys or WScript.Shell to bring a window forward: the window argument captures it wherever it is."),
+                dataUrl);
+        }
+
+        private static bool ParseBool(string value)
+        {
+            string normalized = (value ?? string.Empty).Trim();
+            return normalized.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals("1", StringComparison.Ordinal)
+                || normalized.Equals("yes", StringComparison.OrdinalIgnoreCase);
+        }
+
         private AgentToolResult ReadFile(AgentToolCall call)
         {
             if (!TryResolve(call.Arg("path"), out string path, out string error))
                 return AgentToolResult.Fail(error);
             if (!File.Exists(path))
                 return AgentToolResult.Fail($"No such file: {path}");
+
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            string? imageMime = ext switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                ".gif" => "image/gif",
+                _ => null
+            };
+            if (imageMime != null)
+            {
+                var info = new FileInfo(path);
+                if (info.Length > 10 * 1024 * 1024)
+                    return AgentToolResult.Fail($"Image file '{path}' is too large ({info.Length:N0} bytes; limit 10 MB).");
+
+                byte[] bytes = File.ReadAllBytes(path);
+                string dataUrl = $"data:{imageMime};base64,{Convert.ToBase64String(bytes)}";
+                return AgentToolResult.Ok($"Loaded image '{path}' ({bytes.Length:N0} bytes) for visual inspection.", dataUrl);
+            }
 
             string[] lines = File.ReadAllLines(path);
             int start = int.TryParse(call.Arg("start_line"), out int s) && s > 0 ? s : 1;

@@ -39,11 +39,76 @@ internal static class ComputerUseImageGeometry
     public static (int Width, int Height) GetSizeForDetailLevel(int width, int height, int level)
         => GetSize(width, height, MaxEdgeForDetailLevel(level));
 
+    /// <summary>
+    /// Keeps the few regions worth telling a model about and converts them to screenshot pixels.
+    /// </summary>
+    /// <remarks>
+    /// A region earns its place by being named and large: at least an eighth of the monitor.
+    /// Small named groups ("Tools", "Colors") are toolbars, already covered by their buttons.
+    /// When one region sits inside another of nearly the same size, the inner one is the real
+    /// work surface and the wrapper is dropped.
+    /// </remarks>
+    public static IReadOnlyList<ComputerUseUiRegion> SelectRegions(IReadOnlyList<ComputerUseUiRegion> regions,
+        int screenWidth, int screenHeight, int imageWidth, int imageHeight, int max = 3)
+    {
+        double screenArea = Math.Max(1, screenWidth) * (double)Math.Max(1, screenHeight);
+        double scaleX = imageWidth / (double)Math.Max(1, screenWidth);
+        double scaleY = imageHeight / (double)Math.Max(1, screenHeight);
+        return (regions ?? [])
+            .Where(region => !string.IsNullOrWhiteSpace(region.Name))
+            .Select(region => (Region: region, Area: Math.Max(0, region.Right - region.Left) * (double)Math.Max(0, region.Bottom - region.Top)))
+            .Where(candidate => candidate.Area >= screenArea * 0.125)
+            .OrderBy(candidate => candidate.Area)
+            .GroupBy(candidate => candidate.Region.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Take(max)
+            .Select(candidate => new ComputerUseUiRegion
+            {
+                Name = candidate.Region.Name.Length <= 96 ? candidate.Region.Name : candidate.Region.Name[..96],
+                Role = candidate.Region.Role,
+                Left = Math.Clamp((int)Math.Ceiling(candidate.Region.Left * scaleX), 0, Math.Max(0, imageWidth - 1)),
+                Top = Math.Clamp((int)Math.Ceiling(candidate.Region.Top * scaleY), 0, Math.Max(0, imageHeight - 1)),
+                Right = Math.Clamp((int)Math.Floor(candidate.Region.Right * scaleX), 0, Math.Max(0, imageWidth - 1)),
+                Bottom = Math.Clamp((int)Math.Floor(candidate.Region.Bottom * scaleY), 0, Math.Max(0, imageHeight - 1))
+            })
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Cuts a region down to the part that lies inside its window, or returns null when none does.
+    /// </summary>
+    /// <remarks>
+    /// A scrollable surface reports its whole extent, not the part on screen: Paint's canvas
+    /// reached 150 px past the right and bottom of its window on a real run. Passed on as the
+    /// "work area", that told the model it could draw over whatever window sat behind Paint.
+    /// </remarks>
+    public static ComputerUseUiRegion? ClipToWindow(ComputerUseUiRegion region,
+        int windowLeft, int windowTop, int windowRight, int windowBottom)
+    {
+        int left = Math.Max(region.Left, windowLeft);
+        int top = Math.Max(region.Top, windowTop);
+        int right = Math.Min(region.Right, windowRight);
+        int bottom = Math.Min(region.Bottom, windowBottom);
+        if (right <= left || bottom <= top)
+            return null;
+        return new ComputerUseUiRegion
+        {
+            Name = region.Name,
+            Role = region.Role,
+            Left = left,
+            Top = top,
+            Right = right,
+            Bottom = bottom
+        };
+    }
+
     public static IReadOnlyList<ComputerUseUiTarget> ScaleTargets(IReadOnlyList<ComputerUseUiTarget> targets,
         int screenWidth, int screenHeight, int imageWidth, int imageHeight)
         => targets.Select(target => new ComputerUseUiTarget
         {
-            Id = target.Id, Name = target.Name, Role = target.Role, Value = target.Value,
+            Id = target.Id, Name = target.Name, Role = target.Role, Value = target.Value, State = target.State,
+            ImageWidth = (int)Math.Round(target.ImageWidth * imageWidth / (double)Math.Max(1, screenWidth)),
+            ImageHeight = (int)Math.Round(target.ImageHeight * imageHeight / (double)Math.Max(1, screenHeight)),
             ImageX = Math.Clamp((int)Math.Floor(target.ImageX * imageWidth / (double)Math.Max(1, screenWidth)), 0, imageWidth - 1),
             ImageY = Math.Clamp((int)Math.Floor(target.ImageY * imageHeight / (double)Math.Max(1, screenHeight)), 0, imageHeight - 1)
         }).ToArray();

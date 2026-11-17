@@ -1,0 +1,116 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>axsim</AssemblyName>
+    <RootNamespace>AxSim</RootNamespace>
+    <NoWarn>$(NoWarn);CA1416;CS8618;CS8602;CS8604</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <PackageReference Include="Markdig" Version="0.37.0" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Drawing.Imaging" />
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Net.Http" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\DocumentChunker.cs" Link="Production\DocumentChunker.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\DocumentRetriever.cs" Link="Production\DocumentRetriever.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\WebSearchService.cs" Link="Production\WebSearchService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ReasoningParser.cs" Link="Production\ReasoningParser.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\MarkdownParser.cs" Link="Production\MarkdownParser.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\LineDiff.cs" Link="Production\LineDiff.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\SmartContextCompaction.cs" Link="Production\SmartContextCompaction.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\WorkplaceCompactionEngine.cs" Link="Production\WorkplaceCompactionEngine.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Mcp\McpModels.cs" Link="Production\Mcp\McpModels.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\LocalVisionSupport.cs" Link="Production\LocalVisionSupport.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseModels.cs" Link="Production\ComputerUse\ComputerUseModels.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseStrokeGeometry.cs" Link="Production\ComputerUse\ComputerUseStrokeGeometry.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseLogFormatting.cs" Link="Production\ComputerUse\ComputerUseLogFormatting.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseTargetId.cs" Link="Production\ComputerUse\ComputerUseTargetId.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseSessionController.State.cs" Link="Production\ComputerUse\ComputerUseSessionController.State.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseSessionController.Prompts.cs" Link="Production\ComputerUse\ComputerUseSessionController.Prompts.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseVisualAssessment.cs" Link="Production\ComputerUse\ComputerUseVisualAssessment.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseTaskContract.cs" Link="Production\ComputerUse\ComputerUseTaskContract.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseDeterministicPlanBuilder.cs" Link="Production\ComputerUse\ComputerUseDeterministicPlanBuilder.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUsePlanning.cs" Link="Production\ComputerUse\ComputerUsePlanning.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseInference.cs" Link="Production\ComputerUse\ComputerUseInference.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseImageGeometry.cs" Link="Production\ComputerUse\ComputerUseImageGeometry.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseExecutionLedger.cs" Link="Production\ComputerUse\ComputerUseExecutionLedger.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseApplicationVerification.cs" Link="Production\ComputerUse\ComputerUseApplicationVerification.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseBrowserVerification.cs" Link="Production\ComputerUse\ComputerUseBrowserVerification.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseTrustedNavigation.cs" Link="Production\ComputerUse\ComputerUseTrustedNavigation.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseGoalAnalysis.cs" Link="Production\ComputerUse\ComputerUseGoalAnalysis.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseObservationEvidence.cs" Link="Production\ComputerUse\ComputerUseObservationEvidence.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseCoordinateMapper.cs" Link="Production\ComputerUse\ComputerUseCoordinateMapper.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseMention.cs" Link="Production\ComputerUse\ComputerUseMention.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseCapability.cs" Link="Production\ComputerUse\ComputerUseCapability.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseActionParser.cs" Link="Production\ComputerUse\ComputerUseActionParser.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseSafety.cs" Link="Production\ComputerUse\ComputerUseSafety.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\UpdateReleaseParser.cs" Link="Production\UpdateReleaseParser.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\UpdateStoragePaths.cs" Link="Production\UpdateStoragePaths.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\UpdateDownloadFile.cs" Link="Production\UpdateDownloadFile.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\UpdatePackageSafety.cs" Link="Production\UpdatePackageSafety.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\UpdateProcessGuard.cs" Link="Production\UpdateProcessGuard.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\UpdateApplyService.cs" Link="Production\UpdateApplyService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\OpenRouterContentParts.cs" Link="Production\OpenRouterContentParts.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\CustomEndpointMetadataParser.cs" Link="Production\CustomEndpointMetadataParser.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\AtomicFileWriter.cs" Link="Production\AtomicFileWriter.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ArtifactRenderService.cs" Link="Production\ArtifactRenderService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\JavaExecutionService.cs" Link="Production\JavaExecutionService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\JsonPersistenceRecovery.cs" Link="Production\JsonPersistenceRecovery.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\AttachmentReferenceResolver.cs" Link="Production\AttachmentReferenceResolver.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\OllamaStreamChunkConverter.cs" Link="Production\OllamaStreamChunkConverter.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\SkillCanvasDirective.cs" Link="Production\SkillCanvasDirective.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\SkillArtifactComposer.cs" Link="Production\SkillArtifactComposer.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\SmallModelCanvasPlanner.cs" Link="Production\SmallModelCanvasPlanner.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\LocalModelFitAdvisor.cs" Link="Production\LocalModelFitAdvisor.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\FeedbackReport.cs" Link="Production\FeedbackReport.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\GenerationStats.cs" Link="Production\GenerationStats.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\LocalModelCapabilityProfile.cs" Link="Production\LocalModelCapabilityProfile.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\GgufMetadataReader.cs" Link="Production\GgufMetadataReader.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentTool.cs" Link="Production\Agent\AgentTool.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentPermissionPolicy.cs" Link="Production\Agent\AgentPermissionPolicy.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentToolCallParser.cs" Link="Production\Agent\AgentToolCallParser.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentPromptBuilder.cs" Link="Production\Agent\AgentPromptBuilder.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentToolSchemas.cs" Link="Production\Agent\AgentToolSchemas.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentToolExecutor.cs" Link="Production\Agent\AgentToolExecutor.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentSession.cs" Link="Production\Agent\AgentSession.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentModel.cs" Link="Production\Agent\AgentModel.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentContextManager.cs" Link="Production\Agent\AgentContextManager.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentFollowUp.cs" Link="Production\Agent\AgentFollowUp.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentWorkVerifier.cs" Link="Production\Agent\AgentWorkVerifier.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentRunSupport.cs" Link="Production\Agent\AgentRunSupport.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\AgentBackgroundTaskManager.cs" Link="Production\Agent\AgentBackgroundTaskManager.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\BrowserControlService.cs" Link="Production\Agent\BrowserControlService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\WorkplaceTaskTrackerFileService.cs" Link="Production\Agent\WorkplaceTaskTrackerFileService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\Agent\CommandSafetyReviewer.cs" Link="Production\Agent\CommandSafetyReviewer.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\CanvasFileArtifact.cs" Link="Production\CanvasFileArtifact.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\CanvasFileRequest.cs" Link="Production\CanvasFileRequest.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\EffortPolicy.cs" Link="Production\EffortPolicy.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\SidebarHistoryGroups.cs" Link="Production\SidebarHistoryGroups.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\WorkplaceSessionTitleGenerator.cs" Link="Production\WorkplaceSessionTitleGenerator.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\UserProfileStatsService.cs" Link="Production\UserProfileStatsService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\BackendLogService.cs" Link="Production\BackendLogService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\FoundationSystemPrompt.cs" Link="Production\FoundationSystemPrompt.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\GenerationTelemetry.cs" Link="Production\GenerationTelemetry.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\OpenRouterTokenUsageParser.cs" Link="Production\OpenRouterTokenUsageParser.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\OpenRouterChatService.cs" Link="Production\OpenRouterChatService.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseScreenCapture.cs" Link="Production\ComputerUse\ComputerUseScreenCapture.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseUiCatalog.cs" Link="Production\ComputerUse\ComputerUseUiCatalog.cs" />
+    <Compile Include="C:\Users\user\source\repos\Axiom\Malx_AI\ComputerUse\ComputerUseNativeInput.cs" Link="Production\ComputerUse\ComputerUseNativeInput.cs" />
+  </ItemGroup>
+</Project>

@@ -294,17 +294,57 @@ namespace Malx_AI
                 Owner = owner,
                 Title = "Create custom Skill",
                 Width = 560,
-                Height = 720,
+                Height = 740,
                 MinWidth = 480,
-                MinHeight = 600,
+                MinHeight = 620,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                ResizeMode = ResizeMode.CanResize,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                ResizeMode = ResizeMode.NoResize,
                 ShowInTaskbar = false,
-                Background = AppTheme.Brush(p => p.Background),
+                Background = Brushes.Transparent,
                 Foreground = AppTheme.Brush(p => p.Text)
             };
+            WindowTitleBarTheme.Apply(dialog);
 
-            var root = new Grid { Margin = new Thickness(24) };
+            var chrome = new DockPanel();
+            var titleBar = new Grid { Height = 34, Background = Brushes.Transparent };
+            titleBar.MouseLeftButtonDown += (_, args) =>
+            {
+                if (args.LeftButton == MouseButtonState.Pressed)
+                    dialog.DragMove();
+            };
+            titleBar.Children.Add(new TextBlock
+            {
+                Text = "Create custom Skill",
+                FontSize = 11.5,
+                FontWeight = FontWeights.Medium,
+                Foreground = AppTheme.Brush(p => p.TextSecondary),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(16, 0, 40, 0),
+                LineHeight = 14
+            });
+            var headerClose = new Button
+            {
+                Content = "×",
+                Width = 30,
+                Height = 28,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0),
+                FontSize = 14,
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                Foreground = AppTheme.Brush(p => p.TextSecondary),
+                Cursor = Cursors.Hand,
+                IsCancel = true,
+                ToolTip = "Close"
+            };
+            DockPanel.SetDock(titleBar, Dock.Top);
+            titleBar.Children.Add(headerClose);
+            chrome.Children.Add(titleBar);
+
+            var root = new Grid { Margin = new Thickness(24, 6, 24, 24) };
             for (int i = 0; i < 6; i++)
                 root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions[4].Height = new GridLength(1, GridUnitType.Star);
@@ -382,7 +422,15 @@ namespace Malx_AI
                 dialog.DialogResult = true;
             };
 
-            dialog.Content = root;
+            chrome.Children.Add(root);
+            dialog.Content = new Border
+            {
+                Background = AppTheme.Brush(p => p.Background),
+                BorderBrush = AppTheme.Brush(p => p.Border),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Child = chrome
+            };
             _ = dialog.ShowDialog();
             return result;
         }

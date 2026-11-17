@@ -3,27 +3,39 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Rename chat" Width="460" SizeToContent="Height"
         ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
-        WindowStyle="ToolWindow" ShowInTaskbar="False"
-        Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}">
-    <Border Margin="18" Padding="20" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <TextBlock Text="Rename chat" FontSize="24" FontFamily="Georgia"/>
-            <TextBlock Grid.Row="1" Text="Use a short name that will be easy to search later." TextWrapping="Wrap" Margin="0,5,0,12" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-            <TextBox x:Name="ChatNameBox" Grid.Row="2" Height="34" MaxLength="80" Padding="9,6"
-                     Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
-                     KeyDown="ChatNameBox_KeyDown"/>
-            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-                <Button Content="Cancel" Click="Cancel_Click" MinWidth="82" Padding="12,7" Margin="0,0,8,0"
-                        Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource DarkSecondaryBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
-                <Button Content="Rename" Click="Rename_Click" MinWidth="88" Padding="12,7"
-                        Background="{DynamicResource PrimaryAccentBrush}" Foreground="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" FontWeight="SemiBold"/>
-            </StackPanel>
-        </Grid>
+        WindowStyle="None" AllowsTransparency="True" ShowInTaskbar="False"
+        Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}">
+    <Border Background="{DynamicResource NotebookBackgroundBrush}"
+            BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12">
+        <StackPanel>
+            <Grid Background="Transparent" Height="34" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                <TextBlock Text="Rename chat" FontSize="11.5" FontWeight="Medium" Foreground="{DynamicResource DarkSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="16,0,40,0" LineHeight="14"/>
+                <Button Content="×" Click="Cancel_Click" IsCancel="True" HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Width="30" Height="28" Margin="0,0,6,0" FontSize="14" Style="{StaticResource SubtleButtonStyle}"
+                        Background="Transparent" BorderBrush="Transparent" Foreground="{DynamicResource DarkSecondaryBrush}" ToolTip="Close"/>
+            </Grid>
+            <Border Margin="18,4,18,18" Padding="18" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Rename chat" FontSize="22" FontFamily="Georgia"/>
+                    <TextBlock Grid.Row="1" Text="Use a short name that will be easy to search later." TextWrapping="Wrap" Margin="0,5,0,12" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                    <TextBox x:Name="ChatNameBox" Grid.Row="2" Height="34" MaxLength="80" Padding="9,6"
+                             Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
+                             KeyDown="ChatNameBox_KeyDown"/>
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                        <Button Content="Cancel" Click="Cancel_Click" IsCancel="True" MinWidth="82" Padding="12,7" Margin="0,0,8,0"
+                                Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource DarkSecondaryBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
+                        <Button Content="Rename" Click="Rename_Click" MinWidth="88" Padding="12,7"
+                                Background="{DynamicResource PrimaryAccentBrush}" Foreground="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </StackPanel>
     </Border>
 </Window>

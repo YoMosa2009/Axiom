@@ -36,6 +36,17 @@ namespace Malx_AI.ComputerUse
         /// <summary>End point of a drag, in screenshot pixels. Only meaningful for Drag.</summary>
         public int X2 { get; init; }
         public int Y2 { get; init; }
+
+        /// <summary>
+        /// Several held-button paths drawn by one action, in screenshot pixels. Empty for an
+        /// ordinary two-point drag. A figure is many strokes; sending them together means a
+        /// drawing takes one turn instead of one turn per line.
+        /// </summary>
+        public IReadOnlyList<IReadOnlyList<(int X, int Y)>> Strokes { get; init; } = Array.Empty<IReadOnlyList<(int X, int Y)>>();
+
+        /// <summary>Every path this drag follows: its strokes, or its single start-to-end line.</summary>
+        public IReadOnlyList<IReadOnlyList<(int X, int Y)>> DragPaths
+            => Strokes.Count > 0 ? Strokes : [[(X, Y), (X2, Y2)]];
         public string Text { get; init; } = "";
         public string Keys { get; init; } = "";
         public int Ms { get; init; }
@@ -46,13 +57,21 @@ namespace Malx_AI.ComputerUse
         public string Explanation { get; init; } = "";
         public string Outcome { get; init; } = "";
 
+        private string Where => !string.IsNullOrWhiteSpace(TargetId) && X == 0 && Y == 0
+            ? $"on target {TargetId.Trim()}"
+            : !string.IsNullOrWhiteSpace(TargetId) ? $"on target {TargetId.Trim()} at ({X}, {Y})" : $"at ({X}, {Y})";
+
         public string ShortLabel => Type switch
         {
             ComputerUseActionType.Move => $"Move to ({X}, {Y})",
-            ComputerUseActionType.Click => $"Click {Button} at ({X}, {Y})",
-            ComputerUseActionType.DoubleClick => $"Double-click at ({X}, {Y})",
-            ComputerUseActionType.RightClick => $"Right-click at ({X}, {Y})",
-            ComputerUseActionType.Drag => $"Drag from ({X}, {Y}) to ({X2}, {Y2})",
+            // A click aimed by target_id usually carries no coordinates. Labelled "at (0, 0)" it
+            // read, in the log and in the observer's payload, like a click in the screen corner.
+            ComputerUseActionType.Click => $"Click {Button} {Where}",
+            ComputerUseActionType.DoubleClick => $"Double-click {Where}",
+            ComputerUseActionType.RightClick => $"Right-click {Where}",
+            ComputerUseActionType.Drag => Strokes.Count > 1
+                ? $"Draw {Strokes.Count} strokes starting at ({X}, {Y})"
+                : $"Drag from ({X}, {Y}) to ({X2}, {Y2})",
             ComputerUseActionType.Scroll => $"Scroll dx={Dx} dy={Dy}",
             ComputerUseActionType.Type => Text.Length == 0 ? "Type" : $"Type \"{TrimForUi(Text, 48)}\"",
             ComputerUseActionType.Key => $"Key {Keys}",
@@ -139,6 +158,17 @@ namespace Malx_AI.ComputerUse
         public IReadOnlyList<string> VisibleWindows { get; init; } = Array.Empty<string>();
         public string ForegroundProcessName { get; init; } = "";
         public IReadOnlyList<ComputerUseUiTarget> UiTargets { get; init; } = Array.Empty<ComputerUseUiTarget>();
+
+        /// <summary>
+        /// Large named areas of the window (a canvas, a document, an editor), in screenshot pixels.
+        /// </summary>
+        /// <remarks>
+        /// Not clickable controls, so they never appeared among the targets, and the model had to
+        /// guess from pixels where a canvas began and ended. Applications say so themselves:
+        /// Paint exposes its canvas as "Using Brush tool on Canvas", which gives both the exact
+        /// drawing rectangle and the tool that is currently active.
+        /// </remarks>
+        public IReadOnlyList<ComputerUseUiRegion> Regions { get; init; } = Array.Empty<ComputerUseUiRegion>();
         public ComputerUseBrowserState? BrowserState { get; init; }
 
         /// <summary>
@@ -176,6 +206,23 @@ namespace Malx_AI.ComputerUse
         public int TabCount => TabTitles.Count;
     }
 
+    /// <summary>A large named area of the foreground window, in screenshot pixels.</summary>
+    public sealed class ComputerUseUiRegion
+    {
+        public string Name { get; init; } = "";
+        public string Role { get; init; } = "";
+        public int Left { get; init; }
+        public int Top { get; init; }
+        public int Right { get; init; }
+        public int Bottom { get; init; }
+
+        public bool Contains(int imageX, int imageY)
+            => imageX >= Left && imageX <= Right && imageY >= Top && imageY <= Bottom;
+
+        public string Describe()
+            => $"{Role} \"{Name}\" spans x {Left}..{Right}, y {Top}..{Bottom}";
+    }
+
     /// <summary>
     /// A screen-relative, point-in-time UI Automation target. The model may choose one of these
     /// instead of estimating a pixel from the screenshot.
@@ -189,8 +236,33 @@ namespace Malx_AI.ComputerUse
         public int ImageX { get; init; }
         public int ImageY { get; init; }
 
+        /// <summary>Size of the control in screenshot pixels, or 0 when unknown.</summary>
+        public int ImageWidth { get; init; }
+        public int ImageHeight { get; init; }
+
+        /// <summary>
+        /// "selected", "on" or "off" when the control reports it through accessibility, else empty.
+        /// </summary>
+        /// <remarks>
+        /// This is the controller's own reading of the control, not a guess from pixels. A tool
+        /// button's selected highlight is a faint tint that does not survive a downscaled JPEG,
+        /// and an observer that could not see it told the model its click had failed.
+        /// </remarks>
+        public string State { get; init; } = "";
+
+        public bool IsSelected => State is "selected" or "on";
+
+        /// <summary>Whether a screenshot point falls on this control (with a small margin).</summary>
+        public bool Contains(int imageX, int imageY, int margin = 3)
+        {
+            int halfWidth = Math.Max(ImageWidth / 2, 6) + margin;
+            int halfHeight = Math.Max(ImageHeight / 2, 6) + margin;
+            return Math.Abs(imageX - ImageX) <= halfWidth && Math.Abs(imageY - ImageY) <= halfHeight;
+        }
+
         public string Describe()
             => $"{Id}: {Role} \"{Name}\" center=({ImageX},{ImageY})" +
+                (State.Length > 0 ? $" state={State}" : "") +
                 (Value.Length > 0 ? $" value=\"{Value}\"" : "");
     }
 }

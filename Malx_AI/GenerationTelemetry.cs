@@ -55,6 +55,7 @@ namespace Malx_AI
         public void EndReply(int reportedCompletionTokens = 0)
         {
             bool wasLive;
+            int committedTokens = 0;
             lock (_gate)
             {
                 wasLive = _live;
@@ -64,7 +65,16 @@ namespace Malx_AI
                 _live = false;
                 GenerationStatsSnapshot snapshot = _tracker.Snapshot(DateTime.UtcNow, reportedCompletionTokens);
                 if (snapshot.OutputTokens > 0)
+                {
                     _last = snapshot;
+                    committedTokens = snapshot.OutputTokens;
+                }
+            }
+
+            if (committedTokens > 0)
+            {
+                try { GenerationTelemetry.OnTokensCommitted?.Invoke(committedTokens); }
+                catch { }
             }
 
             if (wasLive)
@@ -99,6 +109,9 @@ namespace Malx_AI
     internal static class GenerationTelemetry
     {
         private static readonly AsyncLocal<GenerationMonitor?> CurrentMonitor = new();
+
+        /// <summary>Optional sink called whenever a live reply finishes with non-zero output tokens.</summary>
+        public static Action<int>? OnTokensCommitted { get; set; }
 
         public static GenerationMonitor? Current => CurrentMonitor.Value;
 

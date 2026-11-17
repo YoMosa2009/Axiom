@@ -181,47 +181,101 @@ namespace Malx_AI.Agent
             IReadOnlyCollection<string> touchedFiles,
             string? lastErrorOrStatus,
             IReadOnlyCollection<string>? verifiedDependencies = null,
-            string? backupFolder = null)
+            string? backupFolder = null,
+            AgentFollowUpKind? kind = null,
+            string? previousRunDigest = null)
         {
             var builder = new StringBuilder();
-            builder.AppendLine("[CONTINUING ACTIVE TASK]");
-            builder.Append("Original task: ").AppendLine(originalGoal);
+            AgentFollowUpKind followUp = kind ?? AgentFollowUp.Classify(userQuery, hasActiveTask: true);
+            bool isContinuationOnly = followUp == AgentFollowUpKind.Resume || IsContinuationPhrase(userQuery);
+            bool isQuestion = !isContinuationOnly && followUp == AgentFollowUpKind.Question;
+
+            if (isQuestion)
+            {
+                // A question is answered, not worked on. The old wording told the model to
+                // "inspect, modify, or verify" whatever the user sent, which turned "Is it done?"
+                // into a second full verification run that never produced an answer.
+                builder.AppendLine("[CURRENT USER REQUEST — HIGHEST PRIORITY]");
+                builder.Append("The user is asking a QUESTION about the work: ").AppendLine(userQuery);
+                builder.AppendLine("Answer it directly, in words, from the record of the previous run below. This turn is for answering, not for working:");
+                builder.AppendLine("- Do NOT edit files, run builds or commands, start servers, or take screenshots.");
+                builder.AppendLine("- If one fact you need is genuinely missing, make at most 2 quick read-only checks (read_file, list_directory, search_text, check_background_task). Otherwise call no tools at all.");
+                builder.AppendLine("- Say plainly what is finished, what is not finished, and anything you could not confirm. Do NOT repeat an earlier summary word for word, and do not re-verify the project.");
+                builder.AppendLine();
+                builder.AppendLine("[EXISTING WORKSPACE CONTEXT]");
+                builder.AppendLine("[CONTINUING ACTIVE TASK]");
+                builder.Append("Original task: ").AppendLine(originalGoal);
+            }
+            else if (!isContinuationOnly)
+            {
+                builder.AppendLine("[CURRENT USER REQUEST — HIGHEST PRIORITY]");
+                builder.Append("User follow-up / change request: ").AppendLine(userQuery);
+                builder.AppendLine("This follow-up takes priority over the original task if the user asks to change, fix, replace, or rethink it.");
+                builder.AppendLine("- Work only on what this request names: read just the file(s) involved, make the change, and check it once.");
+                builder.AppendLine("- Do NOT rebuild, re-install, re-read every file, or re-verify the whole project.");
+                builder.AppendLine("- Do NOT repeat your previous turn's summary. Your final summary covers only what you do in THIS turn.");
+                builder.AppendLine();
+                builder.AppendLine("[EXISTING WORKSPACE CONTEXT]");
+                builder.AppendLine("[CONTINUING ACTIVE TASK]");
+                builder.Append("Original task: ").AppendLine(originalGoal);
+            }
+            else
+            {
+                builder.AppendLine("[CONTINUING ACTIVE TASK]");
+                builder.Append("Original task: ").AppendLine(originalGoal);
+            }
 
             if (touchedFiles != null && touchedFiles.Count > 0)
             {
+                // Full paths, not bare names: a follow-up that only knows "main.js" has to go
+                // looking for the folder before it can do anything.
                 builder.Append("Files touched so far: ");
-                builder.AppendLine(string.Join(", ", touchedFiles.Select(Path.GetFileName)));
+                builder.AppendLine(string.Join(", ", touchedFiles.Where(file => !string.IsNullOrWhiteSpace(file)).Take(30)));
             }
+
+            if (!string.IsNullOrWhiteSpace(previousRunDigest))
+                builder.AppendLine(previousRunDigest.Trim());
 
             if (verifiedDependencies != null && verifiedDependencies.Count > 0)
             {
                 builder.Append("Verified packages/tools already installed and working: ");
                 builder.AppendLine(string.Join(", ", verifiedDependencies));
+                builder.AppendLine("DO NOT re-install packages or re-download dependencies that are already verified above.");
             }
 
             if (!string.IsNullOrWhiteSpace(lastErrorOrStatus))
             {
-                builder.Append("Current state: ").AppendLine(
-                    string.Equals(lastErrorOrStatus.Trim(), "Stopped.", StringComparison.Ordinal)
-                        ? "the user stopped the previous run part-way, usually to correct or add something."
-                        : lastErrorOrStatus);
+                string trimmedStatus = lastErrorOrStatus.Trim();
+                string compactStatus = string.Equals(trimmedStatus, "Stopped.", StringComparison.OrdinalIgnoreCase)
+                    ? "The user stopped the previous run part-way to steer or correct it."
+                    : trimmedStatus.Length <= 240 ? trimmedStatus : trimmedStatus[..240] + "…";
+                builder.Append("Prior run status: ").AppendLine(compactStatus);
             }
 
             if (!string.IsNullOrWhiteSpace(backupFolder))
             {
-                builder.Append("Copies of files that existed before you changed them are in: ").AppendLine(backupFolder);
+                builder.Append("Backups of modified pre-existing files: ").AppendLine(backupFolder);
             }
 
-            if (!IsContinuationPhrase(userQuery))
+            if (isQuestion)
             {
-                builder.Append("User follow-up / change request: ").AppendLine(userQuery);
-                builder.AppendLine("The follow-up takes priority over the original task where they conflict (for example a different location, name, or approach): apply it, redoing or moving earlier work if needed. Reuse what is already done when it still fits. DO NOT re-install packages or re-download dependencies that are already set up.");
+                builder.AppendLine("Now answer the user's question directly. Start with the answer itself (for example \"Yes — …\" or \"Not yet — …\"), then the few facts that support it.");
+            }
+            else if (!isContinuationOnly)
+            {
+                builder.AppendLine("Now carry out the CURRENT USER REQUEST above with the smallest set of targeted reads and edits, then stop and summarise only this turn's changes.");
+            }
+            else
+            {
+                builder.AppendLine("Resume execution from your current progress and finish the task.");
             }
 
-            builder.AppendLine("Resume execution from your current progress and finish the task.");
             return builder.ToString();
         }
     }
+
+    /// <summary>One finished turn of a task, kept so the tracker and later turns can refer to it.</summary>
+    public sealed record AgentTurnRecord(string Request, string Summary, int Steps, bool StoppedOnStepLimit);
 
     /// <summary>
     /// Tracks the persistent agent state across turns in a workplace chat.
@@ -236,6 +290,9 @@ namespace Malx_AI.Agent
         public List<string> SessionAllowList { get; } = new();
         public HashSet<string> VerifiedDependencies { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string LastStatusMessage { get; set; } = string.Empty;
+
+        /// <summary>Each finished turn of this task: what was asked and how it ended.</summary>
+        public List<AgentTurnRecord> Turns { get; } = new();
 
         /// <summary>Copies of pre-existing files the agent changed during this task.</summary>
         public AgentFileBackup? FileBackup { get; set; }

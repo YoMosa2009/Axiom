@@ -10,12 +10,19 @@ namespace Malx_AI
         public ChatRenameDialog(string currentName)
         {
             InitializeComponent();
+            WindowTitleBarTheme.Apply(this);
             ChatNameBox.Text = currentName;
             Loaded += (_, _) =>
             {
                 ChatNameBox.Focus();
                 ChatNameBox.SelectAll();
             };
+        }
+
+        private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed)
+                DragMove();
         }
 
         private void Rename_Click(object sender, RoutedEventArgs e)

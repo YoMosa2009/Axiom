@@ -312,7 +312,13 @@ internal sealed class ComputerUseTaskContract
                 foreach (string text in declaredText)
                 {
                     if (!TryQuoteRequestText(request, text, out string literal))
-                        return Invalid($"Outcome {outcomes.Count + 1} lists required_text that does not appear in the request: \"{text}\". Only literal text the user asked to enter or display may appear here.", out error);
+                    {
+                        string reason = $"Outcome {outcomes.Count + 1} lists required_text that does not appear in the request: \"{text}\". Only literal text the user asked to enter or display may appear here.";
+                        if (strictCitations)
+                            return Invalid(reason, out error);
+                        advisories.Add(reason);
+                        continue;
+                    }
                     requiredText.Add(literal);
                 }
 
@@ -362,7 +368,8 @@ internal sealed class ComputerUseTaskContract
 
                 // Citations should quote the request, but planners paraphrase, and a paraphrase is
                 // a wording problem rather than an invented instruction.
-                string[] words = SourceWords(source);
+                string citationText = !string.IsNullOrWhiteSpace(source) || strictCitations ? source : description;
+                string[] words = SourceWords(citationText);
                 string[] invented = words.Where(word => !IsCitedBy(word, requestWords)).ToArray();
                 if (invented.Length > 0)
                 {

@@ -49,14 +49,19 @@ namespace Malx_AI.ComputerUse
                     if (!seen.Add(signature))
                         continue;
 
+                    string state = ReadSelectionState(element);
+
                     targets.Add(new ComputerUseUiTarget
                     {
                         Id = ComputerUseTargetId.Create(targets.Count),
                         Name = name.Length <= 96 ? name : name[..96],
                         Role = role,
                         Value = value,
+                        State = state,
                         ImageX = centerX,
-                        ImageY = centerY
+                        ImageY = centerY,
+                        ImageWidth = (int)Math.Round(bounds.Width),
+                        ImageHeight = (int)Math.Round(bounds.Height)
                     });
                 }
 
@@ -71,8 +76,11 @@ namespace Malx_AI.ComputerUse
                         Name = target.Name,
                         Role = target.Role,
                         Value = target.Value,
+                        State = target.State,
                         ImageX = target.ImageX,
-                        ImageY = target.ImageY
+                        ImageY = target.ImageY,
+                        ImageWidth = target.ImageWidth,
+                        ImageHeight = target.ImageHeight
                     })
                     .ToList();
             }
@@ -82,6 +90,95 @@ namespace Malx_AI.ComputerUse
                 // app does not expose an accessibility tree or has a transient provider failure.
                 return Array.Empty<ComputerUseUiTarget>();
             }
+        }
+
+        /// <summary>
+        /// Named container elements of the window, in screen pixels relative to the monitor.
+        /// The caller keeps the large ones; see <see cref="ComputerUseImageGeometry.SelectRegions"/>.
+        /// </summary>
+        public static IReadOnlyList<ComputerUseUiRegion> CaptureRegions(IntPtr windowHandle, int screenX, int screenY, int screenWidth, int screenHeight)
+        {
+            if (windowHandle == IntPtr.Zero)
+                return Array.Empty<ComputerUseUiRegion>();
+
+            try
+            {
+                AutomationElement root = AutomationElement.FromHandle(windowHandle);
+                var containerRoles = new OrCondition(
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Group),
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Pane),
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document),
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Custom),
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Image));
+                var regions = new List<ComputerUseUiRegion>();
+                Rect windowBounds = root.Current.BoundingRectangle;
+                if (double.IsInfinity(windowBounds.Width) || double.IsInfinity(windowBounds.Height))
+                    windowBounds = Rect.Empty;
+                foreach (AutomationElement element in root.FindAll(TreeScope.Descendants, containerRoles).Cast<AutomationElement>())
+                {
+                    var info = element.Current;
+                    string name = (info.Name ?? string.Empty).Trim();
+                    Rect bounds = info.BoundingRectangle;
+                    if (info.IsOffscreen || name.Length == 0 || bounds.IsEmpty
+                        || double.IsInfinity(bounds.Width) || double.IsInfinity(bounds.Height)
+                        || !Intersects(bounds, screenX, screenY, screenWidth, screenHeight))
+                        continue;
+
+                    var region = new ComputerUseUiRegion
+                    {
+                        Name = name,
+                        Role = info.ControlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal),
+                        Left = Math.Clamp((int)Math.Round(bounds.Left) - screenX, 0, Math.Max(0, screenWidth - 1)),
+                        Top = Math.Clamp((int)Math.Round(bounds.Top) - screenY, 0, Math.Max(0, screenHeight - 1)),
+                        Right = Math.Clamp((int)Math.Round(bounds.Right) - screenX, 0, Math.Max(0, screenWidth - 1)),
+                        Bottom = Math.Clamp((int)Math.Round(bounds.Bottom) - screenY, 0, Math.Max(0, screenHeight - 1))
+                    };
+                    // A scrollable surface reports its full extent, past the window's edges.
+                    if (!windowBounds.IsEmpty)
+                    {
+                        region = ComputerUseImageGeometry.ClipToWindow(region,
+                            (int)Math.Round(windowBounds.Left) - screenX,
+                            (int)Math.Round(windowBounds.Top) - screenY,
+                            (int)Math.Round(windowBounds.Right) - screenX,
+                            (int)Math.Round(windowBounds.Bottom) - screenY);
+                        if (region == null)
+                            continue;
+                    }
+
+                    regions.Add(region);
+                    if (regions.Count >= 64)
+                        break;
+                }
+
+                return regions;
+            }
+            catch
+            {
+                return Array.Empty<ComputerUseUiRegion>();
+            }
+        }
+
+        /// <summary>
+        /// Whether a control reports itself selected or toggled on. Read from accessibility, so it
+        /// holds even when the highlight is too faint to see in a screenshot.
+        /// </summary>
+        private static string ReadSelectionState(AutomationElement element)
+        {
+            try
+            {
+                if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out object selection)
+                    && selection is SelectionItemPattern selectionItem)
+                    return selectionItem.Current.IsSelected ? "selected" : "";
+                if (element.TryGetCurrentPattern(TogglePattern.Pattern, out object toggle)
+                    && toggle is TogglePattern togglePattern)
+                    return togglePattern.Current.ToggleState == ToggleState.On ? "on" : "off";
+            }
+            catch
+            {
+                // State is a bonus; a control that will not report it is still a usable target.
+            }
+
+            return "";
         }
 
         public static bool TryResolve(ComputerUseCapture capture, string? targetId, out int imageX, out int imageY)
@@ -198,7 +295,12 @@ namespace Malx_AI.ComputerUse
             if (name.Contains("address", StringComparison.OrdinalIgnoreCase)
                 || name.Contains("search bar", StringComparison.OrdinalIgnoreCase))
                 return 1;
-            if (string.Equals(target.Role, "Button", StringComparison.OrdinalIgnoreCase))
+            // A control that reports a selected/on state is a mode switch (a tool, a tab, an
+            // option), and knowing which one is active matters more than any plain button. Paint's
+            // "Brushes" is a radio button and was being cut from the list by the size limit.
+            if (target.State.Length > 0
+                || string.Equals(target.Role, "Button", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(target.Role, "RadioButton", StringComparison.OrdinalIgnoreCase))
                 return 2;
             if (string.Equals(target.Role, "TabItem", StringComparison.OrdinalIgnoreCase))
                 return 3;

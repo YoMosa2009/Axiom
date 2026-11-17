@@ -9,6 +9,7 @@ namespace Malx_AI
     public partial class WorkplaceView
     {
         private List<DocumentInfo>? _computerUseTurnImages;
+        private string _activeComputerUseNavigationContext = string.Empty;
         private bool _workplaceMentionPopupOpen;
         private int _workplaceMentionAtIndex = -1;
         private int _workplaceMentionSelectedIndex;
@@ -84,6 +85,7 @@ namespace Malx_AI
             _cancellationTokenSource = new CancellationTokenSource();
             CancellationToken token = _cancellationTokenSource.Token;
             string navigationContext = await ResolveComputerUseNavigationContextAsync(goal, token);
+            _activeComputerUseNavigationContext = navigationContext;
             if (_isCloudModeEnabled && _isHybridLocalCouncilSelected)
             {
                 LoadCustomEndpointForWorkplace();
@@ -129,7 +131,7 @@ namespace Malx_AI
                     {
                         Goal = goal,
                         HostWindow = host,
-                        InitialMode = ComputerUseMode.Ask,
+                        InitialMode = _agentApprovalMode == Malx_AI.Agent.AgentApprovalMode.Auto ? ComputerUseMode.Autopilot : ComputerUseMode.Ask,
                         ActingModelLabel = capability.ActingModelLabel,
                         ExecutionSurface = capability.ExecutionSurface,
                         NavigationContext = navigationContext,
@@ -223,13 +225,55 @@ namespace Malx_AI
             => InferComputerUseResponseAsync(systemPrompt, userPayload, capture, token,
                 value => !string.IsNullOrWhiteSpace(ComputerUseVisualAssessment.Parse(value).Evidence));
 
-        private Task<string> InferComputerUsePlanAsync(string systemPrompt, string userPayload,
+        private async Task<string> InferComputerUsePlanAsync(string systemPrompt, string userPayload,
             ComputerUseCapture capture, CancellationToken token)
         {
             using var document = System.Text.Json.JsonDocument.Parse(userPayload);
             string request = document.RootElement.GetProperty("request").GetString() ?? "";
-            return InferComputerUseResponseAsync(systemPrompt, userPayload, capture, token,
-                value => ComputerUseTaskContract.TryParse(value, request, out _), retryInvalidResponse: false, includeScreenshot: false);
+            string navContext = document.RootElement.TryGetProperty("navigation_context", out var navEl)
+                ? (navEl.GetString() ?? _activeComputerUseNavigationContext)
+                : _activeComputerUseNavigationContext;
+
+            string raw = string.Empty;
+            try
+            {
+                raw = await InferComputerUseResponseAsync(systemPrompt, userPayload, capture, token,
+                    value => ComputerUseTaskContract.TryParse(value, request, out _, out _, out _, strictCitations: false),
+                    retryInvalidResponse: true, includeScreenshot: false).ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                LogActivity($"Computer Use model planning failed, falling back to deterministic plan: {ex.Message}");
+            }
+
+            if (ComputerUseTaskContract.TryParse(raw, request, out _, out _, out _, strictCitations: false))
+                return raw;
+
+            // Preserve explicit planner refusal (e.g. unresolvable owned destination error) if stated cleanly.
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                try
+                {
+                    int first = raw.IndexOf('{'), last = raw.LastIndexOf('}');
+                    if (first >= 0 && last > first)
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(raw[first..(last + 1)]);
+                        if (doc.RootElement.TryGetProperty("error", out var errProp)
+                            && !string.IsNullOrWhiteSpace(errProp.GetString()))
+                        {
+                            return raw;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            LogActivity("Using deterministic Computer Use multi-step fallback plan.");
+            return ComputerUseDeterministicPlanBuilder.BuildFallbackPlanJson(request, navContext);
         }
 
         private async Task<string> InferComputerUseResponseAsync(
@@ -266,7 +310,7 @@ namespace Malx_AI
                         var response = await _openRouterChatService.SendConversationStreamAsync([message],
                             _openRouterChatService.BuildSystemPromptForModel(GetEffectiveCouncilModelId(), prompt),
                             thinkingEnabled: false, modelId: GetEffectiveCouncilModelId(), tools: null,
-                            cancellationToken: token, maxTokensOverride: includeScreenshot ? 1024 : 2048,
+                            cancellationToken: token, maxTokensOverride: includeScreenshot ? 2048 : 2048,
                             allowModelFallback: false, requireCompleteResponse: true).ConfigureAwait(true);
                         return new ReasoningParser.ParsedResponse { Answer = response.Text, ThinkingContent = response.Reasoning };
                     }
@@ -276,7 +320,7 @@ namespace Malx_AI
                     payload,
                     token,
                     showLiveCard: false,
-                    maxGenerationTokensOverride: includeScreenshot ? 1024 : 2048,
+                    maxGenerationTokensOverride: includeScreenshot ? 1536 : 2048,
                     useBuilderToolDecision: false,
                     allowAgenticPauses: false,
                     internalInferenceStep: true);

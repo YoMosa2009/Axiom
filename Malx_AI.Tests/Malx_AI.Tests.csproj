@@ -32,11 +32,14 @@
     <Compile Include="..\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
     <Compile Include="..\Malx_AI\LocalVisionSupport.cs" Link="Production\LocalVisionSupport.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseModels.cs" Link="Production\ComputerUse\ComputerUseModels.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseStrokeGeometry.cs" Link="Production\ComputerUse\ComputerUseStrokeGeometry.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseLogFormatting.cs" Link="Production\ComputerUse\ComputerUseLogFormatting.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseTargetId.cs" Link="Production\ComputerUse\ComputerUseTargetId.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseSessionController.State.cs" Link="Production\ComputerUse\ComputerUseSessionController.State.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseSessionController.Prompts.cs" Link="Production\ComputerUse\ComputerUseSessionController.Prompts.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseVisualAssessment.cs" Link="Production\ComputerUse\ComputerUseVisualAssessment.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseTaskContract.cs" Link="Production\ComputerUse\ComputerUseTaskContract.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\ComputerUseDeterministicPlanBuilder.cs" Link="Production\ComputerUse\ComputerUseDeterministicPlanBuilder.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUsePlanning.cs" Link="Production\ComputerUse\ComputerUsePlanning.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseInference.cs" Link="Production\ComputerUse\ComputerUseInference.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseImageGeometry.cs" Link="Production\ComputerUse\ComputerUseImageGeometry.cs" />
@@ -78,15 +81,28 @@
     <Compile Include="..\Malx_AI\Agent\AgentPermissionPolicy.cs" Link="Production\Agent\AgentPermissionPolicy.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentToolCallParser.cs" Link="Production\Agent\AgentToolCallParser.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentPromptBuilder.cs" Link="Production\Agent\AgentPromptBuilder.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentToolSchemas.cs" Link="Production\Agent\AgentToolSchemas.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentToolExecutor.cs" Link="Production\Agent\AgentToolExecutor.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentSession.cs" Link="Production\Agent\AgentSession.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentModel.cs" Link="Production\Agent\AgentModel.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentContextManager.cs" Link="Production\Agent\AgentContextManager.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentFollowUp.cs" Link="Production\Agent\AgentFollowUp.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentWorkVerifier.cs" Link="Production\Agent\AgentWorkVerifier.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentRunSupport.cs" Link="Production\Agent\AgentRunSupport.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentBackgroundTaskManager.cs" Link="Production\Agent\AgentBackgroundTaskManager.cs" />
+    <Compile Include="..\Malx_AI\Agent\BrowserControlService.cs" Link="Production\Agent\BrowserControlService.cs" />
+    <Compile Include="..\Malx_AI\Agent\WorkplaceTaskTrackerFileService.cs" Link="Production\Agent\WorkplaceTaskTrackerFileService.cs" />
+    <Compile Include="..\Malx_AI\Agent\CommandSafetyReviewer.cs" Link="Production\Agent\CommandSafetyReviewer.cs" />
     <Compile Include="..\Malx_AI\CanvasFileArtifact.cs" Link="Production\CanvasFileArtifact.cs" />
     <Compile Include="..\Malx_AI\CanvasFileRequest.cs" Link="Production\CanvasFileRequest.cs" />
     <Compile Include="..\Malx_AI\EffortPolicy.cs" Link="Production\EffortPolicy.cs" />
     <Compile Include="..\Malx_AI\SidebarHistoryGroups.cs" Link="Production\SidebarHistoryGroups.cs" />
+    <Compile Include="..\Malx_AI\WorkplaceSessionTitleGenerator.cs" Link="Production\WorkplaceSessionTitleGenerator.cs" />
+    <Compile Include="..\Malx_AI\UserProfileStatsService.cs" Link="Production\UserProfileStatsService.cs" />
+    <Compile Include="..\Malx_AI\BackendLogService.cs" Link="Production\BackendLogService.cs" />
+    <Compile Include="..\Malx_AI\FoundationSystemPrompt.cs" Link="Production\FoundationSystemPrompt.cs" />
+    <Compile Include="..\Malx_AI\GenerationTelemetry.cs" Link="Production\GenerationTelemetry.cs" />
+    <Compile Include="..\Malx_AI\OpenRouterTokenUsageParser.cs" Link="Production\OpenRouterTokenUsageParser.cs" />
+    <Compile Include="..\Malx_AI\OpenRouterChatService.cs" Link="Production\OpenRouterChatService.cs" />
   </ItemGroup>
 </Project>

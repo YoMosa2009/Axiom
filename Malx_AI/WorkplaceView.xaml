@@ -7,6 +7,7 @@
              Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}"
              UseLayoutRounding="True" SnapsToDevicePixels="True">
     <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <Style x:Key="WorkplaceTokenMeterProgressBarStyle" TargetType="ProgressBar">
             <Setter Property="Height" Value="4"/>
             <Setter Property="Background" Value="{DynamicResource NotebookBorderBrush}"/>
@@ -29,376 +30,439 @@
     </UserControl.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="CouncilSidebarColumn" Width="300" MinWidth="270" MaxWidth="380"/>
+            <ColumnDefinition x:Name="CouncilSidebarColumn" Width="0" MinWidth="0" MaxWidth="0"/>
             <ColumnDefinition Width="*"/>
             <ColumnDefinition x:Name="CanvasColumn" Width="Auto"/>
         </Grid.ColumnDefinitions>
 
-        <!-- ═══════════════════════════════════════════ -->
-        <!-- LEFT SIDEBAR — Council + Knowledge Base     -->
-        <!-- ═══════════════════════════════════════════ -->
-        <Border Grid.Column="0" Background="{DynamicResource NotebookSurfaceBrush}" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource NotebookBorderBrush}">
-            <ScrollViewer x:Name="CouncilSidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0" PreviewMouseWheel="SidebarScrollViewer_PreviewMouseWheel">
-                <StackPanel Margin="16,16,16,20">
-                    <Button x:Name="SingleModelModeToggleButton" Click="SingleModelModeToggleButton_Click"
-                            Style="{StaticResource SubtleButtonStyle}" Height="42" Padding="12,0"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
-                            ToolTip="Switch between Council mode (Architect/Builder/Critic) and Single Model mode (one agent)">
-                        <DockPanel LastChildFill="False">
-                            <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
-                                <TextBlock Text="MODE" FontSize="8" FontWeight="SemiBold" Opacity="0.55"
-                                           Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                <TextBlock x:Name="SingleModelModeValueText" Text="Council" FontSize="13" FontWeight="SemiBold" Margin="0,1,0,0"/>
+        <!-- Configuration Popup (relocated from crowded left sidebar to keep Workplace clean like Image 13) -->
+        <Popup x:Name="WorkplaceConfigPopup"
+               Placement="Bottom"
+               PlacementTarget="{Binding ElementName=WorkplaceConfigButton}"
+               StaysOpen="False"
+               AllowsTransparency="True"
+               PopupAnimation="Fade"
+               VerticalOffset="6">
+            <Border Width="310" MaxHeight="560"
+                    Background="{DynamicResource NotebookSurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderStrongBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="0">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="4" Opacity="0.5"/>
+                </Border.Effect>
+                <ScrollViewer x:Name="CouncilSidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0" PreviewMouseWheel="SidebarScrollViewer_PreviewMouseWheel">
+                    <StackPanel Margin="14,14,14,16">
+                        <Border CornerRadius="7" Padding="2"
+                                Background="{DynamicResource NotebookBackgroundBrush}"
+                                BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                BorderThickness="1">
+                            <Grid Height="26">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="CouncilModeSegmentButton" Grid.Column="0"
+                                        Content="Builder + Critic"
+                                        Click="CouncilModeSegmentButton_Click"
+                                        FontSize="10.5" FontWeight="SemiBold"
+                                        Cursor="Hand" Padding="6,0"
+                                        ToolTip="Council mode: Builder executes directly; Extra High / Ultra add Critic verification">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                                    CornerRadius="5">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                                <Button x:Name="SingleModelModeSegmentButton" Grid.Column="1"
+                                        Content="Single Model"
+                                        Click="SingleModelModeSegmentButton_Click"
+                                        FontSize="10.5" FontWeight="SemiBold"
+                                        Cursor="Hand" Padding="6,0"
+                                        ToolTip="Single Model mode: one agentic model handles the whole workplace chat">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border Background="{TemplateBinding Background}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                                    CornerRadius="5">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- Builder -->
+                        <Border x:Name="RoleContextControlsCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Builder" FontSize="11" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="BuilderModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
+                                <Button x:Name="LoadBuilderModelButton" Content="Load Builder Model" Click="LoadBuilderModel_Click" Height="28" Style="{StaticResource SubtleButtonStyle}"/>
                             </StackPanel>
-                            <Border x:Name="SingleModelModePill" DockPanel.Dock="Right" VerticalAlignment="Center"
-                                    CornerRadius="7" Padding="8,2"
-                                    Background="{DynamicResource SurfaceRaisedBrush}"
-                                    BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
-                                <TextBlock x:Name="SingleModelModePillText" Text="3 roles" FontSize="9" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                            </Border>
-                        </DockPanel>
-                    </Button>
-                    <TextBlock x:Name="CouncilSubtitleText" Text="Configure models for Architect/Builder/Critic" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                    <TextBlock x:Name="SingleModelSubtitleText" Text="One agentic model handles the whole workplace chat" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,8,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+                        </Border>
 
-                    <!-- Architect -->
-                    <Border x:Name="ArchitectModelCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,16,0,0">
-                        <StackPanel>
-                            <TextBlock Text="Architect" FontSize="11" FontWeight="SemiBold"/>
-                            <TextBlock x:Name="ArchitectModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
-                            <ComboBox x:Name="ArchitectFormatCombo" SelectedIndex="0" Height="28" Margin="0,0,0,8">
-                                <ComboBoxItem Content="ChatML"/>
-                                <ComboBoxItem Content="Llama 3"/>
-                                <ComboBoxItem Content="Alpaca"/>
-                            </ComboBox>
-                            <Button x:Name="LoadArchitectModelButton" Content="Load Architect Model" Click="LoadArchitectModel_Click" Height="32" Style="{StaticResource SubtleButtonStyle}"/>
-                        </StackPanel>
-                    </Border>
+                        <!-- Critic -->
+                        <Border x:Name="ManualRoleContextControlsCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0">
+                            <StackPanel>
+                                <DockPanel>
+                                    <TextBlock Text="Critic (Extra High / Ultra)" FontSize="11" FontWeight="SemiBold"/>
+                                    <Border Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="6,1" Margin="6,0,0,0" DockPanel.Dock="Right">
+                                        <TextBlock x:Name="CriticSensitivityBadgeText" Text="Standard" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                    </Border>
+                                </DockPanel>
+                                <TextBlock x:Name="CriticModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
+                                <Button x:Name="LoadCriticModelButton" Content="Load Critic Model" Click="LoadCriticModel_Click" Height="28" Style="{StaticResource SubtleButtonStyle}"/>
+                                <TextBlock Text="Critic Sensitivity" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,3"/>
+                                <ComboBox x:Name="CriticSensitivityCombo" SelectionChanged="CriticSensitivityCombo_SelectionChanged" Height="24" SelectedIndex="0">
+                                    <ComboBoxItem Content="Standard"/>
+                                    <ComboBoxItem Content="Strict"/>
+                                    <ComboBoxItem Content="Critical Only"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Border>
 
-                    <!-- Builder -->
-                    <Border x:Name="RoleContextControlsCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
-                        <StackPanel>
-                            <TextBlock Text="Builder" FontSize="11" FontWeight="SemiBold"/>
-                            <TextBlock x:Name="BuilderModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
-                            <ComboBox x:Name="BuilderFormatCombo" SelectedIndex="0" Height="28" Margin="0,0,0,8">
-                                <ComboBoxItem Content="ChatML"/>
-                                <ComboBoxItem Content="Llama 3"/>
-                                <ComboBoxItem Content="Alpaca"/>
-                            </ComboBox>
-                            <Button x:Name="LoadBuilderModelButton" Content="Load Builder Model" Click="LoadBuilderModel_Click" Height="32" Style="{StaticResource SubtleButtonStyle}"/>
-                        </StackPanel>
-                    </Border>
+                        <!-- Single Model -->
+                        <Border x:Name="SingleModelModelCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="Single Model" FontSize="11" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="SingleModelModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
+                                <Button x:Name="LoadSingleModelButton" Content="Load Single Model" Click="LoadSingleModel_Click" Height="28" Style="{StaticResource SubtleButtonStyle}"/>
+                            </StackPanel>
+                        </Border>
 
-                    <!-- Critic -->
-                    <Border x:Name="ManualRoleContextControlsCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
-                        <StackPanel>
-                            <DockPanel>
-                                <TextBlock Text="Critic" FontSize="11" FontWeight="SemiBold"/>
-                                <Border Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="6,1" Margin="6,0,0,0" DockPanel.Dock="Right">
-                                    <TextBlock x:Name="CriticSensitivityBadgeText" Text="Standard" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                        <Border x:Name="SingleModelContextCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="Model Context" FontSize="11" FontWeight="SemiBold"/>
+                                <Slider x:Name="SingleModelContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="SingleModelContextSlider_ValueChanged"/>
+                                <TextBlock x:Name="SingleModelContextValueText" Text="8192 tokens" FontSize="10" Foreground="{DynamicResource PrimaryAccentBrush}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="CouncilContextControlsCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0">
+                            <StackPanel>
+                                <TextBlock x:Name="CouncilContextControlsTitle" Text="Context Controls" FontSize="11" FontWeight="SemiBold"/>
+                                <CheckBox x:Name="AutoOptimizeContextToggle" Content="Auto optimize (model-aware)" IsChecked="True" Margin="0,6,0,6" Checked="AutoOptimizeContextToggle_Changed" Unchecked="AutoOptimizeContextToggle_Changed"/>
+                                <TextBlock x:Name="CloudContextInfoBlock" Visibility="Collapsed" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                                <Button x:Name="WorkplaceHybridToggleButton" Content="Use Hybrid Local (Kestral 1)" Click="WorkplaceHybridToggleButton_Click"
+                                        Visibility="Collapsed" HorizontalAlignment="Left" FontSize="10" Padding="8,3" Margin="0,0,0,6"
+                                        Style="{StaticResource SubtleButtonStyle}" ToolTip="Route Workplace through your self-hosted endpoint instead of OpenRouter"/>
+
+                                <StackPanel x:Name="ContextSlidersPanel">
+                                    <TextBlock Text="Global Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                    <Slider x:Name="GlobalContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="GlobalContextSlider_ValueChanged"/>
+                                    <TextBlock x:Name="GlobalContextValueText" Text="8192 tokens" FontSize="10" Foreground="{DynamicResource PrimaryAccentBrush}" Margin="0,2,0,6"/>
+
+                                    <TextBlock Text="Builder Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                    <Slider x:Name="BuilderContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="RoleContextSlider_ValueChanged"/>
+                                    <TextBlock x:Name="BuilderContextValueText" Text="8192 tokens" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,6"/>
+
+                                    <TextBlock Text="Critic Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                    <Slider x:Name="CriticContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="4096" ValueChanged="RoleContextSlider_ValueChanged"/>
+                                    <TextBlock x:Name="CriticContextValueText" Text="4096 tokens" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Computer Agent controls (also mirrored in composer pills) -->
+                        <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0">
+                            <StackPanel>
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock Text="Computer Agent" FontSize="11" FontWeight="SemiBold" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                                    <Border x:Name="AgentStateBadge" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="6,1" Margin="6,0,0,0" DockPanel.Dock="Right">
+                                        <TextBlock x:Name="AgentStateText" Text="Off" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                    </Border>
+                                </DockPanel>
+                                <Button x:Name="AgentEnableButton" Content="Enable Computer Agent" Click="AgentEnableButton_Click" Height="28" Margin="0,6,0,0" Style="{StaticResource PremiumButtonStyle}"/>
+                                <TextBlock Text="Scope" FontSize="10" FontWeight="SemiBold" Margin="0,8,0,3"/>
+                                <ComboBox x:Name="AgentScopeCombo" Height="26" SelectionChanged="AgentScopeCombo_SelectionChanged" IsEnabled="False">
+                                    <ComboBoxItem Content="A folder I choose" Tag="folder" IsSelected="True"/>
+                                    <ComboBoxItem Content="The entire computer" Tag="all"/>
+                                </ComboBox>
+                                <Button x:Name="AgentChooseFolderButton" Content="Choose Folder…" Click="AgentChooseFolderButton_Click" Height="26" Margin="0,5,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                                <TextBlock x:Name="AgentScopeDetailText" Text="No folder chosen yet." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                <TextBlock Text="Approval" FontSize="10" FontWeight="SemiBold" Margin="0,8,0,3"/>
+                                <UniformGrid Columns="2">
+                                    <Button x:Name="AgentManualModeButton" Content="Manual" Click="AgentApprovalMode_Click" Tag="manual" Height="26" Margin="0,0,3,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                                    <Button x:Name="AgentAutoModeButton" Content="Auto" Click="AgentApprovalMode_Click" Tag="auto" Height="26" Margin="3,0,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
+                                </UniformGrid>
+                                <TextBlock x:Name="AgentApprovalHintText" Text="Manual: you approve each command before it runs." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Project Knowledge Base -->
+                        <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0">
+                            <StackPanel>
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock Text="Project Knowledge Base" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <Button x:Name="ProjectKnowledgeBaseButton" Content="Manage" Click="OpenProjectKnowledgeBase_Click" DockPanel.Dock="Right"
+                                            Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10"/>
+                                </DockPanel>
+                                <TextBlock x:Name="ProjectKnowledgeBaseSummaryBlock" Text="No project files yet." FontSize="9.5" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,6" TextWrapping="Wrap"/>
+                                <Border x:Name="DropZone" Background="{DynamicResource NotebookSurfaceBrush}" BorderThickness="1" BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                        CornerRadius="8" Padding="8" Margin="0,0,0,8" AllowDrop="True" Drop="DropZone_Drop" DragOver="DropZone_DragOver">
+                                    <TextBlock Text="Drop files or a project folder here" FontSize="10" Foreground="{DynamicResource PrimaryAccentBrush}" TextAlignment="Center"/>
                                 </Border>
-                            </DockPanel>
-                            <TextBlock x:Name="CriticModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
-                            <ComboBox x:Name="CriticFormatCombo" SelectedIndex="0" Height="28" Margin="0,0,0,8">
-                                <ComboBoxItem Content="ChatML"/>
-                                <ComboBoxItem Content="Llama 3"/>
-                                <ComboBoxItem Content="Alpaca"/>
-                            </ComboBox>
-                            <Button x:Name="LoadCriticModelButton" Content="Load Critic Model" Click="LoadCriticModel_Click" Height="32" Style="{StaticResource SubtleButtonStyle}"/>
-                            <TextBlock Text="Critic Sensitivity" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,8,0,4"/>
-                            <ComboBox x:Name="CriticSensitivityCombo" SelectionChanged="CriticSensitivityCombo_SelectionChanged" Height="26" SelectedIndex="0">
-                                <ComboBoxItem Content="Standard"/>
-                                <ComboBoxItem Content="Strict"/>
-                                <ComboBoxItem Content="Critical Only"/>
-                            </ComboBox>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Single Model -->
-                    <Border x:Name="SingleModelModelCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,16,0,0" Visibility="Collapsed">
-                        <StackPanel>
-                            <TextBlock Text="Single Model" FontSize="11" FontWeight="SemiBold"/>
-                            <TextBlock x:Name="SingleModelModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
-                            <ComboBox x:Name="SingleModelFormatCombo" SelectedIndex="0" Height="28" Margin="0,0,0,8">
-                                <ComboBoxItem Content="ChatML"/>
-                                <ComboBoxItem Content="Llama 3"/>
-                                <ComboBoxItem Content="Alpaca"/>
-                                <ComboBoxItem Content="Gemma 4"/>
-                            </ComboBox>
-                            <Button x:Name="LoadSingleModelButton" Content="Load Single Model" Click="LoadSingleModel_Click" Height="32" Style="{StaticResource SubtleButtonStyle}"/>
-                        </StackPanel>
-                    </Border>
-
-                    <Border x:Name="SingleModelContextCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0" Visibility="Collapsed">
-                        <StackPanel>
-                            <TextBlock Text="Model Context" FontSize="11" FontWeight="SemiBold"/>
-                            <Slider x:Name="SingleModelContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="SingleModelContextSlider_ValueChanged"/>
-                            <TextBlock x:Name="SingleModelContextValueText" Text="8192 tokens" FontSize="10" Foreground="{DynamicResource PrimaryAccentBrush}" Margin="0,2,0,0"/>
-                        </StackPanel>
-                    </Border>
-
-                    <Border x:Name="CouncilContextControlsCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
-                        <StackPanel>
-                            <TextBlock x:Name="CouncilContextControlsTitle" Text="Role Context Controls" FontSize="11" FontWeight="SemiBold"/>
-                            <CheckBox x:Name="AutoOptimizeContextToggle" Content="Auto optimize (model-aware)" IsChecked="True" Margin="0,8,0,8" Checked="AutoOptimizeContextToggle_Changed" Unchecked="AutoOptimizeContextToggle_Changed"/>
-
-                            <!-- Cloud mode info panel (visible only when cloud council is active) -->
-                            <TextBlock x:Name="CloudContextInfoBlock" Visibility="Collapsed" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,6" TextWrapping="Wrap"/>
-
-                            <!-- Cloud sub-mode: OpenRouter vs self-hosted Hybrid Local (visible only when cloud council is active) -->
-                            <Button x:Name="WorkplaceHybridToggleButton" Content="Use Hybrid Local (Kestral 1)" Click="WorkplaceHybridToggleButton_Click"
-                                    Visibility="Collapsed" HorizontalAlignment="Left" FontSize="10" Padding="8,4" Margin="0,0,0,8"
-                                    Style="{StaticResource SubtleButtonStyle}" ToolTip="Route the Council through your self-hosted endpoint instead of OpenRouter"/>
-
-                            <!-- Local slider controls (hidden in cloud mode) -->
-                            <StackPanel x:Name="ContextSlidersPanel">
-                                <TextBlock Text="Global Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                <Slider x:Name="GlobalContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="GlobalContextSlider_ValueChanged"/>
-                                <TextBlock x:Name="GlobalContextValueText" Text="8192 tokens" FontSize="10" Foreground="{DynamicResource PrimaryAccentBrush}" Margin="0,2,0,8"/>
-
-                                <TextBlock Text="Architect Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                <Slider x:Name="ArchitectContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="6144" ValueChanged="RoleContextSlider_ValueChanged"/>
-                                <TextBlock x:Name="ArchitectContextValueText" Text="6144 tokens" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,6"/>
-
-                                <TextBlock Text="Builder Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                <Slider x:Name="BuilderContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="RoleContextSlider_ValueChanged"/>
-                                <TextBlock x:Name="BuilderContextValueText" Text="8192 tokens" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,6"/>
-
-                                <TextBlock Text="Critic Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                <Slider x:Name="CriticContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="4096" ValueChanged="RoleContextSlider_ValueChanged"/>
-                                <TextBlock x:Name="CriticContextValueText" Text="4096 tokens" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0"/>
+                                <UniformGrid Columns="2">
+                                    <Button Content="+ Add files" Click="BrowseFiles_Click" Height="28" Margin="0,0,4,0" Style="{StaticResource PremiumButtonStyle}"/>
+                                    <Button Content="+ Add folder" Click="BrowseProjectFolder_Click" Height="28" Margin="4,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
+                                </UniformGrid>
                             </StackPanel>
-                        </StackPanel>
-                    </Border>
+                        </Border>
 
-                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
-
-                    <!-- Computer Agent -->
-                    <TextBlock Text="Computer Agent" FontSize="12" FontWeight="SemiBold"/>
-                    <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0">
-                        <StackPanel>
-                            <DockPanel LastChildFill="False">
-                                <TextBlock Text="Agent Access" FontSize="11" FontWeight="SemiBold" DockPanel.Dock="Left" VerticalAlignment="Center"/>
-                                <Border x:Name="AgentStateBadge" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="6,1" Margin="6,0,0,0" DockPanel.Dock="Right">
-                                    <TextBlock x:Name="AgentStateText" Text="Off" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                </Border>
-                            </DockPanel>
-                            <TextBlock Text="Lets the model run commands and read or change files on this computer, the way a terminal coding agent does." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,8" TextWrapping="Wrap"/>
-                            <Button x:Name="AgentEnableButton" Content="Enable Computer Agent" Click="AgentEnableButton_Click" Height="32" Style="{StaticResource PremiumButtonStyle}"/>
-
-                            <TextBlock Text="Scope" FontSize="10" FontWeight="SemiBold" Margin="0,12,0,4"/>
-                            <ComboBox x:Name="AgentScopeCombo" Height="30" SelectionChanged="AgentScopeCombo_SelectionChanged" IsEnabled="False"
-                                      ToolTip="Which part of the computer the agent may touch">
-                                <ComboBoxItem Content="A folder I choose" Tag="folder" IsSelected="True"/>
-                                <ComboBoxItem Content="The entire computer" Tag="all"/>
-                            </ComboBox>
-                            <Button x:Name="AgentChooseFolderButton" Content="Choose Folder…" Click="AgentChooseFolderButton_Click" Height="30" Margin="0,6,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"/>
-                            <TextBlock x:Name="AgentScopeDetailText" Text="No folder chosen yet." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
-
-                            <TextBlock Text="Approval" FontSize="10" FontWeight="SemiBold" Margin="0,12,0,4"/>
-                            <UniformGrid Columns="2">
-                                <Button x:Name="AgentManualModeButton" Content="Manual" Click="AgentApprovalMode_Click" Tag="manual" Height="30" Margin="0,0,3,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"
-                                        ToolTip="Every command and file change waits for your approval"/>
-                                <Button x:Name="AgentAutoModeButton" Content="Auto" Click="AgentApprovalMode_Click" Tag="auto" Height="30" Margin="3,0,0,0" Style="{StaticResource SubtleButtonStyle}" IsEnabled="False"
-                                        ToolTip="The agent runs without stopping to ask"/>
-                            </UniformGrid>
-                            <TextBlock x:Name="AgentApprovalHintText" Text="Manual: you approve each command before it runs." FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
-
-                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
-
-                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
-
-                    <!-- Project Knowledge Base -->
-                    <DockPanel LastChildFill="False">
-                        <TextBlock Text="Project Knowledge Base" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <Button x:Name="ProjectKnowledgeBaseButton" Content="Manage" Click="OpenProjectKnowledgeBase_Click" DockPanel.Dock="Right"
-                                Style="{StaticResource SubtleButtonStyle}" Padding="8,3" FontSize="10"
-                                ToolTip="View, add, or remove files kept with this Workplace project"/>
-                    </DockPanel>
-                    <TextBlock x:Name="ProjectKnowledgeBaseSummaryBlock" Text="No project files yet." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                    <Border x:Name="DropZone" Background="{DynamicResource NotebookBackgroundBrush}" BorderThickness="1" BorderBrush="{DynamicResource NotebookBorderBrush}"
-                            CornerRadius="12" Padding="16" Margin="0,12,0,12" AllowDrop="True"
-                            Drop="DropZone_Drop" DragOver="DropZone_DragOver">
-                        <StackPanel>
-                            <TextBlock Text="Drop files or a project folder here" FontSize="11" Foreground="{DynamicResource PrimaryAccentBrush}" FontWeight="SemiBold"/>
-                            <TextBlock Text="Axiom keeps a project-owned copy and indexes extractable content." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
-                    <UniformGrid Columns="2">
-                        <Button Content="+ Add files" Click="BrowseFiles_Click" Height="34" Margin="0,0,4,0" Style="{StaticResource PremiumButtonStyle}"/>
-                        <Button Content="+ Add folder" Click="BrowseProjectFolder_Click" Height="34" Margin="4,0,0,0" Style="{StaticResource SubtleButtonStyle}"/>
-                    </UniformGrid>
-
-                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16"/>
-
-                    <Expander Header="Task History" IsExpanded="False" Visibility="Collapsed">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,6">
-                                <Button Content="Clear History" Click="ClearTaskHistory_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10" Margin="0,0,6,0"/>
-                                <Button Content="Compare Selected" Click="CompareTaskHistory_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10"/>
+                        <!-- Preserved inert controls for backward persistence bindings -->
+                        <Expander IsExpanded="False" Visibility="Collapsed">
+                            <StackPanel>
+                                <Button Click="ClearTaskHistory_Click"/>
+                                <Button Click="CompareTaskHistory_Click"/>
+                                <ListBox x:Name="TaskHistoryListBox" SelectionChanged="TaskHistoryListBox_SelectionChanged"/>
+                                <TextBlock x:Name="TaskHistoryDetailBlock"/>
+                                <Button Click="ReplayTaskHistory_Click"/>
+                                <TextBlock x:Name="PerformanceAggregateBlock"/>
+                                <Button Click="ExportPerformanceLog_Click"/>
+                                <ListBox x:Name="PerformanceLogListBox" SelectionChanged="PerformanceLogListBox_SelectionChanged"/>
+                                <TextBlock x:Name="PerformanceLogDetailBlock"/>
+                                <Button Click="CreateWorkspaceTemplate_Click"/>
+                                <Button Click="DeleteWorkspaceTemplate_Click"/>
+                                <ListBox x:Name="WorkspaceTemplateListBox" SelectionChanged="WorkspaceTemplateListBox_SelectionChanged"/>
+                                <Button Click="LoadWorkspaceTemplate_Click"/>
+                                <Button Click="EditWorkspaceTemplate_Click"/>
+                                <ItemsControl x:Name="ConceptCloudItemsControl"/>
                             </StackPanel>
-                            <ListBox x:Name="TaskHistoryListBox" Height="150" SelectionMode="Extended" SelectionChanged="TaskHistoryListBox_SelectionChanged"/>
-                            <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,8,0,0">
-                                <TextBlock x:Name="TaskHistoryDetailBlock" Text="Select a task history entry to view details." TextWrapping="Wrap" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                            </Border>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                <Button Content="Replay" Click="ReplayTaskHistory_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10" Margin="0,0,6,0"/>
-                                <Button Content="Compare" Click="CompareTaskHistory_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Expander>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Popup>
 
-                    <Expander Header="Performance Log" IsExpanded="False" Margin="0,12,0,0" Visibility="Collapsed">
-                        <StackPanel>
-                            <TextBlock x:Name="PerformanceAggregateBlock" Text="No runs logged yet." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap"/>
-                            <Button Content="Export Log" Click="ExportPerformanceLog_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10" Margin="0,8,0,8"/>
-                            <ListBox x:Name="PerformanceLogListBox" Height="130" SelectionChanged="PerformanceLogListBox_SelectionChanged"/>
-                            <TextBlock x:Name="PerformanceLogDetailBlock" Text="" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Expander>
-
-                    <Expander Header="Workspace Templates" IsExpanded="False" Margin="0,12,0,0" Visibility="Collapsed">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,6">
-                                <Button Content="Create New Template" Click="CreateWorkspaceTemplate_Click" Style="{StaticResource PremiumButtonStyle}" Padding="8,2" FontSize="10" Margin="0,0,6,0"/>
-                                <Button Content="Delete" Click="DeleteWorkspaceTemplate_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10"/>
-                            </StackPanel>
-                            <ListBox x:Name="WorkspaceTemplateListBox" Height="120" SelectionChanged="WorkspaceTemplateListBox_SelectionChanged"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                <Button Content="Load" Click="LoadWorkspaceTemplate_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10" Margin="0,0,6,0"/>
-                                <Button Content="Edit" Click="EditWorkspaceTemplate_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="10"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Expander>
-
-                    <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,16,0,16" Visibility="Collapsed"/>
-
-                    <!-- Semantic Memory -->
-                    <TextBlock Text="Semantic Project Memory" FontSize="12" FontWeight="SemiBold" Visibility="Collapsed"/>
-                    <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10" Margin="0,12,0,0" Visibility="Collapsed">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="160">
-                            <ItemsControl x:Name="ConceptCloudItemsControl">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Button Content="{Binding DisplayLabel}" Tag="{Binding Name}" Click="ConceptTag_Click"
-                                                Margin="4" Padding="10,4" FontSize="10" Foreground="{DynamicResource NotebookTextBrush}"
-                                                Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
-                                                Style="{StaticResource SubtleButtonStyle}"/>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
-                    </Border>
-
-                </StackPanel>
-            </ScrollViewer>
-        </Border>
+        <!-- Collapsed left spacer -->
+        <Border Grid.Column="0" Visibility="Collapsed"/>
 
         <!-- ═══════════════════════════════════════════ -->
         <!-- CENTER — Header + Chat + Input              -->
         <!-- ═══════════════════════════════════════════ -->
         <DockPanel Grid.Column="1" Background="{DynamicResource NotebookBackgroundBrush}">
-            <!-- Header bar: title + status chips. Chips replace the old dot-separated status
-                 string, which read as one long mushed line once several statuses were active. -->
-            <Border x:Name="WorkplaceHeaderBorder" DockPanel.Dock="Top" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1" Padding="24,8" Background="{DynamicResource NotebookSurfaceBrush}"
+            <!-- Header bar: clickable session title, status chips, config trigger & 2 right-sidebar icon toggles (Images 1 & 2) -->
+            <Border x:Name="WorkplaceHeaderBorder" DockPanel.Dock="Top" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1" Padding="20,7" Background="{DynamicResource NotebookBackgroundBrush}"
                     SizeChanged="WorkplaceHeaderBorder_SizeChanged">
                 <Border.Resources>
-                    <!-- Status now reads as one quiet line rather than a grid of boxes. Each box
-                         cost a border, padding and its own wrap row, so six of them pushed the
-                         chat down by three lines' worth of chrome to say what fits on one. -->
                     <Style x:Key="HeaderStatusTextStyle" TargetType="TextBlock">
                         <Setter Property="FontSize" Value="10"/>
                         <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
                         <Setter Property="VerticalAlignment" Value="Center"/>
                         <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                        <Setter Property="LineHeight" Value="14"/>
                     </Style>
                     <Style x:Key="HeaderStatusSeparatorStyle" TargetType="TextBlock" BasedOn="{StaticResource HeaderStatusTextStyle}">
                         <Setter Property="Text" Value="·"/>
                         <Setter Property="Foreground" Value="{DynamicResource NotebookBorderBrush}"/>
-                        <Setter Property="Margin" Value="7,0,7,0"/>
+                        <Setter Property="Margin" Value="6,0,6,0"/>
                     </Style>
                 </Border.Resources>
                 <DockPanel>
-                    <!-- Context meters. Sit in the header beside the run status instead of taking a
-                         row inside the composer. Width is fixed per role so the numbers updating
-                         mid-run never shift the layout. When the header is too narrow to hold the
-                         title and all meters side by side, UpdateHeaderMeterPlacement drops them
-                         to their own row under the status line. -->
-                    <Border x:Name="WorkplaceTokenUsagePanel"
-                            DockPanel.Dock="Right"
-                            VerticalAlignment="Center"
-                            Margin="20,0,0,0"
-                            Padding="16,2,0,2"
-                            BorderBrush="{DynamicResource NotebookBorderBrush}"
-                            BorderThickness="1,0,0,0"
-                            Background="Transparent">
-                        <StackPanel Orientation="Horizontal">
-                            <Grid x:Name="ArchitectTokenUsageRow" Width="104" Margin="0,0,14,0">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="4"/>
-                                </Grid.RowDefinitions>
-                                <DockPanel Margin="0,0,0,4">
-                                    <TextBlock Text="Architect" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                    <TextBlock x:Name="ArchitectTokenUsageLabel" Text="0 / 0" FontSize="10" HorizontalAlignment="Right" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                </DockPanel>
-                                <ProgressBar x:Name="ArchitectTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
-                            </Grid>
-                            <Grid x:Name="AgentTokenUsageRow" Width="104" Margin="0,0,14,0">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="4"/>
-                                </Grid.RowDefinitions>
-                                <DockPanel Margin="0,0,0,4">
-                                    <TextBlock x:Name="BuilderTokenUsageTitle" Text="Builder" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                    <TextBlock x:Name="BuilderTokenUsageLabel" Text="0 / 0" FontSize="10" HorizontalAlignment="Right" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                </DockPanel>
-                                <ProgressBar x:Name="BuilderTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
-                            </Grid>
-                            <Grid x:Name="CriticTokenUsageRow" Width="104">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="4"/>
-                                </Grid.RowDefinitions>
-                                <DockPanel Margin="0,0,0,4">
-                                    <TextBlock Text="Critic" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                    <TextBlock x:Name="CriticTokenUsageLabel" Text="0 / 0" FontSize="10" HorizontalAlignment="Right" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                </DockPanel>
-                                <ProgressBar x:Name="CriticTokenUsageProgressBar" Grid.Row="1" Minimum="0" Maximum="100" Value="0" Style="{StaticResource WorkplaceTokenMeterProgressBarStyle}"/>
-                            </Grid>
-                            <!-- Speed of the reply in progress, or the last one: same readout as Chat. -->
-                            <Grid x:Name="WorkplaceGenerationStatsRow" Width="176" Margin="14,0,0,0" Visibility="Collapsed"
-                                  Background="Transparent" ToolTipService.InitialShowDelay="250">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="4"/>
-                                </Grid.RowDefinitions>
-                                <DockPanel Margin="0,0,0,4">
-                                    <TextBlock x:Name="WorkplaceGenerationStatsTitle" Text="Last reply" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource DarkSecondaryBrush}"/>
-                                    <TextBlock x:Name="WorkplaceGenerationStatsLabel" Text="" FontSize="10" HorizontalAlignment="Right" Foreground="{DynamicResource DarkSecondaryBrush}"
-                                               TextTrimming="CharacterEllipsis" Margin="8,0,0,0"/>
-                                </DockPanel>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
+                    <!-- Right side: Setup popover trigger + System Log toggle + Image 1 Diff toggle + Image 2 Context/Env toggle -->
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                        <Border x:Name="WorkplaceTokenUsagePanel"
+                                Visibility="Collapsed"
+                                IsHitTestVisible="False">
+                            <StackPanel Orientation="Horizontal">
+                                <Grid x:Name="AgentTokenUsageRow" Width="0">
+                                    <DockPanel>
+                                        <TextBlock x:Name="BuilderTokenUsageTitle" Text="Builder"/>
+                                        <TextBlock x:Name="BuilderTokenUsageLabel" Text="0 / 0"/>
+                                    </DockPanel>
+                                    <ProgressBar x:Name="BuilderTokenUsageProgressBar" Minimum="0" Maximum="100" Value="0"/>
+                                </Grid>
+                                <Grid x:Name="CriticTokenUsageRow" Width="0">
+                                    <DockPanel>
+                                        <TextBlock x:Name="CriticTokenUsageLabel" Text="0 / 0"/>
+                                    </DockPanel>
+                                    <ProgressBar x:Name="CriticTokenUsageProgressBar" Minimum="0" Maximum="100" Value="0"/>
+                                </Grid>
+                                <Grid x:Name="WorkplaceGenerationStatsRow" Width="0" Visibility="Collapsed">
+                                    <DockPanel>
+                                        <TextBlock x:Name="WorkplaceGenerationStatsTitle" Text="Last reply"/>
+                                        <TextBlock x:Name="WorkplaceGenerationStatsLabel" Text=""/>
+                                    </DockPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
 
-                    <StackPanel>
-                        <DockPanel Margin="0,0,0,3">
-                            <TextBlock Text="Axiom Workplace" FontSize="17" FontFamily="Georgia" FontWeight="Normal" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="PipelineProgressBlock" Text="" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="10,1,0,0" TextTrimming="CharacterEllipsis"/>
+                        <!-- Cloud mode toggle relocated next to Setup -->
+                        <Button x:Name="WorkplaceCloudModeButton"
+                                Content="Cloud Off"
+                                Click="WorkplaceCloudModeButton_Click"
+                                Height="26"
+                                Padding="8,0"
+                                Margin="0,0,5,0"
+                                Style="{StaticResource SubtleButtonStyle}"
+                                FontSize="10.5"
+                                ToolTip="Toggle cloud or local models"
+                                AutomationProperties.Name="Cloud mode"/>
+                        <ComboBox x:Name="WorkplaceCloudModelCombo"
+                                  Height="26"
+                                  MinWidth="112"
+                                  FontSize="10.5"
+                                  Padding="6,2"
+                                  Margin="0,0,5,0"
+                                  VerticalAlignment="Center"
+                                  Visibility="Collapsed"
+                                  SelectionChanged="WorkplaceCloudModelCombo_SelectionChanged"
+                                  ToolTip="Select OpenRouter cloud model"
+                                  AutomationProperties.Name="Workplace cloud model">
+                            <ComboBoxItem Content="Threnody 1.0" Tag="threnody-1.0" ToolTip="DeepSeek: DeepSeek V4.1 Flash"/>
+                            <ComboBoxItem Content="Edios 1.5" Tag="edios-1.5" ToolTip="Google Gemma 4 31B (free)"/>
+                            <ComboBoxItem Content="Hepha 2.5 Coder" Tag="hepha-2.5-coder" ToolTip="NVIDIA Nemotron 3 Ultra (free)"/>
+                            <ComboBoxItem Content="Dots3-Note" Tag="workplace-gpt-oss-20b" ToolTip="Dots Studio: Dots3-Note Preview (free)"/>
+                        </ComboBox>
+
+                        <Button x:Name="WorkplaceConfigButton"
+                                Click="WorkplaceConfigButton_Click"
+                                Style="{StaticResource SubtleButtonStyle}"
+                                Height="26"
+                                Padding="8,0"
+                                Margin="0,0,5,0"
+                                ToolTip="Configure models, agent mode, and knowledge base"
+                                AutomationProperties.Name="Models and setup">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" LineHeight="Auto"
+                                           Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="WorkplaceConfigButtonLabel" Text="Setup" FontSize="10.5" FontWeight="Medium" LineHeight="14" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Relocated & redesigned compact System Log popup toggle next to Diff & Context -->
+                        <Button x:Name="NotificationToggleButton"
+                                Click="NotificationToggle_Click"
+                                Style="{StaticResource SubtleButtonStyle}"
+                                Width="Auto"
+                                Height="26"
+                                Padding="8,0"
+                                Margin="0,0,5,0"
+                                ToolTip="Toggle system activity log"
+                                AutomationProperties.Name="System Log">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE756;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10.5" LineHeight="Auto"
+                                           Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="System Log" FontSize="10.5" FontWeight="Medium" LineHeight="14" VerticalAlignment="Center"/>
+                                <Border x:Name="NotificationBadge" Background="{DynamicResource PrimaryAccentBrush}" CornerRadius="6" MinWidth="14" Height="14" Margin="5,0,0,0" Padding="4,0" Visibility="Collapsed" VerticalAlignment="Center">
+                                    <TextBlock x:Name="NotificationBadgeText" Text="0" FontSize="8.5" LineHeight="11" Foreground="{DynamicResource NotebookBackgroundBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold"/>
+                                </Border>
+                            </StackPanel>
+                        </Button>
+                        <Popup x:Name="NotificationDropdownPopup"
+                               Placement="Bottom"
+                               PlacementTarget="{Binding ElementName=NotificationToggleButton}"
+                               StaysOpen="False"
+                               AllowsTransparency="True"
+                               PopupAnimation="Fade"
+                               VerticalOffset="6"
+                               Closed="NotificationDropdownPopup_Closed">
+                            <Border x:Name="NotificationDropdownPanel"
+                                    Width="360" MaxHeight="280"
+                                    Background="{DynamicResource NotebookSurfaceBrush}"
+                                    BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="10">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#000000" BlurRadius="18" ShadowDepth="4" Opacity="0.45"/>
+                                </Border.Effect>
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    <DockPanel Grid.Row="0" Margin="2,0,2,8">
+                                        <TextBlock Text="System Log" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" VerticalAlignment="Center" LineHeight="14"/>
+                                        <Button Content="Clear" Click="ClearNotifications_Click" DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}" Padding="8,2" FontSize="9.5" Height="22"/>
+                                    </DockPanel>
+                                    <ScrollViewer Grid.Row="1" MaxHeight="210" VerticalScrollBarVisibility="Auto" Padding="0">
+                                        <ItemsControl x:Name="NotificationList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Margin="0,2" Padding="8,5" CornerRadius="6"
+                                                            Background="{Binding CardBackground}"
+                                                            BorderBrush="{Binding AccentBrush}" BorderThickness="2,0,0,0">
+                                                        <DockPanel>
+                                                            <TextBlock Text="{Binding TimestampLabel}" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" DockPanel.Dock="Left" VerticalAlignment="Top" Width="52" Margin="0,0,6,0" LineHeight="12"/>
+                                                            <TextBlock Text="{Binding RoleLabel}" FontSize="9" FontWeight="SemiBold" Foreground="{Binding AccentBrush}" DockPanel.Dock="Left" VerticalAlignment="Top" Width="46" Margin="0,0,6,0" LineHeight="12"/>
+                                                            <TextBlock Text="{Binding FormattedContent}" TextWrapping="Wrap" FontSize="10" FontFamily="Segoe UI" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="14"/>
+                                                        </DockPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Border>
+                        </Popup>
+
+                        <!-- Image 1 attached button: Square with + / - diff viewer toggle -->
+                        <Button x:Name="WorkplaceDiffSidebarButton"
+                                Click="WorkplaceDiffSidebarButton_Click"
+                                Style="{StaticResource PanelToggleButtonStyle}"
+                                Width="26" Height="26"
+                                Margin="0,0,5,0"
+                                ToolTip="Show changed files &amp; code diffs"
+                                AutomationProperties.Name="Show diffs">
+                            <Grid Width="13" Height="13">
+                                <Border CornerRadius="2.5" BorderThickness="1.3" BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      Data="M4.2,4.5 L8.8,4.5 M6.5,2.4 L6.5,6.6 M4.2,9.2 L8.8,9.2"/>
+                            </Grid>
+                        </Button>
+
+                        <!-- Image 2 attached button: 3-bullet context & environment toggle -->
+                        <Button x:Name="WorkplaceContextSidebarButton"
+                                Click="WorkplaceContextSidebarButton_Click"
+                                Style="{StaticResource PanelToggleButtonStyle}"
+                                Width="26" Height="26"
+                                Margin="0,0,5,0"
+                                ToolTip="Show session context, environment &amp; background tasks"
+                                AutomationProperties.Name="Show context and environment">
+                            <Path Width="13" Height="11" Stretch="Uniform"
+                                  Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                  StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  Data="M1.2,2 A0.9,0.9 0 1 0 3,2 A0.9,0.9 0 1 0 1.2,2 Z M5,2 L12.2,2 M1.2,6 A0.9,0.9 0 1 0 3,6 A0.9,0.9 0 1 0 1.2,6 Z M5,6 L12.2,6 M1.2,10 A0.9,0.9 0 1 0 3,10 A0.9,0.9 0 1 0 1.2,10 Z M5,10 L12.2,10"/>
+                        </Button>
+
+                        <!-- Canvas toggle button relocated next to Context -->
+                        <Button x:Name="WorkplaceCanvasSidebarButton"
+                                Click="WorkplaceCanvasSidebarButton_Click"
+                                Style="{StaticResource PanelToggleButtonStyle}"
+                                Width="26" Height="26"
+                                ToolTip="Show Project Canvas"
+                                AutomationProperties.Name="Show canvas">
+                            <Grid Width="13" Height="11">
+                                <Border CornerRadius="2.2" BorderThickness="1.3"
+                                        BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                <Border Width="4" HorizontalAlignment="Right" Margin="0,1.3,1.3,1.3" CornerRadius="0,1.2,1.2,0" Opacity="0.65"
+                                        Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                            </Grid>
+                        </Button>
+                    </StackPanel>
+
+                    <StackPanel VerticalAlignment="Center">
+                        <DockPanel Margin="0,0,0,2">
+                            <Button x:Name="WorkplaceSessionTitleButton"
+                                    Click="WorkplaceSessionTitleButton_Click"
+                                    Background="Transparent" BorderThickness="0" Padding="0" HorizontalContentAlignment="Left" Cursor="Hand"
+                                    ToolTip="Click to rename this Workplace session">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock x:Name="WorkplaceSessionTitleText" Text="New session" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" LineHeight="18" TextTrimming="CharacterEllipsis" MaxWidth="360"/>
+                                    <TextBlock Text="&#xE70F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" LineHeight="Auto"
+                                               Foreground="{DynamicResource MutedTextBrush}" Margin="6,0,0,0" VerticalAlignment="Center" Opacity="0.7"/>
+                                </StackPanel>
+                            </Button>
+                            <TextBlock x:Name="PipelineProgressBlock" Text="" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="10,0,0,0" TextTrimming="CharacterEllipsis" LineHeight="14"/>
                         </DockPanel>
-                        <!-- One line, no boxes. The three statuses worth a glance stay visible; the
-                             diagnostic ones are still live and still update, just behind the hover
-                             tooltip instead of occupying permanent screen space. The last item
-                             fills and trims so a narrow header ellipsizes instead of clipping. -->
                         <DockPanel ToolTipService.InitialShowDelay="250" Background="Transparent">
                             <DockPanel.ToolTip>
                                 <StackPanel MaxWidth="420">
@@ -433,8 +497,9 @@
             <!-- Composer: one flat card (no box-in-a-box) with a tighter radius. Prompt on top,
                  tool toggles on the left of the control row, Stop/Run on the right. Run status
                  lives in the header (Relay line + context meters), not in here. -->
-            <StackPanel DockPanel.Dock="Bottom" Margin="16,6,16,12">
-                <Border x:Name="InputAreaContainer" CornerRadius="10" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Padding="6" Background="{DynamicResource NotebookSurfaceBrush}"
+            <StackPanel DockPanel.Dock="Bottom" Margin="24,6,24,14" MaxWidth="640" HorizontalAlignment="Stretch">
+                <Border x:Name="InputAreaContainer" CornerRadius="12" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}"
+                        MaxWidth="640" HorizontalAlignment="Stretch"
                         AllowDrop="True" PreviewDragOver="InputAreaContainer_PreviewDragOver" PreviewDrop="InputAreaContainer_PreviewDrop">
                     <StackPanel>
                         <!-- Attachment preview tray: thumbnail chips for the files loaded into this
@@ -480,34 +545,29 @@
                             </DockPanel>
                         </Border>
 
-                        <!-- Quiet running-step line. Present only while a step is in flight. -->
+                        <!-- Borderless concise status line (Image 6 blue circle: "<status>  <Ns> ›") -->
                         <Border x:Name="AgentActivityLine" Visibility="Collapsed" HorizontalAlignment="Left"
-                                Margin="8,0,8,5" Padding="8,3" CornerRadius="9"
-                                Background="{DynamicResource SurfaceRaisedBrush}"
-                                BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="6" Height="6" VerticalAlignment="Center" Fill="{DynamicResource PrimaryAccentBrush}"/>
-                                <TextBlock x:Name="AgentActivityText" Text="" FontSize="10.5" FontWeight="Medium"
-                                           Margin="7,0,0,0" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource NotebookTextBrush}"
-                                           TextTrimming="CharacterEllipsis" MaxWidth="420"/>
-                            </StackPanel>
+                                Margin="6,0,6,4" Padding="2,1"
+                                Background="Transparent" BorderThickness="0">
+                            <TextBlock x:Name="AgentActivityText" Text="" FontSize="11.5" FontWeight="Normal"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource DarkSecondaryBrush}"
+                                       LineHeight="16"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="620"/>
                         </Border>
 
-                        <Border x:Name="RefinementModeBanner" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="6" Padding="8,5" Margin="0,0,0,4">
+                        <Border x:Name="RefinementModeBanner" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="6" Padding="8,4" Margin="0,0,0,4">
                             <TextBlock Text="Refinement Mode" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryAccentBrush}" TextTrimming="CharacterEllipsis"/>
                         </Border>
                         <TextBlock x:Name="RevisionNoticeBlock" Margin="8,2,8,2" Text="Issues were found and the output was revised." FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource DarkSecondaryBrush}" Visibility="Collapsed"/>
 
                         <Grid>
-                            <!-- Starts at about two lines and grows with the prompt up to MaxHeight,
-                                 then scrolls. -->
                             <avalonedit:TextEditor x:Name="QueryInput"
                                      Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}"
-                                     FontFamily="Segoe UI" FontSize="13" KeyDown="QueryInput_KeyDown" PreviewKeyDown="QueryInput_PreviewKeyDown"
+                                     FontFamily="Segoe UI" FontSize="12.5" KeyDown="QueryInput_KeyDown" PreviewKeyDown="QueryInput_PreviewKeyDown"
                                      WordWrap="True" ShowLineNumbers="False"
                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
-                                     Margin="8,6,8,4" MinHeight="40" MaxHeight="168"/>
+                                     Margin="6,4,6,3" MinHeight="30" MaxHeight="140"/>
                             <Popup x:Name="WorkplaceMentionPopup"
                                    Placement="Top"
                                    PlacementTarget="{Binding ElementName=QueryInput}"
@@ -528,7 +588,7 @@
                                              Background="Transparent"
                                              BorderThickness="0"
                                              FontFamily="Segoe UI"
-                                             FontSize="13"
+                                             FontSize="12"
                                              Foreground="{DynamicResource NotebookTextBrush}"
                                              MouseLeftButtonUp="WorkplaceMentionList_MouseLeftButtonUp">
                                         <ListBox.ItemTemplate>
@@ -544,42 +604,156 @@
                             </Popup>
                         </Grid>
 
-                        <!-- Items carry 2px vertical margin so that, when a narrow column forces the
-                             tool toggles to wrap, the rows keep a gap instead of touching. -->
-                        <DockPanel Margin="0,0,0,-2">
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="8,2,0,2">
-                                <Button x:Name="StopButton" Content="⏹ Stop" Click="StopMessage_Click" Width="64" Height="30" Padding="8,2"
-                                        Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource PrimaryAccentBrush}" IsEnabled="False" Margin="0,0,6,0"/>
-                                <Button x:Name="SendButton" Content="Run Council" Click="SendMessage_Click" Width="94" Height="30" Padding="8,2"
-                                        Style="{StaticResource PremiumButtonStyle}"/>
+                        <DockPanel Margin="2,2,2,0">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,2,0,2">
+                                <local:EffortSelector x:Name="WorkplaceEffortSelector" Height="26" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <Button x:Name="StopButton" Content="■" Click="StopMessage_Click" Width="28" Height="26" Padding="0"
+                                        Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource PrimaryAccentBrush}" IsEnabled="False" Margin="0,0,5,0" ToolTip="Stop current run"/>
+                                <Button x:Name="SendButton" Content="↑" Click="SendMessage_Click" Width="28" Height="26" Padding="0"
+                                        Style="{StaticResource PremiumButtonStyle}" FontSize="13" FontWeight="Bold" ToolTip="Run task"/>
                             </StackPanel>
                             <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button x:Name="WorkplaceCloudModeButton" Content="Cloud Off" Click="WorkplaceCloudModeButton_Click" Width="78" Height="30" Padding="8,2"
-                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,6,2" ToolTip="Use local council models"/>
-                                <Button x:Name="WebSearchToggleButton" Content="Web" Click="WebSearchToggleButton_Click" Width="46" Height="30" Padding="8,2"
-                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,6,2" ToolTip="Web Search tool enabled"/>
-                                <Button x:Name="WorkplaceSkillsButton" Click="WorkplaceOpenSkills_Click" MinWidth="72" Height="30" Padding="9,2"
-                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,6,2" ToolTip="Attach reusable Skills to every Axiom model and mode">
+                                <!-- '+' menu: Select Project (strict confinement) + Attach Files -->
+                                <Button x:Name="WorkplaceAttachFileButton" Width="26" Height="26" Margin="0,2,5,2" Click="WorkplacePlusButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0" AutomationProperties.Name="Add project or attach files" ToolTip="Select Project folder or attach files">
+                                    <Path Width="11" Height="11" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M5,0 L7,0 L7,5 L12,5 L12,7 L7,7 L7,12 L5,12 L5,7 L0,7 L0,5 L5,5 Z"/>
+                                </Button>
+
+                                <!-- Project badge / quick selector -->
+                                <Button x:Name="WorkplaceProjectBadgeButton" Click="OpenSelectProjectPopup_Click" Height="26" Padding="8,0" Margin="0,2,5,2"
+                                        Style="{StaticResource SubtleButtonStyle}" ToolTip="Strict project folder scope (click to choose)">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="Skills" VerticalAlignment="Center"/>
-                                        <Border x:Name="WorkplaceSkillsBadge" Margin="6,0,0,0" Padding="5,1" CornerRadius="7" Background="{DynamicResource AccentSoftBrush}" Visibility="Collapsed">
+                                        <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10.5" LineHeight="Auto"
+                                                   Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                        <TextBlock x:Name="WorkplaceProjectBadgeText" Text="This computer" FontSize="10.5" LineHeight="14" VerticalAlignment="Center" MaxWidth="140" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </Button>
+
+                                <!-- Command Review / Auto-Review selector (Requirement #13) -->
+                                <Button x:Name="CommandReviewSelectorButton" Click="CommandReviewSelectorButton_Click" Height="26" Padding="8,0" Margin="0,2,5,2"
+                                        Style="{StaticResource SubtleButtonStyle}" ToolTip="Command safety review &amp; interception mode">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="&#xE83D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10.5" LineHeight="Auto"
+                                                   Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                        <TextBlock x:Name="CommandReviewSelectorText" Text="Auto-Review" FontSize="10.5" LineHeight="14" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+
+                                <Button x:Name="WebSearchToggleButton" Click="WebSearchToggleButton_Click" Width="26" Height="26" Padding="0"
+                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,5,2" ToolTip="Web Search toggle"
+                                        AutomationProperties.Name="Web">
+                                    <Grid Width="13" Height="13">
+                                        <Ellipse Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3"/>
+                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3"
+                                              Data="M0.6,6.5 H12.4"/>
+                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3"
+                                              Data="M6.5,0.4 C3.7,2.8 3.7,10.2 6.5,12.6 C9.3,10.2 9.3,2.8 6.5,0.4"/>
+                                    </Grid>
+                                </Button>
+                                <Button x:Name="WorkplaceSkillsButton" Click="WorkplaceOpenSkills_Click" Height="26" MinWidth="26" Padding="5.5,0"
+                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,5,2" ToolTip="Active skills for this session"
+                                        AutomationProperties.Name="Skills">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Path Width="13" Height="13" Stretch="Uniform"
+                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              Data="M7,1 L8.3,4.7 L12,3.4 L9.8,6.7 L13,9 L9,9 L9,13 L6.7,9.8 L3.4,12 L4.7,8.3 L1,7 L4.7,5.7 L3.4,2.2 L6.7,4.2 Z"/>
+                                        <Border x:Name="WorkplaceSkillsBadge" Margin="5,0,0,0" Padding="4,0" CornerRadius="6" Background="{DynamicResource AccentSoftBrush}" Visibility="Collapsed">
                                             <TextBlock x:Name="WorkplaceSkillsCountText" Text="0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource AccentMutedBrush}"/>
                                         </Border>
                                     </StackPanel>
                                 </Button>
-                                <Button x:Name="CouncilPetToggleButton" Content="Bit" Click="CouncilPetToggleButton_Click" Width="42" Height="30" Padding="8,2"
-                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,6,2" ToolTip="Show the draggable Council Bit status companion"/>
-                                <local:EffortSelector x:Name="WorkplaceEffortSelector" Height="30" Margin="0,2,6,2" VerticalAlignment="Center"/>
-                                <Button x:Name="WorkplaceAttachFileButton" Width="30" Height="30" Margin="0,2,6,2" Click="WorkplaceAttachFileButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0" AutomationProperties.Name="Attach files" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
-                                    <Path Width="13" Height="13" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
-                                </Button>
+                                <Button x:Name="CouncilPetToggleButton" Content="Bit" Click="CouncilPetToggleButton_Click" Height="26" Padding="7,0"
+                                        Style="{StaticResource SubtleButtonStyle}" FontSize="10.5" Margin="0,2,4,2" ToolTip="Toggle draggable companion" Visibility="Collapsed"/>
+
+                                <!-- '+' Menu Popup -->
+                                <Popup x:Name="WorkplacePlusPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceAttachFileButton}"
+                                       AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-6">
+                                    <Border Width="210" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Padding="6">
+                                        <Border.Effect>
+                                            <DropShadowEffect Color="#000000" BlurRadius="14" ShadowDepth="3" Opacity="0.45"/>
+                                        </Border.Effect>
+                                        <StackPanel>
+                                            <Button x:Name="WorkplaceSelectProjectMenuButton" Click="WorkplaceSelectProjectMenu_Click"
+                                                    HorizontalContentAlignment="Left" Padding="9,6" Height="30" Background="Transparent" BorderThickness="0" Margin="0,0,0,2">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11.5" LineHeight="Auto" Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                    <TextBlock Text="Select Project" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Click="WorkplaceAttachFilesMenu_Click"
+                                                    HorizontalContentAlignment="Left" Padding="9,6" Height="30" Background="Transparent" BorderThickness="0">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE723;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11.5" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                    <TextBlock Text="Attach Files…" FontSize="11.5" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                    </Border>
+                                </Popup>
+
+                                <!-- Select Project strict-confinement popup (Requirement #4) -->
+                                <Popup x:Name="SelectProjectPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceAttachFileButton}"
+                                       AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-6">
+                                    <Border Width="310" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="12" Padding="12">
+                                        <Border.Effect>
+                                            <DropShadowEffect Color="#000000" BlurRadius="18" ShadowDepth="4" Opacity="0.5"/>
+                                        </Border.Effect>
+                                        <StackPanel>
+                                            <DockPanel Margin="0,0,0,6">
+                                                <TextBlock Text="Select Project Directory" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" LineHeight="16"/>
+                                                <Button Content="×" Click="CloseSelectProjectPopup_Click" DockPanel.Dock="Right" Width="20" Height="20" Padding="0" Style="{StaticResource SubtleButtonStyle}"/>
+                                            </DockPanel>
+                                            <TextBlock Text="The model will work strictly inside the chosen folder or drive and cannot touch paths outside it." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" LineHeight="14" Margin="0,0,0,8"/>
+                                            <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="7" Padding="8,6" Margin="0,0,0,8">
+                                                <TextBlock x:Name="SelectProjectCurrentPathText" Text="Not restricted yet (This computer)" FontSize="10.5" Foreground="{DynamicResource NotebookTextBrush}" TextWrapping="Wrap" LineHeight="14"/>
+                                            </Border>
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                                <Button Content="Browse Folder / Drive…" Click="BrowseStrictProjectFolder_Click" Height="28" Padding="10,0" Style="{StaticResource PremiumButtonStyle}" Margin="0,0,6,0"/>
+                                                <Button Content="Clear Restriction" Click="ClearStrictProjectFolder_Click" Height="28" Padding="8,0" Style="{StaticResource SubtleButtonStyle}"/>
+                                            </StackPanel>
+                                            <TextBlock x:Name="SelectProjectRecentHeader" Text="Recent folders" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" Margin="0,2,0,4" Visibility="Collapsed"/>
+                                            <StackPanel x:Name="SelectProjectRecentList"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Popup>
+
+                                <!-- Command Review Options Popup (Requirement #13) -->
+                                <Popup x:Name="CommandReviewPopup" Placement="Top" PlacementTarget="{Binding ElementName=CommandReviewSelectorButton}"
+                                       AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-6">
+                                    <Border Width="278" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Padding="8">
+                                        <Border.Effect>
+                                            <DropShadowEffect Color="#000000" BlurRadius="16" ShadowDepth="4" Opacity="0.45"/>
+                                        </Border.Effect>
+                                        <StackPanel>
+                                            <TextBlock Text="Command Review Policy" FontSize="11" FontWeight="SemiBold" Margin="4,2,4,6" LineHeight="15"/>
+                                            <Button Click="SelectCommandReviewOption_Click" Tag="AutoReview" HorizontalContentAlignment="Left" Padding="8,6" Margin="0,1" Style="{StaticResource SubtleButtonStyle}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Auto-Review (Recommended)" FontSize="11" FontWeight="SemiBold" LineHeight="14"/>
+                                                    <TextBlock Text="Approves safe project work; intercepts deletes, system edits &amp; network installs" FontSize="9.5" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" LineHeight="13"/>
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Click="SelectCommandReviewOption_Click" Tag="ManualReview" HorizontalContentAlignment="Left" Padding="8,6" Margin="0,2" Style="{StaticResource SubtleButtonStyle}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Review Every Command" FontSize="11" FontWeight="SemiBold" LineHeight="14"/>
+                                                    <TextBlock Text="Pauses so you inspect and approve every command &amp; write before execution" FontSize="9.5" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" LineHeight="13"/>
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Click="SelectCommandReviewOption_Click" Tag="AutoApprove" HorizontalContentAlignment="Left" Padding="8,6" Margin="0,2" Style="{StaticResource SubtleButtonStyle}">
+                                                <StackPanel>
+                                                    <TextBlock Text="Auto-Run Scoped" FontSize="11" FontWeight="SemiBold" LineHeight="14"/>
+                                                    <TextBlock Text="Runs project commands automatically while blocking drive wipes &amp; out-of-scope paths" FontSize="9.5" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" LineHeight="13"/>
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                    </Border>
+                                </Popup>
 
                                 <!-- Zero-size while closed, so they sit in the toggle row without affecting its layout. -->
                                 <Popup x:Name="WorkplaceSkillsPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceSkillsButton}"
                                        AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-10"
                                        Opened="WorkplaceSkillsPopup_Opened">
-                                    <Border x:Name="WorkplaceSkillsFlyoutCard" Width="500" MaxHeight="520" Padding="18" Background="{DynamicResource NotebookSurfaceBrush}"
-                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="16" Effect="{StaticResource SoftShadow}">
+                                    <Border x:Name="WorkplaceSkillsFlyoutCard" Width="460" MaxHeight="480" Padding="16" Background="{DynamicResource NotebookSurfaceBrush}"
+                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="14" Effect="{StaticResource SoftShadow}">
                                         <Border.RenderTransform>
                                             <TranslateTransform Y="0"/>
                                         </Border.RenderTransform>
@@ -596,18 +770,18 @@
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel>
-                                                    <TextBlock Text="Skills" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
-                                                    <TextBlock x:Name="WorkplaceSkillsSummaryText" Text="Reusable procedures for specialized work" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                                    <TextBlock Text="Skills" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
+                                                    <TextBlock x:Name="WorkplaceSkillsSummaryText" Text="Reusable procedures for specialized work" Margin="0,3,0,0" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                                 </StackPanel>
-                                                <Button Grid.Column="1" Width="28" Height="28" Padding="0" Click="WorkplaceCloseSkills_Click" Style="{StaticResource SubtleButtonStyle}" ToolTip="Close">
-                                                    <TextBlock Text="&#215;" FontSize="16" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="1" Width="24" Height="24" Padding="0" Click="WorkplaceCloseSkills_Click" Style="{StaticResource SubtleButtonStyle}" ToolTip="Close">
+                                                    <TextBlock Text="&#215;" FontSize="14" VerticalAlignment="Center"/>
                                                 </Button>
                                             </Grid>
-                                            <TextBlock Grid.Row="1" Margin="0,12,0,12" Text="Skills are attached globally: the same choice applies in Normal Chat and here, across Council and Single Model runs. Skills that render a deliverable send it to the Builder's Project Canvas." TextWrapping="Wrap" FontSize="11" LineHeight="16" Foreground="{DynamicResource MutedTextBrush}"/>
-                                            <ScrollViewer Grid.Row="2" MaxHeight="360" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <TextBlock Grid.Row="1" Margin="0,10,0,10" Text="Skills are shared across Axiom modes. Detailed instructions load when relevant." TextWrapping="Wrap" FontSize="10.5" LineHeight="15" Foreground="{DynamicResource MutedTextBrush}"/>
+                                            <ScrollViewer Grid.Row="2" MaxHeight="320" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                                 <StackPanel x:Name="WorkplaceSkillsListPanel"/>
                                             </ScrollViewer>
-                                            <Button Grid.Row="3" Margin="0,14,0,0" Height="38" Click="WorkplaceCreateCustomSkill_Click" Background="{DynamicResource PrimaryAccentBrush}" Foreground="{DynamicResource NotebookBackgroundBrush}" BorderThickness="0" FontWeight="SemiBold" Cursor="Hand" Content="&#65291;  Create custom Skill"/>
+                                            <Button Grid.Row="3" Margin="0,12,0,0" Height="32" Click="WorkplaceCreateCustomSkill_Click" Background="{DynamicResource PrimaryAccentBrush}" Foreground="{DynamicResource NotebookBackgroundBrush}" BorderThickness="0" FontWeight="SemiBold" Cursor="Hand" Content="&#65291;  Create custom Skill"/>
                                         </Grid>
                                     </Border>
                                 </Popup>
@@ -616,43 +790,9 @@
                         </DockPanel>
                     </StackPanel>
                 </Border>
-                <TextBlock Text="Architect and Critic reply in chat — the Builder's deliverable renders in the Project Canvas" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="6,6,6,0"/>
             </StackPanel>
 
-            <!-- System notifications dropdown (compact, non-intrusive) -->
-            <Border DockPanel.Dock="Top" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1" Padding="12,4">
-                <DockPanel>
-                    <Button x:Name="NotificationToggleButton" Click="NotificationToggle_Click" DockPanel.Dock="Left" Style="{StaticResource SubtleButtonStyle}" Padding="6,2" Height="22">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="▸" x:Name="NotificationToggleArrow" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                            <TextBlock Text="System Log" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center"/>
-                            <Border x:Name="NotificationBadge" Background="{DynamicResource PrimaryAccentBrush}" CornerRadius="7" MinWidth="14" Height="14" Margin="6,0,0,0" Padding="3,0" Visibility="Collapsed">
-                                <TextBlock x:Name="NotificationBadgeText" Text="0" FontSize="9" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                            </Border>
-                        </StackPanel>
-                    </Button>
-                    <Button Content="Clear" Click="ClearNotifications_Click" DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}" Padding="6,1" FontSize="9" Height="20" Margin="0,0,2,0"/>
-                </DockPanel>
-            </Border>
-            <Border x:Name="NotificationDropdownPanel" DockPanel.Dock="Top" Visibility="Collapsed" MaxHeight="180" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0">
-                    <ItemsControl x:Name="NotificationList">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Margin="4,1" Padding="8,4" CornerRadius="6"
-                                        Background="{Binding CardBackground}"
-                                        BorderBrush="{Binding AccentBrush}" BorderThickness="2,0,0,0">
-                                    <DockPanel>
-                                        <TextBlock Text="{Binding TimestampLabel}" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" DockPanel.Dock="Left" VerticalAlignment="Top" Width="52" Margin="0,0,6,0"/>
-                                        <TextBlock Text="{Binding RoleLabel}" FontSize="9" FontWeight="SemiBold" Foreground="{Binding AccentBrush}" DockPanel.Dock="Left" VerticalAlignment="Top" Width="46" Margin="0,0,6,0"/>
-                                        <TextBlock Text="{Binding FormattedContent}" TextWrapping="Wrap" FontSize="10" FontFamily="Segoe UI" Foreground="{DynamicResource DarkSecondaryBrush}" MaxHeight="36" TextTrimming="CharacterEllipsis"/>
-                                    </DockPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-            </Border>
+            <!-- System Log moved to compact header button + popup next to Diff & Context -->
 
             <!-- ═══════════════════════════════════════════════════════════ -->
             <!-- Agentic Pause live status bar                              -->
@@ -719,52 +859,71 @@
                 <ItemsControl x:Name="ChatCardsList">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <!-- Card: soft surface with a slim rounded role-accent rail on the left.
-                                 Cards get real vertical separation and inner breathing room so the
-                                 relay reads as distinct turns instead of a stacked wall of text. -->
-                            <Border Margin="0,5" CornerRadius="12"
-                                    Background="{Binding CardBackground}"
-                                    BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" Width="3" CornerRadius="2" Background="{Binding AccentBrush}" Margin="10,12,0,12"/>
-                                    <StackPanel Grid.Column="1" Margin="12,10,14,11">
-                                        <DockPanel Margin="0,0,0,6">
-                                            <TextBlock Text="{Binding RoleLabel}" FontSize="11" FontWeight="SemiBold" Foreground="{Binding AccentBrush}" VerticalAlignment="Center"/>
-                                            <Button x:Name="CopyWorkplaceMessageButton" Content="Copy" Click="CopyWorkplaceMessage_Click" Tag="{Binding}" FontSize="9" Padding="8,2" DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center"/>
-                                            <TextBlock Text="{Binding TimestampLabel}" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" HorizontalAlignment="Right" DockPanel.Dock="Right" Margin="0,0,10,0" VerticalAlignment="Center"/>
-                                        </DockPanel>
-                                        <local:ShimmerTextBlock x:Name="WorkplaceCardGenerationStatusText"
-                                                                Text="{Binding GenerationStatusText}"
-                                                                FontSize="12"
-                                                                FontWeight="SemiBold"
-                                                                BaseColor="#A1A1AA"
-                                                                HighlightColor="#FFFFFF"
-                                                                ShimmerDurationSeconds="2"
-                                                                TextTrimming="CharacterEllipsis"
-                                                                Visibility="Collapsed"/>
-                                        <!-- Native markdown rendering (headings, lists, code) inside the
-                                             redesigned card layout. -->
-                                        <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText"
-                                                                  Document="{Binding FormattedDocument}"
-                                                                  Background="Transparent"
-                                                                  BorderThickness="0"
-                                                                  Padding="0"
-                                                                  FontSize="12.5"
-                                                                  FontFamily="Segoe UI"
-                                                                  Foreground="{DynamicResource NotebookTextBrush}"
-                                                                  IsToolBarVisible="False"
-                                                                  VerticalScrollBarVisibility="Disabled"
-                                                                  HorizontalScrollBarVisibility="Disabled"
-                                                                  IsTabStop="False"/>
-                                    </StackPanel>
-                                </Grid>
+                            <!-- Clean structured card for AI/agent output; compact right-aligned surface bubble for user -->
+                            <Border x:Name="CardShell" Margin="4,6,20,6" Padding="16,12" CornerRadius="12"
+                                    HorizontalAlignment="Left" MinWidth="360" MaxWidth="820"
+                                    Background="#1C1A18" BorderBrush="#2C2926" BorderThickness="1">
+                                <StackPanel>
+                                    <DockPanel x:Name="CardMetaRow" Margin="0,0,0,8">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Ellipse Width="6" Height="6" Fill="{Binding AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                                            <TextBlock Text="{Binding RoleLabel}" FontSize="11" FontWeight="SemiBold" Foreground="{Binding AccentBrush}" VerticalAlignment="Center" LineHeight="14"/>
+                                        </StackPanel>
+                                        <Button x:Name="CopyWorkplaceMessageButton" Content="Copy" Click="CopyWorkplaceMessage_Click" Tag="{Binding}" FontSize="9.5" Padding="8,2" DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center" Opacity="0.8"/>
+                                        <TextBlock Text="{Binding TimestampLabel}" FontSize="9.5" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Right" DockPanel.Dock="Right" Margin="0,0,8,0" VerticalAlignment="Center" LineHeight="12"/>
+                                    </DockPanel>
+                                    <local:ShimmerTextBlock x:Name="WorkplaceCardGenerationStatusText"
+                                                            Text="{Binding GenerationStatusText}"
+                                                            FontSize="11.5"
+                                                            FontWeight="SemiBold"
+                                                            BaseColor="#A1A1AA"
+                                                            HighlightColor="#FFFFFF"
+                                                            ShimmerDurationSeconds="2"
+                                                            TextTrimming="CharacterEllipsis"
+                                                            Visibility="Collapsed"/>
+                                    <ItemsControl ItemsSource="{Binding AttachedImages}"
+                                                  Visibility="{Binding HasAttachedImages, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                  Margin="0,0,0,6">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal"/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border CornerRadius="8" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Margin="0,0,6,6" ClipToBounds="True">
+                                                    <Image Source="{Binding}" MaxWidth="220" MaxHeight="160" Stretch="Uniform"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText"
+                                                              Document="{Binding FormattedDocument}"
+                                                              Background="Transparent"
+                                                              BorderThickness="0"
+                                                              Padding="0"
+                                                              Margin="0,2,0,0"
+                                                              FontSize="12.5"
+                                                              FontFamily="Segoe UI"
+                                                              Foreground="{DynamicResource NotebookTextBrush}"
+                                                              IsToolBarVisible="False"
+                                                              VerticalScrollBarVisibility="Disabled"
+                                                              HorizontalScrollBarVisibility="Disabled"
+                                                              IsTabStop="False"/>
+                                </StackPanel>
                             </Border>
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding Role}" Value="user">
+                                    <Setter TargetName="CardShell" Property="HorizontalAlignment" Value="Right"/>
+                                    <Setter TargetName="CardShell" Property="MinWidth" Value="0"/>
+                                    <Setter TargetName="CardShell" Property="MaxWidth" Value="640"/>
+                                    <Setter TargetName="CardShell" Property="Margin" Value="80,4,8,4"/>
+                                    <Setter TargetName="CardShell" Property="Padding" Value="12,8"/>
+                                    <Setter TargetName="CardShell" Property="CornerRadius" Value="12"/>
+                                    <Setter TargetName="CardShell" Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
+                                    <Setter TargetName="CardShell" Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
+                                    <Setter TargetName="CardShell" Property="BorderThickness" Value="1"/>
+                                    <Setter TargetName="CardMetaRow" Property="Visibility" Value="Collapsed"/>
                                     <Setter TargetName="CopyWorkplaceMessageButton" Property="Visibility" Value="Collapsed"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding ShowGeneratingStatusInCard}" Value="True">
@@ -783,138 +942,210 @@
         </DockPanel>
 
         <!-- ═══════════════════════════════════════════ -->
-        <!-- RIGHT — Project Canvas                      -->
+        <!-- RIGHT SIDEBAR — Diff / Context & Env / Canvas -->
         <!-- ═══════════════════════════════════════════ -->
-        <!-- No collapsed rail: when hidden, the canvas takes no width at all and is reopened from
-             the Project Canvas toggle in the main window's tab bar. -->
-        <Border x:Name="ProjectCanvasPane" Grid.Column="2" MinWidth="320" MaxWidth="640" Width="500" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1,0,0,0" Padding="16">
+        <Border x:Name="ProjectCanvasPane" Grid.Column="2" MinWidth="290" MaxWidth="620" Width="360" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1,0,0,0" Padding="12">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Canvas header -->
-                <Border Grid.Row="0" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16" Margin="0,0,0,12">
+                <!-- Right Sidebar Header & Mode Switcher (removed per UI refinement; mode buttons live in Workplace header) -->
+                <Border x:Name="RightSidebarHeaderBorder" Grid.Row="0" Visibility="Collapsed" Height="0" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="Transparent" BorderThickness="0" Padding="0" Margin="0" IsHitTestVisible="False">
                     <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" MinWidth="0"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
-                            <TextBlock x:Name="CanvasTitleBlock" Text="Project Canvas" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                            <TextBlock x:Name="CanvasSubtitleBlock" Text="Builder output rendered here." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                            <TextBlock x:Name="CanvasDiffSummaryBlock" Text="" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0" Visibility="Collapsed" TextTrimming="CharacterEllipsis"/>
-                        </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
-                            <StackPanel x:Name="CanvasArtifactTogglePanel" Orientation="Horizontal" Margin="0,0,8,0" Visibility="Collapsed">
-                                <Button x:Name="CanvasCodeViewButton" Content="Code" Click="CanvasCodeViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="58" Height="30" Padding="10,0" Margin="0,0,4,0"/>
-                                <Button x:Name="CanvasPreviewViewButton" Content="Preview" Click="CanvasPreviewViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="78" Height="30" Padding="12,0"/>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" MinWidth="0"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock x:Name="CanvasTitleBlock" Text="Context &amp; Environment" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" LineHeight="16"/>
+                                <TextBlock x:Name="CanvasSubtitleBlock" Text="Session environment, context budget &amp; tasks." FontSize="9.5" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" LineHeight="13"/>
+                                <TextBlock x:Name="CanvasDiffSummaryBlock" Text="" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0" Visibility="Collapsed" TextTrimming="CharacterEllipsis" LineHeight="12"/>
                             </StackPanel>
-                            <Button x:Name="CopyCanvasButton" Click="CopyCanvasButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Copy to clipboard" Margin="0,0,8,0" Width="30" Height="30">
-                                <Canvas Width="14" Height="14">
-                                    <Rectangle Canvas.Left="0" Canvas.Top="3" Width="9" Height="9" Stroke="{DynamicResource DarkSecondaryBrush}" StrokeThickness="1.4" RadiusX="1.5" RadiusY="1.5"/>
-                                    <Rectangle Canvas.Left="4" Canvas.Top="0" Width="9" Height="9" Stroke="{DynamicResource NotebookTextBrush}" StrokeThickness="1.4" Fill="{DynamicResource NotebookBackgroundBrush}" RadiusX="1.5" RadiusY="1.5"/>
-                                </Canvas>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Button x:Name="RightTabDiffButton" Content="Diff" Click="WorkplaceDiffSidebarButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Padding="7,0" Height="24" Margin="0,0,4,0"/>
+                                <Button x:Name="RightTabContextButton" Content="Context" Click="WorkplaceContextSidebarButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Padding="7,0" Height="24" Margin="0,0,4,0"/>
+                                <Button x:Name="RightTabCanvasButton" Content="Canvas" Click="RightTabCanvasButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Padding="7,0" Height="24" Margin="0,0,6,0"/>
+                                <Button x:Name="ProjectCanvasToggleButton" Content="›" Click="ProjectCanvasToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide sidebar" Width="24" Height="24"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Contextual toolbar for Canvas / Codebase patches -->
+                        <WrapPanel Grid.Row="1" Margin="0,6,0,0" x:Name="CanvasActionsRow">
+                            <StackPanel x:Name="CanvasArtifactTogglePanel" Orientation="Horizontal" Margin="0,0,6,0" Visibility="Collapsed">
+                                <Button x:Name="CanvasCodeViewButton" Content="Code" Click="CanvasCodeViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" MinWidth="46" Height="24" Padding="7,0" Margin="0,0,4,0"/>
+                                <Button x:Name="CanvasPreviewViewButton" Content="Preview" Click="CanvasPreviewViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" MinWidth="54" Height="24" Padding="7,0"/>
+                            </StackPanel>
+                            <Button x:Name="CopyCanvasButton" Click="CopyCanvasButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Copy canvas source" Margin="0,0,5,0" Width="24" Height="24" Visibility="Collapsed">
+                                <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" LineHeight="Auto"/>
                             </Button>
-                            <Button x:Name="RunCodeButton" Content="▶ Run" Margin="0,0,8,0" Click="RunCodeButton_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="10" MinWidth="72" Height="30" Padding="10,0" ToolTip="Execute code in sandbox"/>
-                            <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,8,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="52" Height="30" Padding="10,0" ToolTip="Compare the current canvas source with its previous generated version" Visibility="Collapsed"/>
-                            <Button x:Name="CodeOutputToggleButton" Content="⌄" Margin="0,0,8,0" Click="CodeOutputToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide code output" Width="30" Height="30"/>
-                            <Button x:Name="UndoCodebaseChangesButton" Content="Undo" Margin="0,0,8,0" Click="UndoCodebaseChanges_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="62" Height="30" Padding="10,0" ToolTip="Undo the last applied codebase patch" Visibility="Collapsed" IsEnabled="False"/>
-                            <Button x:Name="AcceptCodebaseChangesButton" Content="Accept" Margin="0,0,8,0" Click="AcceptCodebaseChanges_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="10" MinWidth="64" Height="30" Padding="10,0" ToolTip="Accept proposed codebase changes" Visibility="Collapsed" IsEnabled="False"/>
-                            <Button x:Name="RejectCodebaseChangesButton" Content="Reject" Margin="0,0,8,0" Click="RejectCodebaseChanges_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" MinWidth="62" Height="30" Padding="10,0" ToolTip="Reject proposed codebase changes" Visibility="Collapsed" IsEnabled="False"/>
-                            <Button x:Name="CanvasMoreActionsButton" Content="..." Margin="0,0,8,0" Click="CanvasMoreActionsButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="More canvas actions" Width="30" Height="30" Visibility="Collapsed">
+                            <Button x:Name="RunCodeButton" Content="▶ Run" Margin="0,0,5,0" Click="RunCodeButton_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="9.5" MinWidth="56" Height="24" Padding="8,0" ToolTip="Execute code in sandbox" Visibility="Collapsed"/>
+                            <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,5,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" MinWidth="44" Height="24" Padding="7,0" Visibility="Collapsed"/>
+                            <Button x:Name="CodeOutputToggleButton" Content="⌄" Margin="0,0,5,0" Click="CodeOutputToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" Width="24" Height="24" Visibility="Collapsed"/>
+                            <Button x:Name="UndoCodebaseChangesButton" Content="Undo" Margin="0,0,5,0" Click="UndoCodebaseChanges_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Height="24" Padding="7,0" Visibility="Collapsed" IsEnabled="False"/>
+                            <Button x:Name="AcceptCodebaseChangesButton" Content="Accept" Margin="0,0,5,0" Click="AcceptCodebaseChanges_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="9.5" Height="24" Padding="7,0" Visibility="Collapsed" IsEnabled="False"/>
+                            <Button x:Name="RejectCodebaseChangesButton" Content="Reject" Margin="0,0,5,0" Click="RejectCodebaseChanges_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Height="24" Padding="7,0" Visibility="Collapsed" IsEnabled="False"/>
+                            <Button x:Name="CanvasMoreActionsButton" Content="..." Margin="0,0,4,0" Click="CanvasMoreActionsButton_Click" Style="{StaticResource PanelToggleButtonStyle}" Width="24" Height="24" Visibility="Collapsed">
                                 <Button.ContextMenu>
-                                    <ContextMenu Background="{DynamicResource NotebookBackgroundBrush}"
-                                                 BorderBrush="{DynamicResource NotebookBorderBrush}"
-                                                 Foreground="{DynamicResource NotebookTextBrush}"
-                                                 BorderThickness="1"
-                                                 Padding="4">
-                                        <ContextMenu.ItemContainerStyle>
-                                            <Style TargetType="{x:Type MenuItem}">
-                                                <Setter Property="Background" Value="{DynamicResource NotebookBackgroundBrush}"/>
-                                                <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
-                                                <Setter Property="FontFamily" Value="Segoe UI"/>
-                                                <Setter Property="FontSize" Value="12"/>
-                                                <Setter Property="Padding" Value="12,7"/>
-                                                <Setter Property="MinWidth" Value="132"/>
-                                                <Setter Property="Template">
-                                                    <Setter.Value>
-                                                        <ControlTemplate TargetType="{x:Type MenuItem}">
-                                                            <Border x:Name="MenuItemBorder"
-                                                                    Background="{TemplateBinding Background}"
-                                                                    CornerRadius="6"
-                                                                    Padding="{TemplateBinding Padding}"
-                                                                    SnapsToDevicePixels="True">
-                                                                <ContentPresenter ContentSource="Header"
-                                                                                  RecognizesAccessKey="True"
-                                                                                  TextElement.Foreground="{TemplateBinding Foreground}"/>
-                                                            </Border>
-                                                            <ControlTemplate.Triggers>
-                                                                <Trigger Property="IsHighlighted" Value="True">
-                                                                    <Setter TargetName="MenuItemBorder" Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
-                                                                    <Setter Property="Foreground" Value="{DynamicResource PrimaryAccentBrush}"/>
-                                                                </Trigger>
-                                                                <Trigger Property="IsEnabled" Value="False">
-                                                                    <Setter TargetName="MenuItemBorder" Property="Opacity" Value="0.45"/>
-                                                                </Trigger>
-                                                            </ControlTemplate.Triggers>
-                                                        </ControlTemplate>
-                                                    </Setter.Value>
-                                                </Setter>
-                                            </Style>
-                                        </ContextMenu.ItemContainerStyle>
+                                    <ContextMenu Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderThickness="1" Padding="4">
                                         <MenuItem x:Name="CanvasMoreCopyItem" Header="Copy source" Click="CanvasMoreCopyItem_Click"/>
                                         <MenuItem x:Name="CanvasMoreDiffItem" Header="Show diff" Click="CanvasMoreDiffItem_Click"/>
                                         <MenuItem x:Name="CanvasMoreOutputItem" Header="Hide output" Click="CanvasMoreOutputItem_Click"/>
                                     </ContextMenu>
                                 </Button.ContextMenu>
                             </Button>
-                            <Button x:Name="ProjectCanvasToggleButton" Content="›" Click="ProjectCanvasToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide project canvas" Width="30" Height="30"/>
-                        </StackPanel>
+                        </WrapPanel>
                     </Grid>
                 </Border>
 
-                <!-- Code editor -->
-                <Border x:Name="CodeOutputPanel" Grid.Row="1" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12">
-                    <Grid>
-                        <avalonedit:TextEditor x:Name="ProjectCanvasEditor"
-                                           Background="{DynamicResource NotebookBackgroundBrush}"
-                                           Foreground="{DynamicResource NotebookTextBrush}"
-                                           FontFamily="Consolas"
-                                           FontSize="13"
-                                           ShowLineNumbers="True"
-                                           IsReadOnly="True"
-                                           HorizontalScrollBarVisibility="Auto"
-                                           VerticalScrollBarVisibility="Auto"/>
-                        <Grid x:Name="CanvasArtifactPreviewHost" Visibility="Collapsed" Margin="0">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-                            <wv2:WebView2 x:Name="CanvasArtifactWebView"
-                                          Grid.Row="0"
-                                          DefaultBackgroundColor="#00000000"
-                                          Margin="0"
-                                          Visibility="Visible"/>
-                            <Border Grid.Row="1" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,1,0,0" Padding="10,8">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <Button x:Name="CopyCanvasArtifactSourceButton" Content="Copy Source" Click="CopyCanvasArtifactSourceButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,8,0" Padding="8,2"/>
-                                    <Button x:Name="SaveCanvasArtifactButton" Content="Save" Click="SaveCanvasArtifactButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Padding="8,2"/>
-                                </StackPanel>
+                <!-- Right Sidebar Content Views -->
+                <Grid Grid.Row="1">
+                    <!-- VIEW A: Context & Environment + Background Tasks (Images 3 & 4) -->
+                    <ScrollViewer x:Name="ContextEnvironmentPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="2,0,4,8">
+                            <!-- Environment (Image 3 top) -->
+                            <TextBlock Text="Environment" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,8" LineHeight="16"/>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE7F4;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="This computer" FontSize="11" LineHeight="15" VerticalAlignment="Center"/>
+                                <Button Grid.Column="2" Content="Save" Click="ExportContextEnvironment_Click" Background="Transparent" BorderThickness="0" Padding="4,1" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" Cursor="Hand"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="EnvProjectPathText" Grid.Column="1" Text="Unscoped" FontSize="11" LineHeight="15" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="EnvGitBranchText" Grid.Column="1" Text="No git repo" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="15" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,2,0,10"/>
+
+                            <!-- Context Breakdown (Image 3 center) -->
+                            <TextBlock Text="Context" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,6" LineHeight="16"/>
+                            <Grid Margin="0,0,0,5">
+                                <TextBlock x:Name="ContextUsedPercentText" Text="0% used" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Left" LineHeight="15"/>
+                                <TextBlock x:Name="ContextUsedFractionText" Text="0 / 128k" FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Right" LineHeight="15"/>
+                            </Grid>
+                            <!-- Multi-color segmented progress bar -->
+                            <Border CornerRadius="3" Height="6" Background="{DynamicResource NotebookBackgroundBrush}" ClipToBounds="True" Margin="0,0,0,10">
+                                <Grid x:Name="ContextSegmentedBarGrid">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition x:Name="CtxBarMessagesCol" Width="0*"/>
+                                        <ColumnDefinition x:Name="CtxBarSystemToolsCol" Width="0*"/>
+                                        <ColumnDefinition x:Name="CtxBarMcpToolsCol" Width="0*"/>
+                                        <ColumnDefinition x:Name="CtxBarOverheadCol" Width="0*"/>
+                                        <ColumnDefinition x:Name="CtxBarFreeCol" Width="100*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="#3B82F6"/>
+                                    <Border Grid.Column="1" Background="#F97316"/>
+                                    <Border Grid.Column="2" Background="#10B981"/>
+                                    <Border Grid.Column="3" Background="#6B7280"/>
+                                    <Border Grid.Column="4" Background="#272422"/>
+                                </Grid>
                             </Border>
+
+                            <StackPanel x:Name="ContextBreakdownRowsPanel" Margin="0,0,0,8"/>
+
+                            <TextBlock x:Name="CtxExpandMcpText" Text="> MCP tools  0" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,4,0,2" LineHeight="15"/>
+                            <TextBlock x:Name="CtxExpandMemoryText" Text="> Memory files (.md tracker)  0" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,10" LineHeight="15"/>
+
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="CtxUntilCompactText" Text="Compact ready" FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" LineHeight="14"/>
+                                <Button Grid.Column="1" Content="Compact session" Click="CompactSessionNow_Click" Height="26" Padding="10,0" FontSize="10.5" Style="{StaticResource SubtleButtonStyle}"/>
+                            </Grid>
+
+                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,2,0,10"/>
+
+                            <!-- Outputs section (Image 4) -->
+                            <TextBlock Text="Outputs" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,6" LineHeight="16"/>
+                            <StackPanel x:Name="RightSidebarOutputsPanel" Margin="0,0,0,10">
+                                <TextBlock Text="No files modified yet." FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
+                            </StackPanel>
+
+                            <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="0,2,0,10"/>
+
+                            <!-- Background tasks section (Image 4 red circle) -->
+                            <TextBlock Text="Background tasks" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,6" LineHeight="16"/>
+                            <StackPanel x:Name="RightSidebarBackgroundTasksPanel"/>
+                            <Button x:Name="BackgroundFinishedToggleButton" Click="BackgroundFinishedToggle_Click"
+                                    Visibility="Collapsed" Background="Transparent" BorderThickness="0" Padding="0,4" HorizontalContentAlignment="Left" Margin="0,4,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE81C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10.5" LineHeight="Auto" Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="BackgroundFinishedCountText" Text="0 finished" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="14" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <StackPanel x:Name="RightSidebarFinishedTasksPanel" Visibility="Collapsed" Margin="14,2,0,0"/>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- VIEW B & C: Diff Viewer & Code/Preview Canvas -->
+                    <Border x:Name="CodeOutputPanel" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0" CornerRadius="10">
+                        <Grid>
+                            <avalonedit:TextEditor x:Name="ProjectCanvasEditor"
+                                               Background="{DynamicResource NotebookSurfaceBrush}"
+                                               Foreground="{DynamicResource NotebookTextBrush}"
+                                               FontFamily="Consolas"
+                                               FontSize="11.5"
+                                               ShowLineNumbers="True"
+                                               IsReadOnly="True"
+                                               HorizontalScrollBarVisibility="Auto"
+                                               VerticalScrollBarVisibility="Auto"/>
+                            <Grid x:Name="CanvasArtifactPreviewHost" Background="{DynamicResource NotebookSurfaceBrush}" Visibility="Collapsed" Margin="0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <wv2:WebView2 x:Name="CanvasArtifactWebView"
+                                              Grid.Row="0"
+                                              DefaultBackgroundColor="#00000000"
+                                              Margin="0"
+                                              Visibility="Visible"/>
+                                <Border Grid.Row="1" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,1,0,0" Padding="8,6">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Button x:Name="CopyCanvasArtifactSourceButton" Content="Copy Source" Click="CopyCanvasArtifactSourceButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,6,0" Padding="8,2"/>
+                                        <Button x:Name="SaveCanvasArtifactButton" Content="Save" Click="SaveCanvasArtifactButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Padding="8,2"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <ScrollViewer x:Name="DiffViewerScroller" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="{DynamicResource NotebookSurfaceBrush}" Padding="2">
+                                <StackPanel>
+                                    <TextBlock x:Name="DiffViewerEmptyText" Text="No workspace or canvas diffs recorded in this session yet." FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="4,8" TextWrapping="Wrap" Visibility="Collapsed"/>
+                                    <ItemsControl x:Name="DiffViewerLines">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
                         </Grid>
-                        <ScrollViewer x:Name="DiffViewerScroller" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="{DynamicResource NotebookBackgroundBrush}">
-                            <ItemsControl x:Name="DiffViewerLines">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                            </ItemsControl>
-                        </ScrollViewer>
-                    </Grid>
-                </Border>
+                    </Border>
+                </Grid>
             </Grid>
         </Border>
 

@@ -81,8 +81,13 @@ namespace Malx_AI
             if (WebSearchToggleButton == null)
                 return;
 
-            WebSearchToggleButton.Content = "Web";
-            WebSearchToggleButton.Opacity = _isWebSearchEnabled ? 1.0 : 0.45;
+            WebSearchToggleButton.Opacity = _isWebSearchEnabled ? 1.0 : 0.55;
+            WebSearchToggleButton.Background = _isWebSearchEnabled
+                ? (TryFindResource("AccentSoftBrush") as Brush ?? AppTheme.Brush("#3A3226"))
+                : (TryFindResource("NotebookSurfaceBrush") as Brush ?? AppTheme.Brush("#211F1D"));
+            WebSearchToggleButton.BorderBrush = _isWebSearchEnabled
+                ? (TryFindResource("PrimaryAccentBrush") as Brush ?? AppTheme.Brush("#B8924A"))
+                : (TryFindResource("NotebookBorderBrush") as Brush ?? AppTheme.Brush("#302D2A"));
             WebSearchToggleButton.ToolTip = _isWebSearchEnabled
                 ? "Web Search tool enabled"
                 : "Web Search tool disabled";
@@ -236,19 +241,23 @@ namespace Malx_AI
                 cloudModeButton.Content = _isCloudModeEnabled ? "Cloud On" : "Cloud Off";
                 cloudModeButton.Opacity = _isCloudModeEnabled ? 1.0 : 0.75;
                 cloudModeButton.ToolTip = _isCloudModeEnabled
-                    ? $"{(_isSingleModelMode ? "Single-agent" : "Council")} cloud mode enabled ({OpenRouterChatService.WorkplaceCouncilDisplayLabel})"
+                    ? $"{(_isSingleModelMode ? "Single-agent" : "Council")} cloud mode enabled ({WorkplaceCloudRoleDisplayName})"
                     : _isSingleModelMode ? "Use the selected local single model" : "Use local council models";
             }
 
+            if (FindName("WorkplaceCloudModelCombo") is ComboBox cloudModelCombo)
+            {
+                cloudModelCombo.Visibility = (_isCloudModeEnabled && !_isHybridLocalCouncilSelected)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                cloudModelCombo.IsEnabled = !_connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
+                SyncWorkplaceCloudModelComboSelection(cloudModelCombo);
+            }
+
             bool localControlsEnabled = !_isCloudModeEnabled;
-            if (FindName("LoadArchitectModelButton") is Button architectLoadButton) architectLoadButton.IsEnabled = localControlsEnabled;
             if (FindName("LoadBuilderModelButton") is Button builderLoadButton) builderLoadButton.IsEnabled = localControlsEnabled;
             if (FindName("LoadCriticModelButton") is Button criticLoadButton) criticLoadButton.IsEnabled = localControlsEnabled;
             if (FindName("LoadSingleModelButton") is Button singleLoadButton) singleLoadButton.IsEnabled = localControlsEnabled;
-            if (ArchitectFormatCombo != null) ArchitectFormatCombo.IsEnabled = localControlsEnabled;
-            if (BuilderFormatCombo != null) BuilderFormatCombo.IsEnabled = localControlsEnabled;
-            if (CriticFormatCombo != null) CriticFormatCombo.IsEnabled = localControlsEnabled;
-            if (SingleModelFormatCombo != null) SingleModelFormatCombo.IsEnabled = localControlsEnabled;
             if (SingleModelContextSlider != null) SingleModelContextSlider.IsEnabled = localControlsEnabled;
 
             if (AutoOptimizeContextToggle != null)
@@ -2137,8 +2146,10 @@ namespace Malx_AI
             RefinementModeBanner.Visibility = Visibility.Collapsed;
             WorkplaceErrorNotificationBar.Visibility = Visibility.Collapsed;
             WorkplaceErrorNotificationText.Text = string.Empty;
-            NotificationDropdownPanel.Visibility = Visibility.Collapsed;
+            if (NotificationDropdownPopup != null)
+                NotificationDropdownPopup.IsOpen = false;
             _isNotificationPanelOpen = false;
+            SetSidebarButtonActive(NotificationToggleButton, false);
             _unreadNotificationCount = 0;
             NotificationBadge.Visibility = Visibility.Collapsed;
             NotificationBadgeText.Text = "0";
@@ -2172,7 +2183,8 @@ namespace Malx_AI
                 {
                     Role = msg.Role,
                     Content = msg.Content,
-                    Timestamp = msg.Timestamp == default ? DateTime.Now : msg.Timestamp
+                    Timestamp = msg.Timestamp == default ? DateTime.Now : msg.Timestamp,
+                    AttachedImagePaths = msg.AttachedImagePaths?.ToList() ?? new List<string>()
                 };
 
                 if (NotificationRoles.Contains(message.Role))
@@ -2305,7 +2317,9 @@ namespace Malx_AI
                     _council[CouncilRole.Builder].DisplayName = string.IsNullOrWhiteSpace(builder.DisplayName)
                         ? (IsQwen3Model(builder.ModelPath) ? ModelInferenceProfiles.DefaultQwen3DisplayName : "No model selected")
                         : builder.DisplayName;
-                _council[CouncilRole.Builder].Format = ParsePromptFormatByName(builder.Format);
+                _council[CouncilRole.Builder].Format = !string.IsNullOrWhiteSpace(builder.ModelPath)
+                    ? DetectPromptFormatFromModel(builder.ModelPath)
+                    : ParsePromptFormatByName(builder.Format);
             }
             if (councilModels.TryGetValue("Critic", out var critic))
             {
@@ -2313,7 +2327,9 @@ namespace Malx_AI
                     _council[CouncilRole.Critic].DisplayName = string.IsNullOrWhiteSpace(critic.DisplayName)
                         ? (IsQwen3Model(critic.ModelPath) ? ModelInferenceProfiles.DefaultQwen3DisplayName : "No model selected")
                         : critic.DisplayName;
-                _council[CouncilRole.Critic].Format = ParsePromptFormatByName(critic.Format);
+                _council[CouncilRole.Critic].Format = !string.IsNullOrWhiteSpace(critic.ModelPath)
+                    ? DetectPromptFormatFromModel(critic.ModelPath)
+                    : ParsePromptFormatByName(critic.Format);
             }
 
             WorkplaceCouncilModelDto singleModel = snapshot.SingleModel ?? new WorkplaceCouncilModelDto();
@@ -2321,7 +2337,9 @@ namespace Malx_AI
             _singleModel.DisplayName = string.IsNullOrWhiteSpace(singleModel.DisplayName)
                 ? (IsQwen3Model(singleModel.ModelPath) ? ModelInferenceProfiles.DefaultQwen3DisplayName : "No model selected")
                 : singleModel.DisplayName;
-            _singleModel.Format = ParsePromptFormatByName(singleModel.Format);
+            _singleModel.Format = !string.IsNullOrWhiteSpace(singleModel.ModelPath)
+                ? DetectPromptFormatFromModel(singleModel.ModelPath)
+                : ParsePromptFormatByName(singleModel.Format);
 
             if (_autoOptimizeRoleContexts)
                 ApplyOptimizedRoleContexts();
@@ -2337,6 +2355,7 @@ namespace Malx_AI
             RefreshCodebaseAccessUi();
             UpdatePerformanceAggregate();
             UpdateWorkplaceTokenUsageIndicator();
+            RestoreOverhaulSnapshotFields(snapshot);
         }
 
         public void ResetWorkspaceSession()
@@ -2657,6 +2676,8 @@ namespace Malx_AI
         // self-hosted custom endpoint ("Kestral 1"). Independent of _isCloudModeEnabled itself,
         // which just means "not running the in-process local GGUF path."
         private bool _isHybridLocalCouncilSelected;
+        private string _selectedWorkplaceCloudModelId = OpenRouterChatService.Threnody10ModelId;
+        private bool _suppressWorkplaceCloudModelComboChange;
         private bool _isSingleModelMode;
         private uint _singleModelContextSize = 8192;
 
@@ -2773,9 +2794,7 @@ namespace Malx_AI
             _council[role].DisplayName = IsQwen3Model(modelPath)
                 ? ModelInferenceProfiles.DefaultQwen3DisplayName
                 : Path.GetFileNameWithoutExtension(modelPath);
-            _council[role].Format = IsGemma4Model(modelPath)
-                ? PromptFormat.Gemma4
-                : PromptFormat.ChatML;
+            _council[role].Format = DetectPromptFormatFromModel(modelPath);
         }
 
         private bool ShouldEmitWebStatus()
@@ -2794,6 +2813,9 @@ namespace Malx_AI
             {
                 using var database = new DatabaseService();
                 _openRouterChatService.SetApiKey(database.LoadOpenRouterApiKey() ?? string.Empty);
+                string savedModel = database.GetSetting("openrouter_model_id");
+                if (!string.IsNullOrWhiteSpace(savedModel))
+                    _selectedWorkplaceCloudModelId = _openRouterChatService.NormalizeSelectableModelId(savedModel);
             }
             catch
             {
@@ -2828,11 +2850,89 @@ namespace Malx_AI
             }
         }
 
+        internal void SetSelectedWorkplaceCloudModel(string? modelId)
+        {
+            if (string.IsNullOrWhiteSpace(modelId))
+                return;
+
+            string normalized = _openRouterChatService.NormalizeSelectableModelId(modelId);
+            if (string.Equals(normalized, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _selectedWorkplaceCloudModelId = normalized;
+            RefreshWorkplaceCloudModeUi();
+            if (_isCloudModeEnabled && !_isHybridLocalCouncilSelected)
+            {
+                UpdateCouncilBlocks();
+                UpdateContextInfo();
+            }
+        }
+
+        private void SyncWorkplaceCloudModelComboSelection(ComboBox combo)
+        {
+            string effectiveId = _openRouterChatService.NormalizeSelectableModelId(_selectedWorkplaceCloudModelId);
+            _suppressWorkplaceCloudModelComboChange = true;
+            try
+            {
+                foreach (object? item in combo.Items)
+                {
+                    if (item is ComboBoxItem cbi
+                        && cbi.Tag is string tag
+                        && string.Equals(tag, effectiveId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!ReferenceEquals(combo.SelectedItem, cbi))
+                            combo.SelectedItem = cbi;
+                        return;
+                    }
+                }
+            }
+            finally
+            {
+                _suppressWorkplaceCloudModelComboChange = false;
+            }
+        }
+
+        private void WorkplaceCloudModelCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressWorkplaceCloudModelComboChange || !IsLoaded)
+                return;
+
+            if (sender is not ComboBox combo || combo.SelectedItem is not ComboBoxItem item || item.Tag is not string modelId)
+                return;
+
+            if (_isProcessing)
+            {
+                SyncWorkplaceCloudModelComboSelection(combo);
+                AppendChat("system", "Cannot switch cloud model during an active run.");
+                return;
+            }
+
+            string normalized = _openRouterChatService.NormalizeSelectableModelId(modelId);
+            if (string.Equals(_selectedWorkplaceCloudModelId, normalized, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _selectedWorkplaceCloudModelId = normalized;
+            try
+            {
+                using var database = new DatabaseService();
+                database.SaveSetting("openrouter_model_id", _selectedWorkplaceCloudModelId);
+            }
+            catch
+            {
+            }
+
+            RefreshWorkplaceCloudModeUi();
+            UpdateCouncilBlocks();
+            UpdateContextInfo();
+            SavePersistedSession();
+            AppendChat("system", $"Workplace cloud model switched to {_openRouterChatService.ResolveModelLabel(_selectedWorkplaceCloudModelId)}.");
+        }
+
         private string GetEffectiveCouncilModelId()
         {
             return _isHybridLocalCouncilSelected
                 ? OpenRouterChatService.CustomEndpointModelId
-                : OpenRouterChatService.WorkplaceCouncilDefaultModelId;
+                : _openRouterChatService.NormalizeSelectableModelId(_selectedWorkplaceCloudModelId);
         }
 
         private string GetEffectiveWorkspaceAgentModeLabel()
@@ -2910,7 +3010,6 @@ namespace Malx_AI
             UpdateContextPressureLabel(0, (int)_contextSize, false);
             ApplyOptimizedRoleContexts();
             SyncContextControls();
-            ArchitectContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
             BuilderContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
             CriticContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
             LoadPersistedSession();
@@ -2932,6 +3031,7 @@ namespace Malx_AI
             RefreshCouncilPetToggleUi();
             InitializeWorkplaceCapabilities();
             InitializeAgentUi();
+            InitializeOverhaulFeatures();
             UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
             SizeChanged += (_, _) => ApplyDesktopLayout(ActualWidth);
@@ -2982,6 +3082,8 @@ namespace Malx_AI
                 return;
 
             _isProjectCanvasShown = shown;
+            ApplyRightSidebarTabVisibility();
+            HighlightRightSidebarButtons();
             ProjectCanvasShownChanged?.Invoke(this, EventArgs.Empty);
         }
 
@@ -3010,7 +3112,7 @@ namespace Malx_AI
                 return;
 
             bool compactCanvasLayout = availableWidth < 1120;
-            CouncilSidebarColumn.Width = new GridLength(availableWidth < 1200 ? 270 : availableWidth < 1700 ? 290 : 310);
+            CouncilSidebarColumn.Width = new GridLength(0);
 
             if (compactCanvasLayout && _isProjectCanvasExpanded &&
                 !_isProjectCanvasAutoCollapsed && !_isProjectCanvasExplicitlyExpandedInCompactLayout)
@@ -3392,13 +3494,11 @@ namespace Malx_AI
                 return;
 
             GlobalContextSlider.Value = _contextSize;
-            ArchitectContextSlider.Value = _architectContextSize;
             BuilderContextSlider.Value = _builderContextSize;
             CriticContextSlider.Value = _criticContextSize;
             AutoOptimizeContextToggle.IsChecked = _autoOptimizeRoleContexts;
 
             GlobalContextValueText.Text = $"{_contextSize} tokens";
-            ArchitectContextValueText.Text = $"{_architectContextSize} tokens";
             BuilderContextValueText.Text = $"{_builderContextSize} tokens";
             CriticContextValueText.Text = $"{_criticContextSize} tokens";
             UpdateWorkplaceTokenUsageIndicator();
@@ -3535,11 +3635,10 @@ namespace Malx_AI
             if (!IsLoaded || _autoOptimizeRoleContexts)
                 return;
 
-            _architectContextSize = (uint)Math.Clamp((int)ArchitectContextSlider.Value, (int)MinRoleContext, (int)MaxRoleContext);
             _builderContextSize = (uint)Math.Clamp((int)BuilderContextSlider.Value, (int)MinRoleContext, (int)MaxRoleContext);
             _criticContextSize = (uint)Math.Clamp((int)CriticContextSlider.Value, (int)MinRoleContext, (int)MaxRoleContext);
             _effectiveLocalRoleContextSizes.Clear();
-            _contextSize = (uint)Math.Clamp((int)new[] { _architectContextSize, _builderContextSize, _criticContextSize }.Max(), (int)MinRoleContext, (int)MaxRoleContext);
+            _contextSize = (uint)Math.Clamp((int)Math.Max(_builderContextSize, _criticContextSize), (int)MinRoleContext, (int)MaxRoleContext);
 
             SyncContextControls();
             UpdateContextInfo();
@@ -3556,7 +3655,6 @@ namespace Malx_AI
                 ApplyOptimizedRoleContexts();
             }
 
-            ArchitectContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
             BuilderContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
             CriticContextSlider.IsEnabled = !_autoOptimizeRoleContexts;
 
@@ -3572,14 +3670,14 @@ namespace Malx_AI
                 int builderCtx = cloudWindow;
                 int otherCtx = cloudWindow / 2;
                 int maxChunks = _documentRetriever.CalculateMaxChunksForContext(builderCtx);
-                ContextInfoBlock.Text = $"Cloud context · A:{otherCtx / 1024}K  B:{builderCtx / 1024}K  C:{otherCtx / 1024}K | Max chunks: {maxChunks}";
+                ContextInfoBlock.Text = $"Cloud context · B:{builderCtx / 1024}K  C:{otherCtx / 1024}K | Max chunks: {maxChunks}";
             }
             else
             {
-                uint maxRoleContext = Math.Max(_architectContextSize, Math.Max(_builderContextSize, _criticContextSize));
+                uint maxRoleContext = Math.Max(_builderContextSize, _criticContextSize);
                 int maxChunks = _documentRetriever.CalculateMaxChunksForContext((int)maxRoleContext);
                 string mode = _autoOptimizeRoleContexts ? "auto" : "manual";
-                ContextInfoBlock.Text = $"Context A/B/C: {_architectContextSize}/{_builderContextSize}/{_criticContextSize}t ({mode}) | Max chunks: {maxChunks}";
+                ContextInfoBlock.Text = $"Context B/C: {_builderContextSize}/{_criticContextSize}t ({mode}) | Max chunks: {maxChunks}";
             }
             HardwareInfoBlock.Text = GetCouncilStatusDescription();
             UpdateWorkplaceTokenUsageIndicator();
@@ -3743,10 +3841,8 @@ namespace Malx_AI
             }
 
             if (FindName("WorkplaceTokenUsagePanel") is not Border panel
-                || FindName("ArchitectTokenUsageProgressBar") is not ProgressBar architectBar
                 || FindName("BuilderTokenUsageProgressBar") is not ProgressBar builderBar
                 || FindName("CriticTokenUsageProgressBar") is not ProgressBar criticBar
-                || FindName("ArchitectTokenUsageLabel") is not TextBlock architectLabel
                 || FindName("BuilderTokenUsageLabel") is not TextBlock builderLabel
                 || FindName("CriticTokenUsageLabel") is not TextBlock criticLabel)
             {
@@ -3754,9 +3850,9 @@ namespace Malx_AI
             }
 
             panel.Visibility = Visibility.Collapsed;
-            UpdateWorkplaceRoleTokenMeter(CouncilRole.Architect, 0, GetWorkplaceRoleContextCapacity(CouncilRole.Architect), architectLabel, architectBar);
             UpdateWorkplaceRoleTokenMeter(CouncilRole.Builder, 0, GetWorkplaceRoleContextCapacity(CouncilRole.Builder), builderLabel, builderBar);
             UpdateWorkplaceRoleTokenMeter(CouncilRole.Critic, 0, GetWorkplaceRoleContextCapacity(CouncilRole.Critic), criticLabel, criticBar);
+            RefreshRightSidebarContextAndTasks();
         }
 
         private void UpdateWorkplaceTokenUsageIndicator()
@@ -3767,11 +3863,11 @@ namespace Malx_AI
                 return;
             }
 
+            RefreshRightSidebarContextAndTasks();
+
             if (FindName("WorkplaceTokenUsagePanel") is not Border panel
-                || FindName("ArchitectTokenUsageProgressBar") is not ProgressBar architectBar
                 || FindName("BuilderTokenUsageProgressBar") is not ProgressBar builderBar
                 || FindName("CriticTokenUsageProgressBar") is not ProgressBar criticBar
-                || FindName("ArchitectTokenUsageLabel") is not TextBlock architectLabel
                 || FindName("BuilderTokenUsageLabel") is not TextBlock builderLabel
                 || FindName("CriticTokenUsageLabel") is not TextBlock criticLabel)
             {
@@ -3780,31 +3876,21 @@ namespace Malx_AI
 
             int conversationEstimate = EstimateWorkplaceContextTokens();
             int pendingInputTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
-            int architectGenerated = _lastRoleGeneratedTokenCounts.TryGetValue(CouncilRole.Architect, out int architectGeneratedTokens) ? architectGeneratedTokens : 0;
             int builderGenerated = _lastRoleGeneratedTokenCounts.TryGetValue(CouncilRole.Builder, out int builderGeneratedTokens) ? builderGeneratedTokens : 0;
             int criticGenerated = _lastRoleGeneratedTokenCounts.TryGetValue(CouncilRole.Critic, out int criticGeneratedTokens) ? criticGeneratedTokens : 0;
-            int architectUsed = _lastRolePromptTokenEstimates.TryGetValue(CouncilRole.Architect, out int architectPromptTokens)
-                ? architectPromptTokens + pendingInputTokens + architectGenerated
-                : conversationEstimate + architectGenerated;
             int builderUsed = _lastRolePromptTokenEstimates.TryGetValue(CouncilRole.Builder, out int builderPromptTokens)
                 ? builderPromptTokens + pendingInputTokens + builderGenerated
                 : conversationEstimate + builderGenerated;
             int criticUsed = _lastRolePromptTokenEstimates.TryGetValue(CouncilRole.Critic, out int criticPromptTokens)
                 ? criticPromptTokens + pendingInputTokens + criticGenerated
                 : conversationEstimate + criticGenerated;
-            panel.Visibility = Visibility.Visible;
-            panel.ToolTip = _isCloudModeEnabled
-                ? "Approximate retained workplace context against the configured cloud model windows."
-                : "Approximate retained workplace context against each local role's effective model and hardware-aware window.";
-
-            UpdateWorkplaceRoleTokenMeter(CouncilRole.Architect, architectUsed, GetWorkplaceRoleContextCapacity(CouncilRole.Architect), architectLabel, architectBar);
+            panel.Visibility = Visibility.Collapsed;
             UpdateWorkplaceRoleTokenMeter(CouncilRole.Builder, builderUsed, GetWorkplaceRoleContextCapacity(CouncilRole.Builder), builderLabel, builderBar);
             UpdateWorkplaceRoleTokenMeter(CouncilRole.Critic, criticUsed, GetWorkplaceRoleContextCapacity(CouncilRole.Critic), criticLabel, criticBar);
         }
 
         private void UpdateCouncilBlocks()
         {
-            ArchitectModelBlock.Text = GetCouncilDisplayName(CouncilRole.Architect);
             BuilderModelBlock.Text = GetCouncilDisplayName(CouncilRole.Builder);
             CriticModelBlock.Text = GetCouncilDisplayName(CouncilRole.Critic);
         }
@@ -4413,11 +4499,10 @@ namespace Malx_AI
             SavePersistedSession();
         }
 
-        private void LoadArchitectModel_Click(object sender, RoutedEventArgs e) => SelectCouncilModel(CouncilRole.Architect, ArchitectFormatCombo);
-        private void LoadBuilderModel_Click(object sender, RoutedEventArgs e) => SelectCouncilModel(CouncilRole.Builder, BuilderFormatCombo);
-        private void LoadCriticModel_Click(object sender, RoutedEventArgs e) => SelectCouncilModel(CouncilRole.Critic, CriticFormatCombo);
+        private void LoadBuilderModel_Click(object sender, RoutedEventArgs e) => SelectCouncilModel(CouncilRole.Builder);
+        private void LoadCriticModel_Click(object sender, RoutedEventArgs e) => SelectCouncilModel(CouncilRole.Critic);
 
-        private void SelectCouncilModel(CouncilRole role, ComboBox combo)
+        private void SelectCouncilModel(CouncilRole role)
         {
             var dialog = new OpenFileDialog { Filter = "GGUF files (*.gguf)|*.gguf" };
             if (dialog.ShowDialog() != true)
@@ -4446,12 +4531,7 @@ namespace Malx_AI
             _council[role].ModelPath = dialog.FileName;
             _effectiveLocalRoleContextSizes.Remove(role);
             ApplyQwen3DefaultCouncilProfile(role, dialog.FileName);
-            if (!IsQwen3Model(dialog.FileName))
-            {
-                _council[role].Format = IsGemma4Model(dialog.FileName)
-                    ? PromptFormat.Gemma4
-                    : ParsePromptFormat(combo.SelectedItem as ComboBoxItem);
-            }
+            _council[role].Format = DetectPromptFormatFromModel(dialog.FileName);
 
             if (_autoOptimizeRoleContexts)
             {
@@ -4466,6 +4546,52 @@ namespace Malx_AI
             SavePersistedSession();
         }
 
+        private static PromptFormat DetectPromptFormatFromModel(string? modelPathOrName)
+        {
+            if (string.IsNullOrWhiteSpace(modelPathOrName))
+                return PromptFormat.ChatML;
+
+            if (IsGemma4Model(modelPathOrName) || modelPathOrName.Contains("gemma", StringComparison.OrdinalIgnoreCase))
+                return PromptFormat.Gemma4;
+
+            if (modelPathOrName.Contains("llama-3", StringComparison.OrdinalIgnoreCase)
+                || modelPathOrName.Contains("llama3", StringComparison.OrdinalIgnoreCase))
+            {
+                return PromptFormat.Llama3;
+            }
+
+            if (modelPathOrName.Contains("alpaca", StringComparison.OrdinalIgnoreCase))
+                return PromptFormat.Alpaca;
+
+            try
+            {
+                if (File.Exists(modelPathOrName))
+                {
+                    using var stream = new FileStream(modelPathOrName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    int probeLength = (int)Math.Min(65536, stream.Length);
+                    if (probeLength > 0)
+                    {
+                        byte[] buffer = new byte[probeLength];
+                        int read = stream.Read(buffer, 0, probeLength);
+                        string header = Encoding.ASCII.GetString(buffer, 0, read);
+                        if (header.Contains("<start_of_turn>", StringComparison.OrdinalIgnoreCase))
+                            return PromptFormat.Gemma4;
+                        if (header.Contains("<|start_header_id|>", StringComparison.OrdinalIgnoreCase))
+                            return PromptFormat.Llama3;
+                        if (header.Contains("### Instruction:", StringComparison.OrdinalIgnoreCase))
+                            return PromptFormat.Alpaca;
+                        if (header.Contains("<|im_start|>", StringComparison.OrdinalIgnoreCase))
+                            return PromptFormat.ChatML;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore unreadable header bytes and fall back to name/ChatML detection.
+            }
+
+            return PromptFormat.ChatML;
+        }
 
         private static PromptFormat ParsePromptFormat(ComboBoxItem? selected)
         {
@@ -7018,8 +7144,8 @@ namespace Malx_AI
             UpdateCouncilBlocks();
             UpdateContextInfo();
             AppendChat("system", _isSingleModelMode
-                ? $"Workplace cloud mode enabled. The single agent uses {OpenRouterChatService.WorkplaceCouncilDisplayLabel}; provider availability is checked when the run starts."
-                : $"Workplace cloud mode enabled. Architect, Builder, and Critic use {OpenRouterChatService.WorkplaceCouncilDisplayLabel}; provider availability is checked when the run starts.");
+                ? $"Workplace cloud mode enabled. The single agent uses {WorkplaceCloudRoleDisplayName}; provider availability is checked when the run starts."
+                : $"Workplace cloud mode enabled. Builder and Critic use {WorkplaceCloudRoleDisplayName}; provider availability is checked when the run starts.");
             RefreshSingleModelModeUi();
             SavePersistedSession();
             RelayStatusBlock.Text = "Relay: Idle";
@@ -7045,7 +7171,7 @@ namespace Malx_AI
                 RefreshWorkplaceCloudModeUi();
                 UpdateCouncilBlocks();
                 UpdateContextInfo();
-                AppendChat("system", $"Workplace cloud mode now uses {OpenRouterChatService.WorkplaceCouncilDisplayLabel} (OpenRouter).");
+                AppendChat("system", $"Workplace cloud mode now uses {WorkplaceCloudRoleDisplayName} (OpenRouter).");
                 SavePersistedSession();
                 return;
             }
@@ -11350,12 +11476,18 @@ namespace Malx_AI
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(QueryInput.Text) && !string.IsNullOrWhiteSpace(_lastCancelledRunPrompt))
+            List<string> pendingImagePaths = _documents
+                .Where(d => d.IsPending && d.IsImage && !string.IsNullOrWhiteSpace(d.FilePath))
+                .Select(d => d.FilePath)
+                .ToList();
+            bool hasPendingAttachments = _documents.Any(d => d.IsPending);
+
+            if (string.IsNullOrWhiteSpace(QueryInput.Text) && !string.IsNullOrWhiteSpace(_lastCancelledRunPrompt) && !hasPendingAttachments)
             {
                 QueryInput.Text = _lastCancelledRunPrompt;
             }
 
-            if (string.IsNullOrWhiteSpace(QueryInput.Text))
+            if (string.IsNullOrWhiteSpace(QueryInput.Text) && !hasPendingAttachments)
             {
                 AppendChat("error", "Query is empty.");
                 return;
@@ -11363,8 +11495,7 @@ namespace Malx_AI
 
             bool hasRequiredLocalModel = _isSingleModelMode
                 ? !string.IsNullOrWhiteSpace(_singleModel.ModelPath)
-                : !string.IsNullOrWhiteSpace(_council[CouncilRole.Architect].ModelPath)
-                  || !string.IsNullOrWhiteSpace(_council[CouncilRole.Builder].ModelPath)
+                : !string.IsNullOrWhiteSpace(_council[CouncilRole.Builder].ModelPath)
                   || !string.IsNullOrWhiteSpace(_council[CouncilRole.Critic].ModelPath);
             if (!hasRequiredLocalModel && !_isCloudModeEnabled)
             {
@@ -11405,15 +11536,22 @@ namespace Malx_AI
             _unreadNotificationCount = 0;
             NotificationBadge.Visibility = Visibility.Collapsed;
             NotificationBadgeText.Text = "0";
-            NotificationDropdownPanel.Visibility = Visibility.Collapsed;
+            if (NotificationDropdownPopup != null)
+                NotificationDropdownPopup.IsOpen = false;
             _isNotificationPanelOpen = false;
+            SetSidebarButtonActive(NotificationToggleButton, false);
             WorkplaceErrorNotificationBar.Visibility = Visibility.Collapsed;
             WorkplaceErrorNotificationText.Text = string.Empty;
             CouncilConfidenceBanner.Visibility = Visibility.Collapsed;
             RefineButton.Visibility = Visibility.Collapsed;
             RevisionNoticeBlock.Text = "Issues were found and the output was revised.";
             RevisionNoticeBlock.Visibility = Visibility.Collapsed;
-            string userQuery = QueryInput.Text.Trim();
+            string userQuery = (QueryInput.Text ?? string.Empty).Trim();
+            if (userQuery.Length == 0)
+                userQuery = pendingImagePaths.Count > 0 ? "Analyze the attached image(s)." : "Analyze the attached file(s).";
+            EnsureAutoSessionTitle(userQuery);
+            EnsureSessionTrackerUpdated(userQuery, "Starting task...");
+            ReportAgentActivity("Working");
             _submittedRunPrompt = userQuery;
             _lastCancelledRunPrompt = string.Empty;
             string userInstruction = userQuery;
@@ -11434,7 +11572,7 @@ namespace Malx_AI
                 _isRefinementMode = false;
                 RefinementModeBanner.Visibility = Visibility.Collapsed;
             }
-            AppendChat("user", userQuery);
+            AppendChat("user", userQuery, pendingImagePaths);
             _chatHistory.Add(("user", userQuery));
             UpdateWorkplaceTokenUsageIndicator();
 
@@ -11790,16 +11928,11 @@ namespace Malx_AI
                 baseStateVault = null;
                 LogActivity("Base state bootstrap disabled — each role decodes its own payload (avoids KV-budget overflow on local models).");
 
-                // ═══════════════════════════════════════════════════════
-                // STAGE 1 — Architect: receives decomposed input
-                // ═══════════════════════════════════════════════════════
+                // Architect removed completely: Builder executes user requests directly without Architect planning/rules.
                 string architectOutput = "";
                 bool isDocumentGrounded = taskType != CouncilTaskType.Coding && finalChunks.Count > 0;
 
-                // Document task shortcut: skip Architect model entirely for document tasks.
-                // Small local models consistently produce procedural how-to guides instead of
-                // content-specific plans. Use deterministic plan generation instead.
-                if (runContext.IsDocumentTask && string.IsNullOrWhiteSpace(_council[CouncilRole.Architect].ModelPath) && !CanUseCloudCouncil)
+                if (false && runContext.IsDocumentTask && string.IsNullOrWhiteSpace(_council[CouncilRole.Architect].ModelPath) && !CanUseCloudCouncil)
                 {
                     int docTokens = (int)Math.Ceiling(documentContent.Length / AvgCharsPerToken);
                     int builderCtx = (int)GetRoleContextSize(CouncilRole.Builder);
@@ -11814,7 +11947,7 @@ namespace Malx_AI
                     UpdateWorkplaceTokenUsageIndicator();
                     UpdateStageIndicator(null, true, false, false);
                 }
-                else if (HasEffectiveLocalRoleModel(CouncilRole.Architect) || CanUseCloudCouncil)
+                else if (false && (HasEffectiveLocalRoleModel(CouncilRole.Architect) || CanUseCloudCouncil))
                 {
                     UpdateStageIndicator(CouncilRole.Architect, false, false, false);
                     RelayStatusBlock.Text = "Relay: Architect is planning...";
@@ -12059,7 +12192,8 @@ namespace Malx_AI
                 bool builderReasoningFallback = false;
                 if (HasEffectiveLocalRoleModel(CouncilRole.Builder) || CanUseCloudCouncil)
                 {
-                    UpdateStageIndicator(CouncilRole.Builder, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), false, false);
+                    UpdateStageIndicator(CouncilRole.Builder, false, false, false);
+                    ReportAgentActivity("Builder is writing");
                     RelayStatusBlock.Text = "Relay: Builder is executing...";
                     LogActivity("Builder relay started — generating implementation...");
 
@@ -12068,7 +12202,9 @@ namespace Malx_AI
                         AppendChat("system", $"Builder has no dedicated model — running on '{builderConfig.DisplayName}'.");
                     bool smallLocalBuilderModel = IsSmallLocalCouncilModel(builderConfig.ModelPath ?? builderConfig.DisplayName, _isCloudModeEnabled, _isHybridLocalCouncilSelected);
 
-                    string builderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
+                    string builderSystem = "You are an autonomous assistant and builder executing the user's request directly and coherently. Work naturally without waiting on any Architect plan, produce tailored structured final results grounded in the user's request, and reference the session .md tracker when applicable.\n\n"
+                        + GetEmbeddedSystemPrompt(CouncilRole.Builder)
+                        + $"\n[MANDATORY TRACKER FILE]\nSession tracker: '{GetOrResolveTrackerFilePath()}'.\n"
                         + objectiveClause
                         + (useArtifactCanvasContract
                             ? BuildArtifactTaskTypeBoost(CouncilRole.Builder, runContext)
@@ -13195,9 +13331,11 @@ namespace Malx_AI
                 bool hasBuilder = HasEffectiveLocalRoleModel(CouncilRole.Builder) || CanUseCloudCouncil;
                 bool skipCriticForSandbox = (taskType == CouncilTaskType.Coding && !sandboxFailed && sandboxAutoFixRetries > 0)
                     || codebasePatchCaptured;
+                bool effortUsesCritic = EffortPolicy.Current is EffortLevel.ExtraHigh or EffortLevel.Ultra;
 
-                if (hasCritic && !string.IsNullOrWhiteSpace(builderOutput) && !skipCriticForSandbox)
+                if (effortUsesCritic && hasCritic && !string.IsNullOrWhiteSpace(builderOutput) && !skipCriticForSandbox)
                 {
+                    ReportAgentActivity("Critic is reviewing");
                     UpdateStageIndicator(CouncilRole.Critic, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), !string.IsNullOrWhiteSpace(runContext.BuilderOutput), false);
                     RelayStatusBlock.Text = "Relay: Critic is reviewing...";
                     LogActivity("Critic relay started — auditing builder output...");
@@ -14009,6 +14147,8 @@ namespace Malx_AI
             }
             finally
             {
+                ReportAgentActivity(null);
+                EnsureSessionTrackerUpdated(userQuery, _lastFinalOutput);
                 FinalizeOrphanStreamingCards();
                 _builderPythonSandboxPreamble = string.Empty;
                 _activePythonSandboxPreamble = string.Empty;
@@ -18434,11 +18574,11 @@ namespace Malx_AI
         private static bool IsCouncilDisplayRole(string role) =>
             role is "agent" or "architect" or "builder" or "critic" or "critic-final";
 
-        private void AppendChat(string role, string content)
+        private void AppendChat(string role, string content, IReadOnlyList<string>? attachedImagePaths = null)
         {
             if (!Dispatcher.CheckAccess())
             {
-                _ = Dispatcher.InvokeAsync(() => AppendChat(role, content), DispatcherPriority.Background);
+                _ = Dispatcher.InvokeAsync(() => AppendChat(role, content, attachedImagePaths), DispatcherPriority.Background);
                 return;
             }
 
@@ -18459,7 +18599,12 @@ namespace Malx_AI
                 return;
             }
 
-            var message = new WorkplaceChatMessage { Role = role, Content = content.Trim() };
+            var message = new WorkplaceChatMessage
+            {
+                Role = role,
+                Content = content.Trim(),
+                AttachedImagePaths = attachedImagePaths?.ToList() ?? new List<string>()
+            };
 
             if (NotificationRoles.Contains(role))
             {
@@ -18521,14 +18666,21 @@ namespace Malx_AI
         private void NotificationToggle_Click(object sender, RoutedEventArgs e)
         {
             _isNotificationPanelOpen = !_isNotificationPanelOpen;
-            NotificationDropdownPanel.Visibility = _isNotificationPanelOpen ? Visibility.Visible : Visibility.Collapsed;
-            NotificationToggleArrow.Text = _isNotificationPanelOpen ? "\u25be" : "\u25b8";
+            if (NotificationDropdownPopup != null)
+                NotificationDropdownPopup.IsOpen = _isNotificationPanelOpen;
+            SetSidebarButtonActive(NotificationToggleButton, _isNotificationPanelOpen);
 
             if (_isNotificationPanelOpen)
             {
                 _unreadNotificationCount = 0;
                 NotificationBadge.Visibility = Visibility.Collapsed;
             }
+        }
+
+        private void NotificationDropdownPopup_Closed(object? sender, EventArgs e)
+        {
+            _isNotificationPanelOpen = false;
+            SetSidebarButtonActive(NotificationToggleButton, false);
         }
 
         private void ClearNotifications_Click(object sender, RoutedEventArgs e)
@@ -18654,6 +18806,10 @@ namespace Malx_AI
         {
             var snapshot = new WorkplaceSessionSnapshot
             {
+                SessionTitle = _sessionTitle,
+                ProjectFolderPath = SelectedProjectFolder,
+                UpdatedAt = DateTime.Now,
+                CommandReviewMode = _commandReviewMode.ToString(),
                 ObjectiveText = "",
                 ProjectCanvasText = ProjectCanvasEditor.Text,
                 CloudModeEnabled = _isCloudModeEnabled,
@@ -18677,7 +18833,8 @@ namespace Malx_AI
                 {
                     Role = c.Role,
                     Content = c.Content,
-                    Timestamp = c.Timestamp
+                    Timestamp = c.Timestamp,
+                    AttachedImagePaths = c.AttachedImagePaths?.ToList() ?? new List<string>()
                 }).ToList(),
                 SystemNotifications = new List<WorkplaceChatMessageDto>(),
                 ProjectKnowledgeBaseId = _projectKnowledgeBaseId,
@@ -18718,7 +18875,7 @@ namespace Malx_AI
                 DisplayName = _council[CouncilRole.Architect].DisplayName,
                 Format = _council[CouncilRole.Architect].Format.ToString(),
                 UseCloud = _isCloudModeEnabled,
-                CloudModelId = OpenRouterChatService.WorkplaceCouncilDefaultModelId
+                CloudModelId = GetEffectiveCouncilModelId()
             };
             snapshot.CouncilModels["Builder"] = new WorkplaceCouncilModelDto
             {
@@ -18726,7 +18883,7 @@ namespace Malx_AI
                 DisplayName = _council[CouncilRole.Builder].DisplayName,
                 Format = _council[CouncilRole.Builder].Format.ToString(),
                 UseCloud = _isCloudModeEnabled,
-                CloudModelId = OpenRouterChatService.WorkplaceCouncilDefaultModelId
+                CloudModelId = GetEffectiveCouncilModelId()
             };
             snapshot.CouncilModels["Critic"] = new WorkplaceCouncilModelDto
             {
@@ -18734,7 +18891,7 @@ namespace Malx_AI
                 DisplayName = _council[CouncilRole.Critic].DisplayName,
                 Format = _council[CouncilRole.Critic].Format.ToString(),
                 UseCloud = _isCloudModeEnabled,
-                CloudModelId = OpenRouterChatService.WorkplaceCouncilDefaultModelId
+                CloudModelId = GetEffectiveCouncilModelId()
             };
 
             return snapshot;
@@ -19422,11 +19579,11 @@ namespace Malx_AI
             return CanUseCloudCouncil && !_isHybridLocalCouncilSelected ? 16 : 6;
         }
 
-        private async Task CompressChatHistoryIfNeededAsync(CancellationToken token)
+        private async Task CompressChatHistoryIfNeededAsync(CancellationToken token, bool forceCompact = false)
         {
             int totalTokens = EstimateTotalHistoryTokens();
             int compressionThreshold = GetContextCompressionThresholdTokens();
-            if (totalTokens <= compressionThreshold || _chatHistory.Count < 4)
+            if ((!forceCompact && (totalTokens <= compressionThreshold || _chatHistory.Count < 4)) || _chatHistory.Count < 2)
             {
                 return;
             }
@@ -19525,6 +19682,9 @@ namespace Malx_AI
 
             _chatHistory.RemoveRange(0, messagesToCompress);
             _chatHistory.Insert(0, ("system", $"[Context Summary] {summary}"));
+            string trackerAfterCompaction = GetTrackerContextAfterCompaction();
+            if (!string.IsNullOrWhiteSpace(trackerAfterCompaction))
+                _chatHistory.Insert(1, ("system", $"[Task Tracker (.md)]\n{trackerAfterCompaction}"));
 
             int newTokens = EstimateTotalHistoryTokens();
             LogActivity($"Context compressed: {totalTokens} → {newTokens} tokens ({messagesToCompress} messages summarized) via {compactionPath}.");

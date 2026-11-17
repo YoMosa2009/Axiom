@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace Malx_AI
 {
@@ -10,8 +14,76 @@ namespace Malx_AI
     {
         private string _content = "";
         private string? _formattedContentCache;
+        private IReadOnlyList<string> _attachedImagePaths = Array.Empty<string>();
+        private IReadOnlyList<ImageSource>? _attachedImagesCache;
 
         public string Role { get; init; } = "system";
+
+        public IReadOnlyList<string> AttachedImagePaths
+        {
+            get => _attachedImagePaths;
+            set
+            {
+                _attachedImagePaths = value ?? Array.Empty<string>();
+                _attachedImagesCache = null;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AttachedImages));
+                OnPropertyChanged(nameof(HasAttachedImages));
+            }
+        }
+
+        public IReadOnlyList<ImageSource> AttachedImages => _attachedImagesCache ??= LoadImageSources(_attachedImagePaths);
+
+        public bool HasAttachedImages => AttachedImages.Count > 0;
+
+        internal static IReadOnlyList<ImageSource> LoadImageSources(IEnumerable<string>? sources)
+        {
+            if (sources == null)
+                return Array.Empty<ImageSource>();
+
+            var list = new List<ImageSource>();
+            foreach (string raw in sources)
+            {
+                if (string.IsNullOrWhiteSpace(raw))
+                    continue;
+                try
+                {
+                    if (raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int comma = raw.IndexOf(',');
+                        if (comma >= 0 && comma + 1 < raw.Length)
+                        {
+                            byte[] bytes = Convert.FromBase64String(raw[(comma + 1)..]);
+                            using var ms = new MemoryStream(bytes);
+                            var bmp = new BitmapImage();
+                            bmp.BeginInit();
+                            bmp.CacheOption = BitmapCacheOption.OnLoad;
+                            bmp.StreamSource = ms;
+                            bmp.DecodePixelWidth = 320;
+                            bmp.EndInit();
+                            bmp.Freeze();
+                            list.Add(bmp);
+                        }
+                    }
+                    else if (File.Exists(raw))
+                    {
+                        var bmp = new BitmapImage();
+                        bmp.BeginInit();
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.UriSource = new Uri(raw, UriKind.Absolute);
+                        bmp.DecodePixelWidth = 320;
+                        bmp.EndInit();
+                        bmp.Freeze();
+                        list.Add(bmp);
+                    }
+                }
+                catch
+                {
+                    // Skip unreadable image paths gracefully.
+                }
+            }
+            return list;
+        }
 
         public string Content
         {

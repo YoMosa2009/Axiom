@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Malx_AI
@@ -14,20 +15,29 @@ namespace Malx_AI
         private string GetExecutionRoleDisplayName(CouncilRole role)
             => _isSingleModelMode && role == CouncilRole.Builder ? "Agent" : role.ToString();
 
-        private void SingleModelModeToggleButton_Click(object sender, RoutedEventArgs e)
+        private void CouncilModeSegmentButton_Click(object sender, RoutedEventArgs e)
+            => SetSingleModelMode(false);
+
+        private void SingleModelModeSegmentButton_Click(object sender, RoutedEventArgs e)
+            => SetSingleModelMode(true);
+
+        private void SetSingleModelMode(bool enableSingleModel)
         {
+            if (_isSingleModelMode == enableSingleModel)
+                return;
+
             if (_isProcessing)
             {
                 AppendChat("system", "Wait for the active run to finish before switching Workplace modes.");
                 return;
             }
 
-            _isSingleModelMode = !_isSingleModelMode;
+            _isSingleModelMode = enableSingleModel;
             RefreshSingleModelModeUi();
             ResetWorkplaceTokenUsageIndicator();
             AppendChat("system", _isSingleModelMode
                 ? "Single Model mode enabled. One agent now plans, uses tools, executes, and verifies each request."
-                : "Council mode enabled. Architect, Builder, and Critic stages are active.");
+                : "Council mode enabled. Builder executes directly; Extra High / Ultra add Critic verification.");
             SavePersistedSession();
         }
 
@@ -54,9 +64,7 @@ namespace Malx_AI
             _singleModel.DisplayName = IsQwen3Model(dialog.FileName)
                 ? ModelInferenceProfiles.DefaultQwen3DisplayName
                 : Path.GetFileNameWithoutExtension(dialog.FileName);
-            _singleModel.Format = IsGemma4Model(dialog.FileName)
-                ? PromptFormat.Gemma4
-                : ParsePromptFormat(SingleModelFormatCombo.SelectedItem as ComboBoxItem);
+            _singleModel.Format = DetectPromptFormatFromModel(dialog.FileName);
 
             if (!string.IsNullOrWhiteSpace(previousPath)
                 && !string.Equals(previousPath, dialog.FileName, StringComparison.OrdinalIgnoreCase)
@@ -88,30 +96,32 @@ namespace Malx_AI
 
         private void RefreshSingleModelModeUi()
         {
-            if (SingleModelModeToggleButton == null)
+            if (CouncilModeSegmentButton == null || SingleModelModeSegmentButton == null)
                 return;
 
             Visibility councilVisibility = _isSingleModelMode ? Visibility.Collapsed : Visibility.Visible;
             Visibility singleVisibility = _isSingleModelMode ? Visibility.Visible : Visibility.Collapsed;
 
-            // Both states are equally "on" -- one of the two modes is always active -- so the
-            // control names the current mode at full strength instead of dimming itself when
-            // Single Model happens to be the inactive one.
-            SingleModelModeValueText.Text = _isSingleModelMode ? "Single Model" : "Council";
-            SingleModelModePillText.Text = _isSingleModelMode ? "1 agent" : "3 roles";
-            SingleModelModePill.Background = _isSingleModelMode
-                ? AppTheme.Brush(p => p.AccentSoft)
-                : AppTheme.Brush(p => p.SurfaceRaised);
-            SingleModelModePill.BorderBrush = _isSingleModelMode
+            CouncilModeSegmentButton.Background = !_isSingleModelMode
+                ? AppTheme.Brush(p => p.Surface)
+                : Brushes.Transparent;
+            CouncilModeSegmentButton.BorderBrush = !_isSingleModelMode
                 ? AppTheme.Brush(p => p.Accent)
-                : AppTheme.Brush(p => p.Border);
-            SingleModelModePillText.Foreground = _isSingleModelMode
-                ? AppTheme.Brush(p => p.AccentMuted)
+                : Brushes.Transparent;
+            CouncilModeSegmentButton.Foreground = !_isSingleModelMode
+                ? AppTheme.Brush(p => p.Text)
                 : AppTheme.Brush(p => p.TextSecondary);
-            CouncilSubtitleText.Visibility = councilVisibility;
-            SingleModelSubtitleText.Visibility = singleVisibility;
 
-            ArchitectModelCard.Visibility = councilVisibility;
+            SingleModelModeSegmentButton.Background = _isSingleModelMode
+                ? AppTheme.Brush(p => p.Surface)
+                : Brushes.Transparent;
+            SingleModelModeSegmentButton.BorderBrush = _isSingleModelMode
+                ? AppTheme.Brush(p => p.Accent)
+                : Brushes.Transparent;
+            SingleModelModeSegmentButton.Foreground = _isSingleModelMode
+                ? AppTheme.Brush(p => p.Text)
+                : AppTheme.Brush(p => p.TextSecondary);
+
             RoleContextControlsCard.Visibility = councilVisibility;
             ManualRoleContextControlsCard.Visibility = councilVisibility;
             SingleModelModelCard.Visibility = singleVisibility;
@@ -122,25 +132,18 @@ namespace Malx_AI
             SingleModelModelBlock.Text = _isCloudModeEnabled
                 ? WorkplaceCloudRoleDisplayName
                 : _singleModel.DisplayName;
-            SingleModelFormatCombo.SelectedIndex = _singleModel.Format switch
-            {
-                PromptFormat.Llama3 => 1,
-                PromptFormat.Alpaca => 2,
-                PromptFormat.Gemma4 => 3,
-                _ => 0
-            };
             SingleModelContextSlider.Value = _singleModelContextSize;
             SingleModelContextValueText.Text = $"{_singleModelContextSize} tokens";
 
-            ArchitectTokenUsageRow.Visibility = councilVisibility;
             CriticTokenUsageRow.Visibility = councilVisibility;
             BuilderTokenUsageTitle.Text = _isSingleModelMode ? "Agent" : "Builder";
             AgentTokenUsageRow.Margin = _isSingleModelMode ? new Thickness(0) : new Thickness(0, 0, 14, 0);
             UpdateHeaderMeterPlacement();
 
-            SendButton.Content = _isSingleModelMode ? "Run Agent" : "Run Council";
+            SendButton.Content = "↑";
+            SendButton.ToolTip = _isSingleModelMode ? "Run Single Model Agent" : "Run Builder";
             CanvasSubtitleBlock.Text = _isSingleModelMode ? "Agent output rendered here." : "Builder output rendered here.";
-            CouncilContextControlsTitle.Text = _isSingleModelMode ? "Execution Context" : "Role Context Controls";
+            CouncilContextControlsTitle.Text = _isSingleModelMode ? "Execution Context" : "Context Controls";
 
             RefreshWorkplaceCloudModeUi();
             UpdateStageIndicator(null, false, false, false);
@@ -282,7 +285,11 @@ namespace Malx_AI
             RelayStatusBlock.Text = "Agent: Working...";
             LogActivity("Single agent run started.");
 
-            string systemPrompt = BuildSingleModelSystemPrompt(runContext);
+            UpdateWorkplaceStatusLine("Working");
+            EnsureAutoSessionTitle(runContext.UserPrompt);
+            EnsureSessionTrackerUpdated(runContext.UserPrompt, "Running single model task...");
+            string systemPrompt = BuildSingleModelSystemPrompt(runContext)
+                + $"\n\n[MANDATORY TRACKER FILE]\nUpdate '{GetOrResolveTrackerFilePath()}' if using workspace files.";
             string payload = BuildSingleModelPayload(runContext, contextState, knowledgePacket, hasKnowledge, sharedVocabularySection);
             ReasoningParser.ParsedResponse result = await ExecuteCouncilRoleAsync(
                 CouncilRole.Builder,
@@ -366,6 +373,8 @@ namespace Malx_AI
             }
 
             _chatHistory.Add(("agent", output));
+            UpdateWorkplaceStatusLine(null);
+            EnsureSessionTrackerUpdated(runContext.UserPrompt, string.IsNullOrWhiteSpace(output) ? "Completed." : output[..Math.Min(240, output.Length)]);
             UpdateWorkplaceTokenUsageIndicator();
             UpdateStageIndicator(null, false, true, false);
 

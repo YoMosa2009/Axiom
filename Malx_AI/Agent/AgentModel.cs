@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace Malx_AI.Agent
 {
     /// <summary>One completed step: what the agent ran and what came back.</summary>
-    public sealed record AgentExchange(AgentToolCall Call, string Observation);
+    public sealed record AgentExchange(AgentToolCall Call, string Observation, string? ImageDataUrl = null);
 
     /// <summary>
     /// A model failure no retry can fix (e.g. the API key's quota is used up). The session stops
@@ -114,7 +114,7 @@ namespace Malx_AI.Agent
                     continue;
                 }
 
-                builder.Append("You ran: ").AppendLine(exchange.Call.DescribeShort());
+                builder.Append("You ran: ").AppendLine(exchange.Call.DescribeForModel());
                 string observation = exchange.Observation;
                 if (observation.Length > _observationBudget)
                     observation = observation[.._observationBudget] + "\n… truncated.";
@@ -122,7 +122,9 @@ namespace Malx_AI.Agent
             }
 
             builder.AppendLine();
-            builder.AppendLine("What is your next step?");
+            // Both ways to reply are named. "What is your next step?" alone read as a request for
+            // a tool call, even on a turn whose task says "answer it directly, in words".
+            builder.AppendLine("Your reply: one tool call in the format above (finish when the work is done), or, if the task is a question, the answer in plain words.");
             return builder.ToString();
         }
     }

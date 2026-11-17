@@ -12,6 +12,31 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 | **Code signing** (deferred, owner decision 2026-10-09) | When the user base grows: Azure Trusted Signing (about $10/month, identity validation required), then sign `Malx_AI.exe` and the release ZIP's executables in `release.yml`. | Removes the "Windows protected your PC" SmartScreen warning on first launch. Until then README's Getting started explains **More info → Run anyway**. |
 | **CI release secrets** | Confirmed missing on 2026-10-09 (the V1.10.0 CI run stopped before publishing). In GitHub: repo **Settings → Secrets and variables → Actions → New repository secret**, add `AXIOM_BUILTIN_GOOGLE_CLIENT_ID`, `AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET`, `AXIOM_BUILTIN_GITHUB_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_SECRET` with the same values as the local OAuth files. | Until then every release has to be published from this PC with `scripts/Publish-GitHubRelease.ps1`. |
 
+## Committed, not yet released (2026-11-16)
+
+Agent mode and Computer Use reliability work, on `main` without a version bump, so no OTA
+update has gone out. Ship it as the next MINOR version when the owner says so.
+
+- **Computer Use drawing:** drags are injected mouse moves in small steps with holds, and a drag
+  can carry several strokes and shapes. The controller measures each drag on screen
+  (`[DRAG VERIFIED]` / `[DRAG NO EFFECT]`). Proven on real Paint on 2026-11-16 with
+  `tools/axsim dragprobe` (3/3 strokes drawn, Rectangle tool click switched its state).
+- **Computer Use judging:** one step verdict per action (controller evidence, then observer, then
+  screen change); tool buttons report `state=on/off/selected`; the canvas is passed as a work
+  area, clipped to its window; target clicks are labelled by target id, not "(0, 0)".
+- **Agent follow-ups:** questions are answered without working (3 read-only steps at most),
+  change requests stay narrow, a verification budget after the first file change, one closing
+  summary at the step ceiling; `take_screenshot` can capture a named window without focusing it.
+- **Small local models (Micro/Compact):** both tiers get `write_file` and a `finish` example; the
+  rules only name tools the tier has; the transcript shows full commands; the run record lists
+  commands one per line.
+- **Simulation harness** `tools/axsim` (see `tools/simcli.py`): a subagent plays the model against
+  the app's real Agent and Computer Use code, including a simulated Edge. Reports:
+  `tools/axsim/last-*-sim-report.md`.
+
+Not verified yet: real sub-1B/1-4B GGUF models with the new prompts, a real (not simulated)
+browser run, and `CaptureForAgent` on a minimised or GPU-heavy window.
+
 ## Shipped
 
 ### V1.11.0 (2026-10-10)

@@ -70,8 +70,11 @@ namespace Malx_AI.Agent
             IReadOnlyList<AgentExchange>? initialHistory = null,
             IEnumerable<string>? initialAllowList = null,
             Action<AgentStep>? onStep = null,
-            AgentUserMessageInbox? inbox = null)
+            AgentUserMessageInbox? inbox = null,
+            CommandReviewMode? commandReviewMode = null,
+            AgentTurnPolicy? policy = null)
         {
+            policy ??= AgentTurnPolicy.Default;
             ArgumentNullException.ThrowIfNull(model);
             ArgumentNullException.ThrowIfNull(requestApproval);
 
@@ -104,7 +107,24 @@ namespace Malx_AI.Agent
             AgentToolCall? lastToolCall = null;
             int consecutiveIdenticalCalls = 0;
             int verificationPasses = 0;
+            int screenshotsSinceLastMutation = 0;
+            int totalScreenshots = 0;
+            int uiFocusCommandCount = 0;
             var callCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            bool changedSomething = false;
+            int stepsSinceLastChange = 0;
+            int blockedInARow = 0;
+            string? wrapUpReason = null;
+
+            // A step Axiom refused to run. Three in a row means the model is not reading the
+            // refusals, so the run stops asking it for tool calls and asks for the summary.
+            void NoteBlocked(AgentToolCall blockedCall, AgentPermission permission, string message, string note)
+            {
+                AddStep(new AgentStep(blockedCall, permission, AgentToolResult.Fail(message), note));
+                history.Add(new AgentExchange(blockedCall, message));
+                if (++blockedInARow >= MaxBlockedCallsInARow)
+                    wrapUpReason = "several tool calls in a row were blocked";
+            }
 
             // What the user typed while the run was working joins the conversation between steps,
             // the way a terminal agent takes a message mid-task, instead of requiring a Stop.
@@ -124,12 +144,30 @@ namespace Malx_AI.Agent
                 return true;
             }
 
+            bool DeliverBackgroundWakeups()
+            {
+                IReadOnlyList<string> wakeups = _executor.BackgroundTasks.TakeDueWakeNotifications();
+                if (wakeups.Count == 0)
+                    return false;
+
+                foreach (string report in wakeups)
+                {
+                    history.Add(new AgentExchange(
+                        new AgentToolCall(BackgroundWakeTool, new Dictionary<string, string>()),
+                        report));
+                }
+                return true;
+            }
+
             try
             {
                 for (int step = 0; step < _maxSteps; step++)
                 {
                     token.ThrowIfCancellationRequested();
+                    if (wrapUpReason != null)
+                        break;
                     DeliverUserMessages();
+                    DeliverBackgroundWakeups();
 
                     reportActivity?.Invoke("Thinking");
                     AgentModelReply reply;
@@ -264,7 +302,9 @@ namespace Malx_AI.Agent
                             history);
                     }
 
-                    AgentPermissionDecision decision = AgentPermissionPolicy.Evaluate(call, mode, _sessionAllowList);
+                    AgentPermissionDecision decision = commandReviewMode.HasValue
+                        ? CommandSafetyReviewer.Evaluate(call, _scope, commandReviewMode.Value, _sessionAllowList)
+                        : AgentPermissionPolicy.Evaluate(call, mode, _sessionAllowList);
 
                     if (decision.Permission == AgentPermission.Deny)
                     {
@@ -273,11 +313,55 @@ namespace Malx_AI.Agent
                         continue;
                     }
 
+                    // A question turn looks; it does not act. Without this a model asked "Is it
+                    // done?" started editing and re-verifying the project instead of answering.
+                    if (policy.AnswerOnly && !IsAllowedInAnswerOnlyTurn(call.Tool))
+                    {
+                        NoteBlocked(call, decision.Permission,
+                            $"Blocked: the user asked a question, so this turn only answers it. {call.Tool} is not available here. "
+                            + "Answer the question now in words, from what you already know. If one fact is truly missing, a single read_file, list_directory, search_text or check_background_task is allowed.",
+                            "question turn: answer only");
+                        continue;
+                    }
+
+                    if (string.Equals(call.Tool, AgentToolNames.TakeScreenshot, StringComparison.OrdinalIgnoreCase)
+                        && (screenshotsSinceLastMutation >= 2 || totalScreenshots >= 4))
+                    {
+                        NoteBlocked(call, decision.Permission,
+                            $"Blocked: Screenshot limit reached ({totalScreenshots} taken in this run, {screenshotsSinceLastMutation} since the last file change). take_screenshot already captures the app you name in its window argument without needing focus. Do NOT take more screenshots or run WScript.Shell/AppActivate — if a code fix is needed, use edit_file/write_file now; if the app works, stop calling tools and write your final Markdown summary immediately.",
+                            "screenshot limit reached");
+                        continue;
+                    }
+
+                    if (string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                        && IsUiFocusAutomationCommand(call.Arg("command"))
+                        && ++uiFocusCommandCount > 1)
+                    {
+                        NoteBlocked(call, decision.Permission,
+                            "Blocked: Do not use WScript.Shell, AppActivate, or SendKeys in a loop. To look at a specific app, call take_screenshot with window set to part of its title; it does not need the window focused. Proceed to editing files or finishing your turn with a complete summary.",
+                            "ui focus loop blocked");
+                        continue;
+                    }
+
                     if (consecutiveIdenticalCalls == 2)
                     {
-                        string loopBlockMsg = $"Repetitive action blocked: '{call.Tool}' with identical arguments was attempted 3 times in a row without making progress. Proceed immediately to creating or modifying files using write_file or finish.";
-                        AddStep(new AgentStep(call, decision.Permission, AgentToolResult.Fail(loopBlockMsg), "repetition blocked"));
-                        history.Add(new AgentExchange(call, loopBlockMsg));
+                        NoteBlocked(call, decision.Permission,
+                            $"Repetitive action blocked: '{call.Tool}' with identical arguments was attempted 3 times in a row without making progress. Proceed immediately to creating or modifying files using write_file or finish.",
+                            "repetition blocked");
+                        continue;
+                    }
+
+                    // Once a run has built something, checking it is meant to be short. A logged
+                    // run built its project in 18 steps and then spent 42 more refocusing a window
+                    // and screenshotting it. After this many steps in a row without changing a
+                    // file, the run is asked for its summary instead of another look.
+                    if (policy.VerificationBudget > 0 && changedSomething && !IsProgressTool(call.Tool)
+                        && stepsSinceLastChange >= policy.VerificationBudget)
+                    {
+                        wrapUpReason = $"{stepsSinceLastChange} steps in a row changed nothing";
+                        NoteBlocked(call, decision.Permission,
+                            $"Blocked: {stepsSinceLastChange} steps in a row have changed nothing, so the checking phase is over. Do not call another tool.",
+                            "verification budget used up");
                         continue;
                     }
 
@@ -303,12 +387,14 @@ namespace Malx_AI.Agent
 
                     if (seen > allowed)
                     {
-                        string cycleMsg = $"Blocked: this exact {call.Tool} call has already been made {seen - 1} times in this task, and repeating it will not change the result. "
-                            + "Use the earlier results: if a command keeps failing, try a different command or approach; if the work is done, give your final summary.";
-                        AddStep(new AgentStep(call, decision.Permission, AgentToolResult.Fail(cycleMsg), "repetition blocked"));
-                        history.Add(new AgentExchange(call, cycleMsg));
+                        NoteBlocked(call, decision.Permission,
+                            $"Blocked: this exact {call.Tool} call has already been made {seen - 1} times in this task, and repeating it will not change the result. "
+                            + "Use the earlier results: if a command keeps failing, try a different command or approach; if the work is done, give your final summary.",
+                            "repetition blocked");
                         continue;
                     }
+
+                    blockedInARow = 0;
 
                     if (decision.Permission == AgentPermission.Ask)
                     {
@@ -333,7 +419,8 @@ namespace Malx_AI.Agent
                         }
 
                         if (outcome == AgentApprovalOutcome.ApproveAlways
-                            && string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase))
+                            && (string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(call.Tool, AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase)))
                         {
                             string key = AgentPermissionPolicy.AllowListKeyFor(call.Arg("command"));
                             if (key.Length > 0 && !_sessionAllowList.Contains(key))
@@ -353,12 +440,48 @@ namespace Malx_AI.Agent
                     }
 
                     AddStep(new AgentStep(call, decision.Permission, result, decision.Reason));
+                    if (result.Succeeded && IsProgressTool(call.Tool))
+                    {
+                        changedSomething = true;
+                        stepsSinceLastChange = 0;
+                    }
+                    else
+                    {
+                        stepsSinceLastChange++;
+                    }
+
+                    if (result.Succeeded)
+                    {
+                        if (string.Equals(call.Tool, AgentToolNames.TakeScreenshot, StringComparison.OrdinalIgnoreCase))
+                        {
+                            screenshotsSinceLastMutation++;
+                            totalScreenshots++;
+                        }
+                        else if (string.Equals(call.Tool, AgentToolNames.WriteFile, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(call.Tool, AgentToolNames.AppendFile, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(call.Tool, AgentToolNames.EditFile, StringComparison.OrdinalIgnoreCase))
+                        {
+                            screenshotsSinceLastMutation = 0;
+                        }
+                    }
+
                     string observation = result.ToObservation();
                     if (consecutiveIdenticalCalls == 1)
                     {
                         observation += "\n[WARNING: You executed the identical tool call with the identical arguments twice in a row. Do not repeat this action again. If the desired folder or state already exists, proceed immediately to writing files using write_file.]";
                     }
-                    history.Add(new AgentExchange(call, observation));
+                    if (_maxSteps >= 3 && step == _maxSteps - 2)
+                    {
+                        observation += policy.AnswerOnly
+                            ? "\n[LAST CHECK USED: Do NOT call any more tools. Answer the user's question now, in words.]"
+                            : "\n[FINAL STEP WARNING: You have only 1 step left in your step budget. Do NOT call any more tools — reply on your next turn with your complete, structured Markdown summary of everything accomplished.]";
+                    }
+                    else if (policy.VerificationBudget > 0 && changedSomething && !IsProgressTool(call.Tool)
+                        && stepsSinceLastChange == Math.Max(2, policy.VerificationBudget - 3))
+                    {
+                        observation += $"\n[WRAP-UP WARNING: {stepsSinceLastChange} steps in a row have changed nothing. If the work is verified, stop calling tools and write your final Markdown summary now. If something is actually broken, fix it with edit_file. Only {policy.VerificationBudget - stepsSinceLastChange} more checking steps are allowed.]";
+                    }
+                    history.Add(new AgentExchange(call, observation, result.ImageDataUrl));
                 }
             }
             catch (OperationCanceledException)
@@ -367,17 +490,132 @@ namespace Malx_AI.Agent
                 return new AgentRunResult("Stopped.", steps, false, true, history);
             }
 
+            // The run is out of room (or was told to stop checking). It still owes the user an
+            // account of what it did: one last turn is spent asking for the summary, and if the
+            // model answers with yet another tool call Axiom writes the summary from the steps.
+            bool hitStepLimit = wrapUpReason == null;
+            string? closing = await RequestClosingSummaryAsync(
+                goal, model, history, reportActivity, token, policy,
+                hitStepLimit ? $"You have used all {_maxSteps} steps available for this turn" : $"This turn is being closed because {wrapUpReason}")
+                .ConfigureAwait(false);
+            if (closing == CancelledMarker)
+                return new AgentRunResult("Stopped.", steps, false, true, history);
+
             reportActivity?.Invoke(null);
+            string fallback = AgentFollowUp.BuildStepLimitSummary(steps, _maxSteps);
+            if (!hitStepLimit)
+            {
+                // Not a ceiling: the work is most likely done and the model was only circling.
+                return new AgentRunResult(
+                    string.IsNullOrWhiteSpace(closing)
+                        ? fallback.Replace($"I reached the {_maxSteps}-step limit for this model before finishing. Ask me to continue if the work so far looks right.",
+                            $"I stopped here because {wrapUpReason}. This is what the run did:", StringComparison.Ordinal)
+                        : closing!,
+                    steps,
+                    false,
+                    false,
+                    history);
+            }
+
             return new AgentRunResult(
-                $"I reached the {_maxSteps}-step limit for this model before finishing. Ask me to continue if the work so far looks right.",
+                string.IsNullOrWhiteSpace(closing)
+                    ? fallback
+                    : $"I reached the {_maxSteps}-step limit for this model before finishing. Ask me to continue if the work so far looks right.\n\n{closing}",
                 steps,
                 true,
                 false,
                 history);
         }
 
+        private const string CancelledMarker = "\u0001cancelled";
+
+        /// <summary>How many refused tool calls in a row end the tool-calling part of a run.</summary>
+        private const int MaxBlockedCallsInARow = 3;
+
+        /// <summary>The pseudo-tool name the closing-summary request is recorded under.</summary>
+        internal const string WrapUpTool = "(wrap_up)";
+
+        /// <summary>
+        /// Asks the model, once, for its final summary with no further tool calls.
+        /// Returns null when it did not produce one.
+        /// </summary>
+        private static async Task<string?> RequestClosingSummaryAsync(
+            string goal,
+            IAgentModel model,
+            List<AgentExchange> history,
+            AgentActivityReporter? reportActivity,
+            CancellationToken token,
+            AgentTurnPolicy policy,
+            string reason)
+        {
+            history.Add(new AgentExchange(
+                new AgentToolCall(WrapUpTool, new Dictionary<string, string>()),
+                policy.AnswerOnly
+                    ? $"{reason}. Do NOT call a tool. Answer the user's question now, in words, from what you know."
+                    : $"{reason}. Do NOT call a tool — no tool call will be run. Reply now with your final Markdown summary of THIS turn only: "
+                      + "(1) what you built or changed, (2) the exact files created or edited, (3) what you checked and what it showed, "
+                      + "(4) what is still unfinished or unverified, and (5) how to run it."));
+
+            reportActivity?.Invoke("Writing the summary");
+            try
+            {
+                AgentModelReply reply = await model.NextAsync(goal, history, token).ConfigureAwait(false);
+                if (reply.ProtocolError != null)
+                    return null;
+                if (reply.Call == null)
+                    return string.IsNullOrWhiteSpace(reply.FinalText) ? null : reply.FinalText.Trim();
+                if (string.Equals(reply.Call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))
+                {
+                    string summary = reply.Call.Arg("summary");
+                    return string.IsNullOrWhiteSpace(summary) ? null : summary.Trim();
+                }
+
+                return null;
+            }
+            catch (OperationCanceledException)
+            {
+                return CancelledMarker;
+            }
+            catch
+            {
+                // A summary is a courtesy; a failed request for one must not lose the run.
+                return null;
+            }
+            finally
+            {
+                reportActivity?.Invoke(null);
+            }
+        }
+
+        /// <summary>Tools that change the project, as opposed to looking at it.</summary>
+        internal static bool IsProgressTool(string? tool) =>
+            string.Equals(tool, AgentToolNames.WriteFile, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.AppendFile, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.EditFile, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>What a turn that only answers a question may still call.</summary>
+        internal static bool IsAllowedInAnswerOnlyTurn(string? tool) =>
+            string.Equals(tool, AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.ListDirectory, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.FindFiles, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.SearchText, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.CheckBackgroundTask, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase);
+
+        private static readonly System.Text.RegularExpressions.Regex SleepOnlyCommandRegex = new(
+            @"^\s*(?:Start-Sleep|sleep|timeout)\b[^;|&]*$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>A command that does nothing but wait. All of them count as one repeated call.</summary>
+        internal static bool IsSleepOnlyCommand(string? command) =>
+            !string.IsNullOrWhiteSpace(command) && SleepOnlyCommandRegex.IsMatch(command);
+
         /// <summary>The pseudo-tool name a user's mid-run message is recorded under in the history.</summary>
         internal const string UserMessageTool = "(user)";
+
+        /// <summary>The pseudo-tool name a background wake/completion notification is recorded under.</summary>
+        internal const string BackgroundWakeTool = "(background_wake)";
 
         private static string Clip(string text, int max) =>
             text.Length <= max ? text : text[..max] + "…";
@@ -385,10 +623,28 @@ namespace Malx_AI.Agent
         /// <summary>Commands the user chose to stop being asked about during this run.</summary>
         public IReadOnlyList<string> SessionAllowList => _sessionAllowList;
 
-        internal static string CallSignature(AgentToolCall call) =>
-            call.Tool.ToLowerInvariant() + "|" + string.Join("|", call.Arguments
+        internal static bool IsUiFocusAutomationCommand(string? command) =>
+            !string.IsNullOrWhiteSpace(command)
+            && (command.Contains("WScript.Shell", StringComparison.OrdinalIgnoreCase)
+                || command.Contains("AppActivate", StringComparison.OrdinalIgnoreCase)
+                || command.Contains("SendKeys", StringComparison.OrdinalIgnoreCase));
+
+        internal static string CallSignature(AgentToolCall call)
+        {
+            if (string.Equals(call.Tool, AgentToolNames.TakeScreenshot, StringComparison.OrdinalIgnoreCase))
+                return AgentToolNames.TakeScreenshot;
+            if (string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                && IsUiFocusAutomationCommand(call.Arg("command")))
+                return "run_command|ui_focus_automation";
+            // Waiting 2 seconds and waiting 3 seconds are the same non-action.
+            if (string.Equals(call.Tool, AgentToolNames.RunCommand, StringComparison.OrdinalIgnoreCase)
+                && IsSleepOnlyCommand(call.Arg("command")))
+                return "run_command|sleep";
+
+            return call.Tool.ToLowerInvariant() + "|" + string.Join("|", call.Arguments
                 .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(pair => pair.Key.ToLowerInvariant() + "=" + pair.Value));
+        }
 
         internal static bool AreCallsIdentical(AgentToolCall? a, AgentToolCall? b)
         {

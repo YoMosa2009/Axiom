@@ -64,14 +64,28 @@ namespace Malx_AI.Agent
 
         public async Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
         {
-            if (_messages.Count == 0 || _messages[^1].Role != "user")
-                _messages.Add(new OpenRouterMessage("user", goal, PreserveFullText: true, ImageDataUrls: _imageDataUrls));
+            bool hasCurrentGoalMessage = _messages.Any(m => m.Role == "user" && string.Equals(m.Text, goal, StringComparison.Ordinal));
+            if (!hasCurrentGoalMessage)
+            {
+                // Append any pre-existing seed exchanges before the current user request so the
+                // model sees the user's latest prompt last and never mistakes older completed steps
+                // for work already finished on the current request.
+                if (_renderedExchanges == 0 && history.Count > 0)
+                {
+                    for (int i = 0; i < history.Count; i++)
+                        AppendExchange(history[i], i);
+                    _renderedExchanges = history.Count;
+                }
 
-            // Append only what is new, so the assistant/tool message pairing the provider requires
-            // stays intact across turns.
-            for (int i = _renderedExchanges; i < history.Count; i++)
-                AppendExchange(history[i], i);
-            _renderedExchanges = history.Count;
+                _messages.Add(new OpenRouterMessage("user", goal, PreserveFullText: true, ImageDataUrls: _imageDataUrls));
+            }
+            else
+            {
+                // Append only what is new from the active run, keeping assistant/tool pairing intact.
+                for (int i = _renderedExchanges; i < history.Count; i++)
+                    AppendExchange(history[i], i);
+                _renderedExchanges = history.Count;
+            }
 
             OpenRouterChatResponse? response = await SendWithRetryAsync(token).ConfigureAwait(false);
             if (response == null)
@@ -320,8 +334,39 @@ namespace Malx_AI.Agent
                 ?? new OpenRouterToolCall($"call_{index}", exchange.Call.Tool, argsJson);
             _pendingToolCall = null;
 
+            bool preserveToolText = string.Equals(exchange.Call.Tool, AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase);
             _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call]));
-            _messages.Add(new OpenRouterMessage("tool", exchange.Observation, ToolCallId: call.Id));
+            _messages.Add(new OpenRouterMessage("tool", exchange.Observation, ToolCallId: call.Id, PreserveFullText: preserveToolText));
+
+            if (!string.IsNullOrWhiteSpace(exchange.ImageDataUrl) && _service.SupportsImageInput(_modelId))
+            {
+                var visualIndices = new List<int>();
+                for (int m = 0; m < _messages.Count; m++)
+                {
+                    if (_messages[m].ImageDataUrls is { Count: > 0 }
+                        && _messages[m].Role == "user"
+                        && _messages[m].Text.StartsWith("[Visual observation attached", StringComparison.Ordinal))
+                    {
+                        visualIndices.Add(m);
+                    }
+                }
+                while (visualIndices.Count > 1)
+                {
+                    int oldestIdx = visualIndices[0];
+                    visualIndices.RemoveAt(0);
+                    _messages[oldestIdx] = _messages[oldestIdx] with
+                    {
+                        ImageDataUrls = null,
+                        PreserveFullText = false
+                    };
+                }
+
+                _messages.Add(new OpenRouterMessage(
+                    "user",
+                    "[Visual observation attached from tool output above — inspect this image carefully to verify visual output, rendering, and UI layout.]",
+                    PreserveFullText: true,
+                    ImageDataUrls: [exchange.ImageDataUrl]));
+            }
         }
 
         private static bool TryReadArguments(string json, out Dictionary<string, string> arguments, out string? error)

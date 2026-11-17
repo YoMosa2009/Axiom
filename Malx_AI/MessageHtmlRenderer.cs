@@ -122,11 +122,11 @@ html, body {
 body {
     margin: 0;
     color: #EDE8E3;
-    background: #211F1D;
+    background: #171615;
     font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1.6;
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 1.55;
     overflow-wrap: anywhere;
     word-break: break-word;
     -webkit-font-smoothing: antialiased;
@@ -152,22 +152,27 @@ a:hover {
 }
 h1, h2, h3, h4, h5, h6 {
     color: #EDE8E3;
-    margin: 0 0 8px 0;
+    margin: 0 0 6px 0;
 }
-p, ul, ol { margin: 0 0 8px 0; }
-ul, ol { padding-left: 20px; }
+h1 { font-size: 1.35em; }
+h2 { font-size: 1.2em; }
+h3 { font-size: 1.08em; }
+p, ul, ol { margin: 0 0 7px 0; }
+ul, ol { padding-left: 18px; }
 pre {
-    background: #171615;
+    background: #211F1D;
     border: 1px solid #302D2A;
-    border-radius: 8px;
-    padding: 10px;
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 11.5px;
     overflow-x: auto;
 }
 code {
-    background: #171615;
+    background: #211F1D;
     border: 1px solid #302D2A;
     border-radius: 4px;
     padding: 1px 4px;
+    font-size: 11.5px;
 }
 pre code { border: none; background: transparent; padding: 0; }
 blockquote {
@@ -179,22 +184,23 @@ blockquote {
 table {
     border-collapse: collapse;
     width: 100%;
-    margin: 0 0 10px 0;
+    margin: 0 0 8px 0;
+    font-size: 12px;
 }
 th, td {
     border: 1px solid #302D2A;
-    padding: 6px 8px;
+    padding: 5px 7px;
     text-align: left;
 }
 th {
-    background: #171615;
+    background: #211F1D;
 }
 .python-result-block {
-    margin: 10px 0 0 0;
-    padding: 10px 12px;
+    margin: 8px 0 0 0;
+    padding: 8px 10px;
     border: 1px solid #302D2A;
-    border-radius: 8px;
-    background: #171615;
+    border-radius: 7px;
+    background: #211F1D;
 }
 .python-result-label {
     color: #B8924A;

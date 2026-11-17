@@ -20,18 +20,36 @@ namespace Malx_AI.Agent
         public const string ListDirectory = "list_directory";
         public const string FindFiles = "find_files";
         public const string SearchText = "search_text";
+        public const string StartBackgroundTask = "start_background_task";
+        public const string CheckBackgroundTask = "check_background_task";
+        public const string StopBackgroundTask = "stop_background_task";
+        public const string BrowserControl = "browser_control";
+        public const string TakeScreenshot = "take_screenshot";
         public const string Finish = "finish";
 
         public static readonly IReadOnlyList<string> All =
         [
-            RunCommand, ReadFile, WriteFile, AppendFile, EditFile, ListDirectory, FindFiles, SearchText, Finish
+            RunCommand,
+            ReadFile,
+            WriteFile,
+            AppendFile,
+            EditFile,
+            ListDirectory,
+            FindFiles,
+            SearchText,
+            StartBackgroundTask,
+            CheckBackgroundTask,
+            StopBackgroundTask,
+            BrowserControl,
+            TakeScreenshot,
+            Finish
         ];
 
         /// <summary>Tools that only observe. Everything else can change the machine.</summary>
         public static readonly IReadOnlySet<string> ReadOnly =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                ReadFile, ListDirectory, FindFiles, SearchText, Finish
+                ReadFile, ListDirectory, FindFiles, SearchText, CheckBackgroundTask, TakeScreenshot, Finish
             };
 
         public static bool IsReadOnly(string? tool) => tool != null && ReadOnly.Contains(tool);
@@ -61,6 +79,18 @@ namespace Malx_AI.Agent
                 "line_count" => ["linecount", "lines", "count"],
                 "file_pattern" => ["filepattern", "glob", "filter"],
                 "summary" => ["result", "message", "final_text"],
+                "wake_seconds" => ["wakeseconds", "wake_after_seconds", "wait_seconds", "duration", "sleep_seconds"],
+                "wait" => ["sleep", "pause", "wait_for_wake"],
+                "task_id" => ["taskid", "id"],
+                "action" => ["operation", "mode", "subcommand"],
+                "url" => ["target", "query", "address", "uri", "package"],
+                "destination" => ["dest", "output_path", "save_path"],
+                "save_path" => ["path", "destination", "dest", "output_path"],
+                "delay_ms" => ["delay", "wait_ms"],
+                "window" => ["window_title", "app", "application", "process"],
+                "background" => ["bg", "async"],
+                "title" => ["label", "name"],
+                "cwd" => ["working_directory", "workdir", "dir"],
                 _ => null
             };
 
@@ -106,11 +136,54 @@ namespace Malx_AI.Agent
                     return "Searched for " + Summarize(Arg("pattern"), 28);
                 case AgentToolNames.SearchText:
                     return "Searched " + Summarize(Arg("pattern"), 28);
+                case AgentToolNames.StartBackgroundTask:
+                    return "Running background task: " + Summarize(Arg("title", Arg("command")), 34);
+                case AgentToolNames.CheckBackgroundTask:
+                    return string.IsNullOrWhiteSpace(Arg("task_id"))
+                        ? "Checking background tasks"
+                        : "Waiting on background task " + Summarize(Arg("task_id"), 18);
+                case AgentToolNames.StopBackgroundTask:
+                    return "Stopping background task " + Summarize(Arg("task_id"), 18);
+                case AgentToolNames.BrowserControl:
+                    return "Browser (" + Arg("action", "open") + "): " + Summarize(Arg("url"), 26);
+                case AgentToolNames.TakeScreenshot:
+                    return "Took a screenshot";
                 case AgentToolNames.Finish:
                     return "Finished";
                 default:
                     return Summarize(Tool, 28);
             }
+        }
+
+        /// <summary>
+        /// The call as a model should read it back in a text transcript: the tool name and its
+        /// arguments, with full paths and commands, but without file bodies.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="DescribeShort"/> is a UI label: 40 characters and a bare file name. Read back
+        /// by a local model it showed "Ran Set-Content -Path hello.py -Value 'for…", so the model
+        /// could not tell what it had already run or where it had written.
+        /// </remarks>
+        public string DescribeForModel(int maxValueChars = 300)
+        {
+            var parts = new List<string>();
+            foreach ((string key, string value) in Arguments)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+                if (key is "content" or "old_string" or "new_string")
+                {
+                    int lines = value.Split('\n').Length;
+                    parts.Add($"{key}: ({lines} line{(lines == 1 ? "" : "s")}, {value.Length} chars)");
+                    continue;
+                }
+
+                // Only line breaks are flattened: the spacing inside a command is part of it.
+                string flat = string.Join(" ", value.Trim().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+                parts.Add($"{key}: {(flat.Length <= maxValueChars ? flat : flat[..maxValueChars] + "…")}");
+            }
+
+            return parts.Count == 0 ? Tool : Tool + " (" + string.Join("; ", parts) + ")";
         }
 
         private static string FileLabel(string path)
@@ -134,10 +207,30 @@ namespace Malx_AI.Agent
         }
     }
 
-    /// <summary>The outcome of running one tool, as fed back to the model.</summary>
-    public sealed record AgentToolResult(bool Succeeded, string Output, string? Error = null)
+    /// <summary>
+    /// One screenshot taken for the agent, with a plain statement of what it shows.
+    /// </summary>
+    /// <param name="Description">What was captured, e.g. "the window 'Rocket - Edge' (msedge)".</param>
+    /// <param name="OpenWindows">Other windows that could be asked for, as "process: title".</param>
+    public sealed record AgentScreenshot(
+        byte[] PngBytes,
+        int Width,
+        int Height,
+        string Description,
+        IReadOnlyList<string> OpenWindows)
     {
-        public static AgentToolResult Ok(string output) => new(true, output ?? string.Empty);
+        public static string DescribeOpenWindows(IReadOnlyList<string>? windows)
+        {
+            if (windows == null || windows.Count == 0)
+                return string.Empty;
+            return "Open windows: " + string.Join("; ", windows.Take(8).Select(window => window.Length <= 70 ? window : window[..70] + "…")) + ".";
+        }
+    }
+
+    /// <summary>The outcome of running one tool, as fed back to the model.</summary>
+    public sealed record AgentToolResult(bool Succeeded, string Output, string? Error = null, string? ImageDataUrl = null)
+    {
+        public static AgentToolResult Ok(string output, string? imageDataUrl = null) => new(true, output ?? string.Empty, null, imageDataUrl);
         public static AgentToolResult Fail(string error) => new(false, string.Empty, error);
 
         /// <summary>Renders the result as the observation text appended to the transcript.</summary>

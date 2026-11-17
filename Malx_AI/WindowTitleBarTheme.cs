@@ -21,6 +21,7 @@ namespace Malx_AI
         // Documented DWM window attributes. Caption/text colouring needs Windows 11 build 22000+;
         // dark mode works from Windows 10 1809. Unsupported values simply return an error code,
         // which is why every call here is best-effort.
+        private const int DwmwaUseImmersiveDarkModeBefore20H1 = 19;
         private const int DwmwaUseImmersiveDarkMode = 20;
         private const int DwmwaCaptionColor = 35;
         private const int DwmwaTextColor = 36;
@@ -49,18 +50,17 @@ namespace Malx_AI
 
                 int darkMode = 1;
                 DwmSetWindowAttribute(handle, DwmwaUseImmersiveDarkMode, ref darkMode, sizeof(int));
+                DwmSetWindowAttribute(handle, DwmwaUseImmersiveDarkModeBefore20H1, ref darkMode, sizeof(int));
 
-                // Match the app's own surfaces exactly rather than settling for the generic dark
-                // caption, so the title bar reads as part of the window instead of a strip on top.
-                // This uses the navigation bar's own brush, the surface directly beneath the
-                // caption, so the two read as one continuous dark band.
-                int caption = ToColorRef(TryFindColor(window, "DarkSidebarBrush", 0x17, 0x16, 0x15));
+                // Match the window background color seamlessly on both caption and window border
+                // so dialogs and top-level windows never show white title bars or light outlines.
+                int caption = ToColorRef(TryFindColor(window, "NotebookBackgroundBrush", 0x17, 0x16, 0x15));
                 DwmSetWindowAttribute(handle, DwmwaCaptionColor, ref caption, sizeof(int));
 
                 int text = ToColorRef(TryFindColor(window, "NotebookTextBrush", 0xED, 0xE8, 0xE3));
                 DwmSetWindowAttribute(handle, DwmwaTextColor, ref text, sizeof(int));
 
-                int border = ToColorRef(TryFindColor(window, "NotebookBorderBrush", 0x30, 0x2D, 0x2A));
+                int border = ToColorRef(TryFindColor(window, "NotebookBackgroundBrush", 0x17, 0x16, 0x15));
                 DwmSetWindowAttribute(handle, DwmwaBorderColor, ref border, sizeof(int));
             }
             catch (Exception)

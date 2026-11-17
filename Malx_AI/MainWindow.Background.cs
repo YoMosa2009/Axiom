@@ -181,7 +181,7 @@ namespace Malx_AI
         private void HideToSystemTray()
         {
             _isHiddenInSystemTray = true;
-            _neuronTimer.Stop();
+
             _toolActivityTimer.Stop();
             _wasCouncilPetVisibleBeforeTray = _councilPetWindow?.IsVisible == true;
             _councilPetWindow?.Hide();
@@ -242,8 +242,8 @@ namespace Malx_AI
                 _councilPetWindow.Show();
             _wasCouncilPetVisibleBeforeTray = false;
 
-            if (NeuronView.Visibility == Visibility.Visible)
-                _neuronTimer.Start();
+
+
             if (!string.IsNullOrWhiteSpace(_activeToolIndicatorLabel))
                 _toolActivityTimer.Start();
             if (ChatView.Visibility == Visibility.Visible && _chatModelReleasedForCouncil)

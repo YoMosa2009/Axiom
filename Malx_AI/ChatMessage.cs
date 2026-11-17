@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Media;
 
 namespace Malx_AI
 {
@@ -33,9 +34,31 @@ namespace Malx_AI
         private bool _isSearchMatch;
         private string _streamingDisplayTarget = string.Empty;
         private string _canvasReplyText = string.Empty;
+        private IReadOnlyList<string> _attachedImageSources = Array.Empty<string>();
+        private IReadOnlyList<ImageSource>? _attachedImagesCache;
         private System.Windows.Threading.DispatcherTimer? _streamingRevealTimer;
 
         public ObservableCollection<ChatMessageCodeBlock> CodeBlocks { get; } = new();
+
+        public IReadOnlyList<string> AttachedImageSources
+        {
+            get => _attachedImageSources;
+            set
+            {
+                if (InvokeOnUiThreadIfRequired(() => AttachedImageSources = value))
+                    return;
+                _attachedImageSources = value ?? Array.Empty<string>();
+                _attachedImagesCache = null;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(AttachedImages));
+                OnPropertyChanged(nameof(HasAttachedImages));
+            }
+        }
+
+        public IReadOnlyList<ImageSource> AttachedImages =>
+            _attachedImagesCache ??= WorkplaceChatMessage.LoadImageSources(_attachedImageSources);
+
+        public bool HasAttachedImages => AttachedImages.Count > 0;
 
         public string Role { get; set; } // "user", "assistant", or "system"
 

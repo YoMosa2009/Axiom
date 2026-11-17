@@ -13,6 +13,13 @@ namespace Malx_AI.ComputerUse
     {
         private const int InputMouse = 0;
         private const int InputKeyboard = 1;
+        private const uint MouseMove = 0x0001;
+        private const uint MouseAbsolute = 0x8000;
+        private const uint MouseVirtualDesk = 0x4000;
+        private const int SmXVirtualScreen = 76;
+        private const int SmYVirtualScreen = 77;
+        private const int SmCxVirtualScreen = 78;
+        private const int SmCyVirtualScreen = 79;
         private const uint MouseLeftDown = 0x0002;
         private const uint MouseLeftUp = 0x0004;
         private const uint MouseRightDown = 0x0008;
@@ -135,26 +142,71 @@ namespace Malx_AI.ComputerUse
         /// through while the button is down; jumping straight from start to end yields a single
         /// dot or a straight line where a stroke was intended.
         /// </remarks>
-        public static async Task DragAsync(
+        public static Task<bool> DragAsync(
             int fromX,
             int fromY,
             int toX,
             int toY,
             Action<int, int>? onStep,
             CancellationToken token)
-        {
-            MoveCursor(fromX, fromY);
-            onStep?.Invoke(fromX, fromY);
-            // Applications latch the button-down position on the message; give the move ahead of it
-            // time to be processed first, or the stroke starts from wherever the cursor was before.
-            await Task.Delay(60, token).ConfigureAwait(false);
+            => DragPathAsync([(fromX, fromY), (toX, toY)], onStep, token);
 
-            Send(Mouse(MouseLeftDown));
+        /// <summary>
+        /// Presses the left button at the first point, moves through every following point with
+        /// the button held, and releases at the last one. Returns false when Windows refused the
+        /// input, so a caller never reports a stroke that was not sent.
+        /// </summary>
+        /// <remarks>
+        /// Three details decide whether a canvas actually draws. A logged run left Paint blank
+        /// after two "Dragged from … to …" results, and each of these is a way that happens:
+        /// <list type="bullet">
+        /// <item>The moves are INJECTED mouse input, not SetCursorPos. SetCursorPos repositions the
+        /// cursor without sending anything through the input pipeline, so a pointer-based canvas
+        /// (Windows 11 Paint, any WinUI ink surface) can see the button go down and come up at
+        /// one spot: a one-pixel dot with a pencil, nothing at all with a shape tool.</item>
+        /// <item>The path is walked in small, evenly spaced steps. An ease-out curve starts with
+        /// jumps of tens of pixels, which reads as a tap rather than a stroke.</item>
+        /// <item>The button is held still briefly after pressing and before releasing, so the
+        /// application latches the start and commits the end where intended.</item>
+        /// </list>
+        /// </remarks>
+        public static async Task<bool> DragPathAsync(
+            IReadOnlyList<(int X, int Y)> points,
+            Action<int, int>? onStep,
+            CancellationToken token)
+        {
+            if (points == null || points.Count < 2)
+                return false;
+
+            IReadOnlyList<(int X, int Y)> path = ComputerUseStrokeGeometry.Interpolate(points, DragStepPixels);
+            if (path.Count < 2)
+                return false;
+
+            // A very long stroke would otherwise take several seconds; shorten the pause instead.
+            int delayMs = path.Count > 320 ? 3 : DragStepDelayMs;
+
+            MoveCursorInjected(path[0].X, path[0].Y);
+            onStep?.Invoke(path[0].X, path[0].Y);
+            // Applications latch the button-down position on the message; give the move ahead of
+            // it time to be processed first, or the stroke starts from wherever the cursor was.
+            await Task.Delay(DragSettleMs, token).ConfigureAwait(false);
+
+            if (Send(Mouse(MouseLeftDown)) == 0)
+                return false;
+
+            bool sent = true;
             try
             {
-                await Task.Delay(40, token).ConfigureAwait(false);
-                await SmoothMoveAsync(fromX, fromY, toX, toY, onStep, token).ConfigureAwait(false);
-                await Task.Delay(40, token).ConfigureAwait(false);
+                await Task.Delay(DragHoldMs, token).ConfigureAwait(false);
+                for (int i = 1; i < path.Count; i++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    sent &= MoveCursorInjected(path[i].X, path[i].Y);
+                    onStep?.Invoke(path[i].X, path[i].Y);
+                    await Task.Delay(delayMs, token).ConfigureAwait(false);
+                }
+
+                await Task.Delay(DragSettleMs, token).ConfigureAwait(false);
             }
             finally
             {
@@ -162,13 +214,52 @@ namespace Malx_AI.ComputerUse
                 // held would hand the user a desktop with a stuck mouse button.
                 Send(Mouse(MouseLeftUp));
             }
+
+            return sent;
+        }
+
+        private const int DragStepPixels = 6;
+        private const int DragStepDelayMs = 7;
+        private const int DragSettleMs = 90;
+        private const int DragHoldMs = 110;
+
+        /// <summary>
+        /// Moves the cursor by sending real mouse-move input, then corrects any rounding with
+        /// SetCursorPos. Returns false when the injected move was refused.
+        /// </summary>
+        public static bool MoveCursorInjected(int screenX, int screenY)
+        {
+            int virtualX = GetSystemMetrics(SmXVirtualScreen);
+            int virtualY = GetSystemMetrics(SmYVirtualScreen);
+            int virtualWidth = GetSystemMetrics(SmCxVirtualScreen);
+            int virtualHeight = GetSystemMetrics(SmCyVirtualScreen);
+            bool sent = false;
+            if (virtualWidth > 0 && virtualHeight > 0)
+            {
+                sent = Send(Mouse(
+                    MouseMove | MouseAbsolute | MouseVirtualDesk,
+                    ComputerUseStrokeGeometry.ToAbsolute(screenX, virtualX, virtualWidth),
+                    ComputerUseStrokeGeometry.ToAbsolute(screenY, virtualY, virtualHeight))) > 0;
+            }
+
+            // Absolute input is quantised to 65536 steps per axis, so the cursor can land a pixel
+            // off on a large desktop. The correction is a nudge the application also sees.
+            (int X, int Y) actual = GetCursor();
+            if (actual.X != screenX || actual.Y != screenY)
+                SetCursorPos(screenX, screenY);
+            return sent;
         }
 
         public static void LeftClickAt(int screenX, int screenY)
         {
-            MoveCursor(screenX, screenY);
-            Thread.Sleep(20);
-            LeftClick();
+            // The move is injected so the control under the cursor sees the pointer arrive before
+            // the press, and the press is held for a moment, as both would be from a hand. A
+            // down and up delivered in the same instant is ignored by some pointer-based toolbars.
+            MoveCursorInjected(screenX, screenY);
+            Thread.Sleep(40);
+            Send(Mouse(MouseLeftDown));
+            Thread.Sleep(35);
+            Send(Mouse(MouseLeftUp));
         }
 
         public static void DoubleClick()
@@ -180,8 +271,8 @@ namespace Malx_AI.ComputerUse
 
         public static void DoubleClickAt(int screenX, int screenY)
         {
-            MoveCursor(screenX, screenY);
-            Thread.Sleep(20);
+            MoveCursorInjected(screenX, screenY);
+            Thread.Sleep(40);
             DoubleClick();
         }
 
@@ -192,8 +283,8 @@ namespace Malx_AI.ComputerUse
 
         public static void RightClickAt(int screenX, int screenY)
         {
-            MoveCursor(screenX, screenY);
-            Thread.Sleep(20);
+            MoveCursorInjected(screenX, screenY);
+            Thread.Sleep(40);
             RightClick();
         }
 
@@ -246,7 +337,8 @@ namespace Malx_AI.ComputerUse
 
             if (TryLaunchRegisteredApplication(query))
             {
-                await Task.Delay(800, token).ConfigureAwait(false);
+                await Task.Delay(700, token).ConfigureAwait(false);
+                await ActivateApplicationWindowAsync(query, token).ConfigureAwait(false);
                 return;
             }
 
@@ -255,8 +347,74 @@ namespace Malx_AI.ComputerUse
             await TypeTextAsync(query, token).ConfigureAwait(false);
             await Task.Delay(700, token).ConfigureAwait(false);
             PressCombo("Enter");
-            await Task.Delay(250, token).ConfigureAwait(false);
+            await Task.Delay(500, token).ConfigureAwait(false);
+            await ActivateApplicationWindowAsync(query, token).ConfigureAwait(false);
         }
+
+        private static async Task ActivateApplicationWindowAsync(string appName, CancellationToken token)
+        {
+            for (int attempt = 0; attempt < 6; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                IntPtr matched = FindWindowForApp(appName);
+                if (matched != IntPtr.Zero)
+                {
+                    ActivateWindow(matched);
+                    return;
+                }
+
+                await Task.Delay(250, token).ConfigureAwait(false);
+            }
+        }
+
+        private static IntPtr FindWindowForApp(string appName)
+        {
+            IntPtr found = IntPtr.Zero;
+            try
+            {
+                EnumWindows((handle, _) =>
+                {
+                    if (!IsWindowVisible(handle))
+                        return true;
+
+                    var sb = new System.Text.StringBuilder(256);
+                    GetWindowText(handle, sb, sb.Capacity);
+                    string title = sb.ToString().Trim();
+                    if (title.Length == 0)
+                        return true;
+
+                    GetWindowThreadProcessId(handle, out uint pid);
+                    string processName = string.Empty;
+                    try
+                    {
+                        if (pid != 0)
+                            processName = Process.GetProcessById((int)pid).ProcessName ?? string.Empty;
+                    }
+                    catch { }
+
+                    if (ComputerUseApplicationVerification.Matches(appName, processName + " " + title))
+                    {
+                        found = handle;
+                        return false;
+                    }
+                    return true;
+                }, IntPtr.Zero);
+            }
+            catch { }
+
+            return found;
+        }
+
+        private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
 
         private static bool TryLaunchRegisteredApplication(string requestedApp)
         {
@@ -472,12 +630,19 @@ namespace Malx_AI.ComputerUse
             };
         }
 
-        private static void Send(params INPUT[] inputs)
+        /// <summary>Sends input and returns how many events Windows accepted (0 means refused).</summary>
+        private static uint Send(params INPUT[] inputs)
         {
             if (inputs.Length == 0)
-                return;
-            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+                return 0;
+            return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         }
+
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int index);
+
+        /// <summary>The window that currently holds the foreground, or zero.</summary>
+        public static IntPtr ForegroundWindow() => GetForegroundWindow();
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);

@@ -4,9 +4,10 @@
         Title="Welcome to Axiom"
         Width="720" Height="640" MinHeight="560"
         ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
-        Background="{DynamicResource NotebookBackgroundBrush}"
+        Background="Transparent"
         Foreground="{DynamicResource NotebookTextBrush}"
         UseLayoutRounding="True">
     <Window.Resources>
@@ -85,7 +86,17 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="32,26,32,22">
+    <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12">
+        <DockPanel>
+            <Grid DockPanel.Dock="Top" Height="34" Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                           FontSize="11.5" FontWeight="Medium" Foreground="{DynamicResource DarkSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="16,0,40,0" LineHeight="Auto"/>
+                <Button Content="×" Click="HeaderClose_Click" IsCancel="True" HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Width="30" Height="28" Margin="0,0,6,0" FontSize="14" Style="{StaticResource GuideSecondaryButtonStyle}"
+                        Background="Transparent" BorderBrush="Transparent" Foreground="{DynamicResource DarkSecondaryBrush}" Padding="0" ToolTip="Close"/>
+            </Grid>
+            <Grid Margin="32,8,32,22">
         <!-- ═══ PAGE 1: how do you want to run AI ═══ -->
         <Grid x:Name="WelcomePage">
             <Grid.RowDefinitions>
@@ -232,5 +243,7 @@
                         Content="Not now" Margin="0,0,8,0"/>
             </DockPanel>
         </Grid>
-    </Grid>
+            </Grid>
+        </DockPanel>
+    </Border>
 </Window>

@@ -105,6 +105,9 @@ namespace Malx_AI.ComputerUse
                     UiTargets = ComputerUseImageGeometry.ScaleTargets(
                         ComputerUseUiCatalog.Capture(targetWindow, originX, originY, width, height),
                         width, height, modelImage.Width, modelImage.Height),
+                    Regions = ComputerUseImageGeometry.SelectRegions(
+                        ComputerUseUiCatalog.CaptureRegions(targetWindow, originX, originY, width, height),
+                        width, height, modelImage.Width, modelImage.Height),
                     BrowserState = ComputerUseUiCatalog.CaptureBrowserState(targetWindow)
                 };
             }
@@ -116,6 +119,47 @@ namespace Malx_AI.ComputerUse
                         continue;
                     try { windows[i].Show(); } catch { }
                 }
+            }
+        }
+
+        /// <summary>
+        /// The raw pixels of one screen area, for measuring what an action changed there.
+        /// </summary>
+        /// <remarks>
+        /// Read straight from the screen at native resolution, with no scaling and no JPEG, so a
+        /// thin stroke that disappears in the model's screenshot is still counted. Returns null
+        /// when the area cannot be read; callers treat that as "unknown", never as "unchanged".
+        /// </remarks>
+        public static int[]? CaptureRegionArgb(int screenX, int screenY, int width, int height)
+        {
+            if (width <= 0 || height <= 0 || (long)width * height > 8_000_000)
+                return null;
+
+            try
+            {
+                using var bitmap = new Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+                using (var graphics = Graphics.FromImage(bitmap))
+                {
+                    graphics.CopyFromScreen(screenX, screenY, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
+                }
+
+                BitmapData data = bitmap.LockBits(new Drawing.Rectangle(0, 0, width, height),
+                    ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+                try
+                {
+                    var pixels = new int[width * height];
+                    for (int row = 0; row < height; row++)
+                        Marshal.Copy(data.Scan0 + row * data.Stride, pixels, row * width, width);
+                    return pixels;
+                }
+                finally
+                {
+                    bitmap.UnlockBits(data);
+                }
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -387,6 +431,268 @@ namespace Malx_AI.ComputerUse
             public RECT Monitor;
             public RECT Work;
             public uint Flags;
+        }
+
+        /// <summary>
+        /// Takes the agent's screenshot: one named window when asked for, otherwise the screen.
+        /// </summary>
+        /// <remarks>
+        /// A named window is drawn straight from the window itself (PrintWindow), so it comes out
+        /// whole even when another window covers it and without taking the focus from whatever
+        /// the user is doing. That removes the reason a model reached for AppActivate and SendKeys:
+        /// a screen grab shows whatever happens to be in front, which was often not its own page.
+        /// </remarks>
+        public static Malx_AI.Agent.AgentScreenshot CaptureForAgent(string? windowQuery, int maxWidth = 1280, params Window[] hideWindows)
+        {
+            string query = (windowQuery ?? string.Empty).Trim();
+            int ownProcessId = Environment.ProcessId;
+            var windows = new List<(IntPtr Handle, string Title, string Process)>();
+            try
+            {
+                EnumWindows((handle, _) =>
+                {
+                    if (IsActivatableApplicationWindow(handle))
+                    {
+                        GetWindowThreadProcessId(handle, out uint processId);
+                        if (processId != ownProcessId)
+                        {
+                            (string title, string process) = GetForegroundWindowIdentity(handle);
+                            windows.Add((handle, title, process));
+                        }
+                    }
+
+                    return windows.Count < 48;
+                }, IntPtr.Zero);
+            }
+            catch
+            {
+            }
+
+            List<string> names = windows.Select(window => window.Process + ": " + window.Title).ToList();
+            if (query.Length == 0)
+            {
+                (byte[] png, int width, int height) = CapturePrimaryScreenPng(maxWidth, hideWindows);
+                string front = names.Count > 0 ? $"the whole screen; the window in front is '{windows[0].Title}' ({windows[0].Process})" : "the whole screen";
+                return new Malx_AI.Agent.AgentScreenshot(png, width, height, front, names);
+            }
+
+            var match = windows.FirstOrDefault(window =>
+                window.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || window.Process.Contains(query, StringComparison.OrdinalIgnoreCase));
+            if (match.Handle == IntPtr.Zero)
+                return new Malx_AI.Agent.AgentScreenshot([], 0, 0, "", names);
+
+            using Drawing.Bitmap? window = CaptureWindowBitmap(match.Handle);
+            if (window == null)
+                return new Malx_AI.Agent.AgentScreenshot([], 0, 0, "", names);
+
+            (byte[] bytes, int outWidth, int outHeight) = EncodePng(window, maxWidth);
+            return new Malx_AI.Agent.AgentScreenshot(bytes, outWidth, outHeight,
+                $"the window '{match.Title}' ({match.Process})", names);
+        }
+
+        private static Drawing.Bitmap? CaptureWindowBitmap(IntPtr handle)
+        {
+            // A minimised window has nothing drawn. Showing it without activating it lets it
+            // render while leaving the user's focus where it was.
+            if (IsIconic(handle))
+            {
+                ShowWindow(handle, ShowNoActivate);
+                System.Threading.Thread.Sleep(450);
+            }
+
+            if (!GetWindowRect(handle, out RECT rect))
+                return null;
+            int width = rect.Right - rect.Left;
+            int height = rect.Bottom - rect.Top;
+            if (width <= 1 || height <= 1 || (long)width * height > 40_000_000)
+                return null;
+
+            var bitmap = new Drawing.Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            bool drawn = false;
+            try
+            {
+                using var graphics = Graphics.FromImage(bitmap);
+                IntPtr hdc = graphics.GetHdc();
+                try
+                {
+                    // PW_RENDERFULLCONTENT: required for GPU-composited windows (browsers, WebGL).
+                    drawn = PrintWindow(handle, hdc, PrintWindowRenderFullContent);
+                }
+                finally
+                {
+                    graphics.ReleaseHdc(hdc);
+                }
+            }
+            catch
+            {
+                drawn = false;
+            }
+
+            if (drawn && !IsSingleColor(bitmap))
+                return bitmap;
+
+            // Some windows refuse to draw off-screen. Fall back to what is on screen at the
+            // window's position, which is right whenever nothing covers it.
+            try
+            {
+                using var graphics = Graphics.FromImage(bitmap);
+                graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
+                return bitmap;
+            }
+            catch
+            {
+                bitmap.Dispose();
+                return null;
+            }
+        }
+
+        private static bool IsSingleColor(Drawing.Bitmap bitmap)
+        {
+            int first = bitmap.GetPixel(bitmap.Width / 2, bitmap.Height / 2).ToArgb();
+            for (int y = 8; y < bitmap.Height; y += Math.Max(1, bitmap.Height / 24))
+            {
+                for (int x = 8; x < bitmap.Width; x += Math.Max(1, bitmap.Width / 32))
+                {
+                    if (bitmap.GetPixel(x, y).ToArgb() != first)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static (byte[] PngBytes, int Width, int Height) EncodePng(Drawing.Bitmap source, int maxWidth)
+        {
+            int outWidth = source.Width;
+            int outHeight = source.Height;
+            if (maxWidth > 0 && outWidth > maxWidth)
+            {
+                outHeight = Math.Max(1, (int)Math.Round(outHeight * (maxWidth / (double)outWidth)));
+                outWidth = maxWidth;
+            }
+
+            using var scaled = new Drawing.Bitmap(outWidth, outHeight, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            using (var graphics = Graphics.FromImage(scaled))
+            {
+                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                graphics.DrawImage(source, 0, 0, outWidth, outHeight);
+            }
+
+            using var stream = new MemoryStream();
+            scaled.Save(stream, ImageFormat.Png);
+            return (stream.ToArray(), outWidth, outHeight);
+        }
+
+        private const uint PrintWindowRenderFullContent = 2;
+        private const int ShowNoActivate = 4;
+
+        [DllImport("user32.dll")]
+        private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hwnd, int command);
+
+        public static (byte[] PngBytes, int Width, int Height) CapturePrimaryScreenPng(int maxWidth = 1280, params Window[] hideWindows)
+        {
+            Window[] windows = (hideWindows ?? []).Where(w => w != null).ToArray();
+            bool[] wasVisible = new bool[windows.Length];
+            try
+            {
+                for (int i = 0; i < windows.Length; i++)
+                {
+                    Window w = windows[i];
+                    if (w.Dispatcher.HasShutdownStarted)
+                        continue;
+                    w.Dispatcher.Invoke(() =>
+                    {
+                        wasVisible[i] = w.IsVisible;
+                        if (wasVisible[i])
+                        {
+                            try { w.Hide(); } catch { }
+                        }
+                    });
+                }
+
+                if (wasVisible.Any(v => v))
+                    System.Threading.Thread.Sleep(150);
+
+                IntPtr targetWindow = GetForegroundWindow();
+                (string windowTitle, string processName) = GetForegroundWindowIdentity(targetWindow);
+                if (targetWindow == IntPtr.Zero || IsShellWindow(processName, windowTitle))
+                {
+                    IntPtr fallback = FindTopmostApplicationWindow();
+                    if (fallback != IntPtr.Zero)
+                        targetWindow = fallback;
+                }
+
+                RECT bounds = targetWindow != IntPtr.Zero
+                    ? GetMonitorBounds(targetWindow)
+                    : new RECT
+                    {
+                        Left = 0,
+                        Top = 0,
+                        Right = Math.Max(1, (int)Math.Round(SystemParameters.PrimaryScreenWidth)),
+                        Bottom = Math.Max(1, (int)Math.Round(SystemParameters.PrimaryScreenHeight))
+                    };
+
+                int originX = bounds.Left;
+                int originY = bounds.Top;
+                int srcWidth = Math.Max(1, bounds.Right - bounds.Left);
+                int srcHeight = Math.Max(1, bounds.Bottom - bounds.Top);
+
+                using var source = new Drawing.Bitmap(srcWidth, srcHeight, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                using (var graphics = Graphics.FromImage(source))
+                {
+                    graphics.CopyFromScreen(originX, originY, 0, 0, source.Size, CopyPixelOperation.SourceCopy);
+                }
+
+                int outWidth = srcWidth;
+                int outHeight = srcHeight;
+                Drawing.Bitmap finalBitmap = source;
+                Drawing.Bitmap? resized = null;
+                if (maxWidth > 0 && srcWidth > maxWidth)
+                {
+                    outWidth = maxWidth;
+                    outHeight = Math.Max(1, (int)Math.Round(srcHeight * (maxWidth / (double)srcWidth)));
+                    resized = new Drawing.Bitmap(outWidth, outHeight, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                    using (var graphics = Graphics.FromImage(resized))
+                    {
+                        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        graphics.DrawImage(source, 0, 0, outWidth, outHeight);
+                    }
+                    finalBitmap = resized;
+                }
+
+                try
+                {
+                    using var ms = new MemoryStream();
+                    finalBitmap.Save(ms, ImageFormat.Png);
+                    return (ms.ToArray(), outWidth, outHeight);
+                }
+                finally
+                {
+                    resized?.Dispose();
+                }
+            }
+            finally
+            {
+                for (int i = 0; i < windows.Length; i++)
+                {
+                    if (!wasVisible[i])
+                        continue;
+                    Window w = windows[i];
+                    if (w.Dispatcher.HasShutdownStarted)
+                        continue;
+                    w.Dispatcher.Invoke(() =>
+                    {
+                        try { w.Show(); } catch { }
+                    });
+                }
+            }
         }
     }
 }

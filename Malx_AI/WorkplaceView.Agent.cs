@@ -167,6 +167,8 @@ namespace Malx_AI
             _agentScopeFolder = dialog.FolderName;
             AgentSettings.Write(AgentScopeFolderKey, _agentScopeFolder);
             RefreshAgentUi();
+            UpdateProjectScopeBadgesUi();
+            SessionMetadataChanged?.Invoke(_sessionTitle, SelectedProjectFolder);
             AppendChat("system", $"Agent scope set to {_agentScopeFolder}.");
         }
 
@@ -275,7 +277,7 @@ namespace Malx_AI
                 main = DescribeModelWait(seconds) ?? main;
             }
 
-            string text = seconds >= 2 ? $"{main} · {seconds}s" : main;
+            string text = $"{main}  {seconds}s ›";
             AgentActivityText.Text = text;
             SetActiveRunCardStatus(text);
         }
@@ -420,9 +422,19 @@ namespace Malx_AI
             if (_agentInbox == null)
                 return false;
 
+            List<string> pendingImagePaths = _documents
+                .Where(d => d.IsPending && d.IsImage && !string.IsNullOrWhiteSpace(d.FilePath))
+                .Select(d => d.FilePath)
+                .ToList();
+            bool hasPendingAttachments = _documents.Any(d => d.IsPending);
+
             string text = (QueryInput.Text ?? string.Empty).Trim();
             if (text.Length == 0)
-                return true;
+            {
+                if (!hasPendingAttachments)
+                    return true;
+                text = pendingImagePaths.Count > 0 ? "Analyze the attached image(s)." : "Analyze the attached file(s).";
+            }
 
             if (ComputerUseMention.IsInvoked(text))
             {
@@ -431,7 +443,13 @@ namespace Malx_AI
             }
 
             QueryInput.Text = string.Empty;
-            AppendChat("user", text);
+            if (hasPendingAttachments)
+            {
+                foreach (DocumentInfo doc in _documents)
+                    doc.IsPending = false;
+                RefreshWorkplaceAttachmentTray();
+            }
+            AppendChat("user", text, pendingImagePaths);
             _chatHistory.Add(("user", text));
             _agentInbox.Post(text);
             LogActivity("Agent Access: message queued for the running agent.");
@@ -471,11 +489,26 @@ namespace Malx_AI
         {
             Dispatcher.Invoke(() =>
             {
+                string trimmed = (finalMessage ?? string.Empty).Trim();
+                if ((trimmed.Length == 0 || string.Equals(trimmed, "Done.", StringComparison.OrdinalIgnoreCase))
+                    && run.StepLines.Count > 0)
+                {
+                    trimmed = $"### Task Summary\nCompleted **{run.StepLines.Count}** action(s) for your request. See the verified steps below:";
+                }
+                else if (trimmed.StartsWith("I reached the ", StringComparison.Ordinal)
+                    && !trimmed.Contains("### What was done this turn", StringComparison.Ordinal)
+                    && _activeAgentTaskState?.TouchedFiles.Count > 0)
+                {
+                    var touchedNames = _activeAgentTaskState.TouchedFiles
+                        .Where(f => !string.IsNullOrWhiteSpace(f))
+                        .Select(f => "- `" + f + "`");
+                    trimmed += "\n\n### Work Completed in Workspace\n" + string.Join("\n", touchedNames);
+                }
                 string steps = run.StepLines.Count == 0
                     ? string.Empty
-                    : $"\n\n**Steps ({run.StepLines.Count})**\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
+                    : $"\n\n### Steps Executed ({run.StepLines.Count})\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
                 run.Status = null;
-                run.Card.Content = (finalMessage ?? string.Empty).Trim() + steps;
+                run.Card.Content = trimmed + steps;
                 if (ReferenceEquals(_activeAgentRunCard, run))
                     _activeAgentRunCard = null;
                 ChatScrollViewer?.ScrollToEnd();
@@ -640,31 +673,70 @@ namespace Malx_AI
                 ? null
                 : LocalModelCapabilityProfile.FromModel(GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath);
             AgentTier tier = AgentPromptBuilder.TierFor(capability, _isCloudModeEnabled);
-            string systemPrompt = AgentPromptBuilder.Build(tier, scope, _agentApprovalMode, _isCloudModeEnabled);
+            bool visionCapable = _isCloudModeEnabled
+                ? _openRouterChatService.SupportsImageInput(
+                    _isHybridLocalCouncilSelected
+                        ? (_openRouterChatService.CustomEndpointConfiguredModelId ?? GetEffectiveCouncilModelId())
+                        : GetEffectiveCouncilModelId())
+                : !string.IsNullOrWhiteSpace(LocalVisionSupport.FindBestProjectorNextToModel(GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty));
+
+            string systemPrompt = AgentPromptBuilder.Build(
+                tier,
+                scope,
+                _agentApprovalMode,
+                _isCloudModeEnabled,
+                trackerFilePath: GetOrResolveTrackerFilePath(),
+                browserSummary: GetDetectedBrowserSummaryForPrompt(),
+                visionCapable: visionCapable);
 
             _cancellationTokenSource?.Dispose();
             _cancellationTokenSource = new CancellationTokenSource();
             CancellationToken token = _cancellationTokenSource.Token;
 
-            // Context preservation: detect if we are continuing an ongoing or step-limited task
+            // Context preservation: carry over project workspace context without replaying old
+            // completed tool calls after a new follow-up instruction.
             bool isContinuation = false;
             string effectiveGoal = userQuery;
             IReadOnlyList<AgentExchange>? initialHistory = null;
             List<string>? initialAllowList = null;
+            // What the message is asking for decides how much the turn may do: a question is
+            // answered from the record of the last run, a change touches only what it names.
+            AgentFollowUpKind followUpKind = AgentFollowUp.Classify(userQuery, _activeAgentTaskState != null);
 
-            if (_activeAgentTaskState != null && !AgentContextManager.IsNewTaskPhrase(userQuery))
+            if (_activeAgentTaskState != null && followUpKind != AgentFollowUpKind.NewTask)
             {
                 isContinuation = true;
                 _activeAgentTaskState.FileBackup ??= CreateAgentFileBackup();
                 initialAllowList = _activeAgentTaskState.SessionAllowList;
+                bool resumeTruncatedRun = _activeAgentTaskState.StoppedOnStepLimit
+                    && AgentContextManager.IsContinuationPhrase(userQuery);
+                string? carryStatus = (resumeTruncatedRun
+                    || string.Equals(_activeAgentTaskState.LastStatusMessage?.Trim(), "Stopped.", StringComparison.Ordinal))
+                    ? _activeAgentTaskState.LastStatusMessage
+                    : null;
+                // The previous run's tool history is not replayed on a follow-up, so without this
+                // record the model knows nothing of what it did and has to rediscover all of it.
+                string previousRunDigest = resumeTruncatedRun
+                    ? string.Empty
+                    : AgentFollowUp.BuildRunDigest(
+                        _activeAgentTaskState.AccumulatedExchanges,
+                        _activeAgentTaskState.LastStatusMessage,
+                        _activeAgentTaskState.StoppedOnStepLimit,
+                        _backgroundTaskManager.ListTasks()
+                            .Select(task => $"{task.Id} {task.Title} ({(task.IsRunning ? "running" : "finished")})")
+                            .ToList());
                 effectiveGoal = AgentContextManager.BuildContinuationGoal(
                     _activeAgentTaskState.OriginalGoal,
                     userQuery,
                     _activeAgentTaskState.TouchedFiles,
-                    _activeAgentTaskState.LastStatusMessage,
+                    carryStatus,
                     _activeAgentTaskState.VerifiedDependencies,
-                    _activeAgentTaskState.FileBackup.Saved.Count > 0 ? _activeAgentTaskState.FileBackup.Root : null);
-                initialHistory = AgentContextManager.CompactExchanges(_activeAgentTaskState.AccumulatedExchanges, recentKeepCount: 8);
+                    _activeAgentTaskState.FileBackup.Saved.Count > 0 ? _activeAgentTaskState.FileBackup.Root : null,
+                    followUpKind,
+                    previousRunDigest);
+                initialHistory = resumeTruncatedRun
+                    ? AgentContextManager.CompactExchanges(_activeAgentTaskState.AccumulatedExchanges, recentKeepCount: 8)
+                    : null;
                 _activeAgentTaskState.LastTurnGoal = userQuery;
             }
             else
@@ -707,59 +779,20 @@ namespace Malx_AI
             // Typing while the agent works is how you steer it, so Send stays available: the
             // message reaches the agent at its next step (see TryPostMessageToRunningAgent).
             SendButton.IsEnabled = true;
-            SendButton.Content = "Send";
-            SendButton.ToolTip = "Send a message to the running agent. It reads it at its next step.";
+            SendButton.Content = "↑";
+            SendButton.ToolTip = "Send a steering message to the running agent.";
 
-            // Council synergy: when Council Mode is active, Architect plans and identifies dependencies
-            bool enableCouncilSynergy = !_isSingleModelMode
-                && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Architect) || HasEffectiveLocalRoleModel(CouncilRole.Critic));
+            // Architect removed completely: Builder executes directly without Architect/Builder role split.
+            // Extra High / Ultra add Critic verification after Builder completes.
+            bool useCriticPass = EffortPolicy.Current is EffortLevel.ExtraHigh or EffortLevel.Ultra;
+            bool enableCouncilSynergy = !_isSingleModelMode && useCriticPass;
             string? architectPlan = null;
-
-            if (enableCouncilSynergy && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Architect)))
-            {
-                UpdateStageIndicator(CouncilRole.Architect, false, false, false);
-                RelayStatusBlock.Text = "Relay: Architect is planning...";
-                LogActivity("Architect planning agent mission...");
-
-                string architectSystem = "You are the Council Architect. The Council Builder will execute the user request using Machine Agent Tools (commands, file operations).\n"
-                    + "Analyze the goal and provide a concise, grounded architectural blueprint (3-5 bullet points):\n"
-                    + "1. Components/files to create or modify. Something new goes in a new, descriptively named folder (never inside an unrelated existing project); only when the user asked to change an existing project, modify it in place.\n"
-                    + "2. Identify required dependencies/software and instruct Builder to pre-check if they are already installed (e.g. python -c \"import <pkg>\" or pip show) BEFORE attempting installation.\n"
-                    + "3. Outline verification steps (e.g. run test or launch with Start-Process).\n"
-                    + "Output ONLY the concise blueprint.";
-
-                ReportAgentActivity("Architect is planning");
-                try
-                {
-                    ReasoningParser.ParsedResponse architectResult = await ExecuteCouncilRoleAsync(
-                        CouncilRole.Architect,
-                        architectSystem,
-                        $"Scope: {scope.Describe()}\nUser Request: {effectiveGoal}",
-                        token,
-                        temperatureOverride: 0.2f,
-                        showLiveCard: false);
-
-                    if (!string.IsNullOrWhiteSpace(architectResult.Answer))
-                    {
-                        architectPlan = architectResult.Answer.Trim();
-                        effectiveGoal = $"{effectiveGoal}\n\n[ARCHITECT BLUEPRINT]\n{architectPlan}";
-                        LogActivity("Architect blueprint generated.");
-                        AppendAgentRunCardLine(runCard, "✓ Architect planned the approach");
-                    }
-                }
-                catch (Exception archEx)
-                {
-                    LogActivity($"Architect planning pass skipped: {archEx.Message}");
-                }
-                finally
-                {
-                    ReportAgentActivity(null);
-                }
-            }
+            EnsureAutoSessionTitle(userQuery);
+            EnsureSessionTrackerUpdated(userQuery, "Agent execution started");
 
             if (enableCouncilSynergy)
             {
-                UpdateStageIndicator(CouncilRole.Builder, architectPlan != null, false, false);
+                UpdateStageIndicator(CouncilRole.Builder, false, false, false);
             }
             else
             {
@@ -775,11 +808,29 @@ namespace Malx_AI
             }
 
             int maxSteps = AgentPromptBuilder.MaxStepsFor(tier, EffortPolicy.Current, capability, _isCloudModeEnabled);
-            LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, scope {scope.Describe()}.");
+            AgentTurnPolicy turnPolicy = AgentTurnPolicy.For(followUpKind, tier);
+            if (turnPolicy.AnswerOnly)
+                maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);
+            LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, {followUpKind} turn, scope {scope.Describe()}.");
             RelayStatusBlock.Text = enableCouncilSynergy ? "Relay: Builder executing agent mission..." : "Relay: Agent running";
 
             AgentRunJournal runJournal = BeginAgentRunJournal(fileBackup);
-            var session = new AgentSession(scope, maxSteps, new AgentToolExecutor(scope, fileBackup));
+            Window? hostWindow = Window.GetWindow(this);
+            var session = new AgentSession(
+                scope,
+                maxSteps,
+                new AgentToolExecutor(
+                    scope,
+                    fileBackup,
+                    _backgroundTaskManager,
+                    _browserControl,
+                    screenCaptureAsync: (maxWidth, ct) => Task.Run(
+                        () => ComputerUseScreenCapture.CapturePrimaryScreenPng(maxWidth, hostWindow != null ? [hostWindow] : []),
+                        ct),
+                    windowCaptureAsync: (window, maxWidth, ct) => Task.Run(
+                        () => ComputerUseScreenCapture.CaptureForAgent(window, maxWidth, hostWindow != null ? [hostWindow] : []),
+                        ct)));
+            var trackedSteps = new List<string>();
             AgentRunResult result;
             _agentSessionRunning = true;
             try
@@ -797,8 +848,13 @@ namespace Malx_AI
                     {
                         NoteAgentModelResponding();
                         AppendAgentRunCardLine(runCard, DescribeAgentStepLine(step));
+                        RecordTrackedAgentFileStep(step, scope.WorkingDirectory);
+                        trackedSteps.Add(step.Call.DescribeShort());
+                        EnsureSessionTrackerUpdated(userQuery, step.Call.DescribeShort(), trackedSteps);
                     },
-                    inbox: _agentInbox);
+                    inbox: _agentInbox,
+                    commandReviewMode: _commandReviewMode,
+                    policy: turnPolicy);
             }
             catch (Exception ex)
             {
@@ -848,13 +904,19 @@ namespace Malx_AI
 
             _ = BackendLogService.LogEventAsync(
                 "ComputerAgent",
-                $"tier:{tier} effort:{EffortPolicy.Current} mode:{_agentApprovalMode} steps:{result.Steps.Count}/{maxSteps} "
+                $"tier:{tier} effort:{EffortPolicy.Current} mode:{_agentApprovalMode} turn:{followUpKind} steps:{result.Steps.Count}/{maxSteps} "
                 + $"limit:{result.StoppedOnStepLimit} cancelled:{result.Cancelled}");
 
             string finalChatMessage = result.FinalMessage;
 
-            // Council synergy: Critic review phase
-            if (enableCouncilSynergy && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Critic)))
+            EnsureSessionTrackerUpdated(userQuery, result.FinalMessage, result.Steps.Select(s => s.Call.DescribeShort()));
+            // Recorded after the tracker is written, so this turn shows as the latest summary now
+            // and moves under "Earlier Turns" once the next one starts.
+            _activeAgentTaskState?.Turns.Add(new AgentTurnRecord(
+                userQuery, result.FinalMessage, result.Steps.Count, result.StoppedOnStepLimit));
+
+            // Council synergy: Critic review phase (Extra High & Ultra effort only)
+            if (enableCouncilSynergy && useCriticPass && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Critic)))
             {
                 UpdateStageIndicator(CouncilRole.Critic, architectPlan != null, true, false);
                 RelayStatusBlock.Text = "Relay: Critic is reviewing...";
@@ -1013,7 +1075,8 @@ namespace Malx_AI
             HideAgentApprovalBar();
             _isProcessing = false;
             SendButton.IsEnabled = true;
-            SendButton.Content = _isSingleModelMode ? "Run Agent" : "Run Council";
+            SendButton.Content = "↑";
+            SendButton.ToolTip = _isSingleModelMode ? "Run Single Model Agent" : "Run Builder";
             SendButton.ToolTip = null;
             StopButton.IsEnabled = false;
             RelayStatusBlock.Text = "Relay: Idle";

@@ -1,0 +1,445 @@
+{
+  "ScreenWidth": 2256,
+  "ScreenHeight": 1504,
+  "Left": 225,
+  "Top": 150,
+  "Width": 1804,
+  "Height": 1203,
+  "Title": "Untitled - Paint",
+  "Targets": [
+    {
+      "Id": "ui1",
+      "Name": "Minimize",
+      "Role": "Button",
+      "State": "",
+      "X": 1842,
+      "Y": 173,
+      "W": 71,
+      "H": 44
+    },
+    {
+      "Id": "ui2",
+      "Name": "Maximize",
+      "Role": "Button",
+      "State": "",
+      "X": 1913,
+      "Y": 173,
+      "W": 70,
+      "H": 44
+    },
+    {
+      "Id": "ui3",
+      "Name": "Close",
+      "Role": "Button",
+      "State": "",
+      "X": 1984,
+      "Y": 173,
+      "W": 71,
+      "H": 44
+    },
+    {
+      "Id": "ui4",
+      "Name": "Save",
+      "Role": "Button",
+      "State": "",
+      "X": 513,
+      "Y": 225,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui5",
+      "Name": "Share",
+      "Role": "Button",
+      "State": "",
+      "X": 581,
+      "Y": 225,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui6",
+      "Name": "What\u0027s new",
+      "Role": "Button",
+      "State": "",
+      "X": 1886,
+      "Y": 225,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui7",
+      "Name": "Signed in as Mosa Alsaegh",
+      "Role": "Button",
+      "State": "",
+      "X": 1940,
+      "Y": 225,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui8",
+      "Name": "Open settings",
+      "Role": "Button",
+      "State": "",
+      "X": 1988,
+      "Y": 225,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui9",
+      "Name": "Line",
+      "Role": "Button",
+      "State": "off",
+      "X": 934,
+      "Y": 288,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui10",
+      "Name": "Curve",
+      "Role": "Button",
+      "State": "off",
+      "X": 967,
+      "Y": 288,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui11",
+      "Name": "Oval",
+      "Role": "Button",
+      "State": "off",
+      "X": 1000,
+      "Y": 288,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui12",
+      "Name": "Rotate",
+      "Role": "Button",
+      "State": "",
+      "X": 468,
+      "Y": 292,
+      "W": 82,
+      "H": 47
+    },
+    {
+      "Id": "ui13",
+      "Name": "Pencil",
+      "Role": "Button",
+      "State": "off",
+      "X": 630,
+      "Y": 292,
+      "W": 47,
+      "H": 47
+    },
+    {
+      "Id": "ui14",
+      "Name": "Fill",
+      "Role": "Button",
+      "State": "off",
+      "X": 690,
+      "Y": 292,
+      "W": 48,
+      "H": 47
+    },
+    {
+      "Id": "ui15",
+      "Name": "Text",
+      "Role": "Button",
+      "State": "off",
+      "X": 750,
+      "Y": 292,
+      "W": 48,
+      "H": 47
+    },
+    {
+      "Id": "ui16",
+      "Name": "Rectangle",
+      "Role": "Button",
+      "State": "off",
+      "X": 934,
+      "Y": 321,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui17",
+      "Name": "Rounded rectangle",
+      "Role": "Button",
+      "State": "off",
+      "X": 967,
+      "Y": 321,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui18",
+      "Name": "Polygon",
+      "Role": "Button",
+      "State": "off",
+      "X": 1000,
+      "Y": 321,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui19",
+      "Name": "Resize and skew",
+      "Role": "Button",
+      "State": "",
+      "X": 545,
+      "Y": 322,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui20",
+      "Name": "Edit colors",
+      "Role": "Button",
+      "State": "",
+      "X": 1684,
+      "Y": 322,
+      "W": 60,
+      "H": 60
+    },
+    {
+      "Id": "ui21",
+      "Name": "Copilot",
+      "Role": "Button",
+      "State": "",
+      "X": 1782,
+      "Y": 323,
+      "W": 52,
+      "H": 70
+    },
+    {
+      "Id": "ui22",
+      "Name": "Remove background",
+      "Role": "Button",
+      "State": "",
+      "X": 391,
+      "Y": 353,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui23",
+      "Name": "Flip",
+      "Role": "Button",
+      "State": "",
+      "X": 468,
+      "Y": 353,
+      "W": 82,
+      "H": 48
+    },
+    {
+      "Id": "ui24",
+      "Name": "Eraser",
+      "Role": "Button",
+      "State": "off",
+      "X": 630,
+      "Y": 353,
+      "W": 47,
+      "H": 48
+    },
+    {
+      "Id": "ui25",
+      "Name": "Color picker",
+      "Role": "Button",
+      "State": "off",
+      "X": 690,
+      "Y": 353,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui26",
+      "Name": "Magnifier",
+      "Role": "Button",
+      "State": "off",
+      "X": 750,
+      "Y": 353,
+      "W": 48,
+      "H": 48
+    },
+    {
+      "Id": "ui27",
+      "Name": "Triangle",
+      "Role": "Button",
+      "State": "off",
+      "X": 934,
+      "Y": 354,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui28",
+      "Name": "Right triangle",
+      "Role": "Button",
+      "State": "off",
+      "X": 967,
+      "Y": 354,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui29",
+      "Name": "Diamond",
+      "Role": "Button",
+      "State": "off",
+      "X": 1000,
+      "Y": 354,
+      "W": 30,
+      "H": 30
+    },
+    {
+      "Id": "ui30",
+      "Name": "Pentagon",
+      "Role": "Button",
+      "State": "off",
+      "X": 934,
+      "Y": 376,
+      "W": 30,
+      "H": 9
+    },
+    {
+      "Id": "ui31",
+      "Name": "Hexagon",
+      "Role": "Button",
+      "State": "off",
+      "X": 967,
+      "Y": 376,
+      "W": 30,
+      "H": 9
+    },
+    {
+      "Id": "ui32",
+      "Name": "Right arrow",
+      "Role": "Button",
+      "State": "off",
+      "X": 1000,
+      "Y": 376,
+      "W": 30,
+      "H": 9
+    },
+    {
+      "Id": "ui33",
+      "Name": "Toolbar options",
+      "Role": "Button",
+      "State": "",
+      "X": 1995,
+      "Y": 396,
+      "W": 34,
+      "H": 34
+    },
+    {
+      "Id": "ui34",
+      "Name": "Vertical Small Decrease",
+      "Role": "Button",
+      "State": "",
+      "X": 2009,
+      "Y": 430,
+      "W": 18,
+      "H": 18
+    },
+    {
+      "Id": "ui35",
+      "Name": "Vertical Large Increase",
+      "Role": "Button",
+      "State": "",
+      "X": 2009,
+      "Y": 1222,
+      "W": 18,
+      "H": 89
+    },
+    {
+      "Id": "ui36",
+      "Name": "Vertical Small Increase",
+      "Role": "Button",
+      "State": "",
+      "X": 2009,
+      "Y": 1275,
+      "W": 18,
+      "H": 18
+    }
+  ],
+  "Regions": [
+    {
+      "Name": "Selection",
+      "Role": "Group",
+      "Left": 236,
+      "Top": 263,
+      "Right": 349,
+      "Bottom": 413
+    },
+    {
+      "Name": "Image",
+      "Role": "Group",
+      "Left": 349,
+      "Top": 263,
+      "Right": 589,
+      "Bottom": 413
+    },
+    {
+      "Name": "Tools",
+      "Role": "Group",
+      "Left": 589,
+      "Top": 263,
+      "Right": 795,
+      "Bottom": 413
+    },
+    {
+      "Name": "Brushes",
+      "Role": "Group",
+      "Left": 795,
+      "Top": 263,
+      "Right": 897,
+      "Bottom": 413
+    },
+    {
+      "Name": "Shapes",
+      "Role": "Group",
+      "Left": 897,
+      "Top": 263,
+      "Right": 1204,
+      "Bottom": 413
+    },
+    {
+      "Name": "Colors",
+      "Role": "Group",
+      "Left": 1219,
+      "Top": 267,
+      "Right": 1714,
+      "Bottom": 406
+    },
+    {
+      "Name": "Copilot",
+      "Role": "Group",
+      "Left": 1732,
+      "Top": 263,
+      "Right": 1830,
+      "Bottom": 413
+    },
+    {
+      "Name": "Layers",
+      "Role": "Group",
+      "Left": 1830,
+      "Top": 263,
+      "Right": 1928,
+      "Bottom": 413
+    },
+    {
+      "Name": "Using Brush tool on Canvas",
+      "Role": "Group",
+      "Left": 449,
+      "Top": 453,
+      "Right": 1803,
+      "Bottom": 1283
+    }
+  ]
+}

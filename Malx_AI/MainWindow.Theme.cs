@@ -95,6 +95,7 @@ namespace Malx_AI
         {
             RefreshCloudModeToggleUi();
             RefreshNormalWebToggleUi();
+            RefreshUserProfileUi();
         }
     }
 

@@ -157,7 +157,16 @@ namespace Malx_AI
                 AlternativeApiModelIds: [],
                 IsCodeSpecialized: true,
                 ApproximateContextWindowTokens: 1000000,
-                DefaultMaxCompletionTokens: 16384)
+                DefaultMaxCompletionTokens: 16384),
+            new(
+                AliasId: Threnody10ModelId,
+                AliasLabel: Threnody10ModelLabel,
+                PrimaryApiModelId: Threnody10ApiModelId,
+                AlternativeApiModelIds: ["deepseek/deepseek-v4.1-flash-1017"],
+                IsCodeSpecialized: true,
+                ApproximateContextWindowTokens: 1048576,
+                DefaultMaxCompletionTokens: 16384,
+                KnownImageInput: true)
         ];
         private static readonly OpenRouterModelProfile[] WorkplaceOnlyModelProfiles =
         [
@@ -289,6 +298,10 @@ namespace Malx_AI
         public const string Edios15ModelLabel = "Edios 1.5";
         public const string Hepha25CoderModelId = "hepha-2.5-coder";
         public const string Hepha25CoderModelLabel = "Hepha 2.5 Coder";
+        public const string Threnody10ModelId = "threnody-1.0";
+        public const string Threnody10ModelLabel = "Threnody 1.0";
+        public const string Threnody10ApiModelId = "deepseek/deepseek-v4.1-flash";
+        public const string Threnody10OpenRouterDisplayName = "DeepSeek: DeepSeek V4.1 Flash";
         public const string WorkplaceCouncilDefaultModelId = "workplace-gpt-oss-20b";
         public const string WorkplaceCouncilDefaultModelLabel = "Dots Studio: Dots3-Note Preview (free)";
         public const string CustomEndpointModelId = "custom-endpoint";
@@ -459,6 +472,7 @@ namespace Malx_AI
                 : string.Equals(profile.AliasId, WorkplaceCouncilDefaultModelId, StringComparison.OrdinalIgnoreCase)
                     ? qwenLatexInstruction
                     : string.Equals(profile.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(profile.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase)
                         ? qwenLatexInstruction
                         : string.Empty;
 
@@ -2882,9 +2896,11 @@ namespace Malx_AI
             IEnumerable<OpenRouterModelProfile> fallbackSequence = currentModelId switch
             {
                 Edios15ModelId =>
-                    [FindModelProfile(Hepha25CoderModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
+                    [FindModelProfile(Hepha25CoderModelId), FindModelProfile(Threnody10ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
                 Hepha25CoderModelId =>
-                    [FindModelProfile(Edios15ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
+                    [FindModelProfile(Edios15ModelId), FindModelProfile(Threnody10ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
+                Threnody10ModelId =>
+                    [FindModelProfile(Hepha25CoderModelId), FindModelProfile(Edios15ModelId), FindModelProfile(WorkplaceCouncilDefaultModelId)],
                 // The Workplace runs on its one model only; it never silently becomes another.
                 WorkplaceCouncilDefaultModelId => [],
                 // The custom endpoint is a single self-hosted model with no OpenRouter alternates --
@@ -3014,6 +3030,15 @@ namespace Malx_AI
                     return apiModelId;
             }
 
+            if (string.Equals(profile.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                (string Id, string Label, bool IsFree) namedMatch = _availableModels.FirstOrDefault(m =>
+                    string.Equals(m.Label, Threnody10OpenRouterDisplayName, StringComparison.OrdinalIgnoreCase)
+                    || m.Label.StartsWith(Threnody10OpenRouterDisplayName, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(namedMatch.Id))
+                    return namedMatch.Id;
+            }
+
             return null;
         }
 
@@ -3034,6 +3059,11 @@ namespace Malx_AI
                 || string.Equals(normalized, LegacyHepha1ApiModelId, StringComparison.OrdinalIgnoreCase))
             {
                 normalized = Hepha25CoderModelId;
+            }
+            else if (string.Equals(normalized, Threnody10OpenRouterDisplayName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, Threnody10ModelLabel, StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = Threnody10ModelId;
             }
 
             if (string.Equals(normalized, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase)
@@ -3071,6 +3101,9 @@ namespace Malx_AI
             if (string.Equals(profile?.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
                 return isCodingRequest ? (isPythonRequest ? 0.06 : 0.1) : 0.2;
 
+            if (string.Equals(profile?.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
+                return isCodingRequest ? (isPythonRequest ? 0.06 : 0.1) : 0.25;
+
             if (profile?.IsCodeSpecialized == true)
                 return isCodingRequest ? (isPythonRequest ? 0.08 : 0.12) : 0.2;
 
@@ -3084,6 +3117,9 @@ namespace Malx_AI
 
             if (string.Equals(profile?.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
                 return isCodingRequest ? 0.7 : 0.82;
+
+            if (string.Equals(profile?.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
+                return isCodingRequest ? 0.75 : 0.85;
 
             if (profile?.IsCodeSpecialized == true)
                 return isCodingRequest ? 0.72 : 0.82;

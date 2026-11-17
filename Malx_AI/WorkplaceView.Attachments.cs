@@ -228,7 +228,7 @@ namespace Malx_AI
                 {
                     string tempDir = Path.Combine(AppDataPaths.ChatHistory, "PastedAttachments");
                     Directory.CreateDirectory(tempDir);
-                    string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N[..4]}.png";
+                    string fileName = $"pasted_image_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..4]}.png";
                     string filePath = Path.Combine(tempDir, fileName);
 
                     using (var fileStream = new FileStream(filePath, FileMode.Create))

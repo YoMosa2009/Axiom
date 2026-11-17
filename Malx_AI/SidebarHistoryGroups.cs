@@ -22,5 +22,27 @@ namespace Malx_AI
                 return "Previous 30 days";
             return "Older";
         }
+
+        /// <summary>Compact relative age indicator for the Workplace Projects tree ("now", "5m", "2d", "2mo").</summary>
+        public static string FormatRelativeAge(DateTime updatedAt, DateTime now)
+        {
+            if (updatedAt == default)
+                return "now";
+
+            DateTime u = updatedAt.Kind == DateTimeKind.Utc ? updatedAt.ToLocalTime() : updatedAt;
+            DateTime n = now.Kind == DateTimeKind.Utc ? now.ToLocalTime() : now;
+            TimeSpan span = n - u;
+            if (span.TotalSeconds < 60)
+                return "now";
+            if (span.TotalMinutes < 60)
+                return $"{Math.Max(1, (int)span.TotalMinutes)}m";
+            if (span.TotalHours < 24)
+                return $"{Math.Max(1, (int)span.TotalHours)}h";
+            if (span.TotalDays < 30)
+                return $"{Math.Max(1, (int)span.TotalDays)}d";
+            if (span.TotalDays < 365)
+                return $"{Math.Max(1, (int)(span.TotalDays / 30.0))}mo";
+            return $"{Math.Max(1, (int)(span.TotalDays / 365.0))}y";
+        }
     }
 }

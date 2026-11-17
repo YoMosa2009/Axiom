@@ -14,12 +14,13 @@
 
         <Style x:Key="ActiveNavigationTabButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="9.5"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Padding" Value="14,2"/>
+            <Setter Property="MinHeight" Value="20"/>
+            <Setter Property="Padding" Value="5,0"/>
         </Style>
 
         <Style x:Key="CodeBlockToggleButtonStyle" TargetType="Button">
@@ -61,8 +62,9 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Padding" Value="14,2"/>
+            <Setter Property="FontSize" Value="9.5"/>
+            <Setter Property="MinHeight" Value="20"/>
+            <Setter Property="Padding" Value="5,0"/>
         </Style>
 
         <!-- ═══ Sidebar ═══
@@ -792,30 +794,22 @@
         </Grid.RowDefinitions>
         
         <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="SidebarColumn" Width="304"/>
+            <ColumnDefinition x:Name="SidebarColumn" Width="268"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- MODE TABS -->
-        <Border x:Name="NavigationBar" Grid.Row="0" Grid.ColumnSpan="2" Background="{DynamicResource DarkSidebarBrush}" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="20,12">
+        <!-- MODE TABS (relocated into SidebarBorder top header; kept collapsed so UI expands to top edge) -->
+        <Border x:Name="NavigationBar" Grid.Row="0" Grid.ColumnSpan="2" Visibility="Collapsed" Height="0" Padding="0" Margin="0" BorderThickness="0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal">
-                    <Button x:Name="ChatTabButton" Content="Chat" Click="SwitchToChat_Click" Height="32" Width="120"
-                            Style="{StaticResource ActiveNavigationTabButtonStyle}" Margin="0,0,8,0"/>
-                    <Button x:Name="WorkplaceTabButton" Content="Workplace" Click="SwitchToWorkplace_Click" Height="32" Width="120"
-                            Style="{StaticResource InactiveNavigationTabButtonStyle}" Margin="0,0,8,0"/>
-                    <Button x:Name="PersonaTabButton" Content="Persona" Click="SwitchToPersona_Click" Height="32" Width="120"
-                            Style="{StaticResource InactiveNavigationTabButtonStyle}" Margin="0,0,0,0"/>
-                    <Button x:Name="NeuronTabButton" Content="Neuron" Click="SwitchToNeuron_Click" Height="32" Width="120"
-                            Style="{StaticResource InactiveNavigationTabButtonStyle}" Margin="8,0,0,0"/>
 
                     <!-- Sidebar collapse, Workplace only: hides the Axiom / Workplace Chats column
                          so the council gets the extra width. Other tabs always show the sidebar. -->
-                    <Button x:Name="SidebarCollapseButton" Width="32" Height="32" Margin="12,0,0,0" VerticalAlignment="Center"
+                    <Button x:Name="SidebarCollapseButton" Width="28" Height="28" Margin="10,0,0,0" VerticalAlignment="Center"
                             Click="SidebarCollapseButton_Click" Visibility="Collapsed"
                             ToolTip="Hide sidebar (Ctrl+B)" AutomationProperties.Name="Toggle sidebar">
                         <Button.Style>
@@ -929,7 +923,7 @@
              footer. Chat and Workplace each own their row, search field and list; the tab switch
              only flips which set is visible. Per-item actions (rename, pin, delete) live in the
              item's ⋯ menu, so there are no separate Delete buttons. -->
-        <Border x:Name="SidebarBorder" Grid.Row="1" Grid.Column="0" Background="{DynamicResource NotebookBackgroundBrush}" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource NotebookBorderBrush}">
+        <Border x:Name="SidebarBorder" Grid.Row="1" Grid.Column="0" Background="{DynamicResource NotebookSurfaceBrush}" BorderThickness="0,0,1,0" BorderBrush="{DynamicResource NotebookBorderBrush}">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="12,6,12,14">
                     <Rectangle Height="1" Fill="{DynamicResource NotebookBorderBrush}" Margin="4,0,4,8"/>
@@ -955,9 +949,32 @@
                     </Button>
                 </StackPanel>
 
-                <StackPanel DockPanel.Dock="Top" Margin="12,20,12,0">
-                    <TextBlock Text="Axiom" FontSize="26" FontWeight="Normal" FontFamily="Georgia" LineHeight="Auto"
-                               Foreground="{DynamicResource NotebookTextBrush}" Margin="8,0,0,16"/>
+                <StackPanel DockPanel.Dock="Top" Margin="8,12,8,0">
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="SidebarBrandText" Grid.Column="0" Text="Axiom" FontSize="13.5" FontWeight="Normal" FontFamily="Georgia" LineHeight="Auto"
+                                   Foreground="{DynamicResource NotebookTextBrush}" VerticalAlignment="Center" Margin="2,0,6,0"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="ChatTabButton" Content="Chat" Click="SwitchToChat_Click" Height="20"
+                                    Style="{StaticResource ActiveNavigationTabButtonStyle}" Margin="0,0,2,0"/>
+                            <Button x:Name="WorkplaceTabButton" Content="Workplace" Click="SwitchToWorkplace_Click" Height="20"
+                                    Style="{StaticResource InactiveNavigationTabButtonStyle}" Margin="0,0,2,0"/>
+                            <Button x:Name="PersonaTabButton" Content="Persona" Click="SwitchToPersona_Click" Height="20"
+                                    Style="{StaticResource InactiveNavigationTabButtonStyle}" Margin="0"/>
+                        </StackPanel>
+                        <Button x:Name="SidebarHideButton" Grid.Column="2" Width="20" Height="20" Margin="2,0,0,0"
+                                Click="SidebarCollapseButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0"
+                                Background="Transparent" BorderBrush="Transparent"
+                                ToolTip="Hide sidebar (Ctrl+B)" AutomationProperties.Name="Hide sidebar">
+                            <Path Width="6" Height="10" Stretch="Uniform" Data="M5.5,1 L1.5,5 L5.5,9"
+                                  StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                        </Button>
+                    </Grid>
 
                     <Button x:Name="NewChatButton" Click="NewChat_Click" Style="{StaticResource SidebarPrimaryRowButtonStyle}"
                             ToolTip="Start a new chat" AutomationProperties.Name="New chat">
@@ -1066,8 +1083,45 @@
                         </StackPanel>
                     </ScrollViewer>
                     <ScrollViewer x:Name="WorkplaceHistorySectionContainer" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
-                        <StackPanel Margin="12,0,12,8">
-                            <TextBlock x:Name="WorkplaceListHeaderText" Text="Workplaces" Style="{StaticResource SidebarGroupHeaderStyle}" TextWrapping="Wrap"/>
+                        <StackPanel Margin="10,0,10,8">
+                            <!-- Projects section header (Image 5 layout) -->
+                            <Grid Margin="6,4,4,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="WorkplaceListHeaderText" Text="Projects" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center" Margin="0"/>
+                                <Button x:Name="WorkplaceFilterProjectsButton" Grid.Column="1" Width="22" Height="22" Margin="2,0"
+                                        Click="WorkplaceFilterProjects_Click" ToolTip="Toggle filter: hide projects with no conversations"
+                                        Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand" AutomationProperties.Name="Filter projects">
+                                    <TextBlock Text="&#xE71C;" FontFamily="{StaticResource AxiomIconFont}" FontSize="11" LineHeight="Auto"
+                                               Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Button>
+                                <Button x:Name="WorkplaceAddProjectFolderButton" Grid.Column="2" Width="22" Height="22"
+                                        Click="WorkplaceAddProjectFolder_Click" ToolTip="Add project folder"
+                                        Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand" AutomationProperties.Name="Add project folder">
+                                    <TextBlock Text="&#xE8F4;" FontFamily="{StaticResource AxiomIconFont}" FontSize="11" LineHeight="Auto"
+                                               Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Button>
+                            </Grid>
+
+                            <StackPanel x:Name="WorkplaceProjectsStack" Margin="0,0,0,10"/>
+
+                            <!-- Unscoped conversations section header -->
+                            <Grid Margin="6,4,4,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="WorkplaceConversationsHeaderText" Text="Conversations" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"/>
+                                <Button x:Name="WorkplaceNewUnscopedButton" Grid.Column="1" Width="22" Height="22"
+                                        Click="NewWorkplace_Click" ToolTip="New conversation"
+                                        Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand" AutomationProperties.Name="New conversation">
+                                    <TextBlock Text="&#xE710;" FontFamily="{StaticResource AxiomIconFont}" FontSize="10.5" LineHeight="Auto"
+                                               Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Button>
+                            </Grid>
                             <StackPanel x:Name="WorkplaceHistoryStack"/>
                         </StackPanel>
                     </ScrollViewer>
@@ -1077,6 +1131,14 @@
 
         <!-- CONTENT CONTAINER -->
         <Grid x:Name="ContentContainer" Grid.Row="1" Grid.Column="1" Background="{DynamicResource NotebookBackgroundBrush}">
+            <Button x:Name="SidebarExpandButton" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,9,0,0"
+                    Width="26" Height="26" Panel.ZIndex="25" Visibility="Collapsed"
+                    Click="SidebarCollapseButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0"
+                    ToolTip="Show sidebar (Ctrl+B)" AutomationProperties.Name="Show sidebar">
+                <Path Width="6" Height="10" Stretch="Uniform" Data="M1.5,1 L5.5,5 L1.5,9"
+                      StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+            </Button>
             <!-- CHAT VIEW (default) -->
             <DockPanel x:Name="ChatView" Background="{DynamicResource NotebookBackgroundBrush}">
                 <!-- Docked first so the canvas runs the full height of the chat view, beside the
@@ -1480,7 +1542,23 @@
                                                                         ShimmerDurationSeconds="2"
                                                                         TextTrimming="CharacterEllipsis"
                                                                         Visibility="Collapsed"/>
-                                                <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="13" FontFamily="Segoe UI"
+                                                <ItemsControl ItemsSource="{Binding AttachedImages}"
+                                                              Visibility="{Binding HasAttachedImages, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                              Margin="0,0,0,6">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel Orientation="Horizontal"/>
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border CornerRadius="8" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Margin="0,0,6,6" ClipToBounds="True">
+                                                                <Image Source="{Binding}" MaxWidth="220" MaxHeight="160" Stretch="Uniform"/>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="12.5" FontFamily="Segoe UI"
                                                          Foreground="{DynamicResource NotebookTextBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                                          IsReadOnly="True" IsReadOnlyCaretVisible="False" Cursor="Arrow"
                                                          SelectionBrush="{DynamicResource PrimaryAccentBrush}" SelectionOpacity="0.3">
@@ -1515,12 +1593,6 @@
                                                     <Button x:Name="RegenerateActionButton" Click="RegenerateMessage_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Regenerate" AutomationProperties.Name="Regenerate" Visibility="Collapsed">
                                                         <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M13.2,8 A5.2,5.2 0 1 1 11.7,4.3 M12.2,1.6 L12.2,4.6 L9.2,4.6"/>
                                                     </Button>
-                                                    <Button x:Name="RetryCloudActionButton" Click="RetryOtherCloudModel_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Retry with another model" AutomationProperties.Name="Retry with another model" Visibility="Collapsed">
-                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M2.5,5.2 L12.5,5.2 M10,2.7 L12.5,5.2 L10,7.7 M13.5,10.8 L3.5,10.8 M6,8.3 L3.5,10.8 L6,13.3"/>
-                                                    </Button>
-                                                    <Button x:Name="OpenCanvasActionButton" Click="OpenMessageInProjectCanvas_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Open in Canvas" AutomationProperties.Name="Open in Canvas" Visibility="Collapsed">
-                                                        <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M2.5,3.2 L13.5,3.2 L13.5,12.8 L2.5,12.8 Z M9.3,3.2 L9.3,12.8 M10.9,6 L12,6 M10.9,8 L12,8"/>
-                                                    </Button>
                                                     <Button x:Name="PinActionButton" Click="PinMessage_Click" Tag="{Binding}" Style="{StaticResource MessageActionIconButtonStyle}" ToolTip="Pin" AutomationProperties.Name="Pin">
                                                         <Path Style="{StaticResource MessageActionIconPathStyle}" Data="M5.8,2.3 L10.2,2.3 M7,2.3 L7,6.4 L4.6,9 L11.4,9 L9,6.4 L9,2.3 M8,9 L8,13.8"/>
                                                     </Button>
@@ -1537,6 +1609,8 @@
                                             <DataTrigger Binding="{Binding Role}" Value="user">
                                                 <Setter TargetName="BubbleBorder" Property="HorizontalAlignment" Value="Right"/>
                                                 <Setter TargetName="BubbleBorder" Property="Margin" Value="80,4,8,4"/>
+                                                <Setter TargetName="BubbleBorder" Property="Padding" Value="13,7"/>
+                                                <Setter TargetName="BubbleBorder" Property="CornerRadius" Value="12"/>
                                                 <Setter TargetName="BubbleBorder" Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
                                                 <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
                                                 <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="1"/>
@@ -1546,27 +1620,20 @@
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding Role}" Value="assistant">
                                                 <Setter TargetName="BubbleBorder" Property="HorizontalAlignment" Value="Left"/>
-                                                <Setter TargetName="BubbleBorder" Property="Margin" Value="8,4,80,4"/>
+                                                <Setter TargetName="BubbleBorder" Property="Margin" Value="8,2,48,2"/>
+                                                <Setter TargetName="BubbleBorder" Property="Padding" Value="4,6"/>
                                                 <Setter TargetName="BubbleBorder" Property="MinWidth" Value="300"/>
                                                 <Setter TargetName="BubbleBorder" Property="MaxWidth" Value="780"/>
-                                                <Setter TargetName="BubbleBorder" Property="Background" Value="{DynamicResource AiMessageBrush}"/>
-                                                <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
-                                                <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="1"/>
+                                                <Setter TargetName="BubbleBorder" Property="Background" Value="Transparent"/>
+                                                <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="Transparent"/>
+                                                <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="0"/>
                                                 <Setter TargetName="ModelLabelBlock" Property="Visibility" Value="Visible"/>
                                                 <Setter TargetName="ActionButtonPanel" Property="Visibility" Value="Visible"/>
                                                 <Setter TargetName="RegenerateActionButton" Property="Visibility" Value="Visible"/>
-                                                <Setter TargetName="RetryCloudActionButton" Property="Visibility" Value="Visible"/>
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding ShouldShowGenerationStatus}" Value="True">
                                                 <Setter TargetName="AssistantGenerationStatusText" Property="Visibility" Value="Visible"/>
                                             </DataTrigger>
-                                            <MultiDataTrigger>
-                                                <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding Role}" Value="assistant"/>
-                                                    <Condition Binding="{Binding HasCanvasArtifact}" Value="True"/>
-                                                </MultiDataTrigger.Conditions>
-                                                <Setter TargetName="OpenCanvasActionButton" Property="Visibility" Value="Visible"/>
-                                            </MultiDataTrigger>
                                             <DataTrigger Binding="{Binding IsSearchMatch}" Value="True">
                                                 <Setter TargetName="BubbleBorder" Property="BorderBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
                                                 <Setter TargetName="BubbleBorder" Property="BorderThickness" Value="2"/>
@@ -1668,43 +1735,43 @@
                                         Text="Ready when you are"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
-                                        FontSize="34" FontFamily="Georgia"
+                                        FontSize="26" FontFamily="Georgia"
                                        FontWeight="Normal"
                                          Foreground="{DynamicResource NotebookTextBrush}"
                                        TextAlignment="Center"
                                         IsHitTestVisible="False"
                                         Visibility="Visible"/>
-                            <TextBlock Text="A little space to think, explore, and build." Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="13" Margin="0,14,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
+                            <TextBlock Text="A little space to think, explore, and build." Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11.5" Margin="0,10,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Grid>
 
                     <!-- Input Area -->
-                    <Border Grid.Row="1" BorderThickness="0" Padding="0,8,0,0" Background="Transparent">
+                    <Border Grid.Row="1" BorderThickness="0" Padding="0,6,0,0" Background="Transparent">
                         <StackPanel>
-                            <Border x:Name="BranchNavigatorBorder" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="8" Margin="32,0,32,8">
+                            <Border x:Name="BranchNavigatorBorder" Visibility="Collapsed" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="8" Margin="32,0,32,6">
                                 <DockPanel>
                                     <TextBlock Text="Branch:" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center"/>
                                     <ComboBox x:Name="BranchNavigatorCombo" SelectionChanged="BranchNavigatorCombo_SelectionChanged" Margin="8,0,0,0" MinWidth="220" Height="24"/>
                                 </DockPanel>
                             </Border>
 
+                            <!-- Borderless concise status line above composer (Image 6 blue circle) -->
                             <Border x:Name="ToolActivityIndicatorHost"
                                     Visibility="Collapsed"
-                                     HorizontalAlignment="Center"
-                                     Margin="24,0,24,8"
-                                    Padding="8,4"
-                                       Background="{DynamicResource NotebookSurfaceBrush}"
-                                       BorderBrush="{DynamicResource NotebookBorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Opacity="0.96">
+                                    HorizontalAlignment="Stretch"
+                                    MaxWidth="900"
+                                    Margin="36,0,36,4"
+                                    Padding="4,2"
+                                    Background="Transparent"
+                                    BorderThickness="0">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock x:Name="ToolActivityIndicatorGlyph"
-                                               Text="◌"
-                                               FontSize="12"
-                                                Foreground="{DynamicResource MutedTextBrush}"
+                                               Visibility="Collapsed"
+                                               Text=""
+                                               FontSize="11"
+                                               Foreground="{DynamicResource MutedTextBrush}"
                                                FontFamily="Segoe UI"
-                                               Margin="0,0,6,0"
+                                               Margin="0,0,4,0"
                                                VerticalAlignment="Center">
                                         <TextBlock.RenderTransform>
                                             <ScaleTransform ScaleX="1" ScaleY="1"/>
@@ -1712,15 +1779,16 @@
                                     </TextBlock>
                                     <TextBlock x:Name="ToolActivityIndicatorText"
                                                Text=""
-                                               FontSize="11"
-                                                Foreground="{DynamicResource MutedTextBrush}"
+                                               FontSize="11.5"
+                                               Foreground="{DynamicResource DarkSecondaryBrush}"
                                                FontFamily="Segoe UI"
+                                               LineHeight="16"
                                                VerticalAlignment="Center"/>
                                 </StackPanel>
                             </Border>
 
                             <!-- Input Container -->
-                            <Border x:Name="InputContainerBorder" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="16" Padding="0" Margin="32,0,32,24" Opacity="1" HorizontalAlignment="Stretch" MaxWidth="900" MinWidth="320"
+                            <Border x:Name="InputContainerBorder" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="14" Padding="0" Margin="32,0,32,18" Opacity="1" HorizontalAlignment="Stretch" MaxWidth="900" MinWidth="320"
                                     AllowDrop="True" PreviewDragOver="InputContainer_PreviewDragOver" PreviewDrop="InputContainer_PreviewDrop">
                                 <Border.RenderTransform>
                                     <ScaleTransform ScaleX="1" ScaleY="1"/>
@@ -1735,28 +1803,29 @@
                                     <!-- Attachment preview tray: thumbnail chips built in code-behind,
                                          sitting above the prompt text so the user sees what they attached. -->
                                     <WrapPanel x:Name="AttachmentTrayPanel" Grid.Row="0" Orientation="Horizontal"
-                                               Margin="18,16,18,0" Visibility="Collapsed"/>
+                                               Margin="14,12,14,0" Visibility="Collapsed"/>
 
-                                    <Grid Grid.Row="1" MinHeight="78" MaxHeight="180">
+                                    <Grid Grid.Row="1" MinHeight="56" MaxHeight="160">
                                         <!-- Underlay: gold @MCP mentions (PrimaryAccent) while InputBox ink is transparent -->
                                         <TextBlock x:Name="InputBoxMentionOverlay"
                                                    VerticalAlignment="Top"
-                                                   Padding="22,20,22,10"
+                                                   Padding="16,12,16,8"
                                                    Margin="0"
                                                    Background="Transparent"
                                                    FontFamily="Segoe UI"
-                                                   FontSize="16"
+                                                   FontSize="13"
+                                                   LineHeight="19"
                                                    TextWrapping="Wrap"
                                                    IsHitTestVisible="False"
                                                    Visibility="Collapsed"/>
-                                        <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="22,20,22,10"
+                                        <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="16,12,16,8"
                                               Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}" BorderThickness="0" CaretBrush="{DynamicResource NotebookTextBrush}"
-                                              FontFamily="Segoe UI" FontSize="16" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
-                                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="78" MaxHeight="180"
+                                              FontFamily="Segoe UI" FontSize="13" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
+                                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="160"
                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                               SelectionBrush="#66B8924A" SelectionOpacity="1"/>
-                                        <TextBlock Text="Ask anything" Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI" FontSize="15"
-                                                   Margin="22,20,22,10" IsHitTestVisible="False" VerticalAlignment="Top">
+                                        <TextBlock Text="Ask anything" Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI" FontSize="12.5"
+                                                   Margin="16,12,16,8" IsHitTestVisible="False" VerticalAlignment="Top">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -2006,7 +2075,8 @@
                                                      </Border.Resources>
                                                      <StackPanel Orientation="Horizontal">
                                                          <Button x:Name="Edios15ModelButton" Content="Edios 1.5" Click="Edios15ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use Google Gemma 4 31B (free)" Margin="0,0,2,0"/>
-                                                         <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)"/>
+                                                         <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)" Margin="0,0,2,0"/>
+                                                         <Button x:Name="Threnody10ModelButton" Content="Threnody 1.0" Click="Threnody10ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use DeepSeek: DeepSeek V4.1 Flash"/>
                                                          <Button x:Name="CustomEndpointModelButton" Content="Kestral 1" Click="CustomEndpointModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
                                                      </StackPanel>
                                                  </Border>
@@ -2100,21 +2170,6 @@
                         <TextBlock Text="{Binding WordCountLabel}" Margin="12,8,0,0" Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11" VerticalAlignment="Center"/>
                         <TextBlock Text="{Binding Status}" Margin="12,8,0,0" Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11" VerticalAlignment="Center"/>
                     </StackPanel>
-                </Grid>
-            </DockPanel>
-
-            <!-- NEURON VIEW -->
-            <DockPanel x:Name="NeuronView" Visibility="Collapsed" Opacity="0" Background="{DynamicResource NotebookBackgroundBrush}">
-                <Border DockPanel.Dock="Top" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="32,20" Background="{DynamicResource NotebookSurfaceBrush}">
-                    <StackPanel>
-                        <TextBlock Text="Neuron" FontSize="28" FontWeight="Normal" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Georgia"/>
-                        <TextBlock x:Name="NeuronSummaryText" Text="Live graph of your activity across Chat and Workplace." FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0"/>
-                    </StackPanel>
-                </Border>
-                <Grid Margin="24">
-                    <Border Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12">
-                        <Canvas x:Name="NeuronCanvas" Background="{DynamicResource NotebookBackgroundBrush}" MinHeight="460"/>
-                    </Border>
                 </Grid>
             </DockPanel>
 
@@ -2541,6 +2596,28 @@
                                 <StackPanel x:Name="SettingsPageGeneral" Visibility="Collapsed">
                                 <TextBlock Text="General" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,12"/>
 
+                                <!-- Your Profile card (Requirement #15) -->
+                                <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
+                                        CornerRadius="10" Padding="14,12" Margin="0,0,0,14">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="34" Height="34" CornerRadius="17" Background="{DynamicResource AccentSoftBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" VerticalAlignment="Center" Margin="0,0,12,0">
+                                            <TextBlock Text="&#xE77B;" FontFamily="{StaticResource AxiomIconFont}" FontSize="15" LineHeight="Auto"
+                                                       Foreground="{DynamicResource AccentBrightBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock x:Name="ProfileCardTitleText" Text="Your Name" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" LineHeight="16"/>
+                                            <TextBlock x:Name="ProfileCardSubtitleText" Text="0 lifetime tokens · 0 day streak" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,12,0" LineHeight="14"/>
+                                        </StackPanel>
+                                        <Button x:Name="OpenYourProfileButton" Grid.Column="2" Content="Your Profile" Click="OpenYourProfileButton_Click"
+                                                Height="30" MinWidth="120" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Border>
+
                                 <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
                                         CornerRadius="10" Padding="14,12" Margin="0,0,0,16">
                                     <Grid>
@@ -2699,6 +2776,111 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
+                                </StackPanel>
+
+                                <!-- ═══ YOUR PROFILE (Image 7) ═══ -->
+                                <StackPanel x:Name="SettingsPageProfile" Visibility="Collapsed" Margin="0,0,0,12">
+                                    <Button Content="← Back to General"
+                                            Click="BackToGeneralSettings_Click"
+                                            HorizontalAlignment="Left"
+                                            Height="28"
+                                            Padding="10,0"
+                                            FontSize="11"
+                                            Style="{StaticResource SubtleButtonStyle}"
+                                            Margin="0,0,0,14"/>
+
+                                    <!-- Clickable user display name ("Your Name" by default) -->
+                                    <Button x:Name="ProfileDisplayNameButton"
+                                            Click="EditProfileName_Click"
+                                            HorizontalAlignment="Center"
+                                            Background="Transparent"
+                                            BorderBrush="Transparent"
+                                            BorderThickness="0"
+                                            Cursor="Hand"
+                                            Padding="12,4"
+                                            ToolTip="Click to change your name"
+                                            Margin="0,0,0,14">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock x:Name="ProfileDisplayNameText"
+                                                       Text="Your Name"
+                                                       FontSize="20"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource NotebookTextBrush}"
+                                                       LineHeight="26"/>
+                                            <TextBlock Text="&#xE70F;"
+                                                       FontFamily="{StaticResource AxiomIconFont}"
+                                                       FontSize="11"
+                                                       LineHeight="Auto"
+                                                       Foreground="{DynamicResource MutedTextBrush}"
+                                                       Margin="8,0,0,0"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <!-- Stats pill bar (Lifetime tokens, Longest streak, Current streak) -->
+                                    <Border Background="{DynamicResource NotebookBackgroundBrush}"
+                                            BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10"
+                                            Padding="14,12"
+                                            Margin="0,0,0,22">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                                <TextBlock x:Name="ProfileLifetimeTokensText" Text="0" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Center" LineHeight="20"/>
+                                                <TextBlock Text="Lifetime tokens" FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Center" Margin="0,2,0,0" LineHeight="14"/>
+                                            </StackPanel>
+
+                                            <Border Grid.Column="1" Width="1" Background="{DynamicResource NotebookBorderBrush}" Margin="6,2"/>
+
+                                            <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                                <TextBlock x:Name="ProfileLongestStreakText" Text="0 days" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Center" LineHeight="20"/>
+                                                <TextBlock Text="Longest streak" FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Center" Margin="0,2,0,0" LineHeight="14"/>
+                                            </StackPanel>
+
+                                            <Border Grid.Column="3" Width="1" Background="{DynamicResource NotebookBorderBrush}" Margin="6,2"/>
+
+                                            <StackPanel Grid.Column="4" HorizontalAlignment="Center">
+                                                <TextBlock x:Name="ProfileCurrentStreakText" Text="0 days" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" HorizontalAlignment="Center" LineHeight="20"/>
+                                                <TextBlock Text="Current streak" FontSize="10.5" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Center" Margin="0,2,0,0" LineHeight="14"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Token Activity 52-week themed heatmap -->
+                                    <Grid Margin="2,0,2,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Token activity" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" VerticalAlignment="Center" LineHeight="18"/>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button x:Name="ProfileModeDailyButton" Content="Daily" Tag="Daily" Click="ProfileModeButton_Click"
+                                                    Background="Transparent" BorderThickness="0" Padding="8,3" FontSize="11" Height="24" Margin="0,0,2,0"/>
+                                            <Button x:Name="ProfileModeWeeklyButton" Content="Weekly" Tag="Weekly" Click="ProfileModeButton_Click"
+                                                    Background="Transparent" BorderThickness="0" Padding="8,3" FontSize="11" Height="24" Margin="0,0,2,0"/>
+                                            <Button x:Name="ProfileModeCumulativeButton" Content="Cumulative" Tag="Cumulative" Click="ProfileModeButton_Click"
+                                                    Background="Transparent" BorderThickness="0" Padding="8,3" FontSize="11" Height="24"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Border Background="{DynamicResource NotebookBackgroundBrush}"
+                                            BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10"
+                                            Padding="12,12,12,10">
+                                        <StackPanel>
+                                            <UniformGrid x:Name="ProfileHeatmapGrid" Columns="52" Rows="7"/>
+                                            <Grid x:Name="ProfileMonthLabelsGrid" Margin="0,8,0,0"/>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </StackPanel>
                             </ScrollViewer>

@@ -55,8 +55,9 @@ namespace Malx_AI
             if (!_isSidebarCollapsed && !_isSidebarAnimating)
                 SidebarColumn.Width = new GridLength(sidebarWidth);
 
-            NavigationBar.Padding = compact ? new Thickness(12, 8, 12, 8) : new Thickness(20, 12, 20, 12);
-            ChatHeaderBorder.Padding = compact ? new Thickness(20, 10, 20, 2) : new Thickness(28, 14, 28, 4);
+            NavigationBar.Padding = new Thickness(0);
+            double chatLeftPad = _isSidebarCollapsed ? 42 : (compact ? 20 : 28);
+            ChatHeaderBorder.Padding = compact ? new Thickness(chatLeftPad, 10, 20, 2) : new Thickness(chatLeftPad, 14, 28, 4);
             TokenUsagePanel.Width = compact ? 300 : wide ? 380 : 340;
             // Bottom padding stays small: it is a dead band inside the scroll viewport where
             // messages are clipped, which read as an empty strip above the composer.
@@ -184,8 +185,8 @@ namespace Malx_AI
         private double GetResponsiveSidebarWidth()
         {
             if (ActualWidth < CompactDesktopBreakpoint)
-                return 248;
-            return ActualWidth >= WideDesktopBreakpoint ? 304 : 280;
+                return 256;
+            return ActualWidth >= WideDesktopBreakpoint ? 276 : 268;
         }
 
         private Rect GetCurrentMonitorWorkAreaInDips()

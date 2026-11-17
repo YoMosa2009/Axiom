@@ -798,43 +798,31 @@ namespace Malx_AI
 
         private void ToolActivityTimer_Tick(object? sender, EventArgs e)
         {
-            if (ToolActivityIndicatorText == null)
+            if (ToolActivityIndicatorText == null || string.IsNullOrWhiteSpace(_activeToolIndicatorLabel))
                 return;
 
-            string dots = _activeToolIndicatorPhase switch
-            {
-                0 => string.Empty,
-                1 => ".",
-                2 => "..",
-                _ => "..."
-            };
-
-            ToolActivityIndicatorText.Text = _activeToolIndicatorLabel + dots;
-            _activeToolIndicatorPhase = (_activeToolIndicatorPhase + 1) % 4;
-
-            if (ToolActivityIndicatorGlyph != null)
-            {
-                string[] glyphFrames = ["◌", "○", "◍", "●"];
-                ToolActivityIndicatorGlyph.Text = glyphFrames[_activeToolIndicatorGlyphPhase % glyphFrames.Length];
-                _activeToolIndicatorGlyphPhase = (_activeToolIndicatorGlyphPhase + 1) % glyphFrames.Length;
-            }
+            int elapsedSeconds = Math.Max(0, (int)Math.Floor((DateTime.UtcNow - _toolActivityStartedUtc).TotalSeconds));
+            ToolActivityIndicatorText.Text = $"{_activeToolIndicatorLabel}  {elapsedSeconds}s ›";
         }
 
         private void StartToolActivityIndicator(string toolName)
         {
             void Apply()
             {
-                _activeToolIndicatorLabel = toolName?.Trim() ?? string.Empty;
-                _activeToolIndicatorPhase = 0;
-                _activeToolIndicatorGlyphPhase = 0;
+                string nextLabel = toolName?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(_activeToolIndicatorLabel) && !string.IsNullOrWhiteSpace(nextLabel))
+                    _toolActivityStartedUtc = DateTime.UtcNow;
+
+                _activeToolIndicatorLabel = nextLabel;
                 if (ToolActivityIndicatorText != null && ToolActivityIndicatorHost != null)
                 {
                     ToolActivityIndicatorHost.Visibility = string.IsNullOrWhiteSpace(_activeToolIndicatorLabel)
                         ? Visibility.Collapsed
                         : Visibility.Visible;
-                    ToolActivityIndicatorText.Text = _activeToolIndicatorLabel;
-                    if (ToolActivityIndicatorGlyph != null)
-                        ToolActivityIndicatorGlyph.Text = "◌";
+                    int elapsedSeconds = Math.Max(0, (int)Math.Floor((DateTime.UtcNow - _toolActivityStartedUtc).TotalSeconds));
+                    ToolActivityIndicatorText.Text = string.IsNullOrWhiteSpace(_activeToolIndicatorLabel)
+                        ? string.Empty
+                        : $"{_activeToolIndicatorLabel}  {elapsedSeconds}s ›";
                 }
 
                 if (!string.IsNullOrWhiteSpace(_activeToolIndicatorLabel))
@@ -842,7 +830,6 @@ namespace Malx_AI
                     _toolActivityTimer.Start();
                     ToolActivityTimer_Tick(this, EventArgs.Empty);
                     ToolActivityIndicatorHost?.InvalidateVisual();
-                    ToolActivityIndicatorHost?.UpdateLayout();
                 }
             }
 
@@ -858,14 +845,10 @@ namespace Malx_AI
             {
                 _toolActivityTimer.Stop();
                 _activeToolIndicatorLabel = string.Empty;
-                _activeToolIndicatorPhase = 0;
-                _activeToolIndicatorGlyphPhase = 0;
                 if (ToolActivityIndicatorText != null && ToolActivityIndicatorHost != null)
                 {
                     ToolActivityIndicatorText.Text = string.Empty;
                     ToolActivityIndicatorHost.Visibility = Visibility.Collapsed;
-                    if (ToolActivityIndicatorGlyph != null)
-                        ToolActivityIndicatorGlyph.Text = string.Empty;
                 }
             }
 

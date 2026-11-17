@@ -93,6 +93,11 @@ namespace Malx_AI
         private string _nextMessageModelOverride = "";
         private readonly Dictionary<int, WorkplaceSessionSnapshot> _workplaceChats = new();
         private readonly Dictionary<int, string> _workplaceChatNames = new();
+        private readonly Dictionary<int, string> _workplaceProjectFolders = new();
+        private readonly Dictionary<int, DateTime> _workplaceUpdatedAt = new();
+        private readonly List<string> _pinnedProjectFolders = new();
+        private bool _hideEmptyProjectFolders;
+        private TokenActivityViewMode _activeProfileViewMode = TokenActivityViewMode.Daily;
         private int _workplaceChatCounter = 0;
         private int _currentWorkplaceChatId = -1;
         private Button _activeWorkplaceButton = null;
@@ -232,13 +237,9 @@ namespace Malx_AI
                 ContextLengthValueText.Text = _savedLocalContextLength.ToString("F0", CultureInfo.InvariantCulture) + " tokens";
         }
         private readonly RotateTransform _inlineSpinnerRotate = new();
-        private readonly System.Windows.Threading.DispatcherTimer _neuronTimer = new();
         private readonly System.Windows.Threading.DispatcherTimer _toolActivityTimer = new();
-        private readonly Dictionary<string, NeuronBranchNode> _neuronBranches = new(StringComparer.OrdinalIgnoreCase);
-        private int _neuronTick;
+        private DateTime _toolActivityStartedUtc;
         private string _activeToolIndicatorLabel = string.Empty;
-        private int _activeToolIndicatorPhase;
-        private int _activeToolIndicatorGlyphPhase;
         private bool _loadedPersistedWorkplaceChats;
         private Button? _normalThinkingToggleButton;
         private System.Windows.Controls.Primitives.ToggleButton? _normalWebSearchToggleButton;
@@ -246,6 +247,7 @@ namespace Malx_AI
         private Button? _cloudModeButton;
         private Button? _edios15ModelButton;
         private Button? _hepha25CoderModelButton;
+        private Button? _threnody10ModelButton;
         private Button? _hybridLocalModeButton;
         private Button? _customEndpointModelButton;
         private bool _isFetchingOpenRouterUsage;
@@ -405,26 +407,6 @@ namespace Malx_AI
         ];
 
         private const string NormalChatAttachmentDialogFilter = "Supported files (documents;spreadsheets;presentations;e-books;notebooks;code;images)|*.pdf;*.txt;*.md;*.markdown;*.json;*.jsonc;*.xml;*.yaml;*.yml;*.toml;*.csv;*.tsv;*.xlsx;*.docx;*.pptx;*.odt;*.ods;*.odp;*.epub;*.ipynb;*.rtf;*.log;*.ini;*.config;*.cs;*.js;*.ts;*.jsx;*.tsx;*.html;*.htm;*.css;*.sql;*.py;*.java;*.cpp;*.c;*.h;*.go;*.rs;*.rb;*.php;*.ps1;*.bat;*.sh;*.tex;*.srt;*.vtt;*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|Documents (*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md)|*.pdf;*.docx;*.pptx;*.odt;*.odp;*.epub;*.rtf;*.txt;*.md;*.markdown|Spreadsheets and data (*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb)|*.xlsx;*.ods;*.csv;*.tsv;*.json;*.ipynb|Images (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp|All files (*.*)|*.*";
-
-        private sealed class NeuronBranchNode
-        {
-            public string Label { get; init; } = "";
-            public int Weight { get; set; }
-            public double OrbitAngle { get; set; }
-            public double OrbitRadius { get; set; }
-            public int LastSeenTick { get; set; }
-            public int SourceIndex { get; set; } = 1;
-        }
-
-        private static readonly Color[] NeuronNodeColors =
-        [
-            Color.FromRgb(0xC8, 0xA9, 0x6A), // 0 User       – warm amber
-            Color.FromRgb(0x5B, 0x8D, 0xB8), // 1 Chat       – steel blue
-            Color.FromRgb(0xC9, 0x88, 0x2A), // 2 Workplace  – golden amber
-            Color.FromRgb(0x4A, 0x9E, 0x8F), // 3 Documents  – teal
-            Color.FromRgb(0x8B, 0x6B, 0xAE), // 4 Study      – soft purple
-            Color.FromRgb(0xD4, 0x70, 0x3A), // 5 Calculator – burnt orange
-        ];
 
         private readonly ObservableCollection<ChatMessage> _chatMessages = new();
         private ChatMessage _currentStreamingMessage;
@@ -594,12 +576,14 @@ namespace Malx_AI
                     _ = Task.Run(UpdateApplyService.CleanupOldStagingDirectories);
                 }
                 _ = CheckForAppUpdateOnStartupAsync();
-                _neuronTimer.Interval = TimeSpan.FromMilliseconds(750);
-                _neuronTimer.Tick += (_, _) => UpdateNeuronMap();
                 _toolActivityTimer.Interval = TimeSpan.FromMilliseconds(500);
                 _toolActivityTimer.Tick += ToolActivityTimer_Tick;
                 _chatMessages.CollectionChanged += ChatMessages_CollectionChanged;
                 WorkplaceViewControl.ProjectCanvasShownChanged += WorkplaceView_ProjectCanvasShownChanged;
+                WorkplaceViewControl.SessionMetadataChanged += WorkplaceView_SessionMetadataChanged;
+                GenerationTelemetry.OnTokensCommitted = tokens => UserProfileStatsService.Shared.RecordTokens(tokens);
+                UserProfileStatsService.Shared.Changed += () => Dispatcher.InvokeAsync(RefreshUserProfileUi);
+                RefreshUserProfileUi();
             }
             catch (Exception ex)
             {
@@ -647,6 +631,13 @@ namespace Malx_AI
             _isSidebarCollapsed = collapse;
             ((ScaleTransform)SidebarCollapseGlyph.RenderTransform).ScaleX = collapse ? -1 : 1;
             SidebarCollapseButton.ToolTip = collapse ? "Show sidebar (Ctrl+B)" : "Hide sidebar (Ctrl+B)";
+            if (SidebarExpandButton != null)
+                SidebarExpandButton.Visibility = collapse ? Visibility.Visible : Visibility.Collapsed;
+            WorkplaceViewControl?.SetLeftSidebarCollapsedOffset(collapse);
+            double chatLeftPad = collapse ? 42 : (ActualWidth < CompactDesktopBreakpoint ? 20 : 28);
+            ChatHeaderBorder.Padding = ActualWidth < CompactDesktopBreakpoint
+                ? new Thickness(chatLeftPad, 10, 20, 2)
+                : new Thickness(chatLeftPad, 14, 28, 4);
 
             if (animated && !_isSidebarAnimating)
             {
@@ -1514,7 +1505,8 @@ namespace Malx_AI
                 CloudPromptTokens = msg.CloudPromptTokens,
                 CloudCompletionTokens = msg.CloudCompletionTokens,
                 CloudTotalTokens = msg.CloudTotalTokens,
-                CanvasReplyText = msg.CanvasReplyText
+                CanvasReplyText = msg.CanvasReplyText,
+                AttachedImageSources = msg.AttachedImageSources?.ToList() ?? new List<string>()
             };
         }
 
@@ -1532,7 +1524,8 @@ namespace Malx_AI
                 CloudPromptTokens = state.CloudPromptTokens,
                 CloudCompletionTokens = state.CloudCompletionTokens,
                 CloudTotalTokens = state.CloudTotalTokens,
-                CanvasReplyText = state.CanvasReplyText
+                CanvasReplyText = state.CanvasReplyText,
+                AttachedImageSources = state.AttachedImageSources?.ToList() ?? new List<string>()
             };
         }
 
@@ -1695,14 +1688,20 @@ namespace Malx_AI
         {
             if (string.Equals(previousModelLabel, OpenRouterChatService.Edios15ModelLabel, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(previousModelLabel, "Eidos 1", StringComparison.OrdinalIgnoreCase))
-                return OpenRouterChatService.Hepha25CoderModelId;
+                return OpenRouterChatService.Threnody10ModelId;
 
             if (string.Equals(previousModelLabel, OpenRouterChatService.Hepha25CoderModelLabel, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(previousModelLabel, "Hepha 1", StringComparison.OrdinalIgnoreCase))
-                return OpenRouterChatService.Edios15ModelId;
+                return OpenRouterChatService.Threnody10ModelId;
 
-            return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Edios15ModelId, StringComparison.OrdinalIgnoreCase)
-                ? OpenRouterChatService.Hepha25CoderModelId
+            if (string.Equals(previousModelLabel, OpenRouterChatService.Threnody10ModelLabel, StringComparison.OrdinalIgnoreCase))
+                return OpenRouterChatService.Hepha25CoderModelId;
+
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Edios15ModelId, StringComparison.OrdinalIgnoreCase))
+                return OpenRouterChatService.Hepha25CoderModelId;
+
+            return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase)
+                ? OpenRouterChatService.Threnody10ModelId
                 : OpenRouterChatService.Edios15ModelId;
         }
 
@@ -1929,11 +1928,169 @@ namespace Malx_AI
             if (SettingsPageGeneral != null)
                 SettingsPageGeneral.Visibility = string.Equals(key, "General", StringComparison.OrdinalIgnoreCase)
                     ? Visibility.Visible : Visibility.Collapsed;
+            if (SettingsPageProfile != null)
+                SettingsPageProfile.Visibility = string.Equals(key, "Profile", StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Collapsed;
+
+            bool isGeneralOrProfile = string.Equals(key, "General", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "Profile", StringComparison.OrdinalIgnoreCase);
 
             HighlightSettingsNavButton(SettingsNavInferenceButton, string.Equals(key, "Inference", StringComparison.OrdinalIgnoreCase));
             HighlightSettingsNavButton(SettingsNavCloudButton, string.Equals(key, "Cloud", StringComparison.OrdinalIgnoreCase));
             HighlightSettingsNavButton(SettingsNavConnectorsButton, string.Equals(key, "Connectors", StringComparison.OrdinalIgnoreCase));
-            HighlightSettingsNavButton(SettingsNavGeneralButton, string.Equals(key, "General", StringComparison.OrdinalIgnoreCase));
+            HighlightSettingsNavButton(SettingsNavGeneralButton, isGeneralOrProfile);
+
+            if (isGeneralOrProfile)
+                RefreshUserProfileUi();
+        }
+
+        private void OpenYourProfileButton_Click(object sender, RoutedEventArgs e)
+            => ShowSettingsPage("Profile");
+
+        private void BackToGeneralSettings_Click(object sender, RoutedEventArgs e)
+            => ShowSettingsPage("General");
+
+        private void EditProfileName_Click(object sender, RoutedEventArgs e)
+        {
+            string current = UserProfileStatsService.Shared.GetSummary().DisplayName;
+            string? entered = PromptForText("Your Name", "Enter your display name for Axiom Profile:", current);
+            if (entered == null)
+                return;
+            UserProfileStatsService.Shared.SetDisplayName(entered);
+            RefreshUserProfileUi();
+        }
+
+        private void ProfileModeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not string modeStr)
+                return;
+
+            _activeProfileViewMode = modeStr switch
+            {
+                "Weekly" => TokenActivityViewMode.Weekly,
+                "Cumulative" => TokenActivityViewMode.Cumulative,
+                _ => TokenActivityViewMode.Daily
+            };
+            RefreshUserProfileUi();
+        }
+
+        private void RefreshUserProfileUi()
+        {
+            if (ProfileDisplayNameText == null || ProfileHeatmapGrid == null)
+                return;
+
+            UserProfileSummary summary = UserProfileStatsService.Shared.GetSummary(DateTime.Now);
+            if (ProfileCardTitleText != null)
+                ProfileCardTitleText.Text = summary.DisplayName;
+            if (ProfileCardSubtitleText != null)
+                ProfileCardSubtitleText.Text = $"{summary.FormattedLifetimeTokens} lifetime tokens · {summary.CurrentStreakDays} day streak";
+
+            ProfileDisplayNameText.Text = summary.DisplayName;
+            if (ProfileLifetimeTokensText != null)
+                ProfileLifetimeTokensText.Text = summary.FormattedLifetimeTokens;
+            if (ProfileLongestStreakText != null)
+                ProfileLongestStreakText.Text = $"{summary.LongestStreakDays} days";
+            if (ProfileCurrentStreakText != null)
+                ProfileCurrentStreakText.Text = $"{summary.CurrentStreakDays} days";
+
+            HighlightProfileModeButton(ProfileModeDailyButton, _activeProfileViewMode == TokenActivityViewMode.Daily);
+            HighlightProfileModeButton(ProfileModeWeeklyButton, _activeProfileViewMode == TokenActivityViewMode.Weekly);
+            HighlightProfileModeButton(ProfileModeCumulativeButton, _activeProfileViewMode == TokenActivityViewMode.Cumulative);
+
+            AppThemePalette palette = AppTheme.Current;
+            Color emptyColor = ParseHexColorOrDefault(palette.Surface, Color.FromRgb(0x21, 0x1F, 0x1D));
+            Color accentColor = ParseHexColorOrDefault(palette.Accent, Color.FromRgb(0xB8, 0x92, 0x4A));
+            SolidColorBrush[] levelBrushes =
+            [
+                new(BlendRgb(emptyColor, Colors.White, 0.04)),
+                new(BlendRgb(emptyColor, accentColor, 0.30)),
+                new(BlendRgb(emptyColor, accentColor, 0.52)),
+                new(BlendRgb(emptyColor, accentColor, 0.76)),
+                new(accentColor)
+            ];
+            foreach (var b in levelBrushes)
+                b.Freeze();
+
+            TokenHeatmapGrid grid = UserProfileStatsService.Shared.BuildHeatmap(_activeProfileViewMode, DateTime.Now, 52);
+            ProfileHeatmapGrid.Children.Clear();
+            ProfileHeatmapGrid.Columns = grid.Weeks;
+            ProfileHeatmapGrid.Rows = grid.DaysPerWeek;
+
+            for (int day = 0; day < grid.DaysPerWeek; day++)
+            {
+                for (int week = 0; week < grid.Weeks; week++)
+                {
+                    int idx = week * grid.DaysPerWeek + day;
+                    TokenHeatmapCell cell = idx < grid.Cells.Count
+                        ? grid.Cells[idx]
+                        : new TokenHeatmapCell(DateTime.Today, 0, 0, string.Empty);
+                    int level = Math.Clamp(cell.IntensityLevel, 0, 4);
+                    ProfileHeatmapGrid.Children.Add(new Border
+                    {
+                        Width = 10,
+                        Height = 10,
+                        Margin = new Thickness(1.5),
+                        CornerRadius = new CornerRadius(2.5),
+                        Background = levelBrushes[level],
+                        ToolTip = string.IsNullOrWhiteSpace(cell.TooltipText) ? null : cell.TooltipText
+                    });
+                }
+            }
+
+            if (ProfileMonthLabelsGrid != null)
+            {
+                ProfileMonthLabelsGrid.Children.Clear();
+                ProfileMonthLabelsGrid.ColumnDefinitions.Clear();
+                for (int week = 0; week < grid.Weeks; week++)
+                    ProfileMonthLabelsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                for (int week = 0; week < grid.MonthLabels.Count && week < grid.Weeks; week++)
+                {
+                    string month = grid.MonthLabels[week];
+                    if (string.IsNullOrEmpty(month))
+                        continue;
+                    var tb = new TextBlock
+                    {
+                        Text = month,
+                        FontSize = 9.5,
+                        LineHeight = double.NaN,
+                        Foreground = AppBrushCache.Get(palette.TextMuted)
+                    };
+                    Grid.SetColumn(tb, week);
+                    Grid.SetColumnSpan(tb, Math.Min(4, grid.Weeks - week));
+                    ProfileMonthLabelsGrid.Children.Add(tb);
+                }
+            }
+        }
+
+        private static void HighlightProfileModeButton(Button? button, bool active)
+        {
+            if (button == null)
+                return;
+            AppThemePalette palette = AppTheme.Current;
+            button.Background = active ? AppBrushCache.Get(palette.Surface) : Brushes.Transparent;
+            button.Foreground = AppBrushCache.Get(active ? palette.Text : palette.TextMuted);
+            button.FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal;
+        }
+
+        private static Color ParseHexColorOrDefault(string? hex, Color fallback)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(hex) && ColorConverter.ConvertFromString(hex) is Color c)
+                    return c;
+            }
+            catch { }
+            return fallback;
+        }
+
+        private static Color BlendRgb(Color a, Color b, double amount)
+        {
+            double t = Math.Clamp(amount, 0, 1);
+            return Color.FromRgb(
+                (byte)Math.Round(a.R + (b.R - a.R) * t),
+                (byte)Math.Round(a.G + (b.G - a.G) * t),
+                (byte)Math.Round(a.B + (b.B - a.B) * t));
         }
 
         private static void HighlightSettingsNavButton(Button? button, bool selected)
@@ -2121,35 +2278,51 @@ namespace Malx_AI
         {
             if (_loadedPersistedWorkplaceChats && _workplaceChats.Count > 0)
             {
-                RebuildWorkplaceHistoryUi();
                 int idToLoad = _currentWorkplaceChatId > 0 && _workplaceChats.ContainsKey(_currentWorkplaceChatId)
                     ? _currentWorkplaceChatId
                     : _workplaceChats.Keys.OrderBy(k => k).First();
-                LoadWorkplaceChat(idToLoad, _workplaceChatNames.TryGetValue(idToLoad, out var savedName) ? savedName : $"Workplace {idToLoad}");
+                RebuildWorkplaceHistoryUi();
+                LoadWorkplaceChat(idToLoad, _workplaceChatNames.TryGetValue(idToLoad, out var savedName) ? savedName : "New session");
                 return;
             }
 
             _workplaceChatCounter = 1;
             _currentWorkplaceChatId = 1;
-            _workplaceChats[_currentWorkplaceChatId] = WorkplaceViewControl.CaptureSnapshot();
-            _workplaceChatNames[_currentWorkplaceChatId] = "Workplace 1";
-            AddWorkplaceToHistory("Workplace 1", _currentWorkplaceChatId);
-            RefreshWorkplaceHistoryActions();
+            WorkplaceSessionSnapshot initialSnapshot = WorkplaceViewControl.CaptureSnapshot();
+            initialSnapshot.SessionTitle = "New session";
+            initialSnapshot.UpdatedAt = DateTime.Now;
+            _workplaceChats[_currentWorkplaceChatId] = initialSnapshot;
+            _workplaceChatNames[_currentWorkplaceChatId] = "New session";
+            _workplaceUpdatedAt[_currentWorkplaceChatId] = initialSnapshot.UpdatedAt;
+            _workplaceProjectFolders[_currentWorkplaceChatId] = initialSnapshot.ProjectFolderPath ?? string.Empty;
+            RebuildWorkplaceHistoryUi();
         }
 
         private async void NewWorkplace_Click(object sender, RoutedEventArgs e)
+            => await CreateWorkplaceInProjectAsync(null);
+
+        private async Task CreateWorkplaceInProjectAsync(string? projectFolder)
         {
             SaveCurrentWorkplaceChat();
 
             _workplaceChatCounter++;
             _currentWorkplaceChatId = _workplaceChatCounter;
-            string name = $"Workplace {_workplaceChatCounter}";
+            string cleanFolder = projectFolder?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(cleanFolder))
+                AddPinnedProjectFolder(cleanFolder);
 
-            WorkplaceViewControl.ResetWorkspaceSession();
-            _workplaceChats[_currentWorkplaceChatId] = WorkplaceViewControl.CaptureSnapshot();
+            string name = "New session";
+            WorkplaceViewControl.ResetWorkspaceSession(cleanFolder);
+            WorkplaceSessionSnapshot snap = WorkplaceViewControl.CaptureSnapshot();
+            snap.SessionTitle = name;
+            snap.ProjectFolderPath = cleanFolder;
+            snap.UpdatedAt = DateTime.Now;
+
+            _workplaceChats[_currentWorkplaceChatId] = snap;
             _workplaceChatNames[_currentWorkplaceChatId] = name;
-            AddWorkplaceToHistory(name, _currentWorkplaceChatId);
-            RefreshWorkplaceHistoryActions();
+            _workplaceProjectFolders[_currentWorkplaceChatId] = cleanFolder;
+            _workplaceUpdatedAt[_currentWorkplaceChatId] = snap.UpdatedAt;
+            RebuildWorkplaceHistoryUi();
 
             // Await the save so the new workplace is guaranteed to persist even if
             // a background chat save holds the coordinated-persistence gate right now.
@@ -2164,15 +2337,12 @@ namespace Malx_AI
             bool deletingCurrent = deleteId == _currentWorkplaceChatId;
             _workplaceChats.Remove(deleteId);
             _workplaceChatNames.Remove(deleteId);
-
-            var toRemove = WorkplaceHistoryStack.Children
-                .OfType<Button>()
-                .FirstOrDefault(b => b.Tag is int id && id == deleteId);
-            if (toRemove != null)
-                WorkplaceHistoryStack.Children.Remove(toRemove);
+            _workplaceProjectFolders.Remove(deleteId);
+            _workplaceUpdatedAt.Remove(deleteId);
 
             if (!deletingCurrent)
             {
+                RebuildWorkplaceHistoryUi();
                 await QueueCoordinatedChatPersistenceAsync(false, false, true, false);
                 return;
             }
@@ -2185,40 +2355,67 @@ namespace Malx_AI
             _currentWorkplaceChatId = -1;
 
             int next = _workplaceChats.Keys.OrderBy(k => k).First();
-            string nextName = _workplaceChatNames.TryGetValue(next, out string? n) ? n : $"Workplace {next}";
+            string nextName = _workplaceChatNames.TryGetValue(next, out string? n) ? n : "New session";
             LoadWorkplaceChat(next, nextName);
-            RefreshWorkplaceHistoryActions();
+            RebuildWorkplaceHistoryUi();
 
             // Await the save so the deletion is guaranteed to be persisted immediately.
             await QueueCoordinatedChatPersistenceAsync(false, false, true, false);
         }
 
         private void AddWorkplaceToHistory(string name, int workplaceId)
-        {
-            Button button = CreateSidebarItem(name, workplaceId, pinned: false,
-            [
-                new SidebarMenuAction("Rename", "\uE8AC", RenameWorkplaceMenuItem_Click, workplaceId),
-                new SidebarMenuAction("Delete", "\uE74D", DeleteWorkplaceMenuItem_Click, workplaceId, IsDestructive: true)
-            ]);
-
-            // Reads the name at click time so a rename is picked up.
-            button.Click += (_, _) => LoadWorkplaceChat(
-                workplaceId,
-                _workplaceChatNames.TryGetValue(workplaceId, out string? currentName) ? currentName : name);
-            WorkplaceHistoryStack.Children.Add(button);
-            SetActiveWorkplaceButton(button);
-            RefreshWorkplaceHistoryActions();
-        }
+            => RebuildWorkplaceHistoryUi();
 
         private void RebuildWorkplaceHistoryUi()
         {
+            if (WorkplaceHistoryStack == null)
+                return;
+
             WorkplaceHistoryStack.Children.Clear();
+            WorkplaceProjectsStack?.Children.Clear();
             _activeWorkplaceButton = null;
 
-            foreach (var id in _workplaceChats.Keys.OrderBy(k => k))
+            var orderedIds = _workplaceChats.Keys
+                .OrderByDescending(id => _workplaceUpdatedAt.TryGetValue(id, out DateTime dt) ? dt : DateTime.MinValue)
+                .ThenByDescending(id => id)
+                .ToList();
+
+            var knownFolders = new List<string>();
+            foreach (string pinned in _pinnedProjectFolders)
             {
-                string name = _workplaceChatNames.TryGetValue(id, out var n) ? n : $"Workplace {id}";
-                AddWorkplaceToHistory(name, id);
+                if (!string.IsNullOrWhiteSpace(pinned) && !knownFolders.Any(f => string.Equals(f, pinned, StringComparison.OrdinalIgnoreCase)))
+                    knownFolders.Add(pinned);
+            }
+            foreach (int id in orderedIds)
+            {
+                if (_workplaceProjectFolders.TryGetValue(id, out string? folder) && !string.IsNullOrWhiteSpace(folder)
+                    && !knownFolders.Any(f => string.Equals(f, folder, StringComparison.OrdinalIgnoreCase)))
+                {
+                    knownFolders.Add(folder);
+                }
+            }
+
+            if (WorkplaceProjectsStack != null)
+            {
+                foreach (string folder in knownFolders)
+                {
+                    var folderSessions = orderedIds
+                        .Where(id => _workplaceProjectFolders.TryGetValue(id, out string? f) && string.Equals(f, folder, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (_hideEmptyProjectFolders && folderSessions.Count == 0)
+                        continue;
+                    WorkplaceProjectsStack.Children.Add(CreateProjectGroupElement(folder, folderSessions));
+                }
+            }
+
+            var unscopedIds = orderedIds
+                .Where(id => !_workplaceProjectFolders.TryGetValue(id, out string? f) || string.IsNullOrWhiteSpace(f))
+                .ToList();
+            foreach (int id in unscopedIds)
+            {
+                string title = _workplaceChatNames.TryGetValue(id, out string? n) ? n : "New session";
+                DateTime updated = _workplaceUpdatedAt.TryGetValue(id, out DateTime dt) ? dt : DateTime.Now;
+                WorkplaceHistoryStack.Children.Add(CreateWorkplaceTreeRow(id, title, updated, indentLeft: 2));
             }
 
             RefreshWorkplaceHistoryActions();
@@ -2240,9 +2437,35 @@ namespace Malx_AI
             if (_currentWorkplaceChatId < 0)
                 return;
 
-            _workplaceChats[_currentWorkplaceChatId] = WorkplaceViewControl.CaptureSnapshot();
-            if (!_workplaceChatNames.ContainsKey(_currentWorkplaceChatId))
-                _workplaceChatNames[_currentWorkplaceChatId] = $"Workplace {_currentWorkplaceChatId}";
+            WorkplaceSessionSnapshot snapshot = WorkplaceViewControl.CaptureSnapshot();
+            if (!string.IsNullOrWhiteSpace(snapshot.SessionTitle) && !WorkplaceSessionTitleGenerator.IsPlaceholderName(snapshot.SessionTitle))
+                _workplaceChatNames[_currentWorkplaceChatId] = snapshot.SessionTitle;
+            else if (_workplaceChatNames.TryGetValue(_currentWorkplaceChatId, out string? existingName) && !string.IsNullOrWhiteSpace(existingName))
+                snapshot.SessionTitle = existingName;
+            else
+            {
+                snapshot.SessionTitle = "New session";
+                _workplaceChatNames[_currentWorkplaceChatId] = "New session";
+            }
+
+            _workplaceChats[_currentWorkplaceChatId] = snapshot;
+            _workplaceProjectFolders[_currentWorkplaceChatId] = snapshot.ProjectFolderPath ?? string.Empty;
+            _workplaceUpdatedAt[_currentWorkplaceChatId] = snapshot.UpdatedAt == default ? DateTime.Now : snapshot.UpdatedAt;
+            AddPinnedProjectFolder(snapshot.ProjectFolderPath);
+        }
+
+        private void WorkplaceView_SessionMetadataChanged(string sessionTitle, string projectFolderPath)
+        {
+            if (_currentWorkplaceChatId < 0)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(sessionTitle))
+                _workplaceChatNames[_currentWorkplaceChatId] = sessionTitle;
+            _workplaceProjectFolders[_currentWorkplaceChatId] = projectFolderPath ?? string.Empty;
+            _workplaceUpdatedAt[_currentWorkplaceChatId] = DateTime.Now;
+            AddPinnedProjectFolder(projectFolderPath);
+            RebuildWorkplaceHistoryUi();
+            _ = QueueCoordinatedChatPersistenceAsync(false, false, true, false);
         }
 
         private void LoadWorkplaceChat(int workplaceId, string workplaceName)
@@ -2254,15 +2477,7 @@ namespace Malx_AI
 
             _currentWorkplaceChatId = workplaceId;
             WorkplaceViewControl.RestoreSnapshot(snapshot);
-
-            foreach (UIElement child in WorkplaceHistoryStack.Children)
-            {
-                if (child is Button btn && btn.Tag is int id && id == workplaceId)
-                {
-                    SetActiveWorkplaceButton(btn);
-                    break;
-                }
-            }
+            RebuildWorkplaceHistoryUi();
 
             ShowTransientStatus($"Loaded {workplaceName}");
         }
@@ -2968,13 +3183,37 @@ namespace Malx_AI
 
                 _workplaceChats.Clear();
                 _workplaceChatNames.Clear();
+                _workplaceProjectFolders.Clear();
+                _workplaceUpdatedAt.Clear();
+                _pinnedProjectFolders.Clear();
+                foreach (string pinnedFolder in state.PinnedProjectFolders ?? [])
+                    AddPinnedProjectFolder(pinnedFolder);
+
                 foreach (var w in state.WorkplaceChats)
                 {
                     if (w.Id <= 0 || w.Snapshot == null)
                         continue;
 
                     _workplaceChats[w.Id] = w.Snapshot;
-                    _workplaceChatNames[w.Id] = string.IsNullOrWhiteSpace(w.Name) ? $"Workplace {w.Id}" : w.Name;
+                    string folder = !string.IsNullOrWhiteSpace(w.ProjectFolderPath)
+                        ? w.ProjectFolderPath
+                        : (w.Snapshot.ProjectFolderPath ?? string.Empty);
+                    _workplaceProjectFolders[w.Id] = folder;
+                    AddPinnedProjectFolder(folder);
+
+                    DateTime updated = w.UpdatedAt != default
+                        ? w.UpdatedAt
+                        : (w.Snapshot.UpdatedAt != default ? w.Snapshot.UpdatedAt : w.Snapshot.SavedAt);
+                    _workplaceUpdatedAt[w.Id] = updated == default ? DateTime.Now : updated;
+
+                    string rawName = !string.IsNullOrWhiteSpace(w.Snapshot.SessionTitle) ? w.Snapshot.SessionTitle : w.Name;
+                    if (WorkplaceSessionTitleGenerator.IsPlaceholderName(rawName))
+                    {
+                        string? firstPrompt = w.Snapshot.ChatCards?.FirstOrDefault(m => string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase))?.Content
+                            ?? w.Snapshot.ObjectiveText;
+                        rawName = WorkplaceSessionTitleGenerator.GenerateTitle(firstPrompt, folder);
+                    }
+                    _workplaceChatNames[w.Id] = string.IsNullOrWhiteSpace(rawName) ? "New session" : rawName;
                 }
 
                 _currentWorkplaceChatId = state.CurrentWorkplaceChatId;
@@ -3003,15 +3242,55 @@ namespace Malx_AI
             {
                 Title = title,
                 Width = 580,
-                Height = 360,
+                Height = 380,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
                 ResizeMode = ResizeMode.NoResize,
-                Background = bg,
+                ShowInTaskbar = false,
+                Background = Brushes.Transparent,
                 Foreground = fg,
                 Owner = this
             };
+            WindowTitleBarTheme.Apply(window);
 
-            var root = new DockPanel { Margin = new Thickness(16) };
+            var chrome = new DockPanel();
+            var titleBar = new Grid { Height = 34, Background = Brushes.Transparent };
+            titleBar.MouseLeftButtonDown += (_, args) =>
+            {
+                if (args.LeftButton == MouseButtonState.Pressed)
+                    window.DragMove();
+            };
+            titleBar.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 11.5,
+                FontWeight = FontWeights.Medium,
+                Foreground = secondary,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(16, 0, 40, 0)
+            });
+            var closeX = new Button
+            {
+                Content = "×",
+                Width = 30,
+                Height = 28,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0),
+                FontSize = 14,
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                Foreground = secondary,
+                Cursor = Cursors.Hand,
+                IsCancel = true,
+                ToolTip = "Close"
+            };
+            titleBar.Children.Add(closeX);
+            DockPanel.SetDock(titleBar, Dock.Top);
+            chrome.Children.Add(titleBar);
+
+            var root = new DockPanel { Margin = new Thickness(16, 4, 16, 16) };
 
             var label = new TextBlock
             {
@@ -3077,7 +3356,15 @@ namespace Malx_AI
             root.Children.Add(label);
             root.Children.Add(buttons);
             root.Children.Add(text);
-            window.Content = root;
+            chrome.Children.Add(root);
+            window.Content = new Border
+            {
+                Background = bg,
+                BorderBrush = border,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
+                Child = chrome
+            };
             bool? result = window.ShowDialog();
             return result == true ? text.Text : null;
         }
@@ -3160,6 +3447,10 @@ namespace Malx_AI
         {
             return new WorkplaceSessionSnapshot
             {
+                SessionTitle = snapshot.SessionTitle,
+                ProjectFolderPath = snapshot.ProjectFolderPath,
+                UpdatedAt = snapshot.UpdatedAt,
+                CommandReviewMode = snapshot.CommandReviewMode,
                 ObjectiveText = snapshot.ObjectiveText,
                 ProjectCanvasText = snapshot.ProjectCanvasText,
                 CloudModeEnabled = snapshot.CloudModeEnabled,
@@ -3573,10 +3864,13 @@ namespace Malx_AI
                     .Select(kvp => new WorkplaceChatStateEntry
                     {
                         Id = kvp.Key,
-                        Name = _workplaceChatNames.TryGetValue(kvp.Key, out var name) ? name : $"Workplace {kvp.Key}",
+                        Name = _workplaceChatNames.TryGetValue(kvp.Key, out var name) ? name : "New session",
+                        ProjectFolderPath = _workplaceProjectFolders.TryGetValue(kvp.Key, out var pf) ? pf : (kvp.Value.ProjectFolderPath ?? string.Empty),
+                        UpdatedAt = _workplaceUpdatedAt.TryGetValue(kvp.Key, out var dt) ? dt : kvp.Value.UpdatedAt,
                         Snapshot = CloneWorkplaceSessionSnapshot(kvp.Value)
                     })
                     .ToList(),
+                PinnedProjectFolders = _pinnedProjectFolders.ToList(),
                 CurrentWorkplaceChatId = _currentWorkplaceChatId,
                 WorkplaceChatCounter = _workplaceChatCounter
             };
@@ -3880,11 +4174,11 @@ namespace Malx_AI
             }
         }
 
-        private void AddChatMessage(string role, string content)
+        private void AddChatMessage(string role, string content, IReadOnlyList<string>? attachedImageSources = null)
         {
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.Invoke(() => AddChatMessage(role, content));
+                Dispatcher.Invoke(() => AddChatMessage(role, content, attachedImageSources));
                 return;
             }
 
@@ -3894,7 +4188,10 @@ namespace Malx_AI
                 return;
             }
 
-            var msg = new ChatMessage(role, content);
+            var msg = new ChatMessage(role, content)
+            {
+                AttachedImageSources = attachedImageSources?.ToList() ?? new List<string>()
+            };
             msg.Importance = SmartContextCompactionEngine.ClassifyImportance(role, content, false);
             _chatMessages.Add(msg);
 
@@ -3920,7 +4217,8 @@ namespace Malx_AI
                     CloudPromptTokens = msg.CloudPromptTokens,
                     CloudCompletionTokens = msg.CloudCompletionTokens,
                     CloudTotalTokens = msg.CloudTotalTokens,
-                    CanvasReplyText = msg.CanvasReplyText
+                    CanvasReplyText = msg.CanvasReplyText,
+                    AttachedImageSources = msg.AttachedImageSources.ToList()
                 });
             }
 
@@ -4152,7 +4450,6 @@ namespace Malx_AI
             if (_isViewTransitionAnimating || ChatView.Visibility == Visibility.Visible)
                 return;
 
-            _neuronTimer.Stop();
             SaveCurrentWorkplaceChat();
 
             var active = GetActiveContentView();
@@ -4161,7 +4458,6 @@ namespace Malx_AI
             ChatTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
             WorkplaceTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
-            NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             SetNormalChatSidebarActionsVisible(true);
             SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.NormalChat);
             // Attachments are global, so a change made on the other tab has to show here.
@@ -4180,7 +4476,6 @@ namespace Malx_AI
             if (_isViewTransitionAnimating || WorkplaceViewControl.Visibility == Visibility.Visible)
                 return;
 
-            _neuronTimer.Stop();
             SaveCurrentChat();
 
             var active = GetActiveContentView();
@@ -4189,7 +4484,6 @@ namespace Malx_AI
             ChatTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             WorkplaceTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
             PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
-            NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             SetNormalChatSidebarActionsVisible(false);
             SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.Workplace);
             WorkplaceViewControl.RefreshCapabilityCounts();
@@ -4209,7 +4503,6 @@ namespace Malx_AI
             if (_isViewTransitionAnimating || PersonaMemoryView.Visibility == Visibility.Visible)
                 return;
 
-            _neuronTimer.Stop();
             SaveCurrentWorkplaceChat();
 
             var active = GetActiveContentView();
@@ -4217,35 +4510,10 @@ namespace Malx_AI
             ChatTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             WorkplaceTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             PersonaTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
-            NeuronTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
             SetNormalChatSidebarActionsVisible(false);
             SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.None);
             SetWorkplaceTabActive(false);
             ShowSidebarSection(workplace: false);
-        }
-
-        private void SwitchToNeuron_Click(object sender, RoutedEventArgs e)
-        {
-            if (_isViewTransitionAnimating || NeuronView.Visibility == Visibility.Visible)
-                return;
-
-            SaveCurrentWorkplaceChat();
-            SaveCurrentChat();
-
-            var active = GetActiveContentView();
-            AnimateViewSwitch(active, NeuronView);
-
-            ChatTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
-            WorkplaceTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
-            PersonaTabButton.Style = (Style)this.Resources["InactiveNavigationTabButtonStyle"];
-            NeuronTabButton.Style = (Style)this.Resources["ActiveNavigationTabButtonStyle"];
-            SetNormalChatSidebarActionsVisible(false);
-            SetProjectCanvasToggleTarget(ProjectCanvasToggleTarget.None);
-            SetWorkplaceTabActive(false);
-            ShowSidebarSection(workplace: false);
-
-            UpdateNeuronMap();
-            _neuronTimer.Start();
         }
 
         private void SetNormalChatSidebarActionsVisible(bool visible)
@@ -4258,342 +4526,11 @@ namespace Malx_AI
 
         private UIElement GetActiveContentView()
         {
-            if (NeuronView.Visibility == Visibility.Visible)
-                return NeuronView;
             if (WorkplaceViewControl.Visibility == Visibility.Visible)
                 return WorkplaceViewControl;
             if (PersonaMemoryView.Visibility == Visibility.Visible)
                 return PersonaMemoryView;
             return ChatView;
-        }
-
-        private void UpdateNeuronMap()
-        {
-            if (NeuronCanvas == null)
-                return;
-
-            _neuronTick++;
-            double width = Math.Max(NeuronCanvas.ActualWidth, 760);
-            double height = Math.Max(NeuronCanvas.ActualHeight, 460);
-            NeuronCanvas.Children.Clear();
-            double t = DateTime.Now.TimeOfDay.TotalSeconds;
-
-            var workplaceSnapshot = WorkplaceViewControl?.CaptureSnapshot();
-            int normalMessages = _chatMessages.Count;
-            int workplaceMessages = workplaceSnapshot?.ChatCards.Count ?? 0;
-            int normalDocs = _chatDocuments.Count;
-            int workplaceDocs = workplaceSnapshot?.Documents.Count ?? 0;
-            int councilRuns = workplaceSnapshot?.CompletedCouncilRunCount ?? 0;
-            int calculatorOps = _chatMessages.Count(m => m.Role == "system" && m.Content.Contains("Calculator tool active", StringComparison.OrdinalIgnoreCase))
-                + (workplaceSnapshot?.ChatCards.Count(m => string.Equals(m.Role, "system", StringComparison.OrdinalIgnoreCase) && m.Content.Contains("Calculator tool active", StringComparison.OrdinalIgnoreCase)) ?? 0);
-
-            var nodes = new List<(string Label, int Weight, Point P)>
-            {
-                ("User",       Math.Max(1, normalMessages + workplaceMessages),      new Point(width * 0.50, height * 0.48)),
-                ("Chat",       Math.Max(1, normalMessages),                           new Point(width * 0.22, height * 0.30)),
-                ("Workplace",  Math.Max(1, workplaceMessages + councilRuns * 2),     new Point(width * 0.78, height * 0.30)),
-                ("Documents",  Math.Max(1, normalDocs + workplaceDocs),              new Point(width * 0.22, height * 0.72)),
-                ("Knowledge",  Math.Max(1, workplaceDocs),                           new Point(width * 0.50, height * 0.80)),
-                ("Calculator", Math.Max(1, calculatorOps),                           new Point(width * 0.78, height * 0.72))
-            };
-
-            if (_neuronTick % 2 == 0)
-            {
-                IEnumerable<(string? Content, int Source)> taggedTexts =
-                    _chatMessages.TakeLast(24).Select(m => ((string?)m.Content, 1))
-                    .Concat((workplaceSnapshot?.ChatCards ?? new List<WorkplaceChatMessageDto>()).TakeLast(24).Select(m => ((string?)m.Content, 2)));
-
-                if (!string.IsNullOrWhiteSpace(workplaceSnapshot?.ObjectiveText))
-                    taggedTexts = taggedTexts.Append(((string?)workplaceSnapshot.ObjectiveText, 2));
-                if (!string.IsNullOrWhiteSpace(workplaceSnapshot?.ProjectCanvasText))
-                    taggedTexts = taggedTexts.Append(((string?)workplaceSnapshot.ProjectCanvasText, 2));
-
-                taggedTexts = taggedTexts.Concat(_chatDocuments.Select(d => ((string?)d.Name, 3)));
-                if (workplaceSnapshot?.Documents is { Count: > 0 } wDocs)
-                    taggedTexts = taggedTexts.Concat(wDocs.Select(d => ((string?)d.Name, 3)));
-
-                UpdateNeuronBranches(taggedTexts, width, height);
-            }
-
-            // Pre-cache per-source brushes
-            var srcFill = new SolidColorBrush[NeuronNodeColors.Length];
-            var srcGlow = new SolidColorBrush[NeuronNodeColors.Length];
-            var srcLine = new SolidColorBrush[NeuronNodeColors.Length];
-            for (int k = 0; k < NeuronNodeColors.Length; k++)
-            {
-                var c = NeuronNodeColors[k];
-                srcFill[k] = new SolidColorBrush(c); srcFill[k].Freeze();
-                srcGlow[k] = new SolidColorBrush(Color.FromArgb(0x22, c.R, c.G, c.B)); srcGlow[k].Freeze();
-                srcLine[k] = new SolidColorBrush(Color.FromArgb(0x7A, c.R, c.G, c.B)); srcLine[k].Freeze();
-            }
-            var strokeBrush = new SolidColorBrush(Color.FromRgb(0x30, 0x2D, 0x2A)); strokeBrush.Freeze();
-            var labelFgBrush = new SolidColorBrush(Color.FromRgb(0xED, 0xE8, 0xE3)); labelFgBrush.Freeze();
-            var dimLabelBrush = new SolidColorBrush(Color.FromRgb(0xB0, 0xA8, 0x9F)); dimLabelBrush.Freeze();
-            var labelFont = new FontFamily("Segoe UI");
-
-            Point centerP = nodes[0].P;
-            AutomationProperties.SetName(NeuronCanvas, "Neuron activity graph");
-            AutomationProperties.SetHelpText(NeuronCanvas,
-                $"Graph relationships: User connects to Chat, Workplace, Documents, Project Knowledge, and Calculator. Counts: Chat {normalMessages}, Workplace {workplaceMessages}, Documents {normalDocs + workplaceDocs}, Council {councilRuns}, Project Knowledge {workplaceDocs}.");
-
-            // ═══ PASS 1: GLOW HALOS + ALL LINES (drawn first, render behind circles) ═══
-
-            // Glow halos behind each hub node
-            for (int i = 0; i < nodes.Count; i++)
-            {
-                var node = nodes[i];
-                double baseR = 16 + Math.Min(24, Math.Log10(node.Weight + 1) * 10);
-                double glowR = baseR * 2.4;
-                var glow = new System.Windows.Shapes.Ellipse
-                {
-                    Width = glowR * 2,
-                    Height = glowR * 2,
-                    Fill = srcGlow[i]
-                };
-                Canvas.SetLeft(glow, node.P.X - glowR);
-                Canvas.SetTop(glow, node.P.Y - glowR);
-                NeuronCanvas.Children.Add(glow);
-            }
-
-            // Main connector lines from center to each hub
-            for (int i = 1; i < nodes.Count; i++)
-            {
-                var node = nodes[i];
-                NeuronCanvas.Children.Add(new System.Windows.Shapes.Line
-                {
-                    X1 = centerP.X, Y1 = centerP.Y,
-                    X2 = node.P.X, Y2 = node.P.Y,
-                    Stroke = srcLine[i],
-                    Opacity = 0.65,
-                    StrokeThickness = 1.0 + Math.Min(2.5, node.Weight / 22.0)
-                });
-
-                // Satellite branch lines from each hub
-                int branchCount = Math.Clamp(node.Weight / 10, 2, 8);
-                for (int j = 0; j < branchCount; j++)
-                {
-                    double angle = (Math.PI * 2 * j / branchCount) + (i * 0.41);
-                    double dist = 22 + (j % 4) * 7;
-                    NeuronCanvas.Children.Add(new System.Windows.Shapes.Line
-                    {
-                        X1 = node.P.X, Y1 = node.P.Y,
-                        X2 = node.P.X + Math.Cos(angle) * dist,
-                        Y2 = node.P.Y + Math.Sin(angle) * dist,
-                        Stroke = srcLine[i],
-                        Opacity = 0.28,
-                        StrokeThickness = 0.7
-                    });
-                }
-            }
-
-            // Orbital term lines (from source hub to term position)
-            var branchSnapshot = _neuronBranches.Values.OrderByDescending(b => b.Weight).Take(22).ToList();
-            var branchPositions = new List<(NeuronBranchNode Branch, double X, double Y)>();
-            foreach (var branch in branchSnapshot)
-            {
-                int si = Math.Clamp(branch.SourceIndex, 0, nodes.Count - 1);
-                Point orbitCenter = nodes[si].P;
-                double drift = Math.Sin(t * 0.8 + branch.OrbitAngle) * 3;
-                double angle = branch.OrbitAngle + (_neuronTick * 0.009);
-                double bx = orbitCenter.X + Math.Cos(angle) * (branch.OrbitRadius + drift);
-                double by = orbitCenter.Y + Math.Sin(angle) * (branch.OrbitRadius + drift * 0.55);
-                branchPositions.Add((branch, bx, by));
-
-                NeuronCanvas.Children.Add(new System.Windows.Shapes.Line
-                {
-                    X1 = orbitCenter.X, Y1 = orbitCenter.Y,
-                    X2 = bx, Y2 = by,
-                    Stroke = srcLine[si],
-                    Opacity = 0.32,
-                    StrokeThickness = 0.75
-                });
-            }
-
-            // ═══ PASS 2: SATELLITE + BRANCH DOTS ═══
-
-            for (int i = 1; i < nodes.Count; i++)
-            {
-                var node = nodes[i];
-                int branchCount = Math.Clamp(node.Weight / 10, 2, 8);
-                for (int j = 0; j < branchCount; j++)
-                {
-                    double angle = (Math.PI * 2 * j / branchCount) + (i * 0.41);
-                    double dist = 22 + (j % 4) * 7;
-                    double satX = node.P.X + Math.Cos(angle) * dist;
-                    double satY = node.P.Y + Math.Sin(angle) * dist;
-                    var satDot = new System.Windows.Shapes.Ellipse
-                    {
-                        Width = 3.0, Height = 3.0,
-                        Fill = srcFill[i],
-                        Opacity = 0.55
-                    };
-                    Canvas.SetLeft(satDot, satX - 1.5);
-                    Canvas.SetTop(satDot, satY - 1.5);
-                    NeuronCanvas.Children.Add(satDot);
-                }
-            }
-
-            // Orbital term dots
-            foreach (var (branch, bx, by) in branchPositions)
-            {
-                int si = Math.Clamp(branch.SourceIndex, 0, nodes.Count - 1);
-                double dotSize = 4 + Math.Min(4.5, branch.Weight / 6.0);
-                var dot = new System.Windows.Shapes.Ellipse
-                {
-                    Width = dotSize, Height = dotSize,
-                    Fill = srcFill[si],
-                    Opacity = 0.75
-                };
-                Canvas.SetLeft(dot, bx - dotSize / 2);
-                Canvas.SetTop(dot, by - dotSize / 2);
-                NeuronCanvas.Children.Add(dot);
-            }
-
-            // ═══ PASS 3: MAIN HUB CIRCLES + LABELS ═══
-
-            for (int i = 0; i < nodes.Count; i++)
-            {
-                var node = nodes[i];
-                double pulse = 1.0 + Math.Sin(t * 2.1 + i * 0.8) * 0.07;
-                double radius = 16 + Math.Min(24, Math.Log10(node.Weight + 1) * 10);
-                radius *= pulse;
-                var ellipse = new System.Windows.Shapes.Ellipse
-                {
-                    Width = radius * 2, Height = radius * 2,
-                    Fill = srcFill[i],
-                    Stroke = strokeBrush,
-                    StrokeThickness = 1.2,
-                    Opacity = 0.90
-                };
-                AutomationProperties.SetName(ellipse, $"{node.Label} node");
-                AutomationProperties.SetHelpText(ellipse, i == 0
-                    ? $"Central node with weight {node.Weight}. Connected to Chat, Workplace, Documents, Study, and Calculator."
-                    : $"{node.Label} node with weight {node.Weight}. Connected to User and related concept terms.");
-                Canvas.SetLeft(ellipse, node.P.X - radius);
-                Canvas.SetTop(ellipse, node.P.Y - radius);
-                NeuronCanvas.Children.Add(ellipse);
-
-                string labelText = $"{node.Label}  {node.Weight}";
-                double lx = node.P.X - labelText.Length * 3.6;
-                double ly = node.P.Y > height * 0.62 ? node.P.Y - radius - 19 : node.P.Y + radius + 5;
-                var label = new TextBlock
-                {
-                    Text = labelText,
-                    Foreground = labelFgBrush,
-                    FontSize = 12,
-                    FontFamily = labelFont,
-                    FontWeight = FontWeights.SemiBold
-                };
-                AutomationProperties.SetName(label, $"{node.Label} node, weight {node.Weight}");
-                AutomationProperties.SetHelpText(label, i == 0
-                    ? "Central Neuron graph node connected to each activity category."
-                    : $"{node.Label} is connected to User and its orbiting concept labels.");
-                Canvas.SetLeft(label, lx);
-                Canvas.SetTop(label, ly);
-                NeuronCanvas.Children.Add(label);
-            }
-
-            // Orbital term labels
-            foreach (var (branch, bx, by) in branchPositions)
-            {
-                var label = new TextBlock
-                {
-                    Text = branch.Label,
-                    FontSize = 10,
-                    Foreground = dimLabelBrush,
-                    FontFamily = labelFont,
-                    FontWeight = FontWeights.Medium
-                };
-                int sourceIndex = Math.Clamp(branch.SourceIndex, 0, nodes.Count - 1);
-                string sourceLabel = nodes[sourceIndex].Label;
-                AutomationProperties.SetName(label, $"Concept {branch.Label}");
-                AutomationProperties.SetHelpText(label, $"Concept term connected to {sourceLabel}. Weight {branch.Weight}.");
-                Canvas.SetLeft(label, bx + 5);
-                Canvas.SetTop(label, by - 7);
-                NeuronCanvas.Children.Add(label);
-            }
-
-            NeuronSummaryText.Text = $"Live neural map  ·  Chat {normalMessages}  ·  Workplace {workplaceMessages}  ·  Docs {normalDocs + workplaceDocs}  ·  Council {councilRuns}  ·  Project Knowledge {workplaceDocs}";
-        }
-
-        private void UpdateNeuronBranches(IEnumerable<(string? Content, int Source)> taggedTexts, double width, double height)
-        {
-            var stop = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "the","and","for","with","that","this","from","into","about","have","has","are","was","were","will","just",
-                "chat","workplace","system","assistant","user","model","output","response","please","need","should","could","would",
-                "when","then","than","what","they","them","their","there","here","where","which","also","some","more","your",
-                "using","used","like","make","made","been","each","such","both","through","very","much","only","even",
-                "being","doing","having","going","getting","based","after","before","already","always","never","often",
-                "still","again","most","many","help","want","know","think","because","however","other","these","those",
-                "message","messages","document","documents","file","files","text","content","section","information",
-                "data","example","value","result","results","note","context","code","type","true","false","null","void"
-            };
-
-            // Track term frequency per source
-            var termSourceCounts = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (content, source) in taggedTexts)
-            {
-                if (string.IsNullOrWhiteSpace(content)) continue;
-                foreach (Match m in Regex.Matches(content, @"\b[a-zA-Z][a-zA-Z0-9_\-]{3,}\b"))
-                {
-                    string word = m.Value.ToLowerInvariant();
-                    if (stop.Contains(word)) continue;
-                    if (!termSourceCounts.TryGetValue(word, out var srcMap))
-                    {
-                        srcMap = new Dictionary<int, int>();
-                        termSourceCounts[word] = srcMap;
-                    }
-                    srcMap.TryGetValue(source, out int cur);
-                    srcMap[source] = cur + 1;
-                }
-            }
-
-            var terms = termSourceCounts
-                .Select(kv => (
-                    Term: kv.Key,
-                    Weight: kv.Value.Values.Sum(),
-                    DominantSource: kv.Value.OrderByDescending(e => e.Value).First().Key
-                ))
-                .OrderByDescending(x => x.Weight)
-                .Take(16)
-                .ToList();
-
-            foreach (var (term, weight, dominantSource) in terms)
-            {
-                if (!_neuronBranches.TryGetValue(term, out var node))
-                {
-                    int h = Math.Abs(term.GetHashCode());
-                    double orbitR = dominantSource == 0 ? 90 + (h % 110) : 52 + (h % 58);
-                    node = new NeuronBranchNode
-                    {
-                        Label = term,
-                        Weight = weight,
-                        OrbitAngle = (h % 628) / 100.0,
-                        OrbitRadius = orbitR,
-                        LastSeenTick = _neuronTick,
-                        SourceIndex = dominantSource
-                    };
-                    _neuronBranches[term] = node;
-                }
-                else
-                {
-                    node.Weight = Math.Clamp((int)Math.Round(node.Weight * 0.75 + weight * 0.9), 1, 30);
-                    node.LastSeenTick = _neuronTick;
-                    node.SourceIndex = dominantSource;
-                }
-            }
-
-            var stale = _neuronBranches.Where(kv => _neuronTick - kv.Value.LastSeenTick > 40).Select(kv => kv.Key).ToList();
-            foreach (var key in stale)
-                _neuronBranches.Remove(key);
-
-            if (_neuronBranches.Count > 28)
-            {
-                foreach (var key in _neuronBranches.OrderBy(kv => kv.Value.Weight).ThenBy(kv => kv.Value.LastSeenTick)
-                    .Take(_neuronBranches.Count - 28).Select(kv => kv.Key).ToList())
-                    _neuronBranches.Remove(key);
-            }
         }
 
         private void AnimateViewSwitch(UIElement hideElement, UIElement showElement)

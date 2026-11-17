@@ -8,7 +8,7 @@
         <Color x:Key="DarkBackground">#171615</Color>
         <Color x:Key="DarkText">#EDE8E3</Color>
         <Color x:Key="DarkSecondary">#B0A89F</Color>
-        <Color x:Key="DarkSidebar">#171615</Color>
+        <Color x:Key="DarkSidebar">#211F1D</Color>
         <Color x:Key="PrimaryAccent">#B8924A</Color>
 
         <SolidColorBrush x:Key="NotebookBackgroundBrush" Color="#171615"/>
@@ -17,7 +17,7 @@
         <SolidColorBrush x:Key="DarkSecondaryBrush" Color="#B0A89F"/>
         <SolidColorBrush x:Key="NotebookBorderBrush" Color="#302D2A"/>
         <SolidColorBrush x:Key="PrimaryAccentBrush" Color="#B8924A"/>
-        <SolidColorBrush x:Key="DarkSidebarBrush" Color="#171615"/>
+        <SolidColorBrush x:Key="DarkSidebarBrush" Color="#211F1D"/>
         <SolidColorBrush x:Key="AiMessageBrush" Color="#211F1D"/>
 
         <!-- The rest of the palette, named by role. AppTheme repaints every brush above and below
@@ -38,7 +38,8 @@
 
         <Style TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="LineHeight" Value="22"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="LineHeight" Value="18"/>
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
         </Style>
 
@@ -78,7 +79,7 @@
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -172,9 +173,9 @@
         <Style TargetType="ComboBoxItem">
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
-            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Padding" Value="8,4"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ComboBoxItem}">
@@ -225,8 +226,8 @@
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Padding" Value="12,2"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="10,2"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
@@ -300,10 +301,10 @@
         </Style>
 
         <Style x:Key="PanelToggleButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
-            <Setter Property="Width" Value="26"/>
-            <Setter Property="Height" Value="26"/>
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
             <Setter Property="Padding" Value="0"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
@@ -495,5 +496,93 @@
             </Style.Triggers>
         </Style>
         <Style TargetType="ScrollBar" BasedOn="{StaticResource DarkVerticalScrollBar}"/>
+
+        <Style TargetType="ContextMenu">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HasDropShadow" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{DynamicResource NotebookSurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderStrongBrush}"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="5"
+                                Margin="6"
+                                SnapsToDevicePixels="True"
+                                Effect="{StaticResource SoftShadow}">
+                            <StackPanel IsItemsHost="True"
+                                        KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="MenuItem">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="ItemBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="6"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter x:Name="IconHost"
+                                                  Grid.Column="0"
+                                                  ContentSource="Icon"
+                                                  Width="16"
+                                                  Margin="0,0,8,0"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                                <ContentPresenter Grid.Column="1"
+                                                  ContentSource="Header"
+                                                  RecognizesAccessKey="True"
+                                                  VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Icon" Value="{x:Null}">
+                                <Setter TargetName="IconHost" Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ItemBorder" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+            <Setter Property="Height" Value="1"/>
+            <Setter Property="Margin" Value="6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Background="{DynamicResource NotebookBorderBrush}" SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Application.Resources>
 </Application>

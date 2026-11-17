@@ -17,7 +17,19 @@ namespace Malx_AI.ComputerUse
         public string ExpectedState => _expectedState;
         public bool RequiresRecovery => State == ComputerUseActionEvidenceState.Failed;
         public bool IsPending => State == ComputerUseActionEvidenceState.Pending;
-        public bool CanFinish => State is ComputerUseActionEvidenceState.None or ComputerUseActionEvidenceState.Verified;
+        public bool CanFinish => State is ComputerUseActionEvidenceState.None
+            or ComputerUseActionEvidenceState.Verified
+            or ComputerUseActionEvidenceState.Delivered;
+
+        /// <summary>
+        /// Records an action that was sent and made the screen react, but whose exact effect
+        /// nobody could name. It is progress, not a failure to recover from.
+        /// </summary>
+        public void MarkDelivered()
+        {
+            if (State != ComputerUseActionEvidenceState.None)
+                State = ComputerUseActionEvidenceState.Delivered;
+        }
 
         public void AssessExpectedState(bool succeeded, string evidence)
         {
@@ -66,6 +78,7 @@ namespace Malx_AI.ComputerUse
                 ComputerUseActionEvidenceState.Pending => "pending fresh observation",
                 ComputerUseActionEvidenceState.ObservedChange => "visible change observed; semantic state still must be checked",
                 ComputerUseActionEvidenceState.Verified => "expected state supported by a separate visual assessment or controller telemetry",
+                ComputerUseActionEvidenceState.Delivered => "delivered and the screen reacted; its exact effect is too small to confirm, so treat it as done and continue with the next step",
                 ComputerUseActionEvidenceState.Failed => "failed; recovery action required",
                 _ => "unknown"
             };
@@ -79,6 +92,7 @@ namespace Malx_AI.ComputerUse
         Pending,
         ObservedChange,
         Verified,
+        Delivered,
         Failed
     }
 }

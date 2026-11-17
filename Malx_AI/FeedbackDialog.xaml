@@ -4,9 +4,10 @@
         Title="Send feedback"
         Width="600" SizeToContent="Height"
         ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True"
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False"
-        Background="{DynamicResource NotebookBackgroundBrush}"
+        Background="Transparent"
         Foreground="{DynamicResource NotebookTextBrush}"
         UseLayoutRounding="True">
     <Window.Resources>
@@ -58,7 +59,17 @@
         </Style>
     </Window.Resources>
 
-    <StackPanel Margin="28,22,28,22">
+    <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12">
+        <StackPanel>
+            <Grid Height="34" Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                           FontSize="11.5" FontWeight="Medium" Foreground="{DynamicResource DarkSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="16,0,40,0" LineHeight="Auto"/>
+                <Button Content="×" Click="Close_Click" IsCancel="True" HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Width="30" Height="28" Margin="0,0,6,0" FontSize="14" Style="{StaticResource SubtleButtonStyle}"
+                        Background="Transparent" BorderBrush="Transparent" Foreground="{DynamicResource DarkSecondaryBrush}" ToolTip="Close"/>
+            </Grid>
+            <StackPanel Margin="28,6,28,22">
         <TextBlock Text="Send feedback" FontSize="26" FontFamily="Georgia" LineHeight="Auto"/>
         <TextBlock Text="Report a problem or suggest an improvement. It goes straight to the developer."
                    FontSize="12" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,18" TextWrapping="Wrap"/>
@@ -112,5 +123,7 @@
                     Style="{StaticResource PremiumButtonStyle}" Foreground="{DynamicResource OnAccentBrush}" Height="36" MinWidth="110" Padding="18,0"/>
             <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Cancel" Click="Close_Click" Height="36" MinWidth="90" Margin="0,0,8,0"/>
         </DockPanel>
-    </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </Border>
 </Window>

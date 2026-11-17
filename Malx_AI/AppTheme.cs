@@ -201,7 +201,7 @@ namespace Malx_AI
                 return;
 
             SetBrush(resources, "NotebookBackgroundBrush", palette.Background);
-            SetBrush(resources, "DarkSidebarBrush", palette.Background);
+            SetBrush(resources, "DarkSidebarBrush", palette.Surface);
             SetBrush(resources, "NotebookSurfaceBrush", palette.Surface);
             SetBrush(resources, "AiMessageBrush", palette.Surface);
             SetBrush(resources, "SurfaceRaisedBrush", palette.SurfaceRaised);
