@@ -511,6 +511,7 @@ namespace Malx_AI
 
         private void CommandReviewSelectorButton_Click(object sender, RoutedEventArgs e)
         {
+            WorkplacePlusPopup.IsOpen = false;
             if (CommandReviewPopup != null)
                 CommandReviewPopup.IsOpen = true;
         }

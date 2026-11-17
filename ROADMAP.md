@@ -17,8 +17,14 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 ### Local reliability, UI and context work (2026-11-16, not released)
 
 Additional UI/context fixes after the 22:23–22:29 owner test:
-- Unified 40-pixel window header: moved navigation, Workplace title and controls into the
-  caption area; Windows WindowChrome handles dragging/resizing, with explicit caption buttons.
+- Follow-up layout correction (2026-11-17): restored the native Windows caption and its
+  minimize/maximize/restore/close buttons. Navigation and Workplace controls share a client
+  toolbar with automatic height; actions move below the title when space is tight.
+- Normal chat and Workplace message lanes follow their composer widths as sidebars/panels
+  open and close. Normal chat gutters respond to the remaining chat column width.
+- Simplified the Workplace composer: review policy, web search and skills live in the
+  attachments/tools menu. The idle Stop button is hidden; effort uses its compact selector.
+  Normal chat model choices and run controls use separate aligned rows when space is tight.
 - Messages and composer share a centered 960-pixel conversation region when sidebars collapse.
 - Computer Use remains the active surface across follow-ups, carries its prior goal/result/app,
   and restores that per-chat context from snapshots. A visible composer control exits desktop

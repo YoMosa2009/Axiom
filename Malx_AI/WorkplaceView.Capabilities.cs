@@ -47,6 +47,7 @@ namespace Malx_AI
 
         private void WorkplaceOpenSkills_Click(object sender, RoutedEventArgs e)
         {
+            WorkplacePlusPopup.IsOpen = false;
             RefreshWorkplaceSkillsPanel();
             WorkplaceSkillsPopup.IsOpen = true;
         }

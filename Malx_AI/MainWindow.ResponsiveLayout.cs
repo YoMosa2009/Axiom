@@ -61,17 +61,7 @@ namespace Malx_AI
             TokenUsagePanel.Width = compact ? 300 : wide ? 380 : 340;
             // Bottom padding stays small: it is a dead band inside the scroll viewport where
             // messages are clipped, which read as an empty strip above the composer.
-            ChatDisplay.Padding = compact
-                ? new Thickness(20, 12, 20, 6)
-                : wide
-                    ? new Thickness(40, 22, 40, 8)
-                    : new Thickness(28, 18, 28, 6);
-
-            InputContainerBorder.Margin = compact
-                ? new Thickness(16, 0, 16, 18)
-                : wide
-                    ? new Thickness(32, 0, 32, 30)
-                    : new Thickness(24, 0, 24, 24);
+            UpdateChatLaneLayout();
 
             SettingsPanelCard.Margin = compact ? new Thickness(16) : new Thickness(28, 26, 28, 26);
             SettingsPanelCard.Padding = compact ? new Thickness(18, 14, 18, 14) : new Thickness(24, 18, 24, 18);
@@ -81,6 +71,21 @@ namespace Malx_AI
         }
 
         private enum ComposerToolbarMode { Full, IconOnly, Stacked }
+
+        private void ChatDisplay_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (e.WidthChanged) UpdateChatLaneLayout();
+        }
+
+        private void UpdateChatLaneLayout()
+        {
+            if (InputContainerBorder == null || ChatDisplay == null) return;
+            // Panels change the chat column without changing the window. Base gutters on
+            // that column, and let every message row use the composer's measured width.
+            bool narrow = ChatDisplay.ActualWidth < 760;
+            ChatDisplay.Padding = new Thickness(0, narrow ? 12 : 18, 0, 6);
+            InputContainerBorder.Margin = new Thickness(narrow ? 16 : 24, 0, narrow ? 16 : 24, 18);
+        }
 
         private bool _isUpdatingComposerToolbar;
 
@@ -110,6 +115,12 @@ namespace Malx_AI
             _isUpdatingComposerToolbar = true;
             try
             {
+                ComposerRightTools.MaxWidth = double.PositiveInfinity;
+                Grid.SetRow(ComposerRunActions, 0);
+                Grid.SetColumn(ComposerRunActions, 1);
+                Grid.SetColumnSpan(ComposerRunActions, 1);
+                Grid.SetColumnSpan(CloudModelSelectorBorder, 1);
+                ComposerRunActions.Margin = new Thickness(0);
                 ComposerToolbarMode mode = ComposerToolbarMode.Full;
                 ApplyComposerLabels(compact: false);
                 if (MeasureComposerRowWidth() > available)
@@ -129,6 +140,13 @@ namespace Malx_AI
                 }
 
                 bool stacked = mode == ComposerToolbarMode.Stacked;
+                bool modelRow = stacked && CloudModelSelectorBorder.Visibility == Visibility.Visible;
+                Grid.SetRow(ComposerRunActions, modelRow ? 1 : 0);
+                Grid.SetColumn(ComposerRunActions, modelRow ? 0 : 1);
+                Grid.SetColumnSpan(ComposerRunActions, modelRow ? 2 : 1);
+                Grid.SetColumnSpan(CloudModelSelectorBorder, modelRow ? 2 : 1);
+                ComposerRunActions.Margin = modelRow ? new Thickness(0, 6, 0, 0) : new Thickness(0);
+                ComposerRightTools.MaxWidth = stacked ? Math.Max(0, available - 30) : double.PositiveInfinity;
                 Grid.SetRow(ComposerRightTools, stacked ? 1 : 0);
                 Grid.SetColumn(ComposerRightTools, stacked ? 0 : 1);
                 Grid.SetColumnSpan(ComposerRightTools, stacked ? 2 : 1);

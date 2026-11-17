@@ -82,6 +82,7 @@ namespace Malx_AI
                 return;
 
             WebSearchToggleButton.Opacity = _isWebSearchEnabled ? 1.0 : 0.55;
+            WebSearchMenuStateText.Text = _isWebSearchEnabled ? "Web search · On" : "Web search · Off";
             WebSearchToggleButton.Background = _isWebSearchEnabled
                 ? (TryFindResource("AccentSoftBrush") as Brush ?? AppTheme.Brush("#3A3226"))
                 : (TryFindResource("NotebookSurfaceBrush") as Brush ?? AppTheme.Brush("#211F1D"));
@@ -3161,6 +3162,7 @@ namespace Malx_AI
 
         private void WorkplaceHeaderBorder_SizeChanged(object sender, SizeChangedEventArgs e)
         {
+            UpdateHeaderActionLayout();
             if (e.WidthChanged)
                 UpdateHeaderMeterPlacement();
         }

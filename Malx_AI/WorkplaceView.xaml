@@ -7,6 +7,14 @@
              Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}"
              UseLayoutRounding="True" SnapsToDevicePixels="True">
     <UserControl.Resources>
+        <Style x:Key="WorkplaceToolMenuRowStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <Style x:Key="WorkplaceTokenMeterProgressBarStyle" TargetType="ProgressBar">
             <Setter Property="Height" Value="4"/>
@@ -264,9 +272,11 @@
                         <Setter Property="Margin" Value="6,0,6,0"/>
                     </Style>
                 </Border.Resources>
-                <DockPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                     <!-- Right side: Setup popover trigger + System Log toggle + Image 1 Diff toggle + Image 2 Context/Env toggle -->
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+                    <StackPanel x:Name="WorkplaceHeaderActions" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
                         <Border x:Name="WorkplaceTokenUsagePanel"
                                 Visibility="Collapsed"
                                 IsHitTestVisible="False">
@@ -449,7 +459,7 @@
                         </Button>
                     </StackPanel>
 
-                    <StackPanel VerticalAlignment="Center">
+                    <StackPanel x:Name="WorkplaceHeaderIdentity" VerticalAlignment="Center">
                         <DockPanel Margin="0,0,0,2">
                             <Button x:Name="WorkplaceSessionTitleButton"
                                     Click="WorkplaceSessionTitleButton_Click"
@@ -478,7 +488,7 @@
                             <TextBlock x:Name="HardwareInfoBlock" Text="Adaptive mode" Style="{StaticResource HeaderStatusTextStyle}" MaxWidth="320" HorizontalAlignment="Left"/>
                         </DockPanel>
                     </StackPanel>
-                </DockPanel>
+                </Grid>
             </Border>
 
             <Border x:Name="WorkplaceErrorNotificationBar" DockPanel.Dock="Top" Visibility="Collapsed" Padding="24,8" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1">
@@ -497,7 +507,7 @@
             <!-- Composer: one flat card (no box-in-a-box) with a tighter radius. Prompt on top,
                  tool toggles on the left of the control row, Stop/Run on the right. Run status
                  lives in the header (Relay line + context meters), not in here. -->
-            <StackPanel DockPanel.Dock="Bottom" Margin="24,6,24,14" MaxWidth="960" HorizontalAlignment="Stretch">
+            <StackPanel DockPanel.Dock="Bottom" Margin="24,6,24,14" Width="{Binding ActualWidth, ElementName=WorkplaceConversationLane}" MaxWidth="960" HorizontalAlignment="Center">
                 <Button x:Name="ComputerUseContextButton" Content="Computer Use · follow-ups stay on the desktop   ×" Visibility="Collapsed"
                         Click="ComputerUseContextButton_Click" HorizontalAlignment="Left" Margin="0,0,0,5" Padding="8,3"
                         FontSize="10" Style="{StaticResource SubtleButtonStyle}" ToolTip="Return to Agent Access"/>
@@ -609,21 +619,27 @@
 
                         <DockPanel Margin="2,2,2,0">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,2,0,2">
-                                <local:EffortSelector x:Name="WorkplaceEffortSelector" Height="26" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <local:EffortSelector x:Name="WorkplaceEffortSelector" IsCompact="True" Height="28" Margin="0,0,6,0" VerticalAlignment="Center"/>
                                 <Button x:Name="StopButton" Content="■" Click="StopMessage_Click" Width="28" Height="26" Padding="0"
-                                        Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource PrimaryAccentBrush}" IsEnabled="False" Margin="0,0,5,0" ToolTip="Stop current run"/>
+                                        Foreground="{DynamicResource PrimaryAccentBrush}" IsEnabled="False" Margin="0,0,5,0" ToolTip="Stop current run">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+                                            <Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Visibility" Value="Collapsed"/></Trigger></Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
                                 <Button x:Name="SendButton" Content="↑" Click="SendMessage_Click" Width="28" Height="26" Padding="0"
                                         Style="{StaticResource PremiumButtonStyle}" FontSize="13" FontWeight="Bold" ToolTip="Run task"/>
                             </StackPanel>
                             <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <!-- '+' menu: Select Project (strict confinement) + Attach Files -->
-                                <Button x:Name="WorkplaceAttachFileButton" Width="26" Height="26" Margin="0,2,5,2" Click="WorkplacePlusButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0" AutomationProperties.Name="Add project or attach files" ToolTip="Select Project folder or attach files">
+                                <Button x:Name="WorkplaceAttachFileButton" Width="26" Height="26" Margin="0,2,5,2" Click="WorkplacePlusButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0" AutomationProperties.Name="Attachments and tools" ToolTip="Add files, select a project, or configure tools" BorderThickness="0" Background="Transparent">
                                     <Path Width="11" Height="11" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M5,0 L7,0 L7,5 L12,5 L12,7 L7,7 L7,12 L5,12 L5,7 L0,7 L0,5 L5,5 Z"/>
                                 </Button>
 
                                 <!-- Project badge / quick selector -->
                                 <Button x:Name="WorkplaceProjectBadgeButton" Click="OpenSelectProjectPopup_Click" Height="26" Padding="8,0" Margin="0,2,5,2"
-                                        Style="{StaticResource SubtleButtonStyle}" ToolTip="Strict project folder scope (click to choose)">
+                                        Style="{StaticResource SubtleButtonStyle}" BorderThickness="0" Background="Transparent" ToolTip="Strict project folder scope (click to choose)">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="&#xE8B7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10.5" LineHeight="Auto"
                                                    Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,5,0"/>
@@ -631,47 +647,13 @@
                                     </StackPanel>
                                 </Button>
 
-                                <!-- Command Review / Auto-Review selector (Requirement #13) -->
-                                <Button x:Name="CommandReviewSelectorButton" Click="CommandReviewSelectorButton_Click" Height="26" Padding="8,0" Margin="0,2,5,2"
-                                        Style="{StaticResource SubtleButtonStyle}" ToolTip="Command safety review &amp; interception mode">
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="&#xE83D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10.5" LineHeight="Auto"
-                                                   Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                        <TextBlock x:Name="CommandReviewSelectorText" Text="Auto-Review" FontSize="10.5" LineHeight="14" VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </Button>
-
-                                <Button x:Name="WebSearchToggleButton" Click="WebSearchToggleButton_Click" Width="26" Height="26" Padding="0"
-                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,5,2" ToolTip="Web Search toggle"
-                                        AutomationProperties.Name="Web">
-                                    <Grid Width="13" Height="13">
-                                        <Ellipse Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3"/>
-                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3"
-                                              Data="M0.6,6.5 H12.4"/>
-                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3"
-                                              Data="M6.5,0.4 C3.7,2.8 3.7,10.2 6.5,12.6 C9.3,10.2 9.3,2.8 6.5,0.4"/>
-                                    </Grid>
-                                </Button>
-                                <Button x:Name="WorkplaceSkillsButton" Click="WorkplaceOpenSkills_Click" Height="26" MinWidth="26" Padding="5.5,0"
-                                        Style="{StaticResource SubtleButtonStyle}" Margin="0,2,5,2" ToolTip="Active skills for this session"
-                                        AutomationProperties.Name="Skills">
-                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Path Width="13" Height="13" Stretch="Uniform"
-                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                              StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                              Data="M7,1 L8.3,4.7 L12,3.4 L9.8,6.7 L13,9 L9,9 L9,13 L6.7,9.8 L3.4,12 L4.7,8.3 L1,7 L4.7,5.7 L3.4,2.2 L6.7,4.2 Z"/>
-                                        <Border x:Name="WorkplaceSkillsBadge" Margin="5,0,0,0" Padding="4,0" CornerRadius="6" Background="{DynamicResource AccentSoftBrush}" Visibility="Collapsed">
-                                            <TextBlock x:Name="WorkplaceSkillsCountText" Text="0" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource AccentMutedBrush}"/>
-                                        </Border>
-                                    </StackPanel>
-                                </Button>
                                 <Button x:Name="CouncilPetToggleButton" Content="Bit" Click="CouncilPetToggleButton_Click" Height="26" Padding="7,0"
                                         Style="{StaticResource SubtleButtonStyle}" FontSize="10.5" Margin="0,2,4,2" ToolTip="Toggle draggable companion" Visibility="Collapsed"/>
 
                                 <!-- '+' Menu Popup -->
                                 <Popup x:Name="WorkplacePlusPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceAttachFileButton}"
                                        AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-6">
-                                    <Border Width="210" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Padding="6">
+                                    <Border Width="280" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Padding="6">
                                         <Border.Effect>
                                             <DropShadowEffect Color="#000000" BlurRadius="14" ShadowDepth="3" Opacity="0.45"/>
                                         </Border.Effect>
@@ -688,6 +670,25 @@
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="&#xE723;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="11.5" LineHeight="Auto" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                                     <TextBlock Text="Attach Files…" FontSize="11.5" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </Button>
+                                                                                    <Border Height="1" Background="{DynamicResource NotebookBorderBrush}" Margin="6,7"/>
+                                            <TextBlock Text="Tools" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" Margin="10,2,10,4"/>
+                                            <Button x:Name="CommandReviewSelectorButton" Click="CommandReviewSelectorButton_Click" Style="{StaticResource WorkplaceToolMenuRowStyle}" ToolTip="Command safety review and interception mode">
+                                                <DockPanel>
+                                                    <TextBlock Text="Command review"/>
+                                                    <TextBlock x:Name="CommandReviewSelectorText" Text="Auto-Review" Foreground="{DynamicResource DarkSecondaryBrush}" HorizontalAlignment="Right" Margin="12,0,0,0"/>
+                                                </DockPanel>
+                                            </Button>
+                                            <Button x:Name="WebSearchToggleButton" Click="WebSearchToggleButton_Click" Style="{StaticResource WorkplaceToolMenuRowStyle}" AutomationProperties.Name="Web search">
+                                                <TextBlock x:Name="WebSearchMenuStateText" Text="Web search · On"/>
+                                            </Button>
+                                            <Button x:Name="WorkplaceSkillsButton" Click="WorkplaceOpenSkills_Click" Style="{StaticResource WorkplaceToolMenuRowStyle}" ToolTip="Active skills for this session" AutomationProperties.Name="Skills">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="Skills"/>
+                                                    <Border x:Name="WorkplaceSkillsBadge" Margin="8,0,0,0" Padding="5,1" CornerRadius="6" Background="{DynamicResource AccentSoftBrush}" Visibility="Collapsed">
+                                                        <TextBlock x:Name="WorkplaceSkillsCountText" Text="0" FontSize="10" Foreground="{DynamicResource AccentMutedBrush}"/>
+                                                    </Border>
                                                 </StackPanel>
                                             </Button>
                                         </StackPanel>
@@ -721,7 +722,7 @@
                                 </Popup>
 
                                 <!-- Command Review Options Popup (Requirement #13) -->
-                                <Popup x:Name="CommandReviewPopup" Placement="Top" PlacementTarget="{Binding ElementName=CommandReviewSelectorButton}"
+                                <Popup x:Name="CommandReviewPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceAttachFileButton}"
                                        AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-6">
                                     <Border Width="278" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Padding="8">
                                         <Border.Effect>
@@ -752,7 +753,7 @@
                                 </Popup>
 
                                 <!-- Zero-size while closed, so they sit in the toggle row without affecting its layout. -->
-                                <Popup x:Name="WorkplaceSkillsPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceSkillsButton}"
+                                <Popup x:Name="WorkplaceSkillsPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceAttachFileButton}"
                                        AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-10"
                                        Opened="WorkplaceSkillsPopup_Opened">
                                     <Border x:Name="WorkplaceSkillsFlyoutCard" Width="460" MaxHeight="480" Padding="16" Background="{DynamicResource NotebookSurfaceBrush}"
@@ -847,8 +848,8 @@
             </Border>
 
             <!-- Chat display (fills remaining space — shows only user/architect/builder/critic/sandbox) -->
-            <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{DynamicResource NotebookBackgroundBrush}" Padding="16,14" PreviewMouseWheel="ChatScrollViewer_PreviewMouseWheel">
-                <StackPanel MaxWidth="960" HorizontalAlignment="Stretch">
+            <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{DynamicResource NotebookBackgroundBrush}" Padding="24,14" PreviewMouseWheel="ChatScrollViewer_PreviewMouseWheel">
+                <StackPanel x:Name="WorkplaceConversationLane" MaxWidth="960" HorizontalAlignment="Stretch">
                 <Button x:Name="ShowEarlierWorkplaceMessagesButton"
                         Content="Show earlier messages"
                         Click="ShowEarlierWorkplaceMessages_Click"
