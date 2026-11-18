@@ -1,5 +1,43 @@
 # Changelog
 
+## [Unreleased]
+
+These changes are in source and are not included in the V1.11.0 download.
+
+### Added
+
+- Workplace replies with recorded edits end with a compact file-change panel:
+  added/deleted line totals, three-file preview, expandable list, saved diff review,
+  and Undo for the latest eligible Agent run. Shell-command changes are not counted.
+- Full per-chat tool evidence can be recalled across follow-ups and compaction.
+- Passive window and isolated page screenshots appear as small activity previews
+  while the model works, without minimizing Axiom for capture.
+
+### Changed
+
+- Workplace Send animates while working. Finished activity lists collapse into a
+  themed dropdown while retaining the full history.
+- Project Canvas has a useful empty state, visible preview/source/save controls,
+  responsive actions and clearer diff and syntax presentation.
+- Background completion notifications cover Agent Access and Computer Use as well
+  as Council work, and request the Windows notification sound when enabled.
+- Native Windows caption controls are restored. Chat/composer widths adapt to open
+  panels; Context text is larger and duplicate sidebar controls are removed.
+- Cloud usage displays the remaining daily free-model quota as a percentage with
+  a theme-colored fill, with explicit unknown/error states.
+
+### Fixed
+
+- Commands can finish when a launched child keeps the shell's output streams open,
+  instead of falsely waiting until the command timeout.
+- Computer Use follow-ups retain their prior goal, result and work application.
+  Raw tool evidence is preserved without repeatedly mirroring identical transport results.
+- Rapid navigation, Settings scrolling, custom-profile isolation and atomic-save
+  staging/cancellation defects found during local testing.
+
+Validation and remaining limits: [implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md)
+and [roadmap](ROADMAP.md). No new release version is assigned.
+
 ## [V1.11.0] - 2026-10-10
 
 A one-click installer, feedback that goes straight to the developer, GitHub issues, and an open door for contributors.

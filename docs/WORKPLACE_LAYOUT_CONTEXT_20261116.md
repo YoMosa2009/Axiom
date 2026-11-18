@@ -56,5 +56,7 @@ to opposite sides of the entire viewport. Collapsing the sidebars magnified that
 
 Caption behavior follows [Microsoft's WindowChrome documentation](https://learn.microsoft.com/en-us/dotnet/api/system.windows.shell.windowchrome).
 
-No version bump, push or release is included. The owner authorized a local commit and
-hibernation after completion.
+At implementation time the owner authorized a local commit and hibernation, without
+a version bump, push or release. That earlier power-state request is historical.
+On 2026-11-17 the owner authorized GitHub source/docs synchronization; see
+[ROADMAP.md](../ROADMAP.md) for the current scope. No release is included.

@@ -24,4 +24,6 @@ Evidence is in ignored local `artifacts/context-sidebar-verified/`. Each final
 run used a fresh isolated profile and waited for sidebar animations. A fixture tracker file
 exercises the long output filename; it is not a real task result.
 
-These changes are local and have not been published as an OTA release.
+Committed as `5ede4a6`; these changes have not been published as an OTA release.
+The owner authorized GitHub source/docs synchronization on 2026-11-17; see
+[ROADMAP.md](../ROADMAP.md) for the publication scope and current source status.

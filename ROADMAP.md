@@ -12,9 +12,30 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 | **Code signing** (deferred, owner decision 2026-10-09) | When the user base grows: Azure Trusted Signing (about $10/month, identity validation required), then sign `Malx_AI.exe` and the release ZIP's executables in `release.yml`. | Removes the "Windows protected your PC" SmartScreen warning on first launch. Until then README's Getting started explains **More info → Run anyway**. |
 | **CI release secrets** | Confirmed missing on 2026-10-09 (the V1.10.0 CI run stopped before publishing). In GitHub: repo **Settings → Secrets and variables → Actions → New repository secret**, add `AXIOM_BUILTIN_GOOGLE_CLIENT_ID`, `AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET`, `AXIOM_BUILTIN_GITHUB_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_SECRET` with the same values as the local OAuth files. | Until then every release has to be published from this PC with `scripts/Publish-GitHubRelease.ps1`. |
 
-## Committed, not yet released (2026-11-16)
+## Source updates, not yet released (2026-11-16–17)
 
-### Local reliability, UI and context work (2026-11-16, not released)
+The owner authorized GitHub synchronization on 2026-11-17, including the six
+previously local implementation commits below and the documentation follow-up.
+This is source publication only: no version bump, tag, installer, ZIP or OTA release.
+The latest published release was checked on GitHub and remains V1.11.0 (2026-10-10).
+
+| Commit | Completed work | Detailed record |
+| --- | --- | --- |
+| `c370e03` | Workplace layout, durable tool evidence, follow-up context and passive screenshots | [Layout/context](docs/WORKPLACE_LAYOUT_CONTEXT_20261116.md), [capture follow-up](docs/WORKPLACE_CAPTURE_FOLLOWUP_20261116.md) |
+| `a8d02cb` | Native caption buttons, responsive chat lanes and simpler composers | [Layout/composer](docs/UI_LAYOUT_COMPOSER_20261117.md) |
+| `5ede4a6` | Larger Context sidebar content and one navigation toggle | [Context sidebar](docs/CONTEXT_SIDEBAR_20261117.md) |
+| `cf58509` | Accurate cloud quota, theme fill, tested navigation, custom-profile isolation and atomic saves | [Cloud usage and testing](docs/CLOUD_USAGE_STRESS_TEST_20261117.md) |
+| `83b49cc` | Shell pipe timeout fix, evidence replay, working spinner, compact activity, notification audio and Canvas presentation | [Run experience](docs/WORKPLACE_RUN_EXPERIENCE_20261117.md) |
+| `7b6ff94` | Completed-response file-change panel, captured review, persistence and guarded Agent Undo | [Change summary](docs/WORKPLACE_CHANGE_SUMMARY_20261117.md) |
+
+Latest implementation verification: **954 tests passed**, zero failures/skips;
+WPF Debug build: **zero errors**, 352 existing warnings; **19 final change-summary
+UI checks passed**. The preceding run-experience pass separately verified 18
+progress/activity checks and 24 Canvas checks. These are dated, scoped results;
+smaller counts below belong to earlier snapshots. See
+[the implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md) for remaining limits.
+
+### Reliability, UI and context work (2026-11-16–17, not released)
 
 Additional UI/context fixes after the 22:23–22:29 owner test:
 - Completed Workplace replies now have a reference-style recorded-change panel:

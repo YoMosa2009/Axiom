@@ -63,4 +63,6 @@ The headless flags follow the official [Chrome command-line reference](https://d
 - No model requests or real-profile UI writes were used for validation. Native probe artifacts
   are under `artifacts/pagecheck`. An initial screenshot is not an interactive playback test.
 
-Changes are local and unreleased; see Git history for the commit.
+Changes were initially local and remain unreleased. The owner authorized GitHub
+source/docs synchronization on 2026-11-17; see [ROADMAP.md](../ROADMAP.md) for the
+publication scope and current source status.

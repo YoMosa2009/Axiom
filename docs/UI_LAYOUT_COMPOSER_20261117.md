@@ -41,4 +41,6 @@ Local evidence (ignored build artifacts):
 `artifacts/layout-composer-menu-final/report.json`, `composer.png`,
 `tools-menu.png`, and the corresponding Chat/Workplace renders.
 
-These are local changes, not a published OTA release.
+Committed as `a8d02cb`; these changes are not a published OTA release.
+The owner authorized GitHub source/docs synchronization on 2026-11-17; see
+[ROADMAP.md](../ROADMAP.md) for the publication scope and current source status.

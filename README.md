@@ -21,6 +21,12 @@ Free · Windows 10/11 (64-bit) · one-click installer
 
 </div>
 
+Source status (2026-11-17): the repository includes newer Workplace reliability,
+responsive UI, cloud-usage and completed-response change-summary work. These changes
+are **unreleased** and are not part of the V1.11.0 download. See the
+[unreleased changelog](CHANGELOG.md#unreleased), [roadmap](ROADMAP.md) and
+[implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md) for verification and limits.
+
 ![Axiom Chat](docs/images/chat.png)
 
 ---

@@ -84,4 +84,6 @@ Local ignored evidence:
 - `artifacts/workplace-progress-polished/`
 - `artifacts/canvas-presentation-probe/acceptance/`
 
-Changes are committed locally only; no push, version bump or release is authorized.
+Initially committed locally as `83b49cc`. On 2026-11-17 the owner authorized
+GitHub source/docs synchronization, without a version bump or release. See
+[ROADMAP.md](../ROADMAP.md) for the publication scope and current source status.

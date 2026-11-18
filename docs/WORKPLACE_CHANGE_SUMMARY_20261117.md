@@ -21,7 +21,7 @@ answer and collapsed activity list when recorded file or Canvas changes exist.
 - Repeated changes to a path collapse to the net before/after change. Unchanged and
   reverted writes are omitted. Empty created/deleted files remain real changes.
   Binary, unreadable, invalid UTF-8 or oversized files have unknown counts instead
-  of fabricated additions/deletions. Text capture is limited to 512 KB per file.
+  of fabricated additions/deletions. Journal text capture is limited to 512 KB per file.
 - Summary metadata and captured text persist with each chat card. Review shows the
   captured version rather than silently reading the current disk state on click.
   A restored chat retains review history without reviving an unsafe Undo action.
@@ -61,4 +61,6 @@ Ignored local evidence: `artifacts/workplace-changes-tests.log`,
 `artifacts/workplace-changes-final-acceptance/`, and
 `artifacts/workplace-changes-final-graphify.log`.
 
-Committed locally only. No push, version bump or release.
+Initially committed locally as `7b6ff94`. On 2026-11-17 the owner authorized
+GitHub source/docs synchronization, without a version bump or release. See
+[ROADMAP.md](../ROADMAP.md) for the publication scope and current source status.

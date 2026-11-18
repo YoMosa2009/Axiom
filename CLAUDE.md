@@ -19,8 +19,8 @@ delivery key, code signing), and what comes next. Update it in the same commit a
 | View | What it does |
 | --- | --- |
 | **Chat** (Normal chat) | Single-model chat. Supports Skills/Plugins and Project Canvas artifacts (HTML, PDF and similar render in a WebView2 side pane). Supports MCP connectors. |
-| **Workplace** | A "Council" (Architect → Builder → Critic) or **Single Model** agent. Features: Codebase Access (patch envelopes into a connected folder), **Agent Access** (a terminal-style coding agent with real tools), **@ComputerUse** (vision-driven desktop control). |
-| **Persona / Neuron** | Persona memory and related views. |
+| **Workplace** | Builder/Critic workflow or **Single Model** agent; Architect is removed from the user-facing controls, though legacy role code remains. Features: Codebase Access (patch envelopes into a connected folder), **Agent Access** (a terminal-style coding agent with real tools), **@ComputerUse** (vision-driven desktop control). |
+| **Persona** | Persona memory and related views. Neuron navigation was removed. |
 
 Three inference backends, chosen per view:
 - **Local**: GGUF models through LLamaSharp (CUDA when an NVIDIA GPU is detected, otherwise CPU AVX/AVX2).
@@ -35,7 +35,8 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet build Malx_AI/Malx_AI.cspr
 NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj
 ```
 
-- **Tests:** about 740 xUnit tests, about 35 s on this machine (about 2 min inside OpenCode's shell). Keep them green.
+- **Latest recorded verification (2026-11-17):** 954 xUnit tests passed in 58 s;
+  WPF Debug build had zero errors and 352 existing warnings. Keep required checks green.
 - **How the tests compile:** `Malx_AI.Tests` targets plain `net10.0` and compiles *linked production files*
   (`<Compile Include="..\Malx_AI\...">`), not a project reference. A new pure-logic file must be added
   to the `.csproj` link list. Code that touches WPF, WebView2 or `AppDataPaths` cannot be linked, so keep
@@ -65,8 +66,10 @@ NUGET_PACKAGES="C:\Users\user\.nuget\packages" dotnet test Malx_AI.Tests/Malx_AI
   there). Never change its `AppId`. The updater ranks the ZIP asset above the Setup.exe, so updates still use the ZIP.
 - **Encoding:** the script reads CHANGELOG.md as UTF-8. Before that fix, PowerShell 5.1 turned ✓ into `âœ“`.
   After publishing, check the release notes for mojibake (`gh release view vX.Y.Z --json body`).
-- **Shipping rule:** the owner expects each finished fix to be committed, pushed and released so users get it.
-  Follow AGENTS.md's ship workflow. Never delete or overwrite a published release.
+- **Shipping rule:** committing, pushing source and releasing are separate actions. Follow the
+  owner's current scope and AGENTS.md's ship workflow. On 2026-11-17 the owner authorized
+  source/docs synchronization to GitHub, with no version bump or release. Never delete or
+  overwrite a published release.
 - **winget (package `YoMosa2009.Axiom`):** `scripts/New-WingetManifest.ps1` writes and `winget validate` checks the
   manifests. Submitting opens a public PR on microsoft/winget-pkgs from the owner's account, which Claude Code's auto
   mode blocks, so the owner runs it: first listing `wingetcreate submit --token (gh auth token) <manifest dir>`; once

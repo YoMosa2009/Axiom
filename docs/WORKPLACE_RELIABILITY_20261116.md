@@ -68,4 +68,7 @@ https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-printwind
   capture. Minimized targets are not restored for inspection.
 - No paid/free model requests were spent, no Hybrid Local workload was interrupted, and no
   live-model or full in-app Computer Use acceptance is claimed. The user's animation project
-  was not modified. These changes are local and unreleased.
+  was not modified. These changes were initially local and remain unreleased.
+
+On 2026-11-17 the owner authorized GitHub source/docs synchronization, without a
+version bump or release. See [ROADMAP.md](../ROADMAP.md) for the current source status.

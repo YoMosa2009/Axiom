@@ -87,4 +87,6 @@ were not accepted end to end. An earlier restore-time CollectionView exception
 occurred in the harness before its dispatcher started and was not reproduced in
 normal startup, so no speculative product change was made for it.
 
-Changes are local; no version bump, push or OTA release was performed.
+Initially committed locally as `cf58509`, with no version bump or OTA release.
+On 2026-11-17 the owner authorized GitHub source/docs synchronization. See
+[ROADMAP.md](../ROADMAP.md) for the publication scope and current source status.
