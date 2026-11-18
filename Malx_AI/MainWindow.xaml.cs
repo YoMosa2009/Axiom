@@ -70,6 +70,7 @@ namespace Malx_AI
         // model is reloaded when the user returns to the chat view.
         private bool _chatModelReleasedForCouncil = false;
         private bool _isViewTransitionAnimating = false;
+        private Action? _pendingViewSwitch;
         private bool _isSidebarAnimating = false;
         private bool _isSidebarCollapsed = false;
         private bool _isWorkplaceSidebarCollapsed = false;
@@ -251,7 +252,7 @@ namespace Malx_AI
         private Button? _hybridLocalModeButton;
         private Button? _customEndpointModelButton;
         private bool _isFetchingOpenRouterUsage;
-        private double _openRouterUsagePercent;
+        private double _openRouterUsageRemainingPercent;
         private readonly PythonExecutionService _pythonExecutionService = new();
         private readonly OpenRouterChatService _openRouterChatService = new();
         private readonly OpenRouterUsageRefreshThrottle _openRouterUsageRefreshThrottle = new(TimeSpan.FromSeconds(60));
@@ -443,6 +444,7 @@ namespace Malx_AI
                 WorkplaceViewControl.CouncilPetStatusChanged += WorkplaceCouncilPetStatusChanged;
                 WorkplaceViewControl.CouncilRunFinished += WorkplaceCouncilRunFinished;
                 _openRouterChatService.TokenUsageRecorded += OpenRouterChatService_TokenUsageRecorded;
+                InitializeOpenRouterUsageRefresh();
                 LoadEmptyChatLogo();
                 TemperatureSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
                 TopPSlider.ValueChanged += InferenceSettingsSlider_ValueChanged;
@@ -1916,6 +1918,7 @@ namespace Malx_AI
 
         private void ShowSettingsPage(string page)
         {
+            SettingsContentScrollViewer.ScrollToTop();
             string key = (page ?? "Inference").Trim();
             if (SettingsPageInference != null)
                 SettingsPageInference.Visibility = string.Equals(key, "Inference", StringComparison.OrdinalIgnoreCase)
@@ -4448,7 +4451,12 @@ namespace Malx_AI
 
         private void SwitchToChat_Click(object sender, RoutedEventArgs e)
         {
-            if (_isViewTransitionAnimating || ChatView.Visibility == Visibility.Visible)
+            if (_isViewTransitionAnimating)
+            {
+                _pendingViewSwitch = () => SwitchToChat_Click(sender, e);
+                return;
+            }
+            if (ChatView.Visibility == Visibility.Visible)
                 return;
 
             SaveCurrentWorkplaceChat();
@@ -4474,7 +4482,12 @@ namespace Malx_AI
 
         private void SwitchToWorkplace_Click(object sender, RoutedEventArgs e)
         {
-            if (_isViewTransitionAnimating || WorkplaceViewControl.Visibility == Visibility.Visible)
+            if (_isViewTransitionAnimating)
+            {
+                _pendingViewSwitch = () => SwitchToWorkplace_Click(sender, e);
+                return;
+            }
+            if (WorkplaceViewControl.Visibility == Visibility.Visible)
                 return;
 
             SaveCurrentChat();
@@ -4501,7 +4514,12 @@ namespace Malx_AI
 
         private void SwitchToPersona_Click(object sender, RoutedEventArgs e)
         {
-            if (_isViewTransitionAnimating || PersonaMemoryView.Visibility == Visibility.Visible)
+            if (_isViewTransitionAnimating)
+            {
+                _pendingViewSwitch = () => SwitchToPersona_Click(sender, e);
+                return;
+            }
+            if (PersonaMemoryView.Visibility == Visibility.Visible)
                 return;
 
             SaveCurrentWorkplaceChat();
@@ -4563,7 +4581,13 @@ namespace Malx_AI
                     EasingFunction = ease
                 };
 
-                showAnimation.Completed += (_, _) => _isViewTransitionAnimating = false;
+                showAnimation.Completed += (_, _) =>
+                {
+                    _isViewTransitionAnimating = false;
+                    var pending = _pendingViewSwitch;
+                    _pendingViewSwitch = null;
+                    pending?.Invoke();
+                };
                 showElement.BeginAnimation(UIElement.OpacityProperty, showAnimation);
             };
 
@@ -4572,8 +4596,10 @@ namespace Malx_AI
 
         protected override void OnClosed(EventArgs e)
         {
+            _pendingViewSwitch = null;
             DisposeSystemTray();
             _openRouterChatService.TokenUsageRecorded -= OpenRouterChatService_TokenUsageRecorded;
+            StopOpenRouterUsageRefresh();
             if (_councilPetWindow != null)
             {
                 _councilPetWindow.DisableRequested -= CouncilPetWindow_DisableRequested;

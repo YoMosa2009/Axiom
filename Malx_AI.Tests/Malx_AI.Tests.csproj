@@ -105,6 +105,7 @@
     <Compile Include="..\Malx_AI\FoundationSystemPrompt.cs" Link="Production\FoundationSystemPrompt.cs" />
     <Compile Include="..\Malx_AI\GenerationTelemetry.cs" Link="Production\GenerationTelemetry.cs" />
     <Compile Include="..\Malx_AI\OpenRouterTokenUsageParser.cs" Link="Production\OpenRouterTokenUsageParser.cs" />
+    <Compile Include="..\Malx_AI\OpenRouterKeyUsage.cs" Link="Production\OpenRouterKeyUsage.cs" />
     <Compile Include="..\Malx_AI\OpenRouterChatService.cs" Link="Production\OpenRouterChatService.cs" />
   </ItemGroup>
 </Project>

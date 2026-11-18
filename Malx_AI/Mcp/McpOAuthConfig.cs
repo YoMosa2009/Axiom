@@ -15,8 +15,9 @@ namespace Malx_AI.Mcp
     /// environment variables → active profile folder → machine SharedOAuth folder →
     /// legacy Axiom / Axiom-Dev folders → optional release built-ins.
     /// </para>
-    /// App credentials are machine-shared (not chat data). User connection tokens stay
-    /// per-profile in the DPAPI connector store.
+    /// The default profiles share app credentials. A custom profile resolves credentials
+    /// from its own folder, explicit overrides, or release built-ins. User connection
+    /// tokens stay per-profile in the DPAPI connector store.
     /// </summary>
     internal static class McpOAuthConfig
     {
@@ -46,12 +47,15 @@ namespace Malx_AI.Mcp
         private static bool _hydrated;
 
         /// <summary>
-        /// Machine-wide OAuth app credential folder shared by Debug (Axiom-Dev) and Release (Axiom).
+        /// OAuth app credential folder shared by the default profiles, or local to a custom profile.
         /// </summary>
         public static string SharedOAuthRoot
         {
             get
             {
+                if (AppDataPaths.ProfileLabel == "custom")
+                    return AppDataPaths.Root;
+
                 string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 return Path.Combine(local, "Axiom", "SharedOAuth");
             }
@@ -78,7 +82,7 @@ namespace Malx_AI.Mcp
         /// </summary>
         public static void EnsureSharedCredentialsHydrated()
         {
-            if (_hydrated)
+            if (_hydrated || AppDataPaths.ProfileLabel == "custom")
                 return;
 
             lock (HydrateGate)
@@ -247,7 +251,8 @@ namespace Malx_AI.Mcp
             string sharedPath = Path.Combine(SharedOAuthRoot, fileName);
             string profilePath = Path.Combine(AppDataPaths.Root, fileName);
             File.WriteAllText(sharedPath, normalized, Encoding.UTF8);
-            File.WriteAllText(profilePath, normalized, Encoding.UTF8);
+            if (AppDataPaths.ProfileLabel != "custom")
+                File.WriteAllText(profilePath, normalized, Encoding.UTF8);
             _hydrated = true;
         }
 
@@ -281,8 +286,11 @@ namespace Malx_AI.Mcp
 
         private static IEnumerable<string> EnumerateCredentialDirectories()
         {
-            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             yield return AppDataPaths.Root;
+            if (AppDataPaths.ProfileLabel == "custom")
+                yield break;
+
+            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             yield return SharedOAuthRoot;
             yield return Path.Combine(local, "Axiom");
             yield return Path.Combine(local, "Axiom-Dev");

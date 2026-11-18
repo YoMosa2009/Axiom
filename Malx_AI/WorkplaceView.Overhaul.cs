@@ -542,7 +542,7 @@ namespace Malx_AI
 
         private void ShowRightSidebarTab(WorkplaceRightSidebarTab tab, bool toggleOffIfSame)
         {
-            if (_rightSidebarTab == tab && _isProjectCanvasExpanded && toggleOffIfSame)
+            if (_rightSidebarTab == tab && _isProjectCanvasShown && toggleOffIfSame)
             {
                 ToggleProjectCanvas();
                 HighlightRightSidebarButtons();
@@ -550,7 +550,7 @@ namespace Malx_AI
             }
 
             _rightSidebarTab = tab;
-            if (!_isProjectCanvasExpanded)
+            if (!_isProjectCanvasShown)
                 ToggleProjectCanvas();
 
             if (tab == WorkplaceRightSidebarTab.Diff)
@@ -613,7 +613,7 @@ namespace Malx_AI
 
         private void HighlightRightSidebarButtons()
         {
-            bool panelOpen = _isProjectCanvasExpanded;
+            bool panelOpen = _isProjectCanvasShown;
             SetSidebarButtonActive(RightTabDiffButton, panelOpen && _rightSidebarTab == WorkplaceRightSidebarTab.Diff);
             SetSidebarButtonActive(RightTabContextButton, panelOpen && _rightSidebarTab == WorkplaceRightSidebarTab.Context);
             SetSidebarButtonActive(RightTabCanvasButton, panelOpen && _rightSidebarTab == WorkplaceRightSidebarTab.Canvas);

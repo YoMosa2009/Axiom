@@ -17,6 +17,15 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 ### Local reliability, UI and context work (2026-11-16, not released)
 
 Additional UI/context fixes after the 22:23–22:29 owner test:
+- OpenRouter usage now reads the explicit daily free-model request counter, reports the
+  remaining percentage, and fills the pill with the selected theme accent. Refreshes are
+  bounded, expire after 30 seconds/UTC rollover, and ignore responses for replaced keys.
+- GPT 6.2 Sol user-flow testing: fixed sticky Settings navigation/scroll reset, first-click
+  compact Workplace sidebar reopening, and rapid main-tab navigation losing the final click.
+- Fixed custom-profile isolation: Debug migrations and shared OAuth credentials no longer
+  import into or write outside explicit custom profiles. Default profiles retain migration.
+- Atomic saves now preserve unrelated `.tmp` siblings, serialize commit/backup updates,
+  and leave the primary/backup unchanged when canceled before commit.
 - Follow-up layout correction (2026-11-17): restored the native Windows caption and its
   minimize/maximize/restore/close buttons. Navigation and Workplace controls share a client
   toolbar with automatic height; actions move below the title when space is tight.

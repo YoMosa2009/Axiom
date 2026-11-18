@@ -33,9 +33,10 @@ namespace Malx_AI
             if (primaryExists)
                 quarantinedPath = QuarantineCorruptedFile(primaryPath);
 
-            if (TryLoadCandidate(tempPath, deserialize, out T? tempValue, out string tempJson))
+            if (TryLoadCandidate(tempPath, deserialize, out T? tempValue, out _))
             {
-                AtomicFileWriter.WriteAllText(primaryPath, tempJson);
+                // Consume the legacy snapshot so it cannot be recovered again after a later save.
+                File.Move(tempPath, primaryPath, overwrite: true);
                 return new JsonPersistenceRecoveryResult<T>
                 {
                     Value = tempValue,

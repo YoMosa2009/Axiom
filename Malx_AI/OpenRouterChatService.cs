@@ -80,12 +80,6 @@ namespace Malx_AI
         int ContextWindowTokens,
         string ModelLabel);
 
-    public sealed record OpenRouterKeyInfo(
-        int RequestsUsed,
-        int RequestsLimit,
-        bool FetchSucceeded,
-        bool IsUnlimited = false);
-
     public sealed record OpenRouterModelProfile(
         string AliasId,
         string AliasLabel,
@@ -867,24 +861,7 @@ namespace Malx_AI
                 if (string.IsNullOrWhiteSpace(responseBody))
                     return new OpenRouterKeyInfo(0, 0, false);
 
-                using JsonDocument document = JsonDocument.Parse(responseBody);
-
-                // Free-tier keys return a "data" object with "limit": null (no credit/request cap).
-                // That's a valid, healthy key — treat it as a successful "unlimited" fetch rather than
-                // a parse failure, so the UI stops falsely reporting "Unable to fetch usage."
-                if (IsUnlimitedFreeTierKey(document.RootElement))
-                    return new OpenRouterKeyInfo(0, 0, true, IsUnlimited: true);
-
-                if (!TryExtractDailyRequests(document.RootElement, out int requestsUsed, out int requestsLimit))
-                {
-                    await BackendLogService.LogEventAsync("OpenRouterKeyInfoParseFailed", Truncate(responseBody, 800));
-                    return new OpenRouterKeyInfo(0, 0, false);
-                }
-
-                if (requestsUsed < 0 || requestsLimit <= 0)
-                    return new OpenRouterKeyInfo(0, 0, false);
-
-                return new OpenRouterKeyInfo(requestsUsed, requestsLimit, true);
+                return OpenRouterKeyUsage.Parse(responseBody);
             }
             catch
             {
@@ -2473,154 +2450,6 @@ namespace Malx_AI
             return messages;
         }
 
-        private static bool IsUnlimitedFreeTierKey(JsonElement root)
-        {
-            // Matches OpenRouter's /key response: { "data": { "limit": null, ... } }
-            if (root.ValueKind != JsonValueKind.Object
-                || !TryGetPropertyIgnoreCase(root, "data", out JsonElement data)
-                || data.ValueKind != JsonValueKind.Object)
-            {
-                return false;
-            }
-
-            // A present-but-null "limit" means there is no usage cap on this key.
-            return TryGetPropertyIgnoreCase(data, "limit", out JsonElement limit)
-                && limit.ValueKind == JsonValueKind.Null;
-        }
-
-        private static bool TryExtractDailyRequests(JsonElement element, out int requestsUsed, out int requestsLimit)
-        {
-            requestsUsed = 0;
-            requestsLimit = 0;
-
-            if (TryExtractRequestUsageFromStructuredObject(element, out requestsUsed, out requestsLimit))
-                return true;
-
-            if (!TryFindNumericProperty(element, new[] { "requests_used", "used_requests", "daily_requests_used", "daily_used_requests" }, out requestsUsed)
-                && !TryFindNumericProperty(element, new[] { "used", "usage" }, out requestsUsed))
-            {
-                return false;
-            }
-
-            if (!TryFindNumericProperty(element, new[] { "requests_limit", "daily_requests_limit", "daily_limit_requests", "limit_requests" }, out requestsLimit)
-                && !TryFindNumericProperty(element, new[] { "limit", "max_requests", "requests_max" }, out requestsLimit))
-            {
-                if (TryFindNumericProperty(element, new[] { "remaining", "requests_remaining", "remaining_requests" }, out int requestsRemaining)
-                    && requestsRemaining >= 0
-                    && requestsRemaining >= requestsUsed)
-                {
-                    requestsLimit = requestsRemaining;
-                    requestsUsed = 0;
-                    return true;
-                }
-
-                return false;
-            }
-
-            return true;
-        }
-
-        private static bool TryExtractRequestUsageFromStructuredObject(JsonElement element, out int requestsUsed, out int requestsLimit)
-        {
-            requestsUsed = 0;
-            requestsLimit = 0;
-
-            if (element.ValueKind != JsonValueKind.Object)
-            {
-                if (element.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (JsonElement item in element.EnumerateArray())
-                    {
-                        if (TryExtractRequestUsageFromStructuredObject(item, out requestsUsed, out requestsLimit))
-                            return true;
-                    }
-                }
-
-                return false;
-            }
-
-            if (TryExtractUsageLimitPair(element, out requestsUsed, out requestsLimit))
-                return true;
-
-            foreach (string containerName in new[] { "data", "daily", "requests", "request", "usage", "limit", "limits", "rate_limit" })
-            {
-                if (TryGetPropertyIgnoreCase(element, containerName, out JsonElement nested)
-                    && TryExtractRequestUsageFromStructuredObject(nested, out requestsUsed, out requestsLimit))
-                {
-                    return true;
-                }
-            }
-
-            foreach (JsonProperty property in element.EnumerateObject())
-            {
-                if (TryExtractRequestUsageFromStructuredObject(property.Value, out requestsUsed, out requestsLimit))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool TryExtractUsageLimitPair(JsonElement element, out int requestsUsed, out int requestsLimit)
-        {
-            requestsUsed = 0;
-            requestsLimit = 0;
-
-            if (element.ValueKind != JsonValueKind.Object)
-                return false;
-
-            if (TryGetPropertyIgnoreCase(element, "usage", out JsonElement usageElement)
-                && TryGetPropertyIgnoreCase(element, "limit", out JsonElement limitElement)
-                && TryExtractRequestCount(usageElement, out requestsUsed)
-                && TryExtractRequestCount(limitElement, out requestsLimit))
-            {
-                return requestsLimit > 0;
-            }
-
-            if (TryGetPropertyIgnoreCase(element, "used", out JsonElement usedElement)
-                && TryGetPropertyIgnoreCase(element, "limit", out JsonElement directLimitElement)
-                && TryExtractRequestCount(usedElement, out requestsUsed)
-                && TryExtractRequestCount(directLimitElement, out requestsLimit))
-            {
-                return requestsLimit > 0;
-            }
-
-            if (TryGetPropertyIgnoreCase(element, "used", out usedElement)
-                && TryGetPropertyIgnoreCase(element, "remaining", out JsonElement remainingElement)
-                && TryExtractRequestCount(usedElement, out requestsUsed)
-                && TryExtractRequestCount(remainingElement, out int requestsRemaining))
-            {
-                requestsLimit = requestsUsed + Math.Max(0, requestsRemaining);
-                return requestsLimit > 0;
-            }
-
-            if (TryGetPropertyIgnoreCase(element, "requests", out JsonElement requestsElement)
-                && TryExtractUsageLimitPair(requestsElement, out requestsUsed, out requestsLimit))
-            {
-                return true;
-            }
-
-            if (TryGetPropertyIgnoreCase(element, "daily", out JsonElement dailyElement)
-                && TryExtractUsageLimitPair(dailyElement, out requestsUsed, out requestsLimit))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        private static bool TryExtractRequestCount(JsonElement element, out int value)
-        {
-            value = 0;
-
-            if (TryReadInt(element, out value))
-                return true;
-
-            if (element.ValueKind != JsonValueKind.Object)
-                return false;
-
-            return TryFindNumericProperty(element, new[] { "requests", "count", "value", "used", "limit", "remaining" }, out value);
-        }
-
         private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
         {
             if (element.ValueKind == JsonValueKind.Object)
@@ -2636,74 +2465,6 @@ namespace Malx_AI
             }
 
             value = default;
-            return false;
-        }
-
-        private static bool TryFindNumericProperty(JsonElement element, IReadOnlyCollection<string> propertyNames, out int value)
-        {
-            value = 0;
-
-            if (element.ValueKind == JsonValueKind.Object)
-            {
-                foreach (JsonProperty property in element.EnumerateObject())
-                {
-                    if (propertyNames.Contains(property.Name, StringComparer.OrdinalIgnoreCase)
-                        && TryReadInt(property.Value, out value))
-                    {
-                        return true;
-                    }
-
-                    if (TryFindNumericProperty(property.Value, propertyNames, out value))
-                        return true;
-                }
-            }
-            else if (element.ValueKind == JsonValueKind.Array)
-            {
-                foreach (JsonElement item in element.EnumerateArray())
-                {
-                    if (TryFindNumericProperty(item, propertyNames, out value))
-                        return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static bool TryReadInt(JsonElement element, out int value)
-        {
-            value = 0;
-
-            try
-            {
-                switch (element.ValueKind)
-                {
-                    case JsonValueKind.Number:
-                        if (element.TryGetInt32(out value))
-                            return true;
-
-                        if (element.TryGetInt64(out long longValue))
-                        {
-                            value = (int)Math.Clamp(longValue, int.MinValue, int.MaxValue);
-                            return true;
-                        }
-
-                        if (element.TryGetDouble(out double doubleValue))
-                        {
-                            value = (int)Math.Round(doubleValue);
-                            return true;
-                        }
-
-                        break;
-
-                    case JsonValueKind.String:
-                        return int.TryParse(element.GetString(), out value);
-                }
-            }
-            catch
-            {
-                return false;
-            }
-
             return false;
         }
 

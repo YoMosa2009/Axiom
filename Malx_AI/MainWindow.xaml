@@ -1,4 +1,4 @@
-﻿<Window x:Class="Malx_AI.MainWindow"
+<Window x:Class="Malx_AI.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Malx_AI"
@@ -1419,7 +1419,7 @@
                                                                         Click="CodeBlockToggle_Click"
                                                                         Tag="{Binding}"
                                                                         Style="{StaticResource CodeBlockToggleButtonStyle}"/>
-                                                            </StackPanel>
+                            </StackPanel>
                                                         </DockPanel>
                                                         <ItemsControl x:Name="CodeBlockItemsControl" ItemsSource="{Binding CodeBlocks}" Margin="10,8,10,10">
                                                             <ItemsControl.ItemTemplate>
@@ -2198,12 +2198,12 @@
                         </Border.RenderTransform>
                         <Grid>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
-                            <StackPanel>
+                            <StackPanel Grid.Row="0">
                                 <TextBlock Text="Settings" FontSize="28" FontWeight="Normal" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Georgia" Margin="0,0,0,12"/>
 
                                 <!-- Settings category menu -->
@@ -2220,6 +2220,9 @@
                                     </StackPanel>
                                 </Border>
 
+                                                            </StackPanel>
+                            <ScrollViewer x:Name="SettingsContentScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
+                            <StackPanel>
                                 <!-- ═══ INFERENCE ═══ -->
                                 <StackPanel x:Name="SettingsPageInference">
                                 <TextBlock Text="Inference Settings" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,16"/>
@@ -2346,7 +2349,7 @@
                                                      <ColumnDefinition Width="*"/>
                                                      <ColumnDefinition Width="Auto"/>
                                                  </Grid.ColumnDefinitions>
-                                                 <TextBlock Text="API key usage" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                                                 <TextBlock Text="Daily free-model requests" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" VerticalAlignment="Center"/>
                                                  <Button x:Name="RefreshOpenRouterUsageButton"
                                                          Grid.Column="1"
                                                          Width="22"
@@ -2358,14 +2361,12 @@
                                                      <TextBlock Text="↻" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                  </Button>
                                              </Grid>
-                                             <!-- Pill-shaped usage meter: color-coded fill behind a centered
-                                                  "used / limit · remaining" label. Fill is deliberately translucent
-                                                  so the label stays readable at any fill level. -->
+                                             <!-- The fill and label both represent remaining daily requests. -->
                                              <Border x:Name="OpenRouterUsageTrack" Height="24" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" HorizontalAlignment="Stretch" SizeChanged="OpenRouterUsageTrack_SizeChanged">
                                                  <Grid>
-                                                     <Border x:Name="OpenRouterUsageFillBar" Width="0" Background="#22C55E" Opacity="0.38" CornerRadius="11" HorizontalAlignment="Left" Margin="1"/>
+                                                     <Border x:Name="OpenRouterUsageFillBar" Width="0" Background="{DynamicResource PrimaryAccentBrush}" Opacity="0.45" CornerRadius="11" HorizontalAlignment="Left" Margin="1"/>
                                                      <TextBlock x:Name="OpenRouterUsageText"
-                                                                Text="0 / 0 requests"
+                                                                Text="No usage data yet"
                                                                 FontSize="11"
                                                                 FontWeight="SemiBold"
                                                                 Foreground="{DynamicResource NotebookTextBrush}"
@@ -2901,7 +2902,7 @@
                             </StackPanel>
                             </ScrollViewer>
 
-                            <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,12,0,0" Margin="0,12,0,0">
+                            <Border Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,12,0,0" Margin="0,12,0,0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>

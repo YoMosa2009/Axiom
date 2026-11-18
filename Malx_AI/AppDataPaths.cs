@@ -56,9 +56,15 @@ namespace Malx_AI
 #if DEBUG
                 // Bring existing developer data from the old shared %LocalAppData%\Axiom folder
                 // into Axiom-Dev once so switching profiles doesn't look like "data disappeared".
-                TryMigrateSharedAxiomIntoDevProfile();
-                // Old relative paths under bin/Debug — only for development.
-                MigrateLegacyWorkingDirectoryData();
+                // An explicit data-folder override is a clean profile, not a migration
+                // destination. Importing legacy data here can copy personal chats and keys
+                // into smoke tests or a deliberately separate user profile.
+                if (ProfileLabel == "dev")
+                {
+                    TryMigrateSharedAxiomIntoDevProfile();
+                    // Old relative paths under bin/Debug — only for development.
+                    MigrateLegacyWorkingDirectoryData();
+                }
 #else
                 // Release/published builds: do NOT scrape ChatHistory / DB out of the install
                 // folder. That path is how a poorly packed zip could ship the author's personal

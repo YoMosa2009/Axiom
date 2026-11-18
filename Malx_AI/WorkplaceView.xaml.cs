@@ -2545,6 +2545,7 @@ namespace Malx_AI
         private bool _isProjectCanvasShown = true;
         private bool _isProjectCanvasAutoCollapsed;
         private bool _isProjectCanvasExplicitlyExpandedInCompactLayout;
+        private const double CompactProjectCanvasBreakpoint = 1120;
         private bool _isCodeOutputExpanded = true;
         private const double ProjectCanvasExpandedWidthRatio = 0.30;
         private const int ContextCompressionThreshold = 3000;
@@ -3110,17 +3111,10 @@ namespace Malx_AI
 
         private void ToggleProjectCanvas()
         {
-            if (_isProjectCanvasAutoCollapsed)
-            {
-                _isProjectCanvasAutoCollapsed = false;
-                _isProjectCanvasExplicitlyExpandedInCompactLayout = true;
-                _isProjectCanvasExpanded = true;
-                AnimateProjectCanvasPane(true);
-                return;
-            }
-
-            _isProjectCanvasExpanded = !_isProjectCanvasExpanded;
-            _isProjectCanvasExplicitlyExpandedInCompactLayout = false;
+            bool compactLayout = _isProjectCanvasAutoCollapsed || ActualWidth < CompactProjectCanvasBreakpoint;
+            _isProjectCanvasExpanded = !_isProjectCanvasShown;
+            _isProjectCanvasAutoCollapsed = false;
+            _isProjectCanvasExplicitlyExpandedInCompactLayout = _isProjectCanvasExpanded && compactLayout;
             AnimateProjectCanvasPane(_isProjectCanvasExpanded);
         }
 
@@ -3129,7 +3123,7 @@ namespace Malx_AI
             if (!IsLoaded || availableWidth <= 0)
                 return;
 
-            bool compactCanvasLayout = availableWidth < 1120;
+            bool compactCanvasLayout = availableWidth < CompactProjectCanvasBreakpoint;
             CouncilSidebarColumn.Width = new GridLength(0);
 
             if (compactCanvasLayout && _isProjectCanvasExpanded &&
