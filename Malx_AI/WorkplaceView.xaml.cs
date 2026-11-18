@@ -2190,7 +2190,8 @@ namespace Malx_AI
                     Role = msg.Role,
                     Content = msg.Content,
                     Timestamp = msg.Timestamp == default ? DateTime.Now : msg.Timestamp,
-                    AttachedImagePaths = msg.AttachedImagePaths?.ToList() ?? new List<string>()
+                    AttachedImagePaths = msg.AttachedImagePaths?.ToList() ?? new List<string>(),
+                    FileChanges = msg.FileChanges?.ToList() ?? new List<WorkplaceFileChange>()
                 };
 
                 if (NotificationRoles.Contains(message.Role))
@@ -6352,6 +6353,7 @@ namespace Malx_AI
                 WorkspaceGitStatus gitBefore = GetConnectedWorkspaceGitStatus();
                 WorkspacePatchApplyResult result = _workspaceAccessService.ApplyPatchProposal(_connectedWorkspace, proposal);
                 _lastCodebaseUndo = undoSnapshot with { ChangedFiles = result.ChangedFiles.ToList() };
+                RecordAppliedPatchChanges(undoSnapshot, result);
                 RecordRecentlyChangedWorkspaceFiles(result.ChangedFiles);
                 _pendingCodebasePatch = null;
                 _hasPendingCodebaseChanges = false;
@@ -18771,7 +18773,8 @@ namespace Malx_AI
                     Role = c.Role,
                     Content = c.Content,
                     Timestamp = c.Timestamp,
-                    AttachedImagePaths = c.AttachedImagePaths?.ToList() ?? new List<string>()
+                    AttachedImagePaths = c.AttachedImagePaths?.ToList() ?? new List<string>(),
+                    FileChanges = c.FileChanges.ToList()
                 }).ToList(),
                 SystemNotifications = new List<WorkplaceChatMessageDto>(),
                 ProjectKnowledgeBaseId = _projectKnowledgeBaseId,

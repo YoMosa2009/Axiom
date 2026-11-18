@@ -57,6 +57,7 @@ namespace Malx_AI
         public string Content { get; set; } = "";
         public DateTime Timestamp { get; set; }
         public List<string> AttachedImagePaths { get; set; } = new();
+        public List<WorkplaceFileChange> FileChanges { get; set; } = new();
     }
 
     public sealed class WorkplaceDocumentDto

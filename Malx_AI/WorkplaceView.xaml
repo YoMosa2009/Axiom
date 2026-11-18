@@ -1022,6 +1022,9 @@
                                                                       IsToolBarVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
                                         </Border>
                                     </Expander>
+                                    <local:WorkplaceChangeSummary x:Name="CompletedChangesSummary" Margin="0,16,0,0"
+                                        Visibility="{Binding HasFileChanges, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                        ReviewRequested="CompletedChanges_Review" UndoRequested="CompletedChanges_Undo" FileReviewRequested="CompletedChanges_ReviewFile"/>
                                 </StackPanel>
                             </Border>
                             <DataTemplate.Triggers>

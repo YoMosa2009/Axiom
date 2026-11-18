@@ -25,6 +25,7 @@
     <Compile Include="..\Malx_AI\ReasoningParser.cs" Link="Production\ReasoningParser.cs" />
     <Compile Include="..\Malx_AI\MarkdownParser.cs" Link="Production\MarkdownParser.cs" />
     <Compile Include="..\Malx_AI\LineDiff.cs" Link="Production\LineDiff.cs" />
+    <Compile Include="..\Malx_AI\WorkplaceFileChange.cs" Link="Production\WorkplaceFileChange.cs" />
     <Compile Include="..\Malx_AI\SmartContextCompaction.cs" Link="Production\SmartContextCompaction.cs" />
     <Compile Include="..\Malx_AI\WorkplaceCompactionEngine.cs" Link="Production\WorkplaceCompactionEngine.cs" />
     <Compile Include="..\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />

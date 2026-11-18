@@ -219,6 +219,15 @@ namespace Malx_AI.Agent
             }
         }
 
+        /// <summary>Captures observed run changes while its before-copies still exist.</summary>
+        public IReadOnlyList<WorkplaceFileChange> CaptureFileChanges(string? projectRoot = null)
+        {
+            List<Entry> entries;
+            lock (_gate) entries = _order.Select(path => _entries[path]).ToList();
+            return entries.Select(entry => WorkplaceFileChange.FromFiles(entry.Path, entry.CopyPath, entry.ExistedBefore, projectRoot))
+                .OfType<WorkplaceFileChange>().ToArray();
+        }
+
         /// <summary>Call before the run changes <paramref name="path"/>; only the first call per file counts.</summary>
         public void BeforeChange(string path)
         {

@@ -872,8 +872,8 @@ namespace Malx_AI
             {
                 await BackendLogService.LogErrorAsync("ComputerAgent", ex);
                 CompleteAgentRunCard(runCard, $"The agent stopped: {ex.Message}");
+                await OfferAgentUndoAsync(runJournal, runCard.Card);
                 FinishAgentRunUi();
-                OfferAgentUndo(runJournal);
                 if (!token.IsCancellationRequested)
                     CouncilRunFinished?.Invoke("Agent Access stopped with an error.");
                 return;
@@ -996,8 +996,8 @@ namespace Malx_AI
             CompleteAgentRunCard(runCard, finalChatMessage);
             _chatHistory.Add(("assistant", finalChatMessage));
             UpdateWorkplaceTokenUsageIndicator();
+            await OfferAgentUndoAsync(runJournal, runCard.Card);
             FinishAgentRunUi();
-            OfferAgentUndo(runJournal);
             if (!result.Cancelled && !token.IsCancellationRequested)
                 CouncilRunFinished?.Invoke(result.StoppedOnStepLimit
                     ? "Agent Access reached its step limit. Open Axiom to review."

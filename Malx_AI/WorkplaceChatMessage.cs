@@ -19,6 +19,47 @@ namespace Malx_AI
         private IReadOnlyList<ImageSource>? _attachedImagesCache;
         private IReadOnlyList<string> _viewedImagePaths = Array.Empty<string>();
         private IReadOnlyList<ImageSource>? _viewedImagesCache;
+        private IReadOnlyList<WorkplaceFileChange> _fileChanges = Array.Empty<WorkplaceFileChange>();
+        private bool _fileChangesExpanded;
+        private bool _canUndoFileChanges;
+
+        public IReadOnlyList<WorkplaceFileChange> FileChanges
+        {
+            get => _fileChanges;
+            set
+            {
+                _fileChanges = value ?? Array.Empty<WorkplaceFileChange>();
+                foreach (string name in new[] { nameof(FileChanges), nameof(HasFileChanges), nameof(FileChangesTitle),
+                    nameof(AddedLinesLabel), nameof(RemovedLinesLabel), nameof(FileChangesScope), nameof(VisibleFileChanges),
+                    nameof(HasMoreFileChanges), nameof(MoreFileChangesLabel) }) OnPropertyChanged(name);
+            }
+        }
+        public bool HasFileChanges => FileChanges.Count > 0;
+        public string FileChangesTitle
+        {
+            get
+            {
+                int files = FileChanges.Count(c => c.Kind != "Canvas");
+                return files == 0 ? "Updated canvas" : $"Edited {files} file{(files == 1 ? "" : "s")}" + (files < FileChanges.Count ? " · Canvas updated" : "");
+            }
+        }
+        public string AddedLinesLabel => FileChanges.Any(c => c.Additions.HasValue) ? $"+{FileChanges.Sum(c => (long)(c.Additions ?? 0)):N0}" : "Not counted";
+        public string RemovedLinesLabel => FileChanges.Any(c => c.Removals.HasValue) ? $"−{FileChanges.Sum(c => (long)(c.Removals ?? 0)):N0}" : "";
+        public string FileChangesScope => "Recorded file-tool and applied patch edits, plus canvas updates. Shell-command changes may not be included."
+            + (FileChanges.Any(c => !c.Additions.HasValue) ? " Some files could not be counted; totals cover readable text only." : "");
+        public IReadOnlyList<WorkplaceFileChange> VisibleFileChanges => FileChangesExpanded ? FileChanges : FileChanges.Take(3).ToArray();
+        public bool HasMoreFileChanges => FileChanges.Count > 3;
+        public string MoreFileChangesLabel => FileChangesExpanded ? "Show fewer files  ⌃" : $"Show {FileChanges.Count - 3} more file{(FileChanges.Count == 4 ? "" : "s")}  ⌄";
+        public bool FileChangesExpanded
+        {
+            get => _fileChangesExpanded;
+            set { _fileChangesExpanded = value; OnPropertyChanged(nameof(VisibleFileChanges)); OnPropertyChanged(nameof(MoreFileChangesLabel)); }
+        }
+        public bool CanUndoFileChanges
+        {
+            get => _canUndoFileChanges;
+            set { _canUndoFileChanges = value; OnPropertyChanged(); }
+        }
 
         public string Role { get; init; } = "system";
 

@@ -10,7 +10,7 @@ using Malx_AI.Agent;
 namespace Malx_AI
 {
     /// <summary>
-    /// "Undo these changes" for the most recent Agent Access run: a bar above the composer that
+    /// "Undo these changes" for the most recent Agent Access run: an action on its completed response that
     /// puts every file the run wrote back the way it was.
     /// </summary>
     /// <remarks>
@@ -20,6 +20,7 @@ namespace Malx_AI
     public partial class WorkplaceView
     {
         private AgentRunJournal? _agentUndoJournal;
+        private WorkplaceChatMessage? _agentUndoMessage;
 
         /// <summary>A new undo record for the run about to start, attached to the task's backup.</summary>
         private AgentRunJournal BeginAgentRunJournal(AgentFileBackup fileBackup)
@@ -37,11 +38,14 @@ namespace Malx_AI
             journal.Seal();
         }
 
-        /// <summary>Shows the undo bar when the run changed or created files.</summary>
-        private void OfferAgentUndo(AgentRunJournal journal)
+        /// <summary>Attaches the captured summary and latest-run Undo to the completed response.</summary>
+        private async Task OfferAgentUndoAsync(AgentRunJournal journal, WorkplaceChatMessage message)
         {
+            string? root = _agentScopeEntireComputer ? null : _agentScopeFolder;
+            IReadOnlyList<WorkplaceFileChange> changes = await Task.Run(() => journal.CaptureFileChanges(root));
+            message.FileChanges = WorkplaceFileChange.Merge(message.FileChanges.Concat(changes));
             IReadOnlyList<string> files = journal.ChangedFiles;
-            if (files.Count == 0)
+            if (changes.Count == 0)
                 return;
 
             int created = journal.CreatedCount;
@@ -64,16 +68,22 @@ namespace Malx_AI
             Dispatcher.Invoke(() =>
             {
                 _agentUndoJournal = journal;
+                _agentUndoMessage = message;
+                message.CanUndoFileChanges = true;
                 AgentUndoText.Text = "The agent " + string.Join(" and ", parts) + ".";
                 AgentUndoText.ToolTip = tip.ToString();
                 AgentUndoButton.ToolTip = tip.ToString();
                 AgentUndoButton.IsEnabled = true;
-                AgentUndoBar.Visibility = Visibility.Visible;
+                // The action now lives with its completed response instead of above the composer.
+                AgentUndoBar.Visibility = Visibility.Collapsed;
             });
+            RequestWorkspaceStateSave();
         }
 
         private void ClearAgentUndo()
         {
+            if (_agentUndoMessage != null) _agentUndoMessage.CanUndoFileChanges = false;
+            _agentUndoMessage = null;
             _agentUndoJournal = null;
             if (Dispatcher.CheckAccess())
                 HideAgentUndoBar();
@@ -102,6 +112,7 @@ namespace Malx_AI
             }
 
             AgentUndoButton.IsEnabled = false;
+            if (_agentUndoMessage != null) _agentUndoMessage.CanUndoFileChanges = false;
             AgentUndoResult result = await Task.Run(journal.Undo);
             ClearAgentUndo();
 

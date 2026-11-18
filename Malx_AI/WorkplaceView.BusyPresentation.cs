@@ -15,9 +15,19 @@ public partial class WorkplaceView
         get => _workplaceProcessing;
         set
         {
+            bool changed = _workplaceProcessing != value;
             _workplaceProcessing = value;
-            if (Dispatcher.CheckAccess()) UpdateWorkplaceBusyPresentation();
-            else Dispatcher.BeginInvoke(UpdateWorkplaceBusyPresentation);
+            void Update()
+            {
+                if (changed)
+                {
+                    if (value) BeginRunChangeSummary();
+                    else CompleteRunChangeSummary();
+                }
+                UpdateWorkplaceBusyPresentation();
+            }
+            if (Dispatcher.CheckAccess()) Update();
+            else Dispatcher.BeginInvoke(Update);
         }
     }
 

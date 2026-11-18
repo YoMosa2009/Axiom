@@ -17,6 +17,12 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 ### Local reliability, UI and context work (2026-11-16, not released)
 
 Additional UI/context fixes after the 22:23–22:29 owner test:
+- Completed Workplace replies now have a reference-style recorded-change panel:
+  rounded file-edit header, added/removed totals, three-row preview, expandable file
+  list, captured diff review and the latest eligible Agent run's existing safe Undo.
+  Observed file-tool edits, applied Council patches and Canvas revisions survive chat
+  reload; unrecorded shell edits are not inferred from model claims. See
+  `docs/WORKPLACE_CHANGE_SUMMARY_20261117.md` for coverage and validation.
 - Latest Workplace run follow-up (2026-11-17): corrected shell-exit/output-pipe handling,
   retained raw diagnostic evidence, removed repeated mirrors of identical transport results,
   and clarified repairs must update the originally delivered entry point within scope.
