@@ -14,6 +14,7 @@ namespace Malx_AI
     {
         private string _content = "";
         private string? _formattedContentCache;
+        private WorkplaceExecutionSummary? _executionSummary;
         private IReadOnlyList<string> _attachedImagePaths = Array.Empty<string>();
         private IReadOnlyList<ImageSource>? _attachedImagesCache;
         private IReadOnlyList<string> _viewedImagePaths = Array.Empty<string>();
@@ -111,12 +112,16 @@ namespace Malx_AI
                 if (_content == value) return;
                 _content = value;
                 _formattedContentCache = null;
+                _executionSummary = null;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(FormattedContent));
                 OnPropertyChanged(nameof(FormattedDocument));
                 OnPropertyChanged(nameof(IsGeneratingStatus));
                 OnPropertyChanged(nameof(ShowGeneratingStatusInCard));
                 OnPropertyChanged(nameof(GenerationStatusText));
+                OnPropertyChanged(nameof(HasExecutionSteps));
+                OnPropertyChanged(nameof(ExecutionStepsLabel));
+                OnPropertyChanged(nameof(ExecutionStepsDocument));
             }
         }
 
@@ -130,7 +135,12 @@ namespace Malx_AI
         // viewer and throws "Document belongs to another FlowDocumentScrollViewer already" on
         // every refresh. A fresh instance per read gives each viewer its own document. Reads
         // happen once per PropertyChanged, which is already throttled during streaming.
-        public FlowDocument FormattedDocument => WorkplaceMarkdownDocumentFactory.Create(Content);
+        private WorkplaceExecutionSummary ExecutionSummary => _executionSummary ??=
+            WorkplaceExecutionSummary.Parse(Content, !string.Equals(Role, "user", StringComparison.OrdinalIgnoreCase));
+        public bool HasExecutionSteps => ExecutionSummary.Count > 0;
+        public string ExecutionStepsLabel => $"{ExecutionSummary.Count} steps · View activity";
+        public FlowDocument ExecutionStepsDocument => WorkplaceMarkdownDocumentFactory.Create(ExecutionSummary.Steps);
+        public FlowDocument FormattedDocument => WorkplaceMarkdownDocumentFactory.Create(ExecutionSummary.Body);
         public bool IsGeneratingStatus
         {
             get

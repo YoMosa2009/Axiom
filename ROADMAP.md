@@ -17,6 +17,17 @@ same commit as the work it describes, so nothing agreed in a conversation gets l
 ### Local reliability, UI and context work (2026-11-16, not released)
 
 Additional UI/context fixes after the 22:23–22:29 owner test:
+- Latest Workplace run follow-up (2026-11-17): corrected shell-exit/output-pipe handling,
+  retained raw diagnostic evidence, removed repeated mirrors of identical transport results,
+  and clarified repairs must update the originally delivered entry point within scope.
+- Workplace Send now shows a rotating working indicator and restores its arrow on completion,
+  stop or error. Final activity lists collapse into a themed dropdown without removing steps
+  from saved history. Synchronous step commits prevent late live updates replacing an answer.
+- Background completion notifications now cover Agent Access and Computer Use as well as
+  Council/single-model work and reruns, requesting the Windows notification sound while
+  respecting the existing notification switch. User cancellation stays quiet.
+- Project Canvas now has a proper empty state, visible preview/source/artifact actions,
+  adaptive controls and clearer diff views. Canvas-only syntax contrast adapts to dark themes.
 - OpenRouter usage now reads the explicit daily free-model request counter, reports the
   remaining percentage, and fills the pill with the selected theme accent. Refreshes are
   bounded, expire after 30 seconds/UTC rollover, and ignore responses for replaced keys.

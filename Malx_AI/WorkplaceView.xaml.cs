@@ -2539,7 +2539,6 @@ namespace Malx_AI
         private bool _autoOptimizeRoleContexts = true;
         private static readonly uint MinRoleContext = 2048;
         private static readonly uint MaxRoleContext = 32768;
-        private bool _isProcessing;
         public bool HasActiveWork => _isProcessing;
         private bool _isProjectCanvasExpanded = true;
         private bool _isProjectCanvasShown = true;
@@ -3054,7 +3053,6 @@ namespace Malx_AI
             UpdateWorkplaceTokenUsageIndicator();
             Loaded += WorkplaceView_Loaded;
             SizeChanged += (_, _) => ApplyDesktopLayout(ActualWidth);
-            ProjectCanvasPane.SizeChanged += (_, _) => UpdateCanvasHeaderLayout();
         }
 
         private sealed class ProjectCanvasMentionColorizer : DocumentColorizingTransformer
@@ -3146,7 +3144,6 @@ namespace Malx_AI
                 }
             }
 
-            UpdateCanvasHeaderLayout();
         }
 
         // Room the title and status line need before the meters may share their row.
@@ -11472,12 +11469,21 @@ namespace Malx_AI
 
         private async Task SendQueryAsync()
         {
+            bool ownsRun = !_isProcessing;
             using var evidence = new ConversationEvidence(AppDataPaths.Root, "workplace-" + _projectKnowledgeBaseId,
                 string.Join("\n\n", _chatCards.Select(c => c.Role + ":\n" + c.Content)) + "\nCurrent user request:\n" + QueryInput.Text);
             // Every reply the run produces (architect, builder, agent steps, critic; local, cloud
             // or Hybrid Local) reports its speed to the header readout.
             using (GenerationTelemetry.Use(_generationMonitor))
-                await SendQueryCoreAsync();
+            {
+                try { await SendQueryCoreAsync(); }
+                finally
+                {
+                    // A steering message does not own the active run. An initiating send
+                    // must restore its controls even if preparation or verification throws.
+                    if (ownsRun && _isProcessing) FinishAgentRunUi();
+                }
+            }
         }
 
         private async Task SendQueryCoreAsync()
@@ -14140,6 +14146,7 @@ namespace Malx_AI
                 LogActivity($"Relay stopped: {keyExhausted.Message}");
                 await BackendLogService.LogErrorAsync("Workplace.Relay.KeyExhausted", keyExhausted);
                 AppendChat("error", "⚠ " + keyExhausted.Message);
+                CouncilRunFinished?.Invoke("Workplace stopped because the API key has no remaining usage.");
                 _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsDailyLimit
                     ? "OpenRouter API key: daily free usage exhausted — cloud council paused."
                     : "OpenRouter API key: out of credits — cloud council paused.");
@@ -17924,6 +17931,7 @@ namespace Malx_AI
                 SetProjectCanvasShown(true);
 
             RefreshCanvasArtifactUi();
+            RefreshRightSidebarDiffView();
             _ = RenderCanvasArtifactPreviewAsync();
         }
 
@@ -17981,39 +17989,10 @@ namespace Malx_AI
 
         private void RefreshCanvasArtifactUi()
         {
-            bool hasArtifact = _canvasArtifact.SupportsPreview;
-            bool suppressPreviewForCodebase = _connectedWorkspace.CodebaseEditAccessEnabled;
-            if (suppressPreviewForCodebase)
+            if (_connectedWorkspace.CodebaseEditAccessEnabled)
                 _isCanvasPreviewMode = false;
 
-            bool showNativePreview = !_suppressCanvasNativePreviewForOverlay && !_isDiffViewActive && hasArtifact && _isCanvasPreviewMode;
-            if (FindName("CanvasArtifactTogglePanel") is StackPanel togglePanel)
-                togglePanel.Visibility = hasArtifact && !suppressPreviewForCodebase ? Visibility.Visible : Visibility.Collapsed;
-            if (FindName("CopyCanvasArtifactSourceButton") is Button copyButton)
-                copyButton.Visibility = hasArtifact ? Visibility.Visible : Visibility.Collapsed;
-            if (FindName("SaveCanvasArtifactButton") is Button saveButton)
-                saveButton.Visibility = hasArtifact ? Visibility.Visible : Visibility.Collapsed;
-            if (FindName("CanvasCodeViewButton") is Button codeButton)
-                codeButton.Opacity = !_isCanvasPreviewMode ? 1.0 : 0.65;
-            if (FindName("CanvasPreviewViewButton") is Button previewButton)
-            {
-                previewButton.Opacity = _isCanvasPreviewMode ? 1.0 : 0.65;
-                previewButton.Visibility = suppressPreviewForCodebase ? Visibility.Collapsed : Visibility.Visible;
-            }
-            if (FindName("CanvasArtifactPreviewHost") is Grid previewHost)
-                previewHost.Visibility = showNativePreview ? Visibility.Visible : Visibility.Collapsed;
-            ProjectCanvasEditor.Visibility = _isDiffViewActive || (hasArtifact && _isCanvasPreviewMode)
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-            DiffViewerScroller.Visibility = _isDiffViewActive ? Visibility.Visible : Visibility.Collapsed;
-            CanvasSubtitleBlock.Text = _isDiffViewActive
-                ? "Source diff — red removed, green added"
-                : hasArtifact
-                ? _isCanvasPreviewMode
-                    ? _canvasArtifact.DisplayTitle
-                    : $"{_canvasArtifact.DisplayTitle} — code view"
-                : "Builder output rendered here.";
-            UpdateCanvasHeaderLayout();
+            RefreshCanvasPresentation();
         }
 
         private bool HasCanvasDiffAvailable()
@@ -18021,69 +18000,6 @@ namespace Malx_AI
             return !string.IsNullOrWhiteSpace(_canvasDiffBaseSource)
                 && !string.IsNullOrWhiteSpace(_canvasDiffCurrentSource)
                 && (_canvasDiffAdditionCount > 0 || _canvasDiffRemovalCount > 0);
-        }
-
-        private void UpdateCanvasHeaderLayout()
-        {
-            if (!IsLoaded)
-                return;
-
-            double paneWidth = ProjectCanvasPane.ActualWidth;
-            if (paneWidth <= 0 || double.IsNaN(paneWidth))
-                paneWidth = ProjectCanvasPane.Width > 0 && !double.IsNaN(ProjectCanvasPane.Width)
-                    ? ProjectCanvasPane.Width
-                    : ProjectCanvasPane.MinWidth;
-
-            bool compact = paneWidth < 600;
-            bool narrow = paneWidth < 500;
-            bool veryNarrow = paneWidth < 420;
-            bool hasDiff = HasCanvasDiffAvailable();
-
-            Thickness buttonMargin = compact
-                ? new Thickness(0, 0, 5, 0)
-                : new Thickness(0, 0, 8, 0);
-            CanvasArtifactTogglePanel.Margin = compact
-                ? new Thickness(0, 0, 5, 0)
-                : new Thickness(0, 0, 8, 0);
-            CopyCanvasButton.Margin = buttonMargin;
-            RunCodeButton.Margin = buttonMargin;
-            ShowDiffButton.Margin = buttonMargin;
-            CodeOutputToggleButton.Margin = buttonMargin;
-            CanvasMoreActionsButton.Margin = buttonMargin;
-
-            SetCanvasHeaderButtonSize(CanvasCodeViewButton, veryNarrow ? 48 : compact ? 54 : double.NaN, veryNarrow ? 48 : 58, veryNarrow ? "Code" : "Code");
-            SetCanvasHeaderButtonSize(CanvasPreviewViewButton, veryNarrow ? 58 : compact ? 68 : double.NaN, veryNarrow ? 58 : 78, veryNarrow ? "Prev" : "Preview");
-            SetCanvasHeaderButtonSize(RunCodeButton, veryNarrow ? 54 : compact ? 62 : double.NaN, veryNarrow ? 54 : 72, compact ? "Run" : "▶ Run");
-
-            CopyCanvasButton.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-            CodeOutputToggleButton.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-            ShowDiffButton.Visibility = hasDiff && !narrow ? Visibility.Visible : Visibility.Collapsed;
-
-            CanvasMoreCopyItem.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
-            CanvasMoreOutputItem.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
-            CanvasMoreDiffItem.Visibility = hasDiff && narrow ? Visibility.Visible : Visibility.Collapsed;
-            CanvasMoreOutputItem.Header = _isCodeOutputExpanded ? "Hide output" : "Show output";
-            CanvasMoreActionsButton.Visibility =
-                CanvasMoreCopyItem.Visibility == Visibility.Visible
-                || CanvasMoreOutputItem.Visibility == Visibility.Visible
-                || CanvasMoreDiffItem.Visibility == Visibility.Visible
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-
-            CanvasSubtitleBlock.Visibility = veryNarrow ? Visibility.Collapsed : Visibility.Visible;
-            CanvasDiffSummaryBlock.Visibility = veryNarrow || !hasDiff ? Visibility.Collapsed : Visibility.Visible;
-            CanvasTitleBlock.FontSize = veryNarrow ? 13 : 14;
-        }
-
-        private static void SetCanvasHeaderButtonSize(Button button, double width, double minWidth, object content)
-        {
-            if (double.IsNaN(width))
-                button.ClearValue(WidthProperty);
-            else
-                button.Width = width;
-
-            button.MinWidth = minWidth;
-            button.Content = content;
         }
 
         public void SetNativePreviewSuppressedForOverlay(bool suppressed)
@@ -18109,8 +18025,8 @@ namespace Malx_AI
 
             ExitCanvasDiffView();
             _isCanvasPreviewMode = true;
-            _ = RenderCanvasArtifactPreviewAsync();
             RefreshCanvasArtifactUi();
+            _ = RenderCanvasArtifactPreviewAsync();
         }
 
         private void CopyCanvasArtifactSourceButton_Click(object sender, RoutedEventArgs e)
@@ -18279,6 +18195,7 @@ namespace Malx_AI
                 manager.GetDefinition(language) ??
                 manager.GetDefinition("Markdown") ??
                 manager.GetDefinition("C#");
+            ApplyCanvasSyntaxContrast();
         }
 
         // Removes leaked chat-template special tokens (turn terminators / role headers) a model can
@@ -19938,6 +19855,8 @@ namespace Malx_AI
                 _activeCouncilWebPrompt = previousActiveCouncilWebPrompt;
                 _latestCouncilReactiveWebContext = previousReactiveWebContext;
                 _activeCouncilRunContext = previousActiveRunContext;
+                if (_cancellationTokenSource?.IsCancellationRequested == false)
+                    CouncilRunFinished?.Invoke("Builder re-run ended. Open Axiom to review the result.");
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
                 RelayStatusBlock.Text = "Relay: Idle";
@@ -20013,6 +19932,8 @@ namespace Malx_AI
                 _isProcessing = false;
                 SendButton.IsEnabled = true;
                 StopButton.IsEnabled = false;
+                if (_cancellationTokenSource?.IsCancellationRequested == false)
+                    CouncilRunFinished?.Invoke("Critic re-run ended. Open Axiom to review the result.");
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
                 RelayStatusBlock.Text = "Relay: Idle";

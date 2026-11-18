@@ -628,8 +628,19 @@
                                         </Style>
                                     </Button.Style>
                                 </Button>
-                                <Button x:Name="SendButton" Content="↑" Click="SendMessage_Click" Width="28" Height="26" Padding="0"
-                                        Style="{StaticResource PremiumButtonStyle}" FontSize="13" FontWeight="Bold" ToolTip="Run task"/>
+                                <Button x:Name="SendButton" Click="SendMessage_Click" Width="28" Height="26" Padding="0"
+                                        Style="{StaticResource PremiumButtonStyle}" FontSize="13" FontWeight="Bold" ToolTip="Run task" AutomationProperties.Name="Send message">
+                                    <Grid Width="16" Height="16">
+                                        <Path x:Name="WorkplaceSendArrow" Data="M8,14 V2 M3,7 L8,2 L13,7" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                        <Grid x:Name="WorkplaceSendSpinner" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+                                            <Grid.RenderTransform><RotateTransform x:Name="WorkplaceSendRotation"/></Grid.RenderTransform>
+                                            <Ellipse Margin="1.5" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.7" Opacity="0.22"/>
+                                            <Path Data="M8,1.5 A6.5,6.5 0 0 1 14.5,8" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                  StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                        </Grid>
+                                    </Grid>
+                                </Button>
                             </StackPanel>
                             <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <!-- '+' menu: Select Project (strict confinement) + Attach Files -->
@@ -950,6 +961,67 @@
                                                               VerticalScrollBarVisibility="Disabled"
                                                               HorizontalScrollBarVisibility="Disabled"
                                                               IsTabStop="False"/>
+                                    <Expander x:Name="WorkplaceExecutionSteps" IsExpanded="False" Margin="0,12,0,0"
+                                              Visibility="{Binding HasExecutionSteps, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                              Foreground="{DynamicResource DarkSecondaryBrush}" AutomationProperties.Name="Run activity details">
+                                        <Expander.Template>
+                                            <ControlTemplate TargetType="Expander">
+                                                <StackPanel>
+                                                    <ToggleButton IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                                                  Foreground="{TemplateBinding Foreground}" HorizontalAlignment="Left" Cursor="Hand"
+                                                                  ToolTip="Expand or collapse run activity"
+                                                                  FocusVisualStyle="{StaticResource AxiomFocusVisual}">
+                                                        <ToggleButton.Template>
+                                                            <ControlTemplate TargetType="ToggleButton">
+                                                                <Border x:Name="ActivityHeaderShell" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="9" Padding="2,2,10,2">
+                                                                    <StackPanel Orientation="Horizontal">
+                                                                        <Border x:Name="ActivityBadge" Width="24" Height="24" CornerRadius="7" Margin="0,0,9,0"
+                                                                                Background="{DynamicResource AccentSoftBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                                                                            <Path Data="M0,0 L4,4 L0,8" Width="4" Height="8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                                  Stroke="{DynamicResource PrimaryAccentBrush}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                                                  RenderTransformOrigin="0.5,0.5">
+                                                                                <Path.RenderTransform><RotateTransform x:Name="ActivityChevronRotation"/></Path.RenderTransform>
+                                                                            </Path>
+                                                                        </Border>
+                                                                        <ContentPresenter Content="{Binding Header, RelativeSource={RelativeSource AncestorType=Expander}}" VerticalAlignment="Center"/>
+                                                                    </StackPanel>
+                                                                </Border>
+                                                                <ControlTemplate.Triggers>
+                                                                    <Trigger Property="IsChecked" Value="True">
+                                                                        <Setter TargetName="ActivityBadge" Property="BorderBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
+                                                                        <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                                                                            <DoubleAnimation Storyboard.TargetName="ActivityChevronRotation" Storyboard.TargetProperty="Angle" To="90" Duration="0:0:0.16"/>
+                                                                        </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                                                        <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                                                                            <DoubleAnimation Storyboard.TargetName="ActivityChevronRotation" Storyboard.TargetProperty="Angle" To="0" Duration="0:0:0.16"/>
+                                                                        </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                                                    </Trigger>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter TargetName="ActivityHeaderShell" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                                                        <Setter TargetName="ActivityHeaderShell" Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
+                                                                    </Trigger>
+                                                                    <Trigger Property="IsPressed" Value="True"><Setter TargetName="ActivityHeaderShell" Property="Opacity" Value="0.8"/></Trigger>
+                                                                </ControlTemplate.Triggers>
+                                                            </ControlTemplate>
+                                                        </ToggleButton.Template>
+                                                    </ToggleButton>
+                                                    <ContentPresenter x:Name="ActivityContent" ContentSource="Content" Visibility="Collapsed"/>
+                                                </StackPanel>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsExpanded" Value="True"><Setter TargetName="ActivityContent" Property="Visibility" Value="Visible"/></Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Expander.Template>
+                                        <Expander.Header>
+                                            <TextBlock Text="{Binding ExecutionStepsLabel}" FontFamily="Segoe UI" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                        </Expander.Header>
+                                        <Border Margin="0,8,0,0" Padding="10" CornerRadius="8" Background="{DynamicResource NotebookBackgroundBrush}"
+                                                BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
+                                            <FlowDocumentScrollViewer Document="{Binding ExecutionStepsDocument}" MaxHeight="260" Background="Transparent" BorderThickness="0" Padding="0"
+                                                                      FontFamily="Segoe UI" Foreground="{DynamicResource NotebookTextBrush}"
+                                                                      IsToolBarVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
+                                        </Border>
+                                    </Expander>
                                 </StackPanel>
                             </Border>
                             <DataTemplate.Triggers>
@@ -991,46 +1063,66 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Right Sidebar Header & Mode Switcher (removed per UI refinement; mode buttons live in Workplace header) -->
-                <Border x:Name="RightSidebarHeaderBorder" Grid.Row="0" Visibility="Collapsed" Height="0" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="Transparent" BorderThickness="0" Padding="0" Margin="0" IsHitTestVisible="False">
+                <!-- Output identity and actions. Sidebar mode buttons live in the Workplace header. -->
+                <Border x:Name="RightSidebarHeaderBorder" Grid.Row="0" Margin="2,1,2,10">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <Grid>
+                        <Grid Margin="0,1,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" MinWidth="0"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                <TextBlock x:Name="CanvasTitleBlock" Text="Context &amp; Environment" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" LineHeight="16"/>
-                                <TextBlock x:Name="CanvasSubtitleBlock" Text="Session environment, context budget &amp; tasks." FontSize="9.5" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" LineHeight="13"/>
-                                <TextBlock x:Name="CanvasDiffSummaryBlock" Text="" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,0" Visibility="Collapsed" TextTrimming="CharacterEllipsis" LineHeight="12"/>
+                                <TextBlock x:Name="CanvasTitleBlock" Text="Project Canvas" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" LineHeight="20" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+                                <TextBlock x:Name="CanvasSubtitleBlock" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap" LineHeight="17" Visibility="Collapsed"/>
+                                <TextBlock x:Name="CanvasDiffSummaryBlock" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,3,0,0" Visibility="Collapsed" TextWrapping="Wrap" LineHeight="17"/>
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                              <StackPanel Orientation="Horizontal" Visibility="Collapsed">
                                 <Button x:Name="RightTabDiffButton" Content="Diff" Click="WorkplaceDiffSidebarButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Padding="7,0" Height="24" Margin="0,0,4,0"/>
                                 <Button x:Name="RightTabContextButton" Content="Context" Click="WorkplaceContextSidebarButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Padding="7,0" Height="24" Margin="0,0,4,0"/>
                                 <Button x:Name="RightTabCanvasButton" Content="Canvas" Click="RightTabCanvasButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Padding="7,0" Height="24" Margin="0,0,6,0"/>
-                                <Button x:Name="ProjectCanvasToggleButton" Content="›" Click="ProjectCanvasToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide sidebar" Width="24" Height="24"/>
+                              </StackPanel>
+                                <Button x:Name="ProjectCanvasToggleButton" Content="›" Click="ProjectCanvasToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Hide project canvas" AutomationProperties.Name="Hide project canvas" FontSize="17" Width="28" Height="28"/>
                             </StackPanel>
                         </Grid>
 
                         <!-- Contextual toolbar for Canvas / Codebase patches -->
-                        <WrapPanel Grid.Row="1" Margin="0,6,0,0" x:Name="CanvasActionsRow">
-                            <StackPanel x:Name="CanvasArtifactTogglePanel" Orientation="Horizontal" Margin="0,0,6,0" Visibility="Collapsed">
-                                <Button x:Name="CanvasCodeViewButton" Content="Code" Click="CanvasCodeViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" MinWidth="46" Height="24" Padding="7,0" Margin="0,0,4,0"/>
-                                <Button x:Name="CanvasPreviewViewButton" Content="Preview" Click="CanvasPreviewViewButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" MinWidth="54" Height="24" Padding="7,0"/>
+                        <WrapPanel Grid.Row="1" Margin="0,8,0,0" x:Name="CanvasActionsRow">
+                            <WrapPanel.Resources>
+                                <Style x:Key="CanvasActionStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+                                    <Setter Property="FontSize" Value="12"/>
+                                    <Setter Property="MinHeight" Value="28"/>
+                                    <Setter Property="Padding" Value="9,3"/>
+                                    <Setter Property="Margin" Value="0,0,5,4"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="Tag" Value="Selected">
+                                            <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}"/>
+                                            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </WrapPanel.Resources>
+                            <StackPanel x:Name="CanvasArtifactTogglePanel" Orientation="Horizontal" Margin="0,0,4,0" Visibility="Collapsed">
+                                <Button x:Name="CanvasPreviewViewButton" Content="Preview" Click="CanvasPreviewViewButton_Click" Style="{StaticResource CanvasActionStyle}"/>
+                                <Button x:Name="CanvasCodeViewButton" Content="Source" Click="CanvasCodeViewButton_Click" Style="{StaticResource CanvasActionStyle}"/>
                             </StackPanel>
-                            <Button x:Name="CopyCanvasButton" Click="CopyCanvasButton_Click" Style="{StaticResource PanelToggleButtonStyle}" ToolTip="Copy canvas source" Margin="0,0,5,0" Width="24" Height="24" Visibility="Collapsed">
-                                <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" LineHeight="Auto"/>
+                            <Button x:Name="CopyCanvasButton" Click="CopyCanvasButton_Click" Style="{StaticResource CanvasActionStyle}" ToolTip="Copy source" AutomationProperties.Name="Copy source" Visibility="Collapsed">
+                                <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" LineHeight="Auto"/>
                             </Button>
-                            <Button x:Name="RunCodeButton" Content="▶ Run" Margin="0,0,5,0" Click="RunCodeButton_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="9.5" MinWidth="56" Height="24" Padding="8,0" ToolTip="Execute code in sandbox" Visibility="Collapsed"/>
-                            <Button x:Name="ShowDiffButton" Content="Diff" Margin="0,0,5,0" Click="ShowDiffButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" MinWidth="44" Height="24" Padding="7,0" Visibility="Collapsed"/>
+                            <Button x:Name="CopyCanvasArtifactSourceButton" Click="CopyCanvasArtifactSourceButton_Click" Style="{StaticResource CanvasActionStyle}" ToolTip="Copy artifact source" AutomationProperties.Name="Copy artifact source" Visibility="Collapsed">
+                                <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" LineHeight="Auto"/>
+                            </Button>
+                            <Button x:Name="SaveCanvasArtifactButton" Content="Save" Click="SaveCanvasArtifactButton_Click" Style="{StaticResource CanvasActionStyle}" ToolTip="Save artifact to a file" Visibility="Collapsed"/>
+                            <Button x:Name="RunCodeButton" Content="Run" Click="RunCodeButton_Click" Style="{StaticResource CanvasActionStyle}" ToolTip="Execute code in sandbox" Visibility="Collapsed"/>
+                            <Button x:Name="ShowDiffButton" Content="Diff" Click="ShowDiffButton_Click" Style="{StaticResource CanvasActionStyle}" Visibility="Collapsed"/>
                             <Button x:Name="CodeOutputToggleButton" Content="⌄" Margin="0,0,5,0" Click="CodeOutputToggleButton_Click" Style="{StaticResource PanelToggleButtonStyle}" Width="24" Height="24" Visibility="Collapsed"/>
-                            <Button x:Name="UndoCodebaseChangesButton" Content="Undo" Margin="0,0,5,0" Click="UndoCodebaseChanges_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Height="24" Padding="7,0" Visibility="Collapsed" IsEnabled="False"/>
-                            <Button x:Name="AcceptCodebaseChangesButton" Content="Accept" Margin="0,0,5,0" Click="AcceptCodebaseChanges_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="9.5" Height="24" Padding="7,0" Visibility="Collapsed" IsEnabled="False"/>
-                            <Button x:Name="RejectCodebaseChangesButton" Content="Reject" Margin="0,0,5,0" Click="RejectCodebaseChanges_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="9.5" Height="24" Padding="7,0" Visibility="Collapsed" IsEnabled="False"/>
+                            <Button x:Name="UndoCodebaseChangesButton" Content="Undo" Click="UndoCodebaseChanges_Click" Style="{StaticResource CanvasActionStyle}" Visibility="Collapsed" IsEnabled="False"/>
+                            <Button x:Name="AcceptCodebaseChangesButton" Content="Accept" Margin="0,0,5,4" Click="AcceptCodebaseChanges_Click" Style="{StaticResource PremiumButtonStyle}" FontSize="12" MinHeight="28" Padding="9,3" Visibility="Collapsed" IsEnabled="False"/>
+                            <Button x:Name="RejectCodebaseChangesButton" Content="Reject" Click="RejectCodebaseChanges_Click" Style="{StaticResource CanvasActionStyle}" Visibility="Collapsed" IsEnabled="False"/>
                             <Button x:Name="CanvasMoreActionsButton" Content="..." Margin="0,0,4,0" Click="CanvasMoreActionsButton_Click" Style="{StaticResource PanelToggleButtonStyle}" Width="24" Height="24" Visibility="Collapsed">
                                 <Button.ContextMenu>
                                     <ContextMenu Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderThickness="1" Padding="4">
@@ -1149,45 +1241,50 @@
                     </ScrollViewer>
 
                     <!-- VIEW B & C: Diff Viewer & Code/Preview Canvas -->
-                    <Border x:Name="CodeOutputPanel" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0" CornerRadius="10">
+                    <Border x:Name="CodeOutputPanel" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" ClipToBounds="True">
                         <Grid>
+                            <ScrollViewer x:Name="CanvasEmptyState" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" VerticalAlignment="Center">
+                                <StackPanel Margin="19,54" MaxWidth="260">
+                                    <Border Width="48" Height="48" CornerRadius="12" Background="{DynamicResource AccentSoftBrush}"
+                                            HorizontalAlignment="Center" IsHitTestVisible="False">
+                                        <TextBlock Text="&#xE8A1;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="21"
+                                                   Foreground="{DynamicResource AccentBrightBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" LineHeight="Auto"/>
+                                    </Border>
+                                    <TextBlock Text="No canvas output yet" FontSize="16" FontWeight="SemiBold" LineHeight="22"
+                                               TextAlignment="Center" TextWrapping="Wrap" Margin="0,13,0,0"/>
+                                    <TextBlock Text="Ask in chat for a document, a webpage, or a code file. Generated output opens here so you can preview it or inspect its source."
+                                               FontSize="13" LineHeight="19" TextAlignment="Center" TextWrapping="Wrap" Margin="0,6,0,0"
+                                               Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                </StackPanel>
+                            </ScrollViewer>
                             <avalonedit:TextEditor x:Name="ProjectCanvasEditor"
-                                               Background="{DynamicResource NotebookSurfaceBrush}"
+                                               Background="Transparent"
                                                Foreground="{DynamicResource NotebookTextBrush}"
+                                               LineNumbersForeground="{DynamicResource MutedTextBrush}"
                                                FontFamily="Consolas"
-                                               FontSize="11.5"
+                                               FontSize="12.5"
+                                               Margin="6,8,6,8"
+                                               Visibility="Collapsed"
+                                               AutomationProperties.Name="Canvas source"
                                                ShowLineNumbers="True"
                                                IsReadOnly="True"
                                                HorizontalScrollBarVisibility="Auto"
                                                VerticalScrollBarVisibility="Auto"/>
-                            <Grid x:Name="CanvasArtifactPreviewHost" Background="{DynamicResource NotebookSurfaceBrush}" Visibility="Collapsed" Margin="0">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
+                            <Grid x:Name="CanvasArtifactPreviewHost" Background="{DynamicResource NotebookBackgroundBrush}" Visibility="Collapsed" Margin="1">
                                 <wv2:WebView2 x:Name="CanvasArtifactWebView"
                                               Grid.Row="0"
                                               DefaultBackgroundColor="#00000000"
                                               Margin="0"
                                               Visibility="Visible"/>
-                                <Border Grid.Row="1" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,1,0,0" Padding="8,6">
-                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                        <Button x:Name="CopyCanvasArtifactSourceButton" Content="Copy Source" Click="CopyCanvasArtifactSourceButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,6,0" Padding="8,2"/>
-                                        <Button x:Name="SaveCanvasArtifactButton" Content="Save" Click="SaveCanvasArtifactButton_Click" Style="{StaticResource SubtleButtonStyle}" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Padding="8,2"/>
-                                    </StackPanel>
-                                </Border>
                             </Grid>
-                            <ScrollViewer x:Name="DiffViewerScroller" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="{DynamicResource NotebookSurfaceBrush}" Padding="2">
+                            <ScrollViewer x:Name="SessionDiffScroller" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="5,8">
                                 <StackPanel>
-                                    <TextBlock x:Name="DiffViewerEmptyText" Text="No workspace or canvas diffs recorded in this session yet." FontSize="11" Foreground="{DynamicResource MutedTextBrush}" Margin="4,8" TextWrapping="Wrap" Visibility="Collapsed"/>
-                                    <ItemsControl x:Name="DiffViewerLines">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <StackPanel/>
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                    </ItemsControl>
+                                    <TextBlock x:Name="DiffViewerEmptyText" Text="File edits and canvas revisions will appear here." FontSize="13" LineHeight="19" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="8,5" TextWrapping="Wrap" Visibility="Collapsed"/>
+                                    <ItemsControl x:Name="SessionDiffLines"/>
                                 </StackPanel>
+                            </ScrollViewer>
+                            <ScrollViewer x:Name="DiffViewerScroller" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Padding="5,8">
+                                <ItemsControl x:Name="DiffViewerLines"/>
                             </ScrollViewer>
                         </Grid>
                     </Border>

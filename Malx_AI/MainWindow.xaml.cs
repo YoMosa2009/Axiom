@@ -2134,7 +2134,7 @@ namespace Malx_AI
         private void WorkplaceCouncilRunFinished(string message)
         {
             if (CouncilCompletionToastToggle.IsChecked == true)
-                WindowsToastNotificationService.ShowCouncilCompletionIfInactive(message);
+                WindowsToastNotificationService.ShowWorkplaceCompletionIfInactive(message);
             if (_isHiddenInSystemTray)
                 _ = OptimizeBackgroundResourcesAsync();
         }

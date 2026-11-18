@@ -375,6 +375,7 @@ namespace Malx_AI
         /// </summary>
         private AgentRunCard StartAgentRunCard(string goal, string title)
         {
+            _isProcessing = true;
             var run = new AgentRunCard
             {
                 Card = new WorkplaceChatMessage { Role = "agent" },
@@ -394,7 +395,9 @@ namespace Malx_AI
 
         private void AppendAgentRunCardLine(AgentRunCard run, string line)
         {
-            Dispatcher.BeginInvoke(() =>
+            // Commit the step before its callback returns. Queuing this behind finalization
+            // could lose activity or overwrite the completed answer with an old live card.
+            Dispatcher.Invoke(() =>
             {
                 run.StepLines.Add(line);
                 if (string.Equals(run.Status, StartingStatus, StringComparison.Ordinal))
@@ -497,7 +500,7 @@ namespace Malx_AI
                 if ((trimmed.Length == 0 || string.Equals(trimmed, "Done.", StringComparison.OrdinalIgnoreCase))
                     && run.StepLines.Count > 0)
                 {
-                    trimmed = $"### Task Summary\nCompleted **{run.StepLines.Count}** action(s) for your request. See the verified steps below:";
+                    trimmed = $"The run ended after **{run.StepLines.Count}** action(s). Open activity to review the tool results.";
                 }
                 else if (trimmed.StartsWith("I reached the ", StringComparison.Ordinal)
                     && !trimmed.Contains("### What was done this turn", StringComparison.Ordinal)
@@ -636,6 +639,7 @@ namespace Malx_AI
                     pending = _agentInbox?.TakeAll() ?? [];
                     _agentInbox = null;
                     _agentSessionRunning = false;
+                    if (_isProcessing) FinishAgentRunUi();
                 }
 
                 next = null;
@@ -776,7 +780,6 @@ namespace Malx_AI
             // Typing while the agent works is how you steer it, so Send stays available: the
             // message reaches the agent at its next step (see TryPostMessageToRunningAgent).
             SendButton.IsEnabled = true;
-            SendButton.Content = "↑";
             SendButton.ToolTip = "Send a steering message to the running agent.";
 
             // Architect removed completely: Builder executes directly without Architect/Builder role split.
@@ -871,6 +874,8 @@ namespace Malx_AI
                 CompleteAgentRunCard(runCard, $"The agent stopped: {ex.Message}");
                 FinishAgentRunUi();
                 OfferAgentUndo(runJournal);
+                if (!token.IsCancellationRequested)
+                    CouncilRunFinished?.Invoke("Agent Access stopped with an error.");
                 return;
             }
             finally
@@ -993,6 +998,10 @@ namespace Malx_AI
             UpdateWorkplaceTokenUsageIndicator();
             FinishAgentRunUi();
             OfferAgentUndo(runJournal);
+            if (!result.Cancelled && !token.IsCancellationRequested)
+                CouncilRunFinished?.Invoke(result.StoppedOnStepLimit
+                    ? "Agent Access reached its step limit. Open Axiom to review."
+                    : "Agent Access run ended. Open Axiom to review the result.");
         }
 
         /// <summary>
@@ -1084,7 +1093,6 @@ namespace Malx_AI
             HideAgentApprovalBar();
             _isProcessing = false;
             SendButton.IsEnabled = true;
-            SendButton.Content = "↑";
             SendButton.ToolTip = _isSingleModelMode ? "Run Single Model Agent" : "Run Builder";
             SendButton.ToolTip = null;
             StopButton.IsEnabled = false;

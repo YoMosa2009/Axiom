@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,7 @@ namespace Malx_AI
         private static readonly AsyncLocal<ConversationEvidence?> Active = new();
         private static readonly object Gate = new();
         private readonly ConversationEvidence? _previous;
+        private readonly HashSet<OpenRouterMessage> _mirroredToolResults = new(ReferenceEqualityComparer.Instance);
         public static ConversationEvidence? Current => Active.Value;
         public string DirectoryPath { get; }
         private string HistoryPath => Path.Combine(DirectoryPath, "history.md");
@@ -35,8 +37,28 @@ namespace Malx_AI
                 ["limit"] = new JsonObject { ["type"] = "integer" } } });
         public void Record(string kind, string? content)
         {
-            lock (Gate) File.AppendAllText(HistoryPath, $"\n## {DateTime.UtcNow:O} — {kind}\n{content}\n", new UTF8Encoding(false));
+            lock (Gate) AppendRecord(kind, content);
         }
+
+        internal void RecordTransportToolResult(OpenRouterMessage message)
+        {
+            lock (Gate)
+            {
+                // Replayed history contains the same immutable message instance. Distinct messages
+                // can share a provider ID and payload, so those alone cannot identify a replay.
+                bool hasCallId = !string.IsNullOrWhiteSpace(message.ToolCallId);
+                if (hasCallId && _mirroredToolResults.Contains(message))
+                    return;
+
+                AppendRecord("Transport tool evidence", message.Text);
+                if (hasCallId)
+                    _mirroredToolResults.Add(message);
+            }
+        }
+
+        private void AppendRecord(string kind, string? content) =>
+            File.AppendAllText(HistoryPath, $"\n## {DateTime.UtcNow:O} — {kind}\n{content}\n", new UTF8Encoding(false));
+
         public string SaveImage(byte[] bytes, string extension)
         {
             string path = Path.Combine(DirectoryPath, Guid.NewGuid().ToString("N") + (extension == ".png" ? ".png" : ".jpg"));

@@ -140,9 +140,7 @@ namespace Malx_AI
             AgentTokenUsageRow.Margin = _isSingleModelMode ? new Thickness(0) : new Thickness(0, 0, 14, 0);
             UpdateHeaderMeterPlacement();
 
-            SendButton.Content = "↑";
             SendButton.ToolTip = _isSingleModelMode ? "Run Single Model Agent" : "Run Builder";
-            CanvasSubtitleBlock.Text = _isSingleModelMode ? "Agent output rendered here." : "Builder output rendered here.";
             CouncilContextControlsTitle.Text = _isSingleModelMode ? "Execution Context" : "Context Controls";
 
             RefreshWorkplaceCloudModeUi();

@@ -58,6 +58,12 @@ namespace Malx_AI
 
         private async Task RunComputerUseSessionFromChatAsync(string userQuery)
         {
+            try { await RunComputerUseSessionFromChatCoreAsync(userQuery); }
+            finally { if (_isProcessing) FinishComputerUseRunUi(); }
+        }
+
+        private async Task RunComputerUseSessionFromChatCoreAsync(string userQuery)
+        {
             // Capability is judged from the model catalog; without it the check can only guess
             // from the model's name, which wrongly blocked vision models with plain names.
             if (_isCloudModeEnabled && !_isHybridLocalCouncilSelected)
@@ -185,8 +191,12 @@ namespace Malx_AI
                 CompleteAgentRunCard(runCard, result.Summary);
                 _chatHistory.Add(("assistant", result.Summary));
                 LogActivity($"Computer Use {(result.Completed ? "completed" : "stopped unfinished")} after {result.Steps} step(s). {result.Summary}");
+                if (!token.IsCancellationRequested)
+                    CouncilRunFinished?.Invoke(result.Completed
+                        ? "Computer Use finished."
+                        : "Computer Use stopped before completion. Open Axiom to review.");
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 _computerUseSummary = "Computer Use stopped by the user; the requested change was not verified complete.";
                 ConversationEvidence.Current?.Record("Computer Use stopped", _computerUseSummary);
@@ -196,6 +206,8 @@ namespace Malx_AI
             {
                 await BackendLogService.LogErrorAsync("Workplace.ComputerUse", ex);
                 CompleteAgentRunCard(runCard, "Computer Use failed: " + ex.Message);
+                if (!token.IsCancellationRequested)
+                    CouncilRunFinished?.Invoke("Computer Use stopped with an error.");
             }
             finally
             {

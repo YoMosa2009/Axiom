@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -419,6 +420,83 @@ namespace Malx_AI.Tests
             Assert.Contains("[Exit code: 0", result.Output);
             Assert.Contains("Duration:", result.Output);
             Assert.Contains("GroundingCheck", result.Output);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(7)]
+        public async Task RunCommandReportsShellExitWhenDescendantKeepsOutputPipeOpen(int exitCode)
+        {
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+            var call = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string>
+            {
+                // Leave the pipe open beyond the shell deadline, even when PowerShell startup
+                // takes several seconds under load. Cleanup below terminates the child promptly.
+                ["command"] = "$child = Start-Process powershell.exe -NoNewWindow -PassThru -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 45'; "
+                    + "Set-Content -LiteralPath child.pid -Value $child.Id; "
+                    + $"[Console]::WriteLine('shell stdout'); [Console]::Error.WriteLine('shell stderr'); exit {exitCode}",
+                ["timeout_seconds"] = "15"
+            });
+
+            AgentToolResult result;
+            try
+            {
+                result = await executor.ExecuteAsync(call, CancellationToken.None);
+            }
+            finally
+            {
+                string pidFile = Path.Combine(_folder, "child.pid");
+                if (File.Exists(pidFile) && int.TryParse(File.ReadAllText(pidFile), out int childId))
+                {
+                    try
+                    {
+                        using Process child = Process.GetProcessById(childId);
+                        child.Kill();
+                        using var cleanupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                        await child.WaitForExitAsync(cleanupDeadline.Token);
+                    }
+                    catch (ArgumentException)
+                    {
+                        // The temporary fixture already exited.
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // The temporary fixture exited between lookup and kill.
+                    }
+                }
+            }
+            string report = result.Error ?? result.Output;
+            Assert.True(result.Succeeded == (exitCode == 0), report);
+            Assert.Contains($"[Exit code: {exitCode} |", report);
+            Assert.Contains("shell stdout", report);
+            Assert.Contains("shell stderr", report);
+            Assert.Contains("output stream remained open after the shell exited", report);
+        }
+
+        [Fact]
+        public async Task RunCommandArchivesRawCliXmlAndReturnsReadableStderr()
+        {
+            using var evidence = new ConversationEvidence(_folder, "command-test", "Inspect shell evidence");
+            var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
+            var call = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string>
+            {
+                ["command"] = "Write-Output 'stdout evidence marker'; Write-Error 'stderr evidence marker'; exit 7"
+            });
+
+            AgentToolResult result = await executor.ExecuteAsync(call, CancellationToken.None);
+
+            Assert.False(result.Succeeded);
+            string report = result.Error ?? result.Output;
+            Assert.Contains("[Exit code: 7 |", report);
+            Assert.Contains("stdout evidence marker", report);
+            Assert.Contains("stderr evidence marker", report);
+            Assert.DoesNotContain("#< CLIXML", report);
+            string archive = evidence.Read(limit: 5000);
+            Assert.Contains("Full command stdout", archive);
+            Assert.Contains("stdout evidence marker", archive);
+            Assert.Contains("Full command stderr", archive);
+            Assert.Contains("#< CLIXML", archive);
+            Assert.Contains("stderr evidence marker", archive);
         }
 
         [Fact]

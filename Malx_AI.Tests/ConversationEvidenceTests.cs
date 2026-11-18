@@ -24,6 +24,31 @@ namespace Malx_AI.Tests
             Assert.Contains("end=False", evidence.Read(limit: 500));
         }
 
+        [Fact]
+        public void OnlyReplayedTransportMessagesWithACallIdAreSuppressed()
+        {
+            using var evidence = new ConversationEvidence(_root, "chat-1", "Inspect the result");
+            var first = new OpenRouterMessage("tool", "original outcome", ToolCallId: "call-1");
+            var missingId = new OpenRouterMessage("tool", "unidentified outcome");
+
+            evidence.RecordTransportToolResult(first);
+            evidence.RecordTransportToolResult(first);
+            evidence.RecordTransportToolResult(first with { ToolCallId = "call-2" });
+            evidence.RecordTransportToolResult(first with { Text = "updated outcome" });
+            evidence.RecordTransportToolResult(new OpenRouterMessage("tool", "original outcome", ToolCallId: "call-1"));
+            evidence.RecordTransportToolResult(first);
+            evidence.RecordTransportToolResult(missingId);
+            evidence.RecordTransportToolResult(missingId);
+            evidence.Record("Full command stdout", "execution output");
+            evidence.Record("Full command stdout", "execution output");
+
+            string history = evidence.Read();
+            Assert.Equal(3, history.Split("original outcome").Length - 1);
+            Assert.Equal(1, history.Split("updated outcome").Length - 1);
+            Assert.Equal(2, history.Split("unidentified outcome").Length - 1);
+            Assert.Equal(2, history.Split("execution output").Length - 1);
+        }
+
         [Theory]
         [InlineData("now give the stickman a smiley face")]
         [InlineData("add eyes and keep the rest")]

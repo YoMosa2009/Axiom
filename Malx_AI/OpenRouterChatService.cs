@@ -959,7 +959,7 @@ namespace Malx_AI
             if (ConversationEvidence.Current != null)
             {
                 foreach (var message in messages)
-                    if (message.Role == "tool") ConversationEvidence.Current.Record("Transport tool evidence", message.Text);
+                    if (message.Role == "tool") ConversationEvidence.Current.RecordTransportToolResult(message);
                 if (tools?.Any(t => t.Name == "recall_context") == true)
                     systemPrompt = (systemPrompt ?? "") + "\n" + ConversationEvidence.Instructions;
             }

@@ -565,50 +565,10 @@ namespace Malx_AI
         private void ApplyRightSidebarTabVisibility()
         {
             bool isContext = _rightSidebarTab == WorkplaceRightSidebarTab.Context;
-            bool isDiff = _rightSidebarTab == WorkplaceRightSidebarTab.Diff;
-            bool isCanvas = _rightSidebarTab == WorkplaceRightSidebarTab.Canvas;
-
-            if (RightSidebarHeaderBorder != null)
-                RightSidebarHeaderBorder.Visibility = Visibility.Collapsed;
-            if (ContextEnvironmentPanel != null)
-                ContextEnvironmentPanel.Visibility = isContext ? Visibility.Visible : Visibility.Collapsed;
-            if (CodeOutputPanel != null)
-                CodeOutputPanel.Visibility = isContext ? Visibility.Collapsed : Visibility.Visible;
-
-            if (DiffViewerScroller != null)
-                DiffViewerScroller.Visibility = isDiff ? Visibility.Visible : Visibility.Collapsed;
-            if (ProjectCanvasEditor != null)
-                ProjectCanvasEditor.Visibility = isCanvas && !_isCanvasPreviewMode ? Visibility.Visible : Visibility.Collapsed;
-            if (CanvasArtifactPreviewHost != null)
-                CanvasArtifactPreviewHost.Visibility = isCanvas && _isCanvasPreviewMode ? Visibility.Visible : Visibility.Collapsed;
-
-            if (CanvasTitleBlock != null)
-            {
-                CanvasTitleBlock.Text = _rightSidebarTab switch
-                {
-                    WorkplaceRightSidebarTab.Diff => "Changed Files & Diffs",
-                    WorkplaceRightSidebarTab.Context => "Context & Environment",
-                    _ => "Project Canvas"
-                };
-            }
-
-            if (CanvasSubtitleBlock != null)
-            {
-                CanvasSubtitleBlock.Text = _rightSidebarTab switch
-                {
-                    WorkplaceRightSidebarTab.Diff => "Workspace and canvas additions / removals.",
-                    WorkplaceRightSidebarTab.Context => "Environment, token budget, outputs & background tasks.",
-                    _ => "Deliverable output rendered here."
-                };
-            }
-
-            Visibility canvasToolVis = isCanvas ? Visibility.Visible : Visibility.Collapsed;
-            if (CopyCanvasButton != null)
-                CopyCanvasButton.Visibility = canvasToolVis;
-            if (RunCodeButton != null)
-                RunCodeButton.Visibility = canvasToolVis;
-            if (CodeOutputToggleButton != null)
-                CodeOutputToggleButton.Visibility = canvasToolVis;
+            RightSidebarHeaderBorder.Visibility = isContext ? Visibility.Collapsed : Visibility.Visible;
+            ContextEnvironmentPanel.Visibility = isContext ? Visibility.Visible : Visibility.Collapsed;
+            CodeOutputPanel.Visibility = isContext ? Visibility.Collapsed : Visibility.Visible;
+            RefreshCanvasArtifactUi();
         }
 
         private void HighlightRightSidebarButtons()
@@ -632,7 +592,10 @@ namespace Malx_AI
 
         private void RefreshRightSidebarDiffView()
         {
-            if (DiffViewerLines == null)
+            if (_rightSidebarTab != WorkplaceRightSidebarTab.Diff)
+                return;
+
+            if (SessionDiffLines == null)
                 return;
 
             var cards = new List<UIElement>();
@@ -672,26 +635,16 @@ namespace Malx_AI
                 }
             }
 
-            if (DiffViewerLines.ItemsSource != null)
-                DiffViewerLines.ItemsSource = null;
-            DiffViewerLines.Items.Clear();
+            SessionDiffLines.Items.Clear();
             foreach (UIElement card in cards)
-                DiffViewerLines.Items.Add(card);
+                SessionDiffLines.Items.Add(card);
             if (DiffViewerEmptyText != null)
                 DiffViewerEmptyText.Visibility = cards.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
-            if (CanvasDiffSummaryBlock != null)
-            {
-                if (totalAdd > 0 || totalDel > 0)
-                {
-                    CanvasDiffSummaryBlock.Text = $"+{totalAdd} additions  -{totalDel} removals across {cards.Count} item(s)";
-                    CanvasDiffSummaryBlock.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    CanvasDiffSummaryBlock.Visibility = Visibility.Collapsed;
-                }
-            }
+            _sessionDiffSummary = cards.Count > 0
+                ? $"+{totalAdd} additions / −{totalDel} removals"
+                : string.Empty;
+            RefreshCanvasPresentation();
         }
 
         private UIElement BuildDiffCardElement(

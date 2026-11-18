@@ -186,11 +186,15 @@ namespace Malx_AI.Agent
                 StandardErrorEncoding = Encoding.UTF8
             };
 
-            using var process = new Process { StartInfo = startInfo };
+            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var stdoutClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var stderrClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var stdout = new StringBuilder();
             var stderr = new StringBuilder();
-            process.OutputDataReceived += (_, e) => { if (e.Data != null) stdout.AppendLine(e.Data); };
-            process.ErrorDataReceived += (_, e) => { if (e.Data != null) stderr.AppendLine(e.Data); };
+            process.Exited += (_, _) => exited.TrySetResult();
+            process.OutputDataReceived += (_, e) => CollectOutput(e.Data, stdout, stdoutClosed);
+            process.ErrorDataReceived += (_, e) => CollectOutput(e.Data, stderr, stderrClosed);
 
             var stopwatch = Stopwatch.StartNew();
             if (!process.Start())
@@ -199,34 +203,52 @@ namespace Malx_AI.Agent
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-
+            bool outputStillOpen = false;
             try
             {
-                await process.WaitForExitAsync(timeout.Token);
-                process.WaitForExit();
+                // WaitForExitAsync also waits for redirected output to close. A child launched
+                // by PowerShell can retain those handles after PowerShell itself exits.
+                await exited.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), token);
+                try
+                {
+                    await Task.WhenAll(stdoutClosed.Task, stderrClosed.Task).WaitAsync(TimeSpan.FromSeconds(1), token);
+                }
+                catch (TimeoutException)
+                {
+                    outputStillOpen = true;
+                }
             }
-            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            catch (TimeoutException)
             {
                 TryKill(process);
                 stopwatch.Stop();
+                string partialOutput = SnapshotOutput(stdout);
+                string partialError = SnapshotOutput(stderr);
+                RecordCommandOutput(partialOutput, partialError);
                 return AgentToolResult.Fail(
                     $"The command timed out after {timeoutSeconds}s ({stopwatch.ElapsedMilliseconds}ms) and was stopped.\n"
-                    + Combine(stdout, stderr));
+                    + Combine(partialOutput, CleanPowerShellErrorStream(partialError)));
             }
             catch (OperationCanceledException)
             {
                 TryKill(process);
+                RecordCommandOutput(SnapshotOutput(stdout), SnapshotOutput(stderr));
                 throw;
             }
 
             stopwatch.Stop();
             long elapsedMs = stopwatch.ElapsedMilliseconds;
 
-            string cleanedError = CleanPowerShellErrorStream(stderr.ToString());
-            stderr.Clear().Append(cleanedError);
-            string combined = Combine(stdout, stderr);
+            string capturedOutput = SnapshotOutput(stdout);
+            string rawError = SnapshotOutput(stderr);
+            RecordCommandOutput(capturedOutput, rawError);
+            string capturedError = CleanPowerShellErrorStream(rawError);
+            string combined = Combine(capturedOutput, capturedError);
+            if (outputStillOpen)
+            {
+                combined += "\n[An output stream remained open after the shell exited. "
+                    + "Any later output from child processes is not included.]";
+            }
             string exitPrefix = $"[Exit code: {process.ExitCode} | Duration: {elapsedMs}ms]";
 
             if (process.ExitCode == 0)
@@ -236,7 +258,7 @@ namespace Malx_AI.Agent
                     : combined;
                 return AgentToolResult.Ok($"{exitPrefix}\n{body}");
             }
-            else if (IsDirectoryAlreadyExistsScenario(command, stdout.ToString(), stderr.ToString()))
+            else if (IsDirectoryAlreadyExistsScenario(command, capturedOutput, capturedError))
             {
                 string body = $"Directory already exists and is ready for use.\n{combined}".Trim();
                 return AgentToolResult.Ok($"[Exit code: 0 (Directory already exists) | Duration: {elapsedMs}ms]\n{body}");
@@ -776,10 +798,32 @@ namespace Malx_AI.Agent
             return count;
         }
 
-        private static string Combine(StringBuilder stdout, StringBuilder stderr)
+        private static void CollectOutput(string? line, StringBuilder output, TaskCompletionSource closed)
         {
-            ConversationEvidence.Current?.Record("Full command stdout", stdout.ToString());
-            ConversationEvidence.Current?.Record("Full command stderr", stderr.ToString());
+            if (line == null)
+            {
+                closed.TrySetResult();
+                return;
+            }
+
+            lock (output)
+                output.AppendLine(line);
+        }
+
+        private static string SnapshotOutput(StringBuilder output)
+        {
+            lock (output)
+                return output.ToString();
+        }
+
+        private static void RecordCommandOutput(string stdout, string stderr)
+        {
+            ConversationEvidence.Current?.Record("Full command stdout", stdout);
+            ConversationEvidence.Current?.Record("Full command stderr", stderr);
+        }
+
+        private static string Combine(string stdout, string stderr)
+        {
             var builder = new StringBuilder();
             builder.Append(stdout);
             if (stderr.Length > 0)

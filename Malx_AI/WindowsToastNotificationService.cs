@@ -72,7 +72,7 @@ namespace Malx_AI
             }
         }
 
-        public static void ShowCouncilCompletionIfInactive(string message)
+        public static void ShowWorkplaceCompletionIfInactive(string message)
         {
             if (!_registered || string.IsNullOrWhiteSpace(message))
                 return;
@@ -88,6 +88,7 @@ namespace Malx_AI
                         .AddArgument("action", "focus-workplace")
                         .AddText("Axiom Workplace")
                         .AddText(message)
+                        .SetAudioEvent(AppNotificationSoundEvent.Default)
                         .BuildNotification();
                     AppNotificationManager.Default.Show(notification);
                 }
