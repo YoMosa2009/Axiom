@@ -116,28 +116,8 @@ namespace Malx_AI.Agent
         {
             var builder = new StringBuilder();
             builder.AppendLine("[AXIOM COMPUTER AGENT]");
+            builder.AppendLine("You are operating the user's Windows computer directly.");
             builder.AppendLine(ConversationEvidence.Instructions);
-            builder.AppendLine($"You are operating the user's Windows computer directly. Scope: {scope.Describe()}.");
-            if (!scope.EntireComputer && !string.IsNullOrWhiteSpace(scope.RootPath))
-            {
-                builder.AppendLine($"STRICT PROJECT SCOPE: Work ONLY inside '{scope.RootPath}'. Never inspect, write, or execute commands targeting paths outside this folder.");
-            }
-            if (!string.IsNullOrWhiteSpace(browserSummary))
-            {
-                builder.AppendLine($"Detected browser environment: {browserSummary} (use browser_control directly for browsing/searching/reading pages/downloading/installing).");
-            }
-            if (visionCapable)
-            {
-                builder.AppendLine("BACKGROUND PAGE PREVIEW: For HTML/web work, call take_screenshot with url set to the page's file:/// or HTTP URL. It renders in an isolated headless browser and shows the image inside Axiom while Axiom stays visible and active. Do not open, activate, minimize or reposition desktop apps just to verify your page. Shell UI automation is blocked from the first attempt. An initial screenshot proves rendering only; do not claim interactions or playback were tested unless you actually tested them.");
-                builder.AppendLine("VISION & SCREENSHOT INSPECTION: You have vision capability enabled and access to `take_screenshot` (and visual `read_file` on image files). To look at one app, pass window with part of its title or process name (for example window='Edge'): it is captured even when other windows are in front, and the result tells you which window the image shows. NEVER run WScript.Shell, AppActivate, SendKeys or Start-Sleep loops to bring a window forward. One screenshot normally settles a visual check; take a second only after you changed something. Then fix any issue with `edit_file`/`write_file`, or give your final summary.");
-            }
-            if (!string.IsNullOrWhiteSpace(trackerFilePath))
-            {
-                builder.AppendLine($"TASK TRACKER (.md): Axiom keeps '{trackerFilePath}' up to date for you after every step and every turn (goal, steps done, files changed, background tasks, each turn's summary). Do NOT spend steps writing or rewriting it. Read it with read_file only when you need to recall earlier work.");
-            }
-            builder.AppendLine(mode == AgentApprovalMode.Auto
-                ? "Approval mode: Auto. Your calls run immediately (safe/reviewed per policy)."
-                : "Approval mode: Manual. Commands and edits wait for user approval; a refusal is a normal answer, not an error.");
             builder.AppendLine();
 
             if (nativeToolCalling)
@@ -176,8 +156,6 @@ namespace Malx_AI.Agent
             builder.AppendLine("- The user may send a new message while you work. It arrives between steps; follow it from then on, adjusting or redoing earlier work if it changes what they want.");
             if (!flat)
                 builder.AppendLine("- Long files: one reply has an output limit, and a tool call cut off by it writes nothing. Keep each write_file under about 150 lines; put the rest in follow-up append_file calls.");
-            if (!scope.EntireComputer && !string.IsNullOrWhiteSpace(scope.RootPath))
-                builder.AppendLine($"- Commands start in the working folder '{scope.RootPath}', so a relative path like hello.py means a file there.");
             builder.AppendLine("- Look before you change: read a file before editing it, and check a directory before assuming what is in it.");
             builder.AppendLine("- Directories are created automatically: write_file automatically creates all parent folders for you. Do NOT run New-Item or mkdir before write_file.");
             builder.AppendLine("- Direct PowerShell execution: run_command already runs directly in PowerShell. NEVER wrap commands in 'powershell -Command' or 'cmd /c'.");
@@ -190,6 +168,27 @@ namespace Malx_AI.Agent
             builder.AppendLine("- Never repeat an action in a loop. If a step succeeded, already exists, or encountered an error, proceed immediately to the next step (e.g. write_file, read_file, or finish).");
             builder.AppendLine("- Prefer the smallest action that answers the question. Do not explore the whole disk for a one-file task.");
             builder.AppendLine("- Commands are non-interactive: anything that waits for typed input will fail, so pass flags instead.");
+            builder.AppendLine();
+            // Dynamic session details come last so the invariant agent instructions above keep an identical prompt-cache prefix across projects.
+            builder.AppendLine("[SESSION CONTEXT]");
+            builder.AppendLine($"Scope: {scope.Describe()}.");
+            if (!scope.EntireComputer && !string.IsNullOrWhiteSpace(scope.RootPath))
+            {
+                builder.AppendLine($"STRICT PROJECT SCOPE: Work ONLY inside '{scope.RootPath}'. Never inspect, write, or execute commands targeting paths outside this folder.");
+                builder.AppendLine($"Commands start in the working folder '{scope.RootPath}', so a relative path like hello.py means a file there.");
+            }
+            if (!string.IsNullOrWhiteSpace(browserSummary))
+                builder.AppendLine($"Detected browser environment: {browserSummary} (use browser_control directly for browsing/searching/reading pages/downloading/installing).");
+            if (visionCapable)
+            {
+                builder.AppendLine("BACKGROUND PAGE PREVIEW: For HTML/web work, call take_screenshot with url set to the page's file:/// or HTTP URL. It renders in an isolated headless browser and shows the image inside Axiom while Axiom stays visible and active. Do not open, activate, minimize or reposition desktop apps just to verify your page. Shell UI automation is blocked from the first attempt. An initial screenshot proves rendering only; do not claim interactions or playback were tested unless you actually tested them.");
+                builder.AppendLine("VISION & SCREENSHOT INSPECTION: You have vision capability enabled and access to `take_screenshot` (and visual `read_file` on image files). To look at one app, pass window with part of its title or process name (for example window='Edge'): it is captured even when other windows are in front, and the result tells you which window the image shows. NEVER run WScript.Shell, AppActivate, SendKeys or Start-Sleep loops to bring a window forward. One screenshot normally settles a visual check; take a second only after you changed something. Then fix any issue with `edit_file`/`write_file`, or give your final summary.");
+            }
+            if (!string.IsNullOrWhiteSpace(trackerFilePath))
+                builder.AppendLine($"TASK TRACKER (.md): Axiom keeps '{trackerFilePath}' up to date for you after every step and every turn (goal, steps done, files changed, background tasks, each turn's summary). Do NOT spend steps writing or rewriting it. Read it with read_file only when you need to recall earlier work.");
+            builder.AppendLine(mode == AgentApprovalMode.Auto
+                ? "Approval mode: Auto. Your calls run immediately (safe/reviewed per policy)."
+                : "Approval mode: Manual. Commands and edits wait for user approval; a refusal is a normal answer, not an error.");
             builder.Append("[/AXIOM COMPUTER AGENT]");
             return builder.ToString();
         }

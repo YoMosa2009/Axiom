@@ -48,6 +48,7 @@ namespace Malx_AI
         private sealed class CloudChatRequestContext
         {
             public string SystemPrompt { get; init; } = string.Empty;
+            public string TurnContextPrefix { get; init; } = string.Empty;
             public string FinalUserMessage { get; init; } = string.Empty;
             public List<ChatMessage> SelectedHistoryMessages { get; init; } = new();
             public List<OpenRouterMessage> ConversationHistory { get; init; } = new();
@@ -1041,13 +1042,18 @@ namespace Malx_AI
             bool thinkingEnabled,
             Action<string>? onToken,
             CancellationToken token,
-            IReadOnlyList<string>? imageDataUrls = null)
+            IReadOnlyList<string>? imageDataUrls = null,
+            string? turnContextPrefix = null)
         {
             List<OpenRouterMessage> messages = new(conversationHistory ?? []);
-            // PreserveFullText: keeps the active user message (which may carry attached document
-            // context) intact through tool-loop iterations, where it stops being the final message.
+            // Per-turn instructions/evidence ride ahead of the user message rather than mutating the
+            // static system prompt, preserving prompt-cache prefixes across follow-up turns.
+            string effectiveUserTurn = string.IsNullOrWhiteSpace(turnContextPrefix)
+                ? userMsg
+                : turnContextPrefix.Trim() + "\n\n" + userMsg;
+            // PreserveFullText: keeps the active user message intact through tool-loop iterations.
             // ImageDataUrls: attached images ride the same payload message as multipart content.
-            messages.Add(new OpenRouterMessage("user", userMsg, PreserveFullText: true, ImageDataUrls: imageDataUrls));
+            messages.Add(new OpenRouterMessage("user", effectiveUserTurn, PreserveFullText: true, ImageDataUrls: imageDataUrls));
 
             IReadOnlyList<string> mentionedMcpHandles = ResolveMentionedMcpHandles(userMsg);
             bool includeWebSearch = _normalWebSearchEnabled
@@ -1091,9 +1097,10 @@ namespace Malx_AI
                         systemPrompt,
                         thinkingEnabled,
                         _selectedOpenRouterModelId,
-                        forceNoToolsSynthesis ? null : tools,
+                        tools,
                         onToken,
-                        token);
+                        token,
+                        disableToolCalls: forceNoToolsSynthesis);
 
                     if (!string.IsNullOrWhiteSpace(response.Reasoning))
                         reasoningParts.Add(response.Reasoning.Trim());
@@ -1168,9 +1175,10 @@ namespace Malx_AI
                     systemPrompt,
                     thinkingEnabled,
                     _selectedOpenRouterModelId,
-                    null,
+                    tools,
                     onToken,
-                    token);
+                    token,
+                    disableToolCalls: true);
 
                 if (!string.IsNullOrWhiteSpace(finalResponse.Reasoning))
                     reasoningParts.Add(finalResponse.Reasoning.Trim());
@@ -1415,6 +1423,7 @@ namespace Malx_AI
                     requestContext.ConversationHistory,
                     requestContext.ThinkingEnabled,
                     imageDataUrls: requestContext.ImageDataUrls,
+                    turnContextPrefix: requestContext.TurnContextPrefix,
                     onToken: tokenChunk =>
                     {
                         if (string.IsNullOrEmpty(tokenChunk))
@@ -1633,17 +1642,11 @@ namespace Malx_AI
                 bool thinkingEnabled = EffortPolicy.RequestsReasoning(_normalThinkingModeEnabled) && !ShouldRouteNormalChatToCanvas(userMsg);
                 string systemPrompt = string.IsNullOrWhiteSpace(uiSnapshot.SystemPromptText) ? BuildDefaultAssistantSystemPrompt() : uiSnapshot.SystemPromptText.Trim();
                 systemPrompt = AppendSystemInstruction(systemPrompt, EffortPolicy.BuildSystemInstruction());
-                string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Cloud or Hybrid Local");
-                if (!string.IsNullOrWhiteSpace(capabilityInstruction))
-                    systemPrompt += "\n\n" + capabilityInstruction;
-                string projectCanvasInstruction = BuildNormalChatProjectCanvasInstruction(userMsg);
-                if (!string.IsNullOrWhiteSpace(projectCanvasInstruction))
-                    systemPrompt += "\n\n" + projectCanvasInstruction;
-                string cloudModelInstruction = BuildCloudModelSystemInstruction(userMsg);
+                string cloudModelInstruction = BuildCloudModelSystemInstruction(string.Empty);
                 if (!string.IsNullOrWhiteSpace(cloudModelInstruction))
                     systemPrompt += "\n\n" + cloudModelInstruction;
 
-                string cloudWebSearchInstruction = BuildCloudWebSearchSystemInstruction(userMsg, !string.IsNullOrWhiteSpace(webContext));
+                string cloudWebSearchInstruction = BuildCloudWebSearchSystemInstruction(string.Empty, proactiveWebContextAttached: false);
                 if (!string.IsNullOrWhiteSpace(cloudWebSearchInstruction))
                     systemPrompt += "\n\n" + cloudWebSearchInstruction;
 
@@ -1651,13 +1654,8 @@ namespace Malx_AI
                 if (!string.IsNullOrWhiteSpace(cloudIdentityInstruction))
                     systemPrompt += "\n\n" + cloudIdentityInstruction;
 
-                IReadOnlyList<string> mentionedMcp = ResolveMentionedMcpHandles(userMsg);
-                string mcpInstruction = _mcpConnectorService?.BuildSystemInstruction(mentionedMcp, cloudModeActive: true) ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(mcpInstruction))
-                    systemPrompt += "\n\n" + mcpInstruction;
-
-                if (!string.IsNullOrWhiteSpace(personaContext))
-                    systemPrompt += "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]";
+                systemPrompt = AppendSystemInstruction(systemPrompt, LocalMathLatexInstruction);
+                systemPrompt = _openRouterChatService.BuildSystemPromptForModel(_selectedOpenRouterModelId, systemPrompt);
 
                 if (!string.IsNullOrWhiteSpace(uiSnapshot.AttachedDocumentMemory))
                     systemPrompt += "\n\n" + uiSnapshot.AttachedDocumentMemory;
@@ -1669,17 +1667,38 @@ namespace Malx_AI
                 if (!string.IsNullOrWhiteSpace(visionOrderNote))
                     systemPrompt += "\n\n" + visionOrderNote;
 
-                string codingInstruction = BuildCloudCodingSystemInstruction(userMsg);
-                if (!string.IsNullOrWhiteSpace(codingInstruction))
-                    systemPrompt += "\n\n" + codingInstruction;
-
-                systemPrompt = AppendSystemInstruction(systemPrompt, LocalMathLatexInstruction);
-
-                // Pass webContext so proactive search results are grounded into this turn's system prompt
-                systemPrompt = AppendSingleTurnSystemTail(systemPrompt, webContext, thinkingEnabled);
-
-                systemPrompt = _openRouterChatService.BuildSystemPromptForModel(_selectedOpenRouterModelId, systemPrompt);
                 systemPrompt = AppendAttachedDocumentContextToSystemPrompt(systemPrompt, uiSnapshot.DocumentContext);
+
+                // Dynamic per-turn directives, memory, MCP hints, and web snippets travel inside
+                // TurnContextPrefix on the current user message so SystemPrompt stays cache-identical.
+                var turnContext = new StringBuilder();
+                static void AppendTurnBlock(StringBuilder sb, string? block)
+                {
+                    if (string.IsNullOrWhiteSpace(block))
+                        return;
+                    if (sb.Length > 0)
+                        sb.AppendLine().AppendLine();
+                    sb.Append(block.Trim());
+                }
+
+                AppendTurnBlock(turnContext, BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Cloud or Hybrid Local"));
+                AppendTurnBlock(turnContext, BuildNormalChatProjectCanvasInstruction(userMsg));
+
+                IReadOnlyList<string> mentionedMcp = ResolveMentionedMcpHandles(userMsg);
+                AppendTurnBlock(turnContext, _mcpConnectorService?.BuildSystemInstruction(mentionedMcp, cloudModeActive: true));
+
+                if (!string.IsNullOrWhiteSpace(personaContext))
+                    AppendTurnBlock(turnContext, "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]");
+
+                AppendTurnBlock(turnContext, BuildCloudCodingSystemInstruction(userMsg));
+
+                if (!string.IsNullOrWhiteSpace(webContext))
+                {
+                    AppendTurnBlock(turnContext, "[CLOUD WEB EVIDENCE FOR THIS TURN]\nA proactive web evidence block is attached below. Use it as authoritative for current/source-backed claims.");
+                }
+
+                string singleTurnTail = AppendSingleTurnSystemTail(string.Empty, webContext, thinkingEnabled);
+                AppendTurnBlock(turnContext, singleTurnTail);
 
                 List<ChatMessage> historyMessages = uiSnapshot.CurrentStreamingMessageId.HasValue
                     ? uiSnapshot.ChatMessages.Where(msg => msg.Id != uiSnapshot.CurrentStreamingMessageId.Value).ToList()
@@ -1690,6 +1709,7 @@ namespace Malx_AI
                 return new CloudChatRequestContext
                 {
                     SystemPrompt = systemPrompt,
+                    TurnContextPrefix = turnContext.ToString(),
                     FinalUserMessage = userMsg,
                     SelectedHistoryMessages = selectedHistoryMessages,
                     ConversationHistory = conversationHistory,

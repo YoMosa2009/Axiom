@@ -24,6 +24,7 @@ namespace Malx_AI.Agent
         private readonly string _modelId;
         private readonly string _systemPrompt;
         private readonly IReadOnlyList<string>? _imageDataUrls;
+        private readonly bool _thinkingEnabled;
         private readonly List<OpenRouterMessage> _messages = new();
         private int _renderedExchanges;
 
@@ -32,12 +33,14 @@ namespace Malx_AI.Agent
             string modelId,
             string systemPrompt,
             IReadOnlyList<(string Role, string Content)>? priorChatHistory = null,
-            IReadOnlyList<string>? imageDataUrls = null)
+            IReadOnlyList<string>? imageDataUrls = null,
+            bool thinkingEnabled = false)
         {
             _service = service ?? throw new ArgumentNullException(nameof(service));
             _modelId = modelId;
             _systemPrompt = systemPrompt;
             _imageDataUrls = imageDataUrls;
+            _thinkingEnabled = thinkingEnabled;
 
             if (priorChatHistory != null && priorChatHistory.Count > 0)
             {
@@ -56,9 +59,9 @@ namespace Malx_AI.Agent
         }
 
         public string? Unavailable =>
-            _service.HasValidKey || _service.HasValidCustomEndpoint
+            _service.HasCredentialForModel(_modelId)
                 ? null
-                : "Cloud mode needs a valid OpenRouter API key, or a configured Hybrid Local endpoint, in Settings.";
+                : "Cloud mode needs an Axiom subscription, a valid OpenRouter API key, or a configured Hybrid Local endpoint in Settings.";
 
         public Action<int, int>? OnTokenUsageRecorded { get; set; }
 
@@ -205,7 +208,7 @@ namespace Malx_AI.Agent
                     OpenRouterChatResponse response = await _service.SendConversationStreamAsync(
                         _messages,
                         _systemPrompt,
-                        thinkingEnabled: false,
+                        thinkingEnabled: _thinkingEnabled,
                         modelId: _modelId,
                         tools: AgentToolSchemas.All(),
                         onToken: OnText == null ? null : chunk => OnText(chunk),

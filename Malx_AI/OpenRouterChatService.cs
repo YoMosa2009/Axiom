@@ -1115,7 +1115,8 @@ namespace Malx_AI
             IReadOnlyList<string>? stopSequences = null,
             bool allowModelFallback = true,
             bool requireCompleteResponse = false,
-            Action<string, int>? onToolCallProgress = null)
+            Action<string, int>? onToolCallProgress = null,
+            bool disableToolCalls = false)
         {
             if (ConversationEvidence.Current != null)
             {
@@ -1142,7 +1143,8 @@ namespace Malx_AI
                     stopSequences,
                     allowModelFallback: allowModelFallback,
                     requireCompleteResponse: requireCompleteResponse,
-                    onToolCallProgress: onToolCallProgress);
+                    onToolCallProgress: onToolCallProgress,
+                    disableToolCalls: disableToolCalls);
                 return response;
             }
             finally
@@ -1460,7 +1462,8 @@ namespace Malx_AI
             bool allowModelFallback = true,
             int sameModelStreamRetries = 0,
             bool requireCompleteResponse = false,
-            Action<string, int>? onToolCallProgress = null)
+            Action<string, int>? onToolCallProgress = null,
+            bool disableToolCalls = false)
         {
             OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
             if (!HasCredentialForModel(requestedModelProfile.AliasId))
@@ -1521,7 +1524,8 @@ namespace Malx_AI
                     stream: true,
                     stopSequences,
                     isCustomEndpoint: requestedModelProfile.IsCustomEndpoint,
-                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint);
+                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint,
+                    disableToolCalls: disableToolCalls);
 
                 response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
@@ -1565,7 +1569,7 @@ namespace Malx_AI
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
                         {
                             await BackendLogService.LogEventAsync("OpenRouterFallback", $"Primary:{requestedModelProfile.AliasLabel}\nFallback:{ResolveModelLabel(fallbackModelId)}\nStatus:{(int)response.StatusCode} ({response.StatusCode})\nBody:{Truncate(retryBody, 400)}");
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress, disableToolCalls: disableToolCalls);
                         }
                     }
 
@@ -1573,7 +1577,7 @@ namespace Malx_AI
                         && !ContainsIgnoredProvidersMessage(retryBody)
                         && await TryBeginFallbackChainRestartAsync(requestedModelProfile, attemptedModelIds, $"Status:{(int)response.StatusCode}", cancellationToken))
                     {
-                        return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
+                        return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress, disableToolCalls: disableToolCalls);
                     }
 
                     // Fallback chain exhausted (or disabled). A 429 here is a transient throttle (free-tier
@@ -1888,7 +1892,7 @@ namespace Malx_AI
                             $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:disabled\nSameModelRetry:{sameModelStreamRetries}\nFirstLine:{firstStreamLineSample}");
                         if (sameModelStreamRetries < 1)
                         {
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, allowModelFallback: false, sameModelStreamRetries: sameModelStreamRetries + 1, onToolCallProgress: onToolCallProgress);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, allowModelFallback: false, sameModelStreamRetries: sameModelStreamRetries + 1, onToolCallProgress: onToolCallProgress, disableToolCalls: disableToolCalls);
                         }
 
                         if (streamStalled)
@@ -1904,12 +1908,12 @@ namespace Malx_AI
                             "OpenRouterStreamDegeneration",
                             $"Model:{requestedModelProfile.AliasLabel}\nKind:{failureKind}\nError:{Truncate(providerStreamError, 300)}\nFallback:{(string.IsNullOrWhiteSpace(fallbackModelId) ? "none" : ResolveModelLabel(fallbackModelId))}\nFirstLine:{firstStreamLineSample}");
                         if (!string.IsNullOrWhiteSpace(fallbackModelId))
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, fallbackModelId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress, disableToolCalls: disableToolCalls);
 
                         if ((streamStalled || providerStreamError.Length > 0)
                             && await TryBeginFallbackChainRestartAsync(requestedModelProfile, attemptedModelIds, failureKind, cancellationToken))
                         {
-                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress);
+                            return await SendMessageStreamInternalAsync(messages, systemPrompt, thinkingEnabled, requestedModelProfile.AliasId, tools, onToken, attemptedModelIds, cancellationToken, displayModelLabel, maxTokensOverride, stopSequences, onToolCallProgress: onToolCallProgress, disableToolCalls: disableToolCalls);
                         }
 
                         if (streamStalled)
@@ -2047,7 +2051,8 @@ namespace Malx_AI
             bool stream = false,
             IReadOnlyList<string>? stopSequences = null,
             bool isCustomEndpoint = false,
-            bool isManagedEndpoint = false)
+            bool isManagedEndpoint = false,
+            bool disableToolCalls = false)
         {
             JsonArray messagePayload = BuildMessages(messages, systemPrompt);
             JsonObject payload = new()
@@ -2093,7 +2098,7 @@ namespace Malx_AI
             {
                 payload["tools"] = BuildTools(tools);
                 if (SupportsParameter(modelId, "tool_choice"))
-                    payload["tool_choice"] = "auto";
+                    payload["tool_choice"] = disableToolCalls ? "none" : "auto";
             }
 
             string targetUrl = isManagedEndpoint
@@ -2144,6 +2149,7 @@ namespace Malx_AI
                 });
             }
 
+            int messageIndex = 0;
             foreach (OpenRouterMessage message in conversationMessages ?? [])
             {
                 if (message == null)
@@ -2156,7 +2162,7 @@ namespace Malx_AI
                 };
 
                 if (message.ToolCalls?.Count > 0)
-                    messageObject["tool_calls"] = BuildToolCallPayload(message.ToolCalls);
+                    messageObject["tool_calls"] = BuildToolCallPayload(message.ToolCalls, messageIndex);
 
                 if (!string.IsNullOrWhiteSpace(message.ToolCallId))
                     messageObject["tool_call_id"] = message.ToolCallId;
@@ -2194,6 +2200,7 @@ namespace Malx_AI
                 }
 
                 messages.Add(messageObject);
+                messageIndex++;
             }
 
             return messages;
@@ -2222,9 +2229,10 @@ namespace Malx_AI
             return payload;
         }
 
-        private static JsonArray BuildToolCallPayload(IReadOnlyList<OpenRouterToolCall> toolCalls)
+        private static JsonArray BuildToolCallPayload(IReadOnlyList<OpenRouterToolCall> toolCalls, int messageIndex)
         {
             var payload = new JsonArray();
+            int callIndex = 0;
             foreach (OpenRouterToolCall toolCall in toolCalls ?? [])
             {
                 if (toolCall == null || string.IsNullOrWhiteSpace(toolCall.Name))
@@ -2232,7 +2240,7 @@ namespace Malx_AI
 
                 payload.Add(new JsonObject
                 {
-                    ["id"] = string.IsNullOrWhiteSpace(toolCall.Id) ? Guid.NewGuid().ToString("N") : toolCall.Id,
+                    ["id"] = string.IsNullOrWhiteSpace(toolCall.Id) ? $"call_{messageIndex}_{callIndex}" : toolCall.Id,
                     ["type"] = "function",
                     ["function"] = new JsonObject
                     {
@@ -2240,6 +2248,7 @@ namespace Malx_AI
                         ["arguments"] = string.IsNullOrWhiteSpace(toolCall.ArgumentsJson) ? "{}" : toolCall.ArgumentsJson
                     }
                 });
+                callIndex++;
             }
 
             return payload;
@@ -2863,7 +2872,8 @@ namespace Malx_AI
             if (IsManagedEndpointModel(normalizedModelId)
                 || string.Equals(normalizedModelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase))
             {
-                return !string.Equals(parameterName, "reasoning", StringComparison.OrdinalIgnoreCase);
+                // DigitalOcean's 1017 OpenRouter route supports reasoning/effort and tool fields while omitting stop.
+                return !string.Equals(parameterName, "stop", StringComparison.OrdinalIgnoreCase);
             }
 
             if (string.Equals(normalizedModelId, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase)

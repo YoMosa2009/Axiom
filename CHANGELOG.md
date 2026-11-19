@@ -24,6 +24,17 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Changed
 
+- Raised managed gateway output limits (`4,096` default, up to `16,384` tokens), added opt-in
+  managed `reasoning` forwarding (`ExtraHigh`/`Ultra` Workplace Agent & Chat Thinking), and
+  switched gateway pre-request holds to dynamic prompt/budget estimation so subscribers can spend
+  over 99% of their monthly allowance cleanly.
+- Improved provider prompt-cache prefix stability across Workplace and Normal Chat by keeping
+  system instructions static at the top, placing dynamic session/turn context afterward, using
+  deterministic fallback tool-call IDs, and keeping `tools` definitions intact with `tool_choice: "none"`
+  during forced no-tools synthesis passes.
+- Clarified open-source `PolyForm Noncommercial 1.0.0` vs. official maintainer commercial/subscription
+  and contributor terms across `README.md`, `CONTRIBUTING.md`, and `.github/pull_request_template.md`,
+  and hardened `.gitignore` secret/database exclusions.
 - Settings **Inference** defaults to **Cloud** with `DeepSeek 4.1F-1017` when a managed
   subscription is active instead of mapping managed access onto Hybrid Local (`Kestral 1`).
 - Command Review **Auto-Review** decides autonomously on the user's behalf (approving safe
@@ -44,6 +55,8 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Fixed
 
+- Managed-only accounts without a personal OpenRouter API key no longer fail `CloudAgentModel`
+  availability checks in Workplace Agent Access.
 - Opening **Settings** closes Workplace/MCP popups, elevates the Settings overlay above
   the full window, and disables background hit-testing so title-bar and sidebar controls
   (`Setup`, `System Log`, etc.) cannot click through or overlay the Settings modal.

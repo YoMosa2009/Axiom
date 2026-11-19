@@ -10,10 +10,15 @@ namespace AxiomSubscriptionGateway;
 internal sealed class OpenRouterInference
 {
     private const string BaseUrl = "https://openrouter.ai/api/v1/";
-    private const int MaxOutputTokens = 2_048;
-    // Worst case at the pinned input and output prices, rounded up to USD micro-units.
-    internal const long ReservationMicros = 190_219;
+    internal const int DefaultMaxOutputTokens = 4_096;
+    internal const int MaxOutputTokens = 16_384;
+    internal const long MinReservationMicros = 1_000;
+    // Upper bound covering 1M uncached input ($0.18/M) + 16,384 output ($0.72/M) + safety margin.
+    internal const long MaxReservationMicros = 205_000;
+    internal const long ReservationMicros = MaxReservationMicros;
     internal const int ContextTokens = 1_048_576;
+    private const long ConservativeTokensPerInlineImage = 16_384;
+    private const long PromptFramingTokenOverhead = 2_048;
     private static readonly HttpClient OpenRouterHttp = new(new HttpClientHandler { AllowAutoRedirect = false });
     private readonly HttpClient _http;
     private readonly string _key;
@@ -34,9 +39,10 @@ internal sealed class OpenRouterInference
     public async Task<IResult> CompleteAsync(HttpContext context, JsonElement clientRequest, bool stream, AllowanceLedger ledger)
     {
         JsonObject payload;
+        int effectiveMaxTokens;
         try
         {
-            payload = BuildPayload(clientRequest, stream);
+            payload = BuildPayload(clientRequest, stream, out effectiveMaxTokens);
         }
         catch (ArgumentException ex)
         {
@@ -47,7 +53,8 @@ internal sealed class OpenRouterInference
         request.Content = JsonContent.Create(payload);
         string id = Guid.NewGuid().ToString("N");
         context.RequestAborted.ThrowIfCancellationRequested();
-        var reserve = ledger.TryReserveDetailed(id, ReservationMicros);
+        long reservationMicros = EstimateReservationMicros(clientRequest, effectiveMaxTokens);
+        var reserve = ledger.TryReserveDetailed(id, reservationMicros);
         if (reserve.Status == ReserveStatus.SessionLimitReached)
         {
             return LocalGateway.Error(
@@ -91,11 +98,11 @@ internal sealed class OpenRouterInference
             }
 
             if (stream)
-                return await StreamAsync(context, response, ledger, id, deadline.Token);
+                return await StreamAsync(context, response, ledger, id, reservationMicros, deadline.Token);
 
             var body = await response.Content.ReadAsStringAsync(deadline.Token);
             using var completion = JsonDocument.Parse(body);
-            if (!RecordReceipt(completion.RootElement, ledger, id))
+            if (!RecordReceipt(completion.RootElement, ledger, id, reservationMicros))
                 return UsagePending();
 
             return Results.Content(body, "application/json");
@@ -123,7 +130,7 @@ internal sealed class OpenRouterInference
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
             JsonElement data = Read(doc.RootElement, "data");
             if (ReadString(data, "id") == pending.GenerationId
-                && ReadCost(data, "total_cost") is long actual
+                && ReadCost(data, "total_cost", MaxReservationMicros) is long actual
                 && ledger.ForAccount(pending.AccountId).TrySettle(pending.RequestId, actual))
                 count++;
         }
@@ -131,7 +138,7 @@ internal sealed class OpenRouterInference
     }
 
     private static async Task<IResult> StreamAsync(HttpContext context, HttpResponseMessage response, AllowanceLedger ledger,
-        string id, CancellationToken cancellationToken)
+        string id, long reservationMicros, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentType?.MediaType != "text/event-stream")
             return UsagePending();
@@ -163,7 +170,7 @@ internal sealed class OpenRouterInference
                 ledger.RecordUpstreamGeneration(id, upstreamId);
                 generationId = upstreamId;
             }
-            if (!settled && ReadCost(Read(frame.RootElement, "usage"), "cost") is long actual)
+            if (!settled && ReadCost(Read(frame.RootElement, "usage"), "cost", reservationMicros) is long actual)
                 settled = ledger.TrySettle(id, actual);
 
             if (clientConnected)
@@ -193,7 +200,7 @@ internal sealed class OpenRouterInference
         }
     }
 
-    private static JsonObject BuildPayload(JsonElement request, bool stream)
+    private static JsonObject BuildPayload(JsonElement request, bool stream, out int effectiveMaxTokens)
     {
         foreach (var message in request.GetProperty("messages").EnumerateArray())
         {
@@ -217,14 +224,14 @@ internal sealed class OpenRouterInference
             }
         }
 
-        int maxTokens = Read(request, "max_tokens") is { ValueKind: JsonValueKind.Number } requested
-            && requested.TryGetInt32(out int count) ? Math.Clamp(count, 1, MaxOutputTokens) : MaxOutputTokens;
+        effectiveMaxTokens = Read(request, "max_tokens") is { ValueKind: JsonValueKind.Number } requested
+            && requested.TryGetInt32(out int count) ? Math.Clamp(count, 1, MaxOutputTokens) : DefaultMaxOutputTokens;
         var payload = new JsonObject
         {
             ["model"] = LocalGateway.Model,
             ["stream"] = stream,
-            ["max_tokens"] = maxTokens,
-            ["reasoning"] = new JsonObject { ["enabled"] = false },
+            ["max_tokens"] = effectiveMaxTokens,
+            ["reasoning"] = BuildReasoningPayload(request),
             ["provider"] = JsonSerializer.SerializeToNode(new
             {
                 only = new[] { LocalGateway.Provider },
@@ -243,16 +250,99 @@ internal sealed class OpenRouterInference
         return payload;
     }
 
+    internal static JsonObject BuildReasoningPayload(JsonElement request)
+    {
+        JsonElement reasoning = Read(request, "reasoning");
+        if (reasoning.ValueKind != JsonValueKind.Object)
+            return new JsonObject { ["enabled"] = false };
+
+        if (reasoning.TryGetProperty("enabled", out var enabledElement) && enabledElement.ValueKind == JsonValueKind.False)
+            return new JsonObject { ["enabled"] = false };
+
+        string? effort = ReadString(reasoning, "effort")?.Trim().ToLowerInvariant() switch
+        {
+            "low" or "medium" or "high" => ReadString(reasoning, "effort")!.Trim().ToLowerInvariant(),
+            _ => null
+        };
+        bool explicitlyEnabled = reasoning.TryGetProperty("enabled", out enabledElement)
+            && enabledElement.ValueKind == JsonValueKind.True;
+
+        if (!explicitlyEnabled && effort is null)
+            return new JsonObject { ["enabled"] = false };
+
+        var result = new JsonObject { ["enabled"] = true };
+        if (effort is not null)
+            result["effort"] = effort;
+        if (reasoning.TryGetProperty("exclude", out var excludeElement)
+            && excludeElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            result["exclude"] = excludeElement.GetBoolean();
+        }
+        return result;
+    }
+
+    internal static long EstimateReservationMicros(JsonElement request, int effectiveMaxTokens)
+    {
+        long textBytes = 0;
+        long imageCount = 0;
+
+        if (request.ValueKind == JsonValueKind.Object && request.TryGetProperty("messages", out var messages)
+            && messages.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var message in messages.EnumerateArray())
+            {
+                if (message.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                JsonElement content = Read(message, "content");
+                if (content.ValueKind == JsonValueKind.String)
+                {
+                    textBytes += System.Text.Encoding.UTF8.GetByteCount(content.GetString() ?? string.Empty);
+                }
+                else if (content.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var part in content.EnumerateArray())
+                    {
+                        if (string.Equals(ReadString(part, "type"), "image_url", StringComparison.Ordinal))
+                            imageCount++;
+                        else if (ReadString(part, "text") is string textPart)
+                            textBytes += System.Text.Encoding.UTF8.GetByteCount(textPart);
+                    }
+                }
+
+                if (message.TryGetProperty("tool_calls", out var toolCalls) && toolCalls.ValueKind == JsonValueKind.Array)
+                    textBytes += System.Text.Encoding.UTF8.GetByteCount(toolCalls.GetRawText());
+                if (ReadString(message, "tool_call_id") is string toolCallId)
+                    textBytes += System.Text.Encoding.UTF8.GetByteCount(toolCallId);
+            }
+        }
+
+        if (request.ValueKind == JsonValueKind.Object && request.TryGetProperty("tools", out var tools))
+            textBytes += System.Text.Encoding.UTF8.GetByteCount(tools.GetRawText());
+        if (request.ValueKind == JsonValueKind.Object && request.TryGetProperty("tool_choice", out var toolChoice))
+            textBytes += System.Text.Encoding.UTF8.GetByteCount(toolChoice.GetRawText());
+
+        // Upper bound on uncached input cost ($0.18/1M = 0.18 micro-USD/token; 1.25x byte buffer covers worst-case BPE split)
+        // plus 1.15x buffer on max output tokens ($0.72/1M = 0.72 micro-USD/token).
+        long estimatedInputTokens = Math.Min(
+            ContextTokens,
+            (long)Math.Ceiling(textBytes * 1.25m) + (imageCount * ConservativeTokensPerInlineImage) + PromptFramingTokenOverhead);
+        long estimatedOutputTokens = (long)Math.Ceiling(Math.Clamp(effectiveMaxTokens, 1, MaxOutputTokens) * 1.15m);
+        long inputMicros = (long)Math.Ceiling(estimatedInputTokens * 0.18m);
+        long outputMicros = (long)Math.Ceiling(estimatedOutputTokens * 0.72m);
+        return Math.Clamp(inputMicros + outputMicros, MinReservationMicros, MaxReservationMicros);
+    }
+
     private static bool IsInlineImage(string? url)
         => url is not null && (url.StartsWith("data:image/png;base64,", StringComparison.Ordinal)
             || url.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal)
             || url.StartsWith("data:image/webp;base64,", StringComparison.Ordinal));
 
-    private static bool RecordReceipt(JsonElement response, AllowanceLedger ledger, string id)
+    private static bool RecordReceipt(JsonElement response, AllowanceLedger ledger, string id, long reservationMicros)
     {
         if (ReadString(response, "id") is { } upstream)
             ledger.RecordUpstreamGeneration(id, upstream);
-        return ReadCost(Read(response, "usage"), "cost") is long actual && ledger.TrySettle(id, actual);
+        return ReadCost(Read(response, "usage"), "cost", reservationMicros) is long actual && ledger.TrySettle(id, actual);
     }
 
     private static JsonElement Read(JsonElement element, string name)
@@ -261,11 +351,11 @@ internal sealed class OpenRouterInference
     private static string? ReadString(JsonElement element, string name)
         => Read(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
 
-    private static long? ReadCost(JsonElement element, string name)
+    private static long? ReadCost(JsonElement element, string name, long maxAllowedMicros)
     {
         var raw = Read(element, name);
         if (raw.ValueKind != JsonValueKind.Number || !raw.TryGetDecimal(out decimal value)
-            || value < 0 || value > ReservationMicros / 1_000_000m)
+            || value < 0 || value > maxAllowedMicros / 1_000_000m)
             return null;
         return (long)Math.Ceiling(value * 1_000_000m);
     }

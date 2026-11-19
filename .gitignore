@@ -28,3 +28,17 @@ _repro/
 graphify-out/
 .codex/
 .serena/
+
+# Local secrets, environment files, certificates, private keys, and staging databases
+.env
+.env.*
+!.env.example
+credentials.json
+service-account*.json
+*_secrets.json
+*.secrets.json
+*.sqlite*
+*.pem
+*.key
+*.pfx
+*.p12

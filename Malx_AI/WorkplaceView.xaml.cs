@@ -646,10 +646,9 @@ namespace Malx_AI
                 // Fresh buffer per iteration so intermediate (tool-call) turns don't leave stale
                 // partial text on the card before the final answer streams in.
                 var textBuilder = new StringBuilder();
-                IReadOnlyList<OpenRouterToolDefinition>? toolsForThisPass = forceNoToolsSynthesisAfterBuilderGrounding
-                    || executedToolCount >= cloudToolExecutionLimit
-                    ? null
-                    : tools;
+                // Keep tool definitions attached with tool_choice:"none" on synthesis passes so provider prefix caches stay warm.
+                bool disableToolsForThisPass = forceNoToolsSynthesisAfterBuilderGrounding
+                    || executedToolCount >= cloudToolExecutionLimit;
                 var streamThrottle = Stopwatch.StartNew();
                 long lastStreamUiUpdateMs = -CouncilStreamUiUpdateIntervalMs;
                 OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
@@ -657,7 +656,7 @@ namespace Malx_AI
                     adaptedSystemPrompt,
                     cloudReasoningEnabled,
                     GetEffectiveCouncilModelId(),
-                    toolsForThisPass,
+                    tools,
                     onToken: t =>
                     {
                         // Padding sentinels ("<pad>" spam) are already suppressed at the stream source,
@@ -689,7 +688,8 @@ namespace Malx_AI
                     // Council roles build on each other's output mid-task. A silent model swap
                     // leaves the next role unable to continue what the first model started, so
                     // the cloud council always stays on its selected model.
-                    allowModelFallback: false);
+                    allowModelFallback: false,
+                    disableToolCalls: disableToolsForThisPass);
 
                 if (!string.IsNullOrWhiteSpace(response.Reasoning))
                     reasoningParts.Add(response.Reasoning.Trim());
@@ -809,7 +809,7 @@ namespace Malx_AI
                     adaptedSystemPrompt,
                     cloudReasoningEnabled,
                     GetEffectiveCouncilModelId(),
-                    null,
+                    tools,
                     onToken: t =>
                     {
                         forcedTextBuilder.Append(t);
@@ -833,7 +833,8 @@ namespace Malx_AI
                     token,
                     maxTokens,
                     stopSequences,
-                    allowModelFallback: false);
+                    allowModelFallback: false,
+                    disableToolCalls: true);
 
                 if (!string.IsNullOrWhiteSpace(forcedFinal.Reasoning))
                     reasoningParts.Add(forcedFinal.Reasoning.Trim());
@@ -4340,25 +4341,24 @@ namespace Malx_AI
             if (context == null || string.IsNullOrWhiteSpace(context.DocumentContent))
                 return prompt;
 
-            // When the budget is zero (e.g. the Builder, which gets the document in its user payload)
-            // the document body is omitted from the system prompt, but the "a document is attached"
-            // instruction is still emitted so the role knows to ground its answer in it.
+            // Keep static role/capability instructions at the front of the system prompt and place
+            // attached document blocks afterwards so provider prompt caches reuse the invariant prefix.
             string documentBlock = documentCharBudget > 0
                 ? BuildAttachedDocumentSystemPromptBlock(context.DocumentContent, context.DocumentFileNames, documentCharBudget)
                 : string.Empty;
 
             var sb = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(documentBlock))
-                sb.Append(documentBlock);
-
             if (!string.IsNullOrWhiteSpace(prompt))
+                sb.Append(prompt);
+
+            if (!string.IsNullOrWhiteSpace(documentBlock))
             {
                 if (sb.Length > 0)
                 {
                     sb.AppendLine();
                     sb.AppendLine();
                 }
-                sb.Append(prompt);
+                sb.Append(documentBlock);
             }
 
             if (role is CouncilRole.Architect or CouncilRole.Builder)

@@ -149,7 +149,18 @@ the current results and linked reports above for the latest verified scope.
   - Verified (2026-11-18):
     - `dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj -c Release --no-restore`: `Passed: 993, Failed: 0, Skipped: 0, Total: 993`
     - `dotnet build Malx_AI/Malx_AI.csproj -c Release -r win-x64 --no-restore`: `0 Error(s)` (`352` warnings); Debug `win-x64` build: `0 Error(s)`
-    - MalxPC staging gateway (`AxiomGatewayStaging-MalxPC`) updated with new binaries (`AxiomSubscriptionGateway.dll`, `208384` bytes), listening on `127.0.0.1:5198` (HTTP `401` unauthenticated) and public `https://staging.axiominference.work/v1/subscription` (HTTP `401` unauthenticated), with `accounts.sqlite` migrated cleanly (`created_at` column + `usage_session_window` table) and Account 1 balance preserved (`allowance=5000000`, `spent=580`, `reserved=0`).
+    - Hosted staging gateway updated and verified against an isolated test environment with idempotent SQLite ledger migration intact.
+
+- [x] **22. Managed Gateway Output/Reasoning Flexibility, Dynamic Reservations, Commercial License Clarity & Prompt-Cache Prefix Stability**
+  - Files:
+    - Gateway: `tools/AxiomSubscriptionGateway/OpenRouterInference.cs`
+    - Client & Prompts: `Malx_AI/OpenRouterChatService.cs`, `Malx_AI/MainWindow.Cloud.cs`, `Malx_AI/WorkplaceView.xaml.cs`, `Malx_AI/WorkplaceView.Agent.cs`, `Malx_AI/Agent/AgentPromptBuilder.cs`, `Malx_AI/Agent/CloudAgentModel.cs`
+    - Docs & Hygiene: `README.md`, `CONTRIBUTING.md`, `.github/pull_request_template.md`, `.gitignore`, `CHANGELOG.md`
+    - Tests: `Malx_AI.Tests/ManagedInferenceGatewayTests.cs`
+  - Verified (2026-11-19):
+    - `dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj -c Release --no-restore`: `Passed: 996, Failed: 0, Skipped: 0, Total: 996`
+    - `dotnet build Malx_AI/Malx_AI.csproj -c Release -r win-x64 --no-restore`: `0 Error(s)` (`352` warnings); Debug `win-x64` build: `0 Error(s)` (`352` warnings)
+    - Hosted gateway package republished (`win-x64`, Release) and verified healthy against an isolated staging environment.
 
 ## Historical verification log (2026-11-16)
 - `dotnet build C:\Users\user\source\repos\Axiom\Malx_AI\Malx_AI.csproj -c Debug --no-restore`: `0 Error(s)`

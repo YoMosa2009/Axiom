@@ -1044,7 +1044,8 @@ namespace Malx_AI
                         : GetEffectiveCouncilModelId(),
                     systemPrompt,
                     chatHistory,
-                    imageDataUrls);
+                    imageDataUrls,
+                    thinkingEnabled: EffortPolicy.Current >= EffortLevel.ExtraHigh);
                 cloudModel.OnToolCallProgress = (toolName, chars) =>
                     ReportAgentActivityDetail(DescribeToolCallProgress(toolName, chars));
                 cloudModel.OnWaiting = message => ReportAgentActivityDetail(message);

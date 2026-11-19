@@ -43,8 +43,10 @@ It's worth reading before changing the chat pipeline, the Workplace or Agent Acc
 
 Axiom is licensed under [PolyForm Noncommercial 1.0.0](LICENSE). By opening a pull request you
 confirm that you wrote the contribution (or have the right to submit it), and you agree that it
-is provided under the same license, and that the maintainer may also distribute it under other
-terms as part of Axiom.
+is licensed to the project under [PolyForm Noncommercial 1.0.0](LICENSE) and that you grant the
+maintainer a perpetual, irrevocable, worldwide, non-exclusive license to use, modify, distribute,
+and commercially offer the contribution as part of Axiom, including official Axiom builds and
+optional paid hosted or subscription services.
 
 ## Reporting problems
 

@@ -70,7 +70,7 @@ public sealed class ManagedInferenceGatewayTests : IDisposable
         using var payload = JsonDocument.Parse(upstream.Payload!);
         Assert.Equal(LocalGateway.Model, payload.RootElement.GetProperty("model").GetString());
         Assert.Equal("digitalocean", payload.RootElement.GetProperty("provider").GetProperty("only")[0].GetString());
-        Assert.Equal(2048, payload.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(OpenRouterInference.MaxOutputTokens, payload.RootElement.GetProperty("max_tokens").GetInt32());
         Assert.False(payload.RootElement.TryGetProperty("plugins", out _));
         Assert.False(payload.RootElement.TryGetProperty("stop", out _));
 
@@ -88,10 +88,10 @@ public sealed class ManagedInferenceGatewayTests : IDisposable
     }
 
     [Theory]
-    [InlineData(429, 502, 0)]
-    [InlineData(503, 409, OpenRouterInference.ReservationMicros)]
-    [InlineData(200, 409, OpenRouterInference.ReservationMicros)]
-    public async Task RejectionReleasesHoldAndAmbiguousOutcomePreservesIt(int upstreamStatus, int gatewayStatus, long reserved)
+    [InlineData(429, 502, false)]
+    [InlineData(503, 409, true)]
+    [InlineData(200, 409, true)]
+    public async Task RejectionReleasesHoldAndAmbiguousOutcomePreservesIt(int upstreamStatus, int gatewayStatus, bool preserveHold)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var upstream = new InferenceFixture((HttpStatusCode)upstreamStatus, """{"id":"gen-fixture"}""", "application/json");
@@ -101,11 +101,14 @@ public sealed class ManagedInferenceGatewayTests : IDisposable
         await gateway.StartAsync(timeout.Token);
         using var client = AuthenticatedClient(gateway.Urls.Single());
         var request = new { model = LocalGateway.Model, messages = new[] { new { role = "user", content = "Hello" } } };
+        using var requestDoc = JsonDocument.Parse(JsonSerializer.Serialize(request));
+        long dynamicHold = OpenRouterInference.EstimateReservationMicros(requestDoc.RootElement, OpenRouterInference.DefaultMaxOutputTokens);
+        Assert.InRange(dynamicHold, OpenRouterInference.MinReservationMicros, 9_999);
 
         using var rejected = await client.PostAsJsonAsync("v1/chat/completions", request, timeout.Token);
 
         Assert.Equal((HttpStatusCode)gatewayStatus, rejected.StatusCode);
-        Assert.Equal(new AllowanceBalance(5_000_000, 0, reserved),
+        Assert.Equal(new AllowanceBalance(5_000_000, 0, preserveHold ? dynamicHold : 0),
             await client.GetFromJsonAsync<AllowanceBalance>("v1/balance", timeout.Token));
     }
 
@@ -250,7 +253,7 @@ public sealed class ManagedInferenceGatewayTests : IDisposable
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var desktop = new OpenRouterChatService();
         desktop.SetCustomEndpoint("http://127.0.0.1:8080/v1", "custom-token", OpenRouterChatService.CustomEndpointModelId);
-        desktop.SetManagedEndpoint("https://staging.axiominference.work/v1", "managed-token");
+        desktop.SetManagedEndpoint("https://staging.example.com/v1", "managed-token");
 
         Assert.True(desktop.HasValidManagedEndpoint);
         Assert.True(desktop.HasValidCloudCredential);
@@ -281,6 +284,160 @@ public sealed class ManagedInferenceGatewayTests : IDisposable
         Assert.NotNull(subscription);
         Assert.Equal(OpenRouterChatService.AxiomManagedModelLabel, subscription!.ModelLabel);
         Assert.NotNull(subscription.Usage);
+    }
+
+    [Fact]
+    public async Task DynamicReservationUnlocksTailBalanceAndSizesImagesSafely()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var upstream = new InferenceFixture(HttpStatusCode.OK, """
+            {"id":"gen-small-bal","choices":[{"message":{"content":"Done"}}],"usage":{"cost":0.00012,"prompt_tokens":40,"completion_tokens":12}}
+            """, "application/json");
+        using var openRouter = new HttpClient(upstream);
+        // Only $0.02 (20,000 micro-USD) remaining: previously blocked by the fixed $0.1902 hold, now succeeds.
+        await using var gateway = LocalGateway.Create(LocalToken, _database, port: 0, allowanceMicros: 20_000,
+            inference: new OpenRouterInference("openrouter-fixture", openRouter));
+        await gateway.StartAsync(timeout.Token);
+        using var client = AuthenticatedClient(gateway.Urls.Single());
+
+        using var shortRes = await client.PostAsJsonAsync("v1/chat/completions", new
+        {
+            model = LocalGateway.Model,
+            max_tokens = 2_048,
+            messages = new[] { new { role = "user", content = "Hello" } }
+        }, timeout.Token);
+        Assert.Equal(HttpStatusCode.OK, shortRes.StatusCode);
+
+        string bigImage = "data:image/png;base64," + new string('A', 200_000);
+        using var imageDoc = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            messages = new[]
+            {
+                new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new { type = "text", text = "Describe" },
+                        new { type = "image_url", image_url = new { url = bigImage } }
+                    }
+                }
+            }
+        }));
+        long imageHold = OpenRouterInference.EstimateReservationMicros(imageDoc.RootElement, 4_096);
+        using var textDoc = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            messages = new[] { new { role = "user", content = "Describe" } }
+        }));
+        long textHold = OpenRouterInference.EstimateReservationMicros(textDoc.RootElement, 4_096);
+        Assert.True(imageHold > textHold);
+        // Must count the bounded per-image estimate rather than 200KB * 1.25 raw base64 chars (~45,000 micro-USD alone).
+        Assert.True(imageHold < 12_000, $"Expected image hold < 12000 micro-USD, got {imageHold}");
+
+        using var heavyDoc = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            messages = new[] { new { role = "user", content = new string('x', 80_000) } }
+        }));
+        long heavyHold = OpenRouterInference.EstimateReservationMicros(heavyDoc.RootElement, OpenRouterInference.MaxOutputTokens);
+        Assert.True(heavyHold > textHold * 3);
+        Assert.InRange(heavyHold, OpenRouterInference.MinReservationMicros, OpenRouterInference.MaxReservationMicros);
+    }
+
+    [Fact]
+    public async Task ManagedDesktopRequestsHonorReasoningOptInAndKeepToolsSchemaWhenDisablingToolCalls()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var upstream = new InferenceFixture(HttpStatusCode.OK, """
+            data: {"id":"gen-cache-test","choices":[{"delta":{"content":"Synthesized"},"index":0}]}
+
+            data: {"id":"gen-cache-test","choices":[],"usage":{"cost":0.00005,"prompt_tokens":100,"completion_tokens":8}}
+
+            data: [DONE]
+
+            """, "text/event-stream");
+        using var openRouter = new HttpClient(upstream);
+        await using var gateway = LocalGateway.Create(LocalToken, _database, port: 0,
+            inference: new OpenRouterInference("openrouter-fixture", openRouter));
+        await gateway.StartAsync(timeout.Token);
+
+        var desktop = new OpenRouterChatService();
+        desktop.SetManagedEndpoint(new Uri(new Uri(gateway.Urls.Single()), "v1").AbsoluteUri, LocalToken);
+
+        var cloudAgent = new CloudAgentModel(desktop, OpenRouterChatService.AxiomManagedModelId, "Static agent system.");
+        Assert.Null(cloudAgent.Unavailable);
+
+        var tools = AgentToolSchemas.All();
+        var conversation = new List<OpenRouterMessage>
+        {
+            new("user", "Run tool"),
+            new("assistant", string.Empty, ToolCalls: [new OpenRouterToolCall("call_1", "list_directory", "{}")]),
+            new("tool", "[]", ToolCallId: "call_1")
+        };
+
+        await desktop.SendConversationStreamAsync(
+            conversation,
+            systemPrompt: "Static prompt.",
+            thinkingEnabled: true,
+            modelId: OpenRouterChatService.AxiomManagedModelId,
+            tools: tools,
+            stopSequences: ["HALT"],
+            allowModelFallback: false,
+            disableToolCalls: false,
+            cancellationToken: timeout.Token);
+
+        using var firstSent = JsonDocument.Parse(upstream.Payload!);
+        Assert.Equal("auto", firstSent.RootElement.GetProperty("tool_choice").GetString());
+        string firstToolsJson = firstSent.RootElement.GetProperty("tools").GetRawText();
+
+        await desktop.SendConversationStreamAsync(
+            conversation,
+            systemPrompt: "Static prompt.",
+            thinkingEnabled: true,
+            modelId: OpenRouterChatService.AxiomManagedModelId,
+            tools: tools,
+            stopSequences: ["HALT"],
+            allowModelFallback: false,
+            disableToolCalls: true,
+            cancellationToken: timeout.Token);
+
+        using var sent = JsonDocument.Parse(upstream.Payload!);
+        Assert.True(sent.RootElement.GetProperty("reasoning").GetProperty("enabled").GetBoolean());
+        Assert.False(sent.RootElement.TryGetProperty("stop", out _));
+        Assert.Equal("none", sent.RootElement.GetProperty("tool_choice").GetString());
+        Assert.Equal(tools.Count, sent.RootElement.GetProperty("tools").GetArrayLength());
+        Assert.Equal(firstToolsJson, sent.RootElement.GetProperty("tools").GetRawText());
+        Assert.Equal("call_1",
+            sent.RootElement.GetProperty("messages")[2].GetProperty("tool_calls")[0].GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void AgentPromptBuilderKeepsStaticPrefixIdenticalAcrossScopesAndTrackers()
+    {
+        string first = AgentPromptBuilder.Build(
+            AgentTier.Full,
+            AgentScope.Folder(@"C:\RepoOne"),
+            AgentApprovalMode.Auto,
+            nativeToolCalling: true,
+            trackerFilePath: @"C:\RepoOne\.tracker.md",
+            browserSummary: "Edge",
+            visionCapable: true);
+
+        string second = AgentPromptBuilder.Build(
+            AgentTier.Full,
+            AgentScope.Folder(@"D:\CompletelyDifferentProject\Sub"),
+            AgentApprovalMode.Manual,
+            nativeToolCalling: true,
+            trackerFilePath: @"D:\CompletelyDifferentProject\Sub\AXIOM_TASK_TRACKER.md",
+            browserSummary: "Chrome",
+            visionCapable: true);
+
+        int sessionIndexFirst = first.IndexOf("[SESSION CONTEXT]", StringComparison.Ordinal);
+        int sessionIndexSecond = second.IndexOf("[SESSION CONTEXT]", StringComparison.Ordinal);
+        Assert.True(sessionIndexFirst > 1500, $"Expected invariant prefix > 1500 chars, got {sessionIndexFirst}");
+        Assert.Equal(sessionIndexFirst, sessionIndexSecond);
+        Assert.Equal(first[..sessionIndexFirst], second[..sessionIndexSecond]);
+        Assert.Contains(@"C:\RepoOne", first[sessionIndexFirst..]);
+        Assert.Contains(@"D:\CompletelyDifferentProject\Sub", second[sessionIndexSecond..]);
     }
 
     private static HttpClient AuthenticatedClient(string address)

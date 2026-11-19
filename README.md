@@ -345,8 +345,14 @@ accept. Found a security problem? Please report it privately (see [SECURITY.md](
 
 [PolyForm Noncommercial 1.0.0](LICENSE). You may use, study, change and share Axiom for any
 noncommercial purpose, including personal use, research, education and nonprofit work, as long
-as you keep the license and copyright notice with it. Commercial use needs the author's written
-permission. Releases before V1.11.0 were published under CC BY-NC-ND 4.0.
+as you keep the license and copyright notice with it. Releases before V1.11.0 were published
+under CC BY-NC-ND 4.0.
+
+`PolyForm Noncommercial 1.0.0` applies to third-party use of this repository. The author and
+copyright holder ([YoMosa2009](https://github.com/YoMosa2009)) retains all rights to distribute
+official Axiom builds commercially and to operate paid hosted services, including the optional
+managed Axiom cloud subscription. Third-party commercial use requires the author's written
+permission; see [CONTRIBUTING.md](CONTRIBUTING.md#licensing-of-contributions) for contributor terms.
 
 ## Author
 

@@ -11,4 +11,4 @@
 - [ ] I ran `dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj` and all tests pass
 - [ ] I didn't change version numbers, release workflows or scripts (the maintainer handles releases)
 - [ ] No API keys, passwords or personal data are included
-- [ ] I agree my contribution is licensed under this project's license (see CONTRIBUTING.md)
+- [ ] I agree my contribution is licensed under this project's license and commercial distribution terms (see [CONTRIBUTING.md](CONTRIBUTING.md#licensing-of-contributions))
