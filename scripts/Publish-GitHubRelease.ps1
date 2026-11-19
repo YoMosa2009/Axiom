@@ -25,11 +25,23 @@ param(
     [string]$TargetBranch = "main",
     [switch]$PackageOnly,
     [switch]$SkipTests,
-    [switch]$SetUpdateDir
+    [switch]$SetUpdateDir,
+    [switch]$PreparePublishFolderOnly,
+    [switch]$PackageFromPreparedFolder,
+    [switch]$PublishPreparedOnly,
+    [switch]$Signed
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+$phaseCount = @($PreparePublishFolderOnly, $PackageFromPreparedFolder, $PublishPreparedOnly | Where-Object { $_ }).Count
+if ($phaseCount -gt 1) {
+    throw "Specify at most one phase switch: -PreparePublishFolderOnly, -PackageFromPreparedFolder, or -PublishPreparedOnly."
+}
+$runPrepare = -not $PackageFromPreparedFolder -and -not $PublishPreparedOnly
+$runPackage = -not $PreparePublishFolderOnly -and -not $PublishPreparedOnly
+$runPublish = -not $PreparePublishFolderOnly -and -not $PackageFromPreparedFolder
 
 function Invoke-Checked {
     param(
@@ -142,9 +154,11 @@ $installerPath = Join-Path $OutputRoot "Axiom-Setup-v$version-win-x64.exe"
 $notesPath = Join-Path $OutputRoot "Axiom-v$version-release-notes.md"
 $releaseNotes = Get-ChangelogNotes -ChangelogPath $changelogPath -Version $version
 
-$targetCommit = ""
-if (-not $PackageOnly) {
-    $targetCommit = Assert-ReleaseCheckout -Branch $TargetBranch -Repo $Repository
+function Assert-NoExistingGitHubRelease {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Repo
+    )
 
     # Windows PowerShell 5.1 wraps a redirected native command's stderr in a terminating
     # ErrorRecord under $ErrorActionPreference = "Stop", even when the command's own exit
@@ -153,68 +167,125 @@ if (-not $PackageOnly) {
     # for just this probe so `gh` reporting "not found" doesn't abort the whole publish.
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
-    & gh release view $tag --repo $Repository *> $null
+    & gh release view $Tag --repo $Repo *> $null
     $existingReleaseExitCode = $LASTEXITCODE
     $ErrorActionPreference = $previousErrorActionPreference
     if ($existingReleaseExitCode -eq 0) {
-        throw "GitHub Release $tag already exists. Bump the Axiom version before publishing another release."
+        throw "GitHub Release $Tag already exists. Bump the Axiom version before publishing another release."
     }
 }
 
-New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+$targetCommit = ""
+if ($runPrepare) {
+    if (-not $PackageOnly) {
+        $targetCommit = Assert-ReleaseCheckout -Branch $TargetBranch -Repo $Repository
+        Assert-NoExistingGitHubRelease -Tag $tag -Repo $Repository
+    }
 
-# Only redirect this account's in-app updater when explicitly asked. Setting it on every
-# publish permanently pointed the developer's own Axiom at the build output drive; when that
-# drive later filled up or went away, every in-app update failed with nothing but
-# "Update download failed" to go on.
-if ($SetUpdateDir) {
+    New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+
+    # Only redirect this account's in-app updater when explicitly asked. Setting it on every
+    # publish permanently pointed the developer's own Axiom at the build output drive; when that
+    # drive later filled up or went away, every in-app update failed with nothing but
+    # "Update download failed" to go on.
+    if ($SetUpdateDir) {
+        try {
+            [Environment]::SetEnvironmentVariable(
+                "AXIOM_UPDATE_DIR",
+                $OutputRoot,
+                [EnvironmentVariableTarget]::User)
+            $env:AXIOM_UPDATE_DIR = $OutputRoot
+            Write-Host "AXIOM_UPDATE_DIR set to $OutputRoot for this Windows account." -ForegroundColor Yellow
+        }
+        catch {
+            Write-Warning "Could not persist AXIOM_UPDATE_DIR for this Windows account: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not $SkipTests) {
+        Write-Host "Running Axiom tests..." -ForegroundColor Cyan
+        # See the matching comment in Publish-CleanRelease.ps1: disable the shared Roslyn
+        # compiler server here too so a wedged VBCSCompiler pipe can't hang the test build.
+        Invoke-Checked -Command "dotnet" -Arguments @(
+            "test", $testProject, "-c", "Release",
+            "-p:UseSharedCompilation=false", "-nodeReuse:false")
+    }
+
+    Write-Host "Building clean Axiom $version package in $OutputRoot..." -ForegroundColor Cyan
+    $cleanArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $cleanPublishScript, "-OutputDir", $publishFolder)
+    if ($PreparePublishFolderOnly) {
+        $cleanArgs += "-SkipZip"
+    }
+    Invoke-Checked -Command "powershell" -Arguments $cleanArgs
+
+    if ($PreparePublishFolderOnly) {
+        Write-Host "Prepared publish folder: $publishFolder" -ForegroundColor Green
+        exit 0
+    }
+}
+
+if ($runPackage) {
+    if ($PackageFromPreparedFolder) {
+        New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+        Invoke-Checked -Command "powershell" -Arguments @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", $cleanPublishScript, "-OutputDir", $publishFolder, "-FinalizeZipOnly")
+    }
+
+    if (-not (Test-Path -LiteralPath $zipPath)) {
+        throw "Expected release ZIP was not produced: $zipPath"
+    }
+
+    # The installer is built from the ZIP's own contents, so both downloads ship identical files.
+    Write-Host "Building the installer from the release ZIP..." -ForegroundColor Cyan
+    $installerSource = Join-Path $OutputRoot "Axiom-v$version-installer-source"
+    if (Test-Path -LiteralPath $installerSource) {
+        Remove-Item -LiteralPath $installerSource -Recurse -Force
+    }
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $installerSource
     try {
-        [Environment]::SetEnvironmentVariable(
-            "AXIOM_UPDATE_DIR",
-            $OutputRoot,
-            [EnvironmentVariableTarget]::User)
-        $env:AXIOM_UPDATE_DIR = $OutputRoot
-        Write-Host "AXIOM_UPDATE_DIR set to $OutputRoot for this Windows account." -ForegroundColor Yellow
+        Invoke-Checked -Command "powershell" -Arguments @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", (Join-Path $repoRoot "scripts\Build-Installer.ps1"),
+            "-Version", $version, "-SourceDir", $installerSource, "-OutputDir", $OutputRoot) | Out-Null
     }
-    catch {
-        Write-Warning "Could not persist AXIOM_UPDATE_DIR for this Windows account: $($_.Exception.Message)"
+    finally {
+        Remove-Item -LiteralPath $installerSource -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path -LiteralPath $installerPath)) {
+        throw "Expected installer was not produced: $installerPath"
+    }
+
+    if ($PackageFromPreparedFolder) {
+        Write-Host "Packaged artifacts ready for installer signing." -ForegroundColor Green
+        Write-Host "ZIP      : $zipPath"
+        Write-Host "Installer: $installerPath"
+        exit 0
     }
 }
 
-if (-not $SkipTests) {
-    Write-Host "Running Axiom tests..." -ForegroundColor Cyan
-    # See the matching comment in Publish-CleanRelease.ps1: disable the shared Roslyn
-    # compiler server here too so a wedged VBCSCompiler pipe can't hang the test build.
-    Invoke-Checked -Command "dotnet" -Arguments @(
-        "test", $testProject, "-c", "Release",
-        "-p:UseSharedCompilation=false", "-nodeReuse:false")
+if (-not $runPublish) {
+    exit 0
 }
-
-Write-Host "Building clean Axiom $version package in $OutputRoot..." -ForegroundColor Cyan
-Invoke-Checked -Command "powershell" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $cleanPublishScript, "-OutputDir", $publishFolder)
 
 if (-not (Test-Path -LiteralPath $zipPath)) {
     throw "Expected release ZIP was not produced: $zipPath"
 }
-
-# The installer is built from the ZIP's own contents, so both downloads ship identical files.
-Write-Host "Building the installer from the release ZIP..." -ForegroundColor Cyan
-$installerSource = Join-Path $OutputRoot "Axiom-v$version-installer-source"
-if (Test-Path -LiteralPath $installerSource) {
-    Remove-Item -LiteralPath $installerSource -Recurse -Force
-}
-Expand-Archive -LiteralPath $zipPath -DestinationPath $installerSource
-try {
-    Invoke-Checked -Command "powershell" -Arguments @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", (Join-Path $repoRoot "scripts\Build-Installer.ps1"),
-        "-Version", $version, "-SourceDir", $installerSource, "-OutputDir", $OutputRoot) | Out-Null
-}
-finally {
-    Remove-Item -LiteralPath $installerSource -Recurse -Force -ErrorAction SilentlyContinue
-}
 if (-not (Test-Path -LiteralPath $installerPath)) {
     throw "Expected installer was not produced: $installerPath"
+}
+
+if ($Signed) {
+    $sig = Get-AuthenticodeSignature -LiteralPath $installerPath
+    if ($sig.Status -ne "Valid") {
+        throw "Signed release requested, but installer signature status is '$($sig.Status)' for $installerPath."
+    }
+}
+
+$installerGuidance = if ($Signed) {
+    "New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (Authenticode code-signed; installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Malx_AI.exe."
+} else {
+    "New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Malx_AI.exe. Windows may show `"Windows protected your PC`" because Axiom isn't code-signed yet: click **More info**, then **Run anyway**."
 }
 
 $notesDocument = @"
@@ -224,7 +295,7 @@ $releaseNotes
 
 ## Updating
 
-Existing Axiom V1.7.2+ installations can install this release from the in-app update notification. V1.7.0 and V1.7.1 users must manually install V1.7.2 once because those builds contain a download-verification lock defect. New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Malx_AI.exe. Windows may show "Windows protected your PC" because Axiom isn't code-signed yet: click **More info**, then **Run anyway**.
+Existing Axiom V1.7.2+ installations can install this release from the in-app update notification. V1.7.0 and V1.7.1 users must manually install V1.7.2 once because those builds contain a download-verification lock defect. $installerGuidance
 "@
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($notesPath, $notesDocument, $utf8WithoutBom)
@@ -235,6 +306,11 @@ if ($PackageOnly) {
     Write-Host "Installer : $installerPath"
     Write-Host "Notes     : $notesPath"
     exit 0
+}
+
+if ([string]::IsNullOrWhiteSpace($targetCommit)) {
+    $targetCommit = Assert-ReleaseCheckout -Branch $TargetBranch -Repo $Repository
+    Assert-NoExistingGitHubRelease -Tag $tag -Repo $Repository
 }
 
 Write-Host "Creating GitHub Release $tag..." -ForegroundColor Cyan

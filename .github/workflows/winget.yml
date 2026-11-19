@@ -1,0 +1,89 @@
+name: Publish to WinGet
+
+# Automatically opens a microsoft/winget-pkgs update PR after a signed GitHub Release is published.
+# Requires YoMosa2009.Axiom's initial listing in microsoft/winget-pkgs and repository secret WINGET_TOKEN
+# (a classic GitHub PAT with public_repo scope). Until WINGET_TOKEN is set, runs skip cleanly.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (X.Y.Z) to submit to microsoft/winget-pkgs"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: winget-publish
+  cancel-in-progress: false
+
+jobs:
+  winget:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check WinGet automation token
+        id: config
+        shell: powershell
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINGET_TOKEN)) {
+            Write-Host "::notice::WINGET_TOKEN secret is not configured; skipping automated microsoft/winget-pkgs update."
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            exit 0
+          }
+          "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Resolve release version and asset URL
+        id: meta
+        if: steps.config.outputs.enabled == 'true'
+        shell: powershell
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $raw = if ($env:EVENT_NAME -eq 'workflow_dispatch') { $env:INPUT_VERSION } else { $env:RELEASE_TAG }
+          $ver = if ($null -eq $raw) { '' } else { ([string]$raw).Trim().TrimStart('v', 'V') }
+          if ($ver -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Expected MAJOR.MINOR.PATCH version; found '$raw'."
+          }
+          $assetName = "Axiom-Setup-v$ver-win-x64.exe"
+          & gh release download "v$ver" --repo "${{ github.repository }}" --pattern $assetName --dir "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release v$ver does not contain expected installer asset '$assetName'."
+          }
+          $installerPath = Join-Path $env:RUNNER_TEMP $assetName
+          $sig = Get-AuthenticodeSignature -LiteralPath $installerPath
+          if ($sig.Status -ne 'Valid') {
+            Write-Warning "Installer '$assetName' signature status is '$($sig.Status)'."
+          }
+          Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+          $url = "https://github.com/${{ github.repository }}/releases/download/v$ver/$assetName|x64"
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "installer_url=$url" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Submit update to microsoft/winget-pkgs
+        if: steps.config.outputs.enabled == 'true'
+        shell: powershell
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          $exe = (Get-Command wingetcreate -ErrorAction SilentlyContinue).Source
+          if (-not $exe) {
+            $exe = Join-Path $env:RUNNER_TEMP "wingetcreate.exe"
+            Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile $exe
+          }
+          & $exe update YoMosa2009.Axiom `
+            --version "${{ steps.meta.outputs.version }}" `
+            --urls "${{ steps.meta.outputs.installer_url }}" `
+            --submit `
+            --token $env:WINGET_TOKEN
+          if ($LASTEXITCODE -ne 0) {
+            throw "wingetcreate update failed with exit code $LASTEXITCODE."
+          }

@@ -162,6 +162,10 @@ the current results and linked reports above for the latest verified scope.
     - `dotnet build Malx_AI/Malx_AI.csproj -c Release -r win-x64 --no-restore`: `0 Error(s)` (`352` warnings); Debug `win-x64` build: `0 Error(s)` (`352` warnings)
     - Hosted gateway package republished (`win-x64`, Release) and verified healthy against an isolated staging environment.
 
+- [x] **23. Automated Code Signing (Azure Artifact Signing OIDC) & WinGet Publishing**
+  - Files: `.github/workflows/release.yml`, `.github/workflows/winget.yml`, `scripts/Publish-CleanRelease.ps1`, `scripts/Publish-GitHubRelease.ps1`, `scripts/Submit-WingetRelease.ps1`, `RELEASING.md`, `CHANGELOG.md`
+  - Verified (2026-11-19): PowerShell AST parsing clean on all release/WinGet scripts, YAML validation clean on both workflows, and `scripts/Test-VersionConsistency.ps1` passed for `1.11.0`.
+
 ## Historical verification log (2026-11-16)
 - `dotnet build C:\Users\user\source\repos\Axiom\Malx_AI\Malx_AI.csproj -c Debug --no-restore`: `0 Error(s)`
 - `dotnet test C:\Users\user\source\repos\Axiom\Malx_AI.Tests\Malx_AI.Tests.csproj --no-restore`: `Passed: 772, Failed: 0, Skipped: 0, Total: 772`

@@ -7,9 +7,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      package_only:
+        description: "Build and sign release artifacts without creating a GitHub Release (dry run)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+  id-token: write
 
 # Never run two publishes at once; a queued run re-checks whether its version exists.
 concurrency:
@@ -30,9 +37,20 @@ jobs:
       - name: Decide whether this version needs a release
         id: decide
         shell: powershell
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PACKAGE_ONLY_INPUT: ${{ inputs.package_only }}
         run: |
           [xml]$project = Get-Content -LiteralPath Malx_AI\Malx_AI.csproj -Raw
           $version = (Select-Xml -Xml $project -XPath "//Project/PropertyGroup/Version" | Select-Object -First 1).Node.InnerText.Trim()
+          if ($env:EVENT_NAME -eq 'workflow_dispatch' -and $env:PACKAGE_ONLY_INPUT -eq 'true') {
+            Write-Host "Workflow dispatch dry run requested for v$version; building and signing without publishing."
+            "publish=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "package_only=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            exit 0
+          }
+
           $ErrorActionPreference = "SilentlyContinue"
           & gh release view "v$version" --repo "${{ github.repository }}" *> $null
           $exists = ($LASTEXITCODE -eq 0)
@@ -44,11 +62,47 @@ jobs:
             Write-Host "Version $version has no release yet; publishing."
             "publish=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
+          "package_only=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           # `gh release view` exits 1 when the release does not exist yet, and the runner
           # reports the last native exit code as the step result, which failed every real
           # publish (V1.9.14) right after deciding to publish. The decision is in the outputs.
           exit 0
+
+      - name: Check Azure Artifact Signing configuration
+        id: signing
+        if: steps.decide.outputs.publish == 'true'
+        shell: powershell
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: |
+          $vars = @(
+            'AZURE_CLIENT_ID',
+            'AZURE_TENANT_ID',
+            'AZURE_SUBSCRIPTION_ID',
+            'AZURE_SIGNING_ENDPOINT',
+            'AZURE_SIGNING_ACCOUNT',
+            'AZURE_CERT_PROFILE'
+          )
+          $setVars = @($vars | Where-Object { -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($setVars.Count -eq $vars.Count) {
+            Write-Host "Azure Artifact Signing secrets verified; release artifacts will be code-signed."
+            "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            exit 0
+          }
+          if ($setVars.Count -eq 0) {
+            Write-Host "::notice::Azure Artifact Signing secrets are not configured; continuing with unsigned artifacts."
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            exit 0
+          }
+          $missing = @($vars | Where-Object { $_ -notin $setVars })
+          Write-Error ("Partial Azure Artifact Signing configuration. Missing secrets: " + ($missing -join ', '))
+          exit 1
 
       - uses: actions/setup-dotnet@v4
         if: steps.decide.outputs.publish == 'true'
@@ -60,10 +114,11 @@ jobs:
         shell: powershell
         run: .\scripts\Test-VersionConsistency.ps1
 
-      - name: Test, package, and publish release
+      - name: Test and prepare release folder
         if: steps.decide.outputs.publish == 'true'
         shell: powershell
         env:
+          PACKAGE_ONLY_FLAG: ${{ steps.decide.outputs.package_only }}
           AXIOM_REQUIRE_OAUTH_BUILTINS: "1"
           AXIOM_BUILTIN_GOOGLE_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_GOOGLE_CLIENT_ID }}
           AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET: ${{ secrets.AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET }}
@@ -71,7 +126,100 @@ jobs:
           AXIOM_BUILTIN_TODOIST_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_TODOIST_CLIENT_ID }}
           AXIOM_BUILTIN_TODOIST_CLIENT_SECRET: ${{ secrets.AXIOM_BUILTIN_TODOIST_CLIENT_SECRET }}
         run: |
-          .\scripts\Publish-GitHubRelease.ps1 -OutputRoot "$env:RUNNER_TEMP\Axiom-Updates" -Repository "${{ github.repository }}"
+          $argsList = @(
+            '-OutputRoot', "$env:RUNNER_TEMP\Axiom-Updates",
+            '-Repository', '${{ github.repository }}',
+            '-PreparePublishFolderOnly'
+          )
+          if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
+            $argsList += '-PackageOnly'
+          }
+          .\scripts\Publish-GitHubRelease.ps1 @argsList
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Azure Login (OIDC)
+        if: steps.decide.outputs.publish == 'true' && steps.signing.outputs.enabled == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Axiom executables
+        if: steps.decide.outputs.publish == 'true' && steps.signing.outputs.enabled == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
+          files: |
+            ${{ runner.temp }}\Axiom-Updates\Axiom-v${{ steps.decide.outputs.version }}\Malx_AI.exe
+            ${{ runner.temp }}\Axiom-Updates\Axiom-v${{ steps.decide.outputs.version }}\Malx_AI.dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify executable signatures
+        if: steps.decide.outputs.publish == 'true' && steps.signing.outputs.enabled == 'true'
+        shell: powershell
+        run: |
+          $root = "$env:RUNNER_TEMP\Axiom-Updates\Axiom-v${{ steps.decide.outputs.version }}"
+          foreach ($name in @('Malx_AI.exe', 'Malx_AI.dll')) {
+            $path = Join-Path $root $name
+            $sig = Get-AuthenticodeSignature -LiteralPath $path
+            if ($sig.Status -ne 'Valid') {
+              throw "Expected valid Authenticode signature on $path, got '$($sig.Status)'."
+            }
+          }
+
+      - name: Finalize signed ZIP and build Windows installer
+        if: steps.decide.outputs.publish == 'true'
+        shell: powershell
+        env:
+          PACKAGE_ONLY_FLAG: ${{ steps.decide.outputs.package_only }}
+        run: |
+          $argsList = @(
+            '-OutputRoot', "$env:RUNNER_TEMP\Axiom-Updates",
+            '-Repository', '${{ github.repository }}',
+            '-PackageFromPreparedFolder'
+          )
+          if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
+            $argsList += '-PackageOnly'
+          }
+          .\scripts\Publish-GitHubRelease.ps1 @argsList
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Sign Windows installer
+        if: steps.decide.outputs.publish == 'true' && steps.signing.outputs.enabled == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
+          files: ${{ runner.temp }}\Axiom-Updates\Axiom-Setup-v${{ steps.decide.outputs.version }}-win-x64.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Publish GitHub Release
+        if: steps.decide.outputs.publish == 'true'
+        shell: powershell
+        env:
+          PACKAGE_ONLY_FLAG: ${{ steps.decide.outputs.package_only }}
+          SIGNING_ENABLED: ${{ steps.signing.outputs.enabled }}
+        run: |
+          $argsList = @(
+            '-OutputRoot', "$env:RUNNER_TEMP\Axiom-Updates",
+            '-Repository', '${{ github.repository }}',
+            '-PublishPreparedOnly'
+          )
+          if ($env:SIGNING_ENABLED -eq 'true') {
+            $argsList += '-Signed'
+          }
+          if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
+            $argsList += '-PackageOnly'
+          }
+          .\scripts\Publish-GitHubRelease.ps1 @argsList
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Keep package for inspection

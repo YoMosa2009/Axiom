@@ -30,6 +30,31 @@ values as the local `%LOCALAPPDATA%\Axiom\SharedOAuth` files:
 - `AXIOM_BUILTIN_GITHUB_CLIENT_ID`
 - `AXIOM_BUILTIN_TODOIST_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_SECRET`
 
+### Code signing (Azure Artifact Signing via OIDC)
+
+`.github/workflows/release.yml` uses `scripts/Publish-CleanRelease.ps1` and
+`scripts/Publish-GitHubRelease.ps1` in split phases so `Malx_AI.exe` and `Malx_AI.dll` are
+signed before `AXIOM_UPDATE_MANIFEST.txt` is written and the ZIP is packed, and
+`Axiom-Setup-v<version>-win-x64.exe` is signed after Inno Setup finishes. Configure these six
+repository secrets in GitHub (**Settings → Secrets and variables → Actions**) for passwordless
+OIDC signing:
+
+- `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+- `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`
+
+If all six secrets are unset, the release workflow skips signing and notes unsigned binaries.
+You can test signing without bumping `<Version>` or publishing a release by running **Release →
+Run workflow** with `package_only = true`.
+
+### WinGet submission and updates
+
+- First-time listing (after a signed release is published): run
+  `powershell -ExecutionPolicy Bypass -File .\scripts\Submit-WingetRelease.ps1 -Version <X.Y.Z>`
+  (add `-ValidateOnly` to verify the installer and `winget validate` without opening a PR).
+- Ongoing updates: `.github/workflows/winget.yml` automatically submits a `microsoft/winget-pkgs`
+  update PR via `wingetcreate` whenever a GitHub Release is published, once the `WINGET_TOKEN`
+  repository secret (classic PAT with `public_repo` scope) is configured.
+
 ## Publish a release or patch locally
 
 

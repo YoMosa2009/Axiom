@@ -35,6 +35,9 @@ These changes are in source and are not included in the V1.11.0 download.
 - Clarified open-source `PolyForm Noncommercial 1.0.0` vs. official maintainer commercial/subscription
   and contributor terms across `README.md`, `CONTRIBUTING.md`, and `.github/pull_request_template.md`,
   and hardened `.gitignore` secret/database exclusions.
+- Added passwordless Azure Artifact Signing (OIDC) split-phase support to `.github/workflows/release.yml`,
+  `scripts/Publish-CleanRelease.ps1`, and `scripts/Publish-GitHubRelease.ps1`, plus WinGet
+  automation (`scripts/Submit-WingetRelease.ps1` and `.github/workflows/winget.yml`).
 - Settings **Inference** defaults to **Cloud** with `DeepSeek 4.1F-1017` when a managed
   subscription is active instead of mapping managed access onto Hybrid Local (`Kestral 1`).
 - Command Review **Auto-Review** decides autonomously on the user's behalf (approving safe

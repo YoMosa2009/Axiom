@@ -18,11 +18,17 @@
 param(
 	[string]$Configuration = "Release",
 	[string]$Runtime = "win-x64",
-	[string]$OutputDir = ""
+	[string]$OutputDir = "",
+	[switch]$SkipZip,
+	[switch]$FinalizeZipOnly
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if ($SkipZip -and $FinalizeZipOnly) {
+	throw "Cannot specify both -SkipZip and -FinalizeZipOnly."
+}
 
 function Get-RepoRoot {
 	$scriptDir = Split-Path -Parent $PSCommandPath
@@ -209,80 +215,96 @@ Write-Host "Output  : $OutputDir"
 Write-Host "Zip     : $zipPath"
 Write-Host ""
 
-if (Test-Path -LiteralPath $OutputDir) {
-	Write-Host "Removing previous publish folder..."
-	Remove-Item -LiteralPath $OutputDir -Recurse -Force
-}
+function Assert-PackageClean {
+	param([string]$Root)
 
-New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
-New-Item -ItemType Directory -Path $artifactsRoot -Force | Out-Null
-
-Write-Host "Embedding local OAuth app credentials into release built-ins (gitignored generated source)..."
-$generateScript = Join-Path $repoRoot "scripts\Generate-McpOAuthBuiltIns.ps1"
-if (Test-Path -LiteralPath $generateScript) {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $generateScript
-    if ($LASTEXITCODE -ne 0) {
-        throw "Generate-McpOAuthBuiltIns.ps1 failed with exit code $LASTEXITCODE"
-    }
-} else {
-    Write-Warning "Generate-McpOAuthBuiltIns.ps1 not found - connectors may require machine SharedOAuth files."
-}
-
-Write-Host "Publishing ($Configuration / $Runtime)..."
-# Folder publish (not single-file): WinAppSDK single-file fails SxS activation
-# with SessionHandleIPCProxyStub.dll duplicate-name errors on startup.
-#
-# UseSharedCompilation=false / nodeReuse:false: some machines (seen with Visual Studio
-# holding the same project open in a live session) can wedge the Roslyn VBCSCompiler
-# named-pipe handshake -- the build server process starts, the pipe connects, a
-# compilation request is written, and the response never arrives, hanging the publish
-# indefinitely with no error. Forcing csc.exe to run as a plain one-shot process (no
-# shared server, no MSBuild node reuse) avoids that IPC path entirely. It costs a little
-# wall-clock time on a cold compile but a release publish is not the hot inner loop.
-dotnet publish $projectPath `
-	-c $Configuration `
-	-r $Runtime `
-	--self-contained true `
-	-p:PublishProfile=FolderProfile `
-	-p:PublishDir="$OutputDir\" `
-	-p:DeleteExistingFiles=true `
-	-p:PublishSingleFile=false `
-	-p:PublishReadyToRun=true `
-	-p:WindowsAppSDKSelfContained=true `
-	-p:WindowsPackageType=None `
-	-p:UseSharedCompilation=false `
-	-nodeReuse:false
-
-if ($LASTEXITCODE -ne 0) {
-	throw "dotnet publish failed with exit code $LASTEXITCODE"
-}
-
-Write-Host "Scrubbing residual personal runtime files..."
-Remove-UserDataFromDirectory -Root $OutputDir
-Write-Host "Removing non-Windows native runtime assets..."
-Remove-NonWindowsRuntimeAssets -Root $OutputDir
-Write-PackageHelperFiles -Root $OutputDir
-
-Write-Host "Verifying package contains no personal data..."
-$dirtyList = New-Object System.Collections.Generic.List[string]
-foreach ($item in @(Test-PackageIsClean -Root $OutputDir)) {
-	if (-not [string]::IsNullOrWhiteSpace([string]$item)) {
-		[void]$dirtyList.Add([string]$item)
+	Write-Host "Verifying package contains no personal data..."
+	$dirtyList = New-Object System.Collections.Generic.List[string]
+	foreach ($item in @(Test-PackageIsClean -Root $Root)) {
+		if (-not [string]::IsNullOrWhiteSpace([string]$item)) {
+			[void]$dirtyList.Add([string]$item)
+		}
+	}
+	if ($dirtyList.Count -gt 0) {
+		Write-Host "ERROR: Personal/runtime data still present in package:" -ForegroundColor Red
+		$dirtyList | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+		throw "Clean publish verification failed."
 	}
 }
-if ($dirtyList.Count -gt 0) {
-	Write-Host "ERROR: Personal/runtime data still present in package:" -ForegroundColor Red
-	$dirtyList | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
-	throw "Clean publish verification failed."
-}
-
-Write-Host "Writing updater file manifest..."
-Write-UpdateManifest -Root $OutputDir
 
 $exePath = Join-Path $OutputDir "Malx_AI.exe"
+
+if (-not $FinalizeZipOnly) {
+	if (Test-Path -LiteralPath $OutputDir) {
+		Write-Host "Removing previous publish folder..."
+		Remove-Item -LiteralPath $OutputDir -Recurse -Force
+	}
+
+	New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+	New-Item -ItemType Directory -Path $artifactsRoot -Force | Out-Null
+
+	Write-Host "Embedding local OAuth app credentials into release built-ins (gitignored generated source)..."
+	$generateScript = Join-Path $repoRoot "scripts\Generate-McpOAuthBuiltIns.ps1"
+	if (Test-Path -LiteralPath $generateScript) {
+	    & powershell -NoProfile -ExecutionPolicy Bypass -File $generateScript
+	    if ($LASTEXITCODE -ne 0) {
+	        throw "Generate-McpOAuthBuiltIns.ps1 failed with exit code $LASTEXITCODE"
+	    }
+	} else {
+	    Write-Warning "Generate-McpOAuthBuiltIns.ps1 not found - connectors may require machine SharedOAuth files."
+	}
+
+	Write-Host "Publishing ($Configuration / $Runtime)..."
+	# Folder publish (not single-file): WinAppSDK single-file fails SxS activation
+	# with SessionHandleIPCProxyStub.dll duplicate-name errors on startup.
+	#
+	# UseSharedCompilation=false / nodeReuse:false: some machines (seen with Visual Studio
+	# holding the same project open in a live session) can wedge the Roslyn VBCSCompiler
+	# named-pipe handshake -- the build server process starts, the pipe connects, a
+	# compilation request is written, and the response never arrives, hanging the publish
+	# indefinitely with no error. Forcing csc.exe to run as a plain one-shot process (no
+	# shared server, no MSBuild node reuse) avoids that IPC path entirely. It costs a little
+	# wall-clock time on a cold compile but a release publish is not the hot inner loop.
+	dotnet publish $projectPath `
+		-c $Configuration `
+		-r $Runtime `
+		--self-contained true `
+		-p:PublishProfile=FolderProfile `
+		-p:PublishDir="$OutputDir\" `
+		-p:DeleteExistingFiles=true `
+		-p:PublishSingleFile=false `
+		-p:PublishReadyToRun=true `
+		-p:WindowsAppSDKSelfContained=true `
+		-p:WindowsPackageType=None `
+		-p:UseSharedCompilation=false `
+		-nodeReuse:false
+
+	if ($LASTEXITCODE -ne 0) {
+		throw "dotnet publish failed with exit code $LASTEXITCODE"
+	}
+
+	Write-Host "Scrubbing residual personal runtime files..."
+	Remove-UserDataFromDirectory -Root $OutputDir
+	Write-Host "Removing non-Windows native runtime assets..."
+	Remove-NonWindowsRuntimeAssets -Root $OutputDir
+	Write-PackageHelperFiles -Root $OutputDir
+}
+
 if (-not (Test-Path -LiteralPath $exePath)) {
 	throw "Published executable missing: $exePath"
 }
+
+Assert-PackageClean -Root $OutputDir
+
+if ($SkipZip) {
+	Write-Host "Clean publish folder ready for signing: $OutputDir" -ForegroundColor Green
+	exit 0
+}
+
+New-Item -ItemType Directory -Path $artifactsRoot -Force | Out-Null
+
+Write-Host "Writing updater file manifest..."
+Write-UpdateManifest -Root $OutputDir
 
 if (Test-Path -LiteralPath $zipPath) {
 	Remove-Item -LiteralPath $zipPath -Force
