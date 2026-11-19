@@ -50,6 +50,16 @@ namespace Malx_AI
         public event Action<bool>? CouncilPetToggleRequested;
         public event Action<string, string>? CouncilPetStatusChanged;
         public event Action<string>? CouncilRunFinished;
+        public event Action? ManagedUsageChanged;
+
+        private void NotifyManagedUsageChangedIfActive()
+        {
+            if (_isCloudModeEnabled && !_isHybridLocalCouncilSelected
+                && _openRouterChatService.IsManagedEndpointModel(GetEffectiveCouncilModelId()))
+            {
+                ManagedUsageChanged?.Invoke();
+            }
+        }
 
         public void SetCouncilPetEnabled(bool enabled)
         {
@@ -311,17 +321,20 @@ namespace Malx_AI
                 hybridToggleButton.Visibility = _isCloudModeEnabled ? Visibility.Visible : Visibility.Collapsed;
                 hybridToggleButton.IsEnabled = !_connectedWorkspace.CodebaseEditAccessEnabled;
                 hybridToggleButton.Content = _isHybridLocalCouncilSelected
-                    ? "Using Hybrid Local (Kestral 1) — switch to OpenRouter"
+                    ? "Using Hybrid Local (Kestral 1) — switch to Cloud"
                     : "Use Hybrid Local (Kestral 1)";
                 hybridToggleButton.ToolTip = _isHybridLocalCouncilSelected
-                    ? "Switch back to OpenRouter for the Council"
+                    ? "Switch back to Cloud mode"
                     : _openRouterChatService.HasValidCustomEndpoint
-                        ? "Route the Council through your self-hosted endpoint instead of OpenRouter"
+                        ? "Route the Council through your self-hosted endpoint instead of Cloud"
                         : "Configure a custom endpoint in Settings to enable this";
             }
         }
 
-        private bool CanUseCloudCouncil => _isCloudModeEnabled && _openRouterChatService.HasAnyValidCloudCredential;
+        private bool CanUseCloudCouncil => _isCloudModeEnabled
+            && (_isHybridLocalCouncilSelected
+                ? _openRouterChatService.HasValidCustomEndpoint
+                : _openRouterChatService.HasValidCloudCredential);
 
         private string GetCouncilDisplayName(CouncilRole role)
         {
@@ -340,7 +353,7 @@ namespace Malx_AI
             {
                 return CanUseCloudCouncil
                     ? $"Cloud {(_isSingleModelMode ? "agent" : "council")} · {WorkplaceCloudRoleDisplayName}"
-                    : $"Cloud {(_isSingleModelMode ? "agent" : "council")} unavailable · add an OpenRouter key or custom endpoint in Settings";
+                    : $"Cloud {(_isSingleModelMode ? "agent" : "council")} unavailable · sign in to Axiom, add an OpenRouter key, or configure Hybrid Local in Settings";
             }
 
             return _isSingleModelMode ? "Single agent mode" : "Adaptive mode";
@@ -2165,6 +2178,8 @@ namespace Malx_AI
             UpdatePerformanceAggregate();
             if (resetCanvas)
             {
+                _canvasFiles.Clear();
+                _activeCanvasFileKey = string.Empty;
                 ProjectCanvasEditor.Text = "// Builder output appears here\n";
                 SetCanvasHighlighting("markdown");
                 _canvasArtifact = ArtifactRenderInfo.None(string.Empty);
@@ -2394,7 +2409,13 @@ namespace Malx_AI
             ApplyOptimizedRoleContexts();
             SyncContextControls();
             _isWebSearchEnabled = true;
-            _isCloudModeEnabled = false;
+            LoadOpenRouterKeyForWorkplace();
+            LoadManagedEndpointForWorkplace();
+            LoadCustomEndpointForWorkplace();
+            _isHybridLocalCouncilSelected = false;
+            _isCloudModeEnabled = _openRouterChatService.HasValidManagedEndpoint;
+            if (_openRouterChatService.HasValidManagedEndpoint && !_openRouterChatService.HasValidKey)
+                _selectedWorkplaceCloudModelId = OpenRouterChatService.AxiomManagedModelId;
             _isSingleModelMode = false;
             _connectedWorkspace = new ConnectedWorkspaceState();
             _hasPendingCodebaseChanges = false;
@@ -2842,6 +2863,27 @@ namespace Malx_AI
             }
         }
 
+        private void LoadManagedEndpointForWorkplace()
+        {
+            try
+            {
+                using var database = new DatabaseService();
+                if (database.GetSetting(DatabaseService.UseAxiomAccountSettingKey) == "1"
+                    && AxiomAccountClient.ConfiguredEndpoint() is { } managedEndpoint
+                    && database.LoadAxiomAccount(managedEndpoint) is { } session)
+                {
+                    _openRouterChatService.SetManagedEndpoint(managedEndpoint.AbsoluteUri, session.Token);
+                    return;
+                }
+            }
+            catch
+            {
+                // Ignore read failures and clear managed transport cleanly below.
+            }
+
+            _openRouterChatService.SetManagedEndpoint(string.Empty, string.Empty);
+        }
+
         private void LoadCustomEndpointForWorkplace()
         {
             try
@@ -2869,6 +2911,38 @@ namespace Malx_AI
             }
         }
 
+        internal void RefreshCustomEndpointConfiguration()
+        {
+            LoadOpenRouterKeyForWorkplace();
+            LoadManagedEndpointForWorkplace();
+            LoadCustomEndpointForWorkplace();
+
+            if (_openRouterChatService.HasValidManagedEndpoint)
+            {
+                _isHybridLocalCouncilSelected = false;
+                if (!_openRouterChatService.HasValidKey
+                    || string.Equals(_selectedWorkplaceCloudModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase)
+                    || !_openRouterChatService.HasCredentialForModel(_selectedWorkplaceCloudModelId))
+                {
+                    _selectedWorkplaceCloudModelId = OpenRouterChatService.AxiomManagedModelId;
+                }
+
+                if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+                    _isCloudModeEnabled = true;
+            }
+            else if (_openRouterChatService.IsManagedEndpointModel(_selectedWorkplaceCloudModelId))
+            {
+                if (_openRouterChatService.HasValidKey)
+                    _selectedWorkplaceCloudModelId = OpenRouterChatService.DefaultModelId;
+                else if (!_connectedWorkspace.CodebaseEditAccessEnabled)
+                    _isCloudModeEnabled = false;
+            }
+
+            RefreshWorkplaceCloudModeUi();
+            UpdateCouncilBlocks();
+            UpdateContextInfo();
+        }
+
         internal void SetSelectedWorkplaceCloudModel(string? modelId)
         {
             if (string.IsNullOrWhiteSpace(modelId))
@@ -2889,6 +2963,27 @@ namespace Malx_AI
 
         private void SyncWorkplaceCloudModelComboSelection(ComboBox combo)
         {
+            bool hasManaged = _openRouterChatService.HasValidManagedEndpoint;
+            bool hasKey = _openRouterChatService.HasValidKey;
+            bool showAllFallback = !hasManaged && !hasKey;
+            foreach (object? obj in combo.Items)
+            {
+                if (obj is not ComboBoxItem item || item.Tag is not string itemTag)
+                    continue;
+                bool isManagedItem = _openRouterChatService.IsManagedEndpointModel(itemTag);
+                item.Visibility = showAllFallback || (isManagedItem ? hasManaged : hasKey)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+
+            if (!_openRouterChatService.HasCredentialForModel(_selectedWorkplaceCloudModelId) && !showAllFallback)
+            {
+                if (hasManaged)
+                    _selectedWorkplaceCloudModelId = OpenRouterChatService.AxiomManagedModelId;
+                else if (hasKey)
+                    _selectedWorkplaceCloudModelId = OpenRouterChatService.DefaultModelId;
+            }
+
             string effectiveId = _openRouterChatService.NormalizeSelectableModelId(_selectedWorkplaceCloudModelId);
             _suppressWorkplaceCloudModelComboChange = true;
             try
@@ -2988,7 +3083,14 @@ namespace Malx_AI
             });
             Directory.CreateDirectory(CouncilKvStateFolder);
             LoadOpenRouterKeyForWorkplace();
+            LoadManagedEndpointForWorkplace();
             LoadCustomEndpointForWorkplace();
+            if (_openRouterChatService.HasValidManagedEndpoint && !_openRouterChatService.HasValidKey)
+            {
+                _selectedWorkplaceCloudModelId = OpenRouterChatService.AxiomManagedModelId;
+                _isHybridLocalCouncilSelected = false;
+                _isCloudModeEnabled = true;
+            }
 
             _council[CouncilRole.Architect] = new CouncilModelConfig();
             _council[CouncilRole.Builder] = new CouncilModelConfig();
@@ -7140,10 +7242,18 @@ namespace Malx_AI
             }
 
             LoadOpenRouterKeyForWorkplace();
-            if (!_openRouterChatService.HasValidKey)
+            LoadManagedEndpointForWorkplace();
+            if (!_openRouterChatService.HasValidCloudCredential)
             {
-                AppendChat("error", "Workplace cloud mode needs a valid OpenRouter API key in Settings.");
+                AppendChat("error", "Workplace cloud mode needs an Axiom subscription or a valid OpenRouter API key in Settings.");
                 return;
+            }
+
+            if (!_openRouterChatService.HasCredentialForModel(_selectedWorkplaceCloudModelId))
+            {
+                _selectedWorkplaceCloudModelId = _openRouterChatService.HasValidManagedEndpoint
+                    ? OpenRouterChatService.AxiomManagedModelId
+                    : OpenRouterChatService.DefaultModelId;
             }
 
             // Do not send a sacrificial chat completion merely to turn Cloud on. Free providers can
@@ -7214,15 +7324,18 @@ namespace Malx_AI
                 try
                 {
                     using var database = new DatabaseService();
-                    // Only an advertised window is cached; see PersistCustomEndpointMetadata.
-                    database.SaveSetting(
-                        DatabaseService.CustomEndpointContextWindowSettingKey,
-                        _openRouterChatService.CustomEndpointContextWindowIsAdvertised
-                            ? _openRouterChatService.CustomEndpointResolvedContextWindowTokens.ToString()
-                            : string.Empty);
-                    database.SaveSetting(
-                        DatabaseService.CustomEndpointSupportsVisionSettingKey,
-                        _openRouterChatService.CustomEndpointResolvedSupportsImageInput ? "1" : "0");
+                    if (database.GetSetting(DatabaseService.UseAxiomAccountSettingKey) != "1")
+                    {
+                        // Only an advertised window is cached; see PersistCustomEndpointMetadata.
+                        database.SaveSetting(
+                            DatabaseService.CustomEndpointContextWindowSettingKey,
+                            _openRouterChatService.CustomEndpointContextWindowIsAdvertised
+                                ? _openRouterChatService.CustomEndpointResolvedContextWindowTokens.ToString()
+                                : string.Empty);
+                        database.SaveSetting(
+                            DatabaseService.CustomEndpointSupportsVisionSettingKey,
+                            _openRouterChatService.CustomEndpointResolvedSupportsImageInput ? "1" : "0");
+                    }
                 }
                 catch
                 {
@@ -11543,10 +11656,19 @@ namespace Malx_AI
                 else
                 {
                     LoadOpenRouterKeyForWorkplace();
-                    if (!_openRouterChatService.HasValidKey)
+                    LoadManagedEndpointForWorkplace();
+                    if (!_openRouterChatService.HasValidCloudCredential)
                     {
-                        AppendChat("error", "Workplace cloud mode needs a valid OpenRouter API key in Settings.");
+                        AppendChat("error", "Workplace cloud mode needs an Axiom subscription or a valid OpenRouter API key in Settings.");
                         return;
+                    }
+
+                    if (!_openRouterChatService.HasCredentialForModel(_selectedWorkplaceCloudModelId))
+                    {
+                        _selectedWorkplaceCloudModelId = _openRouterChatService.HasValidManagedEndpoint
+                            ? OpenRouterChatService.AxiomManagedModelId
+                            : OpenRouterChatService.DefaultModelId;
+                        RefreshWorkplaceCloudModeUi();
                     }
                 }
             }
@@ -14142,16 +14264,23 @@ namespace Malx_AI
             }
             catch (OpenRouterKeyExhaustedException keyExhausted)
             {
-                RelayStatusBlock.Text = "Relay: API key out of usage";
-                PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "API key out of usage.");
+                RelayStatusBlock.Text = keyExhausted.IsCustomEndpoint
+                    ? "Relay: Allowance exhausted"
+                    : "Relay: API key out of usage";
+                PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council",
+                    keyExhausted.IsCustomEndpoint ? "Usage allowance exhausted." : "API key out of usage.");
                 UpdateStageIndicator(null, false, false, false);
                 LogActivity($"Relay stopped: {keyExhausted.Message}");
                 await BackendLogService.LogErrorAsync("Workplace.Relay.KeyExhausted", keyExhausted);
                 AppendChat("error", "⚠ " + keyExhausted.Message);
-                CouncilRunFinished?.Invoke("Workplace stopped because the API key has no remaining usage.");
-                _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsDailyLimit
-                    ? "OpenRouter API key: daily free usage exhausted — cloud council paused."
-                    : "OpenRouter API key: out of credits — cloud council paused.");
+                CouncilRunFinished?.Invoke(keyExhausted.IsCustomEndpoint
+                    ? "Workplace stopped because the usage allowance is exhausted."
+                    : "Workplace stopped because the API key has no remaining usage.");
+                _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsCustomEndpoint
+                    ? "Managed or custom endpoint usage allowance exhausted — Workplace paused."
+                    : keyExhausted.IsDailyLimit
+                        ? "OpenRouter API key: daily free usage exhausted — cloud council paused."
+                        : "OpenRouter API key: out of credits — cloud council paused.");
             }
             catch (Exception ex)
             {
@@ -14190,6 +14319,7 @@ namespace Malx_AI
                 _activeTaskComplexity = TaskComplexity.Moderate;
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
+                NotifyManagedUsageChangedIfActive();
             }
         }
 
@@ -17905,14 +18035,31 @@ namespace Malx_AI
         {
             _canvasArtifact = ArtifactRenderService.DetectForCanvas(builderOutput, sandboxOutput);
 
-            // A file the model named explicitly takes precedence: the generic detector would
-            // either miss it (a .txt has no Markdown structure to recognise) or label it
-            // "Document Preview" and lose the real filename.
-            if (CanvasFileArtifact.TryParse(builderOutput, _pendingCanvasFileExtensionHint, out CanvasFile? namedFile)
-                && namedFile != null)
+            bool isPlaceholder = string.IsNullOrWhiteSpace(builderOutput)
+                || builderOutput.Trim().Equals("// Builder output appears here", StringComparison.OrdinalIgnoreCase);
+
+            // Files the model named explicitly take precedence so formats like .txt, .json, .md, .yaml
+            // keep their real filename, get formatted previews, and expose underlined clickable links.
+            IReadOnlyList<CanvasFile> parsedFiles = isPlaceholder
+                ? Array.Empty<CanvasFile>()
+                : CanvasFileArtifact.ParseAll(builderOutput, _pendingCanvasFileExtensionHint);
+            if (parsedFiles.Count > 0)
             {
-                _canvasArtifact = CanvasFileArtifact.ToArtifact(namedFile);
-                LogActivity($"Project Canvas: presenting {namedFile.FileName}.");
+                CanvasFile primary = parsedFiles[0];
+                _canvasArtifact = CanvasFileArtifact.ToArtifact(primary);
+                var links = new List<WorkplaceCanvasFileLink>(parsedFiles.Count);
+                foreach (CanvasFile namedFile in parsedFiles)
+                {
+                    string path = !string.IsNullOrWhiteSpace(SelectedProjectFolder)
+                        ? Path.Combine(SelectedProjectFolder, namedFile.FileName)
+                        : namedFile.FileName;
+                    WorkplaceCanvasFileLink link = BuildCanvasFileLink(namedFile.FileName, path, namedFile.Content);
+                    RegisterCanvasFile(link);
+                    links.Add(link);
+                }
+                _activeCanvasFileKey = links[0].FilePath;
+                AttachCanvasLinksToLatestAssistantMessage(links);
+                LogActivity($"Project Canvas: presenting {primary.FileName}.");
             }
 
             // A Skill that promised a rendered deliverable gets it built here when the Builder
@@ -17924,10 +18071,9 @@ namespace Malx_AI
             {
                 _canvasArtifact = ArtifactRenderService.DetectForCanvas(composedArtifact, sandboxOutput: null);
             }
-            // Default a renderable artifact straight to preview mode. Doing this BEFORE the UI
-            // refresh guarantees the preview host (and its WebView2) is visible/realized at the
-            // moment we navigate, which was the root cause of the intermittent blank canvas.
-            _isCanvasPreviewMode = _canvasArtifact.SupportsPreview && !_connectedWorkspace.CodebaseEditAccessEnabled;
+            // Default a renderable artifact straight to preview mode so the formatted document/preview
+            // host (and its WebView2) is ready the moment it opens.
+            _isCanvasPreviewMode = _canvasArtifact.SupportsPreview;
 
             if (_canvasArtifact.SupportsPreview && !_isProjectCanvasShown)
                 SetProjectCanvasShown(true);
@@ -17935,6 +18081,34 @@ namespace Malx_AI
             RefreshCanvasArtifactUi();
             RefreshRightSidebarDiffView();
             _ = RenderCanvasArtifactPreviewAsync();
+        }
+
+        private void AttachCanvasLinksToLatestAssistantMessage(IReadOnlyList<WorkplaceCanvasFileLink> newLinks)
+        {
+            if (newLinks.Count == 0)
+                return;
+            WorkplaceChatMessage? message = _chatCards.LastOrDefault(c =>
+                c.Role is "agent" or "builder" or "critic" or "critic-final" or "assistant");
+            if (message != null)
+                MergeCanvasFilesOntoMessage(message, newLinks);
+        }
+
+        private static void MergeCanvasFilesOntoMessage(WorkplaceChatMessage message, IReadOnlyList<WorkplaceCanvasFileLink> incoming)
+        {
+            if (incoming.Count == 0)
+                return;
+            var merged = message.CanvasFiles.ToList();
+            foreach (WorkplaceCanvasFileLink item in incoming)
+            {
+                int idx = merged.FindIndex(existing =>
+                    string.Equals(existing.DisplayName, item.DisplayName, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(item.FilePath) && string.Equals(existing.FilePath, item.FilePath, StringComparison.OrdinalIgnoreCase)));
+                if (idx >= 0)
+                    merged[idx] = item;
+                else
+                    merged.Add(item);
+            }
+            message.CanvasFiles = merged;
         }
 
         /// <summary>
@@ -17991,9 +18165,6 @@ namespace Malx_AI
 
         private void RefreshCanvasArtifactUi()
         {
-            if (_connectedWorkspace.CodebaseEditAccessEnabled)
-                _isCanvasPreviewMode = false;
-
             RefreshCanvasPresentation();
         }
 

@@ -4475,10 +4475,13 @@ namespace Malx_AI
                     {
                         _inferenceTimer.Stop();
                         AddChatMessage("system", "⚠ " + keyExhausted.Message);
-                        _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsDailyLimit
-                            ? "OpenRouter API key: daily free usage exhausted."
-                            : "OpenRouter API key: out of credits.");
-                        _ = LoadOpenRouterUsageAsync();
+                        _ = ShowNonIntrusiveErrorAsync(keyExhausted.IsCustomEndpoint
+                            ? "Custom endpoint usage allowance exhausted."
+                            : keyExhausted.IsDailyLimit
+                                ? "OpenRouter API key: daily free usage exhausted."
+                                : "OpenRouter API key: out of credits.");
+                        if (!keyExhausted.IsCustomEndpoint)
+                            _ = LoadOpenRouterUsageAsync();
                         SaveCurrentChat();
                     }
                     catch (Exception ex)

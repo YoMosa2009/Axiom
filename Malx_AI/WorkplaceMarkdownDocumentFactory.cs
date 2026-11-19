@@ -272,9 +272,24 @@ namespace Malx_AI
                         target.Add(new LineBreak());
                         break;
                     case LinkInline link:
-                        var linkSpan = new Span { Foreground = SecondaryBrush };
-                        AppendInlines(linkSpan.Inlines, link);
-                        target.Add(linkSpan);
+                        if (!string.IsNullOrWhiteSpace(link.Url))
+                        {
+                            var hyperlink = new Hyperlink
+                            {
+                                Foreground = InlineCodeForegroundBrush,
+                                TextDecorations = TextDecorations.Underline,
+                                Cursor = System.Windows.Input.Cursors.Hand,
+                                Tag = link.Url
+                            };
+                            AppendInlines(hyperlink.Inlines, link);
+                            target.Add(hyperlink);
+                        }
+                        else
+                        {
+                            var linkSpan = new Span { Foreground = SecondaryBrush };
+                            AppendInlines(linkSpan.Inlines, link);
+                            target.Add(linkSpan);
+                        }
                         break;
                     case ContainerInline nested:
                         var span = new Span();

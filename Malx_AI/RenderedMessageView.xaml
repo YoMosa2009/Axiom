@@ -15,7 +15,7 @@
                    VerticalAlignment="Top"
                    Foreground="{DynamicResource NotebookTextBrush}"
                    FontFamily="Segoe UI"
-                   FontSize="12.5"/>
+                   FontSize="14.5"/>
         <Image x:Name="RenderedImage"
                Visibility="Collapsed"
                HorizontalAlignment="Left"

@@ -43,6 +43,23 @@ namespace Malx_AI
         int CompletionTokens,
         int TotalTokens);
 
+    public sealed record AxiomSubscriptionBalance(long AllowanceMicros, long SpentMicros, long ReservedMicros, long AvailableMicros);
+
+    public sealed record AxiomSubscriptionUsageWindow(long UsedMicros, long LimitMicros, double UsedPercent, bool Active, DateTimeOffset? ResetsAt, int? WindowHours = null);
+
+    public sealed record AxiomSubscriptionUsage(AxiomSubscriptionUsageWindow Session, AxiomSubscriptionUsageWindow Week);
+
+    public sealed record AxiomSubscriptionStatus(string Service, bool Sandbox, decimal MonthlyUsd,
+        AxiomSubscriptionBalance Balance, DateTimeOffset? RenewsAt,
+        AxiomSubscriptionUsage? Usage = null, string? ModelLabel = null);
+
+    public sealed record AxiomSubscriptionReadResult(AxiomSubscriptionStatus? Status, bool Unauthorized);
+
+    public sealed class OpenRouterCustomEndpointFatalException : InvalidOperationException
+    {
+        public OpenRouterCustomEndpointFatalException(string message) : base(message) { }
+    }
+
     // Thrown when every model in the fallback chain is rate-limited (429) and there is nowhere
     // left to fall back to. Carries the provider-suggested retry delay so callers can wait briefly
     // and retry instead of treating a transient free-tier throttle as a hard failure.
@@ -64,13 +81,17 @@ namespace Malx_AI
     public sealed class OpenRouterKeyExhaustedException : Exception
     {
         public bool IsDailyLimit { get; }
+        public bool IsCustomEndpoint { get; }
 
-        public OpenRouterKeyExhaustedException(bool isDailyLimit)
-            : base(isDailyLimit
+        public OpenRouterKeyExhaustedException(bool isDailyLimit, bool isCustomEndpoint = false)
+            : base(isCustomEndpoint
+                ? "Axiom's subscription or custom endpoint usage allowance is too low to continue. Check your balance or Usage tab in Settings, or switch to a local model."
+                : isDailyLimit
                 ? "Your OpenRouter API key has used up its free daily request quota. Cloud responses will resume when the quota resets (midnight UTC), or add credits at openrouter.ai to raise the limit."
                 : "Your OpenRouter API key is out of credits. Add credits at openrouter.ai or switch to a local model to continue.")
         {
             IsDailyLimit = isDailyLimit;
+            IsCustomEndpoint = isCustomEndpoint;
         }
     }
 
@@ -89,7 +110,8 @@ namespace Malx_AI
             int ApproximateContextWindowTokens,
             int DefaultMaxCompletionTokens = 8192,
             bool IsCustomEndpoint = false,
-            bool KnownImageInput = false)
+            bool KnownImageInput = false,
+            bool IsManagedEndpoint = false)
     {
         public IEnumerable<string> AllApiModelIds
         {
@@ -115,6 +137,7 @@ namespace Malx_AI
 
     public sealed class OpenRouterChatService
     {
+        internal const string AxiomSubscriptionModel = "deepseek/deepseek-v4.1-flash-1017";
         public event Action<OpenRouterTokenUsage>? TokenUsageRecorded;
 
         private static readonly HttpClient Http = new();
@@ -184,6 +207,7 @@ namespace Malx_AI
         private const string ModelsUrl = "https://openrouter.ai/api/v1/models";
         private const string ChatCompletionsUrl = "https://openrouter.ai/api/v1/chat/completions";
         private string CustomEndpointChatCompletionsUrl => _customEndpointBaseUrl.TrimEnd('/') + "/chat/completions";
+        private string ManagedEndpointChatCompletionsUrl => _managedEndpointBaseUrl.TrimEnd('/') + "/chat/completions";
         private static readonly Regex TokenWordRegex = new(@"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", RegexOptions.Compiled);
         private static readonly Regex RetryAfterSecondsRegex = new("\"retry_after_seconds\"\\s*:\\s*(?<value>\\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const int TransientOpenRouterRetryLimit = 1;
@@ -230,6 +254,8 @@ namespace Malx_AI
         private bool _customEndpointMetadataLoaded;
         private bool _customEndpointMetadataProbed;
         private bool _customEndpointContextWindowAdvertised;
+        private string _managedEndpointBaseUrl = string.Empty;
+        private string _managedEndpointToken = string.Empty;
         private List<(string Id, string Label, bool IsFree)> _availableModels = new();
         private readonly Dictionary<string, HashSet<string>> _modelSupportedParameters = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _imageInputModelIds = new(StringComparer.OrdinalIgnoreCase);
@@ -300,6 +326,8 @@ namespace Malx_AI
         public const string WorkplaceCouncilDefaultModelLabel = "Dots Studio: Dots3-Note Preview (free)";
         public const string CustomEndpointModelId = "custom-endpoint";
         public const string CustomEndpointModelLabel = "Kestral 1";
+        public const string AxiomManagedModelId = "axiom-deepseek-4.1f-1017";
+        public const string AxiomManagedModelLabel = "DeepSeek 4.1F-1017";
         // Used only when the server does not advertise a window of its own. It must stay
         // conservative: an OpenAI-compatible local server (Ollama is the common one) exposes no
         // serving-time window at all, and its real one is a few thousand tokens regardless of what
@@ -335,6 +363,8 @@ namespace Malx_AI
         public bool IsSelectableModelAvailable(string modelId)
         {
             OpenRouterModelProfile profile = FindModelProfile(modelId);
+            if (profile?.IsManagedEndpoint == true)
+                return HasValidManagedEndpoint;
             if (profile?.IsCustomEndpoint == true)
                 return true;
 
@@ -347,6 +377,8 @@ namespace Malx_AI
         public string DescribeModelSelection(string modelId)
         {
             OpenRouterModelProfile profile = FindModelProfile(modelId) ?? SupportedModelProfiles[0];
+            if (profile.IsManagedEndpoint)
+                return "Axiom subscription cloud model (DeepSeek V4.1 Flash 1017 via DigitalOcean) with 1M context, vision, and tool calling.";
             return profile.IsCodeSpecialized
                 ? "Code-specialized cloud profile tuned for coding, agentic tool use, debugging, and built-in reasoning-aware execution."
                 : "General reasoning cloud profile tuned for tool outputs, structured context blocks, and direct execution-focused answers.";
@@ -467,6 +499,7 @@ namespace Malx_AI
                     ? qwenLatexInstruction
                     : string.Equals(profile.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(profile.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(profile.AliasId, AxiomManagedModelId, StringComparison.OrdinalIgnoreCase)
                         ? qwenLatexInstruction
                         : string.Empty;
 
@@ -537,6 +570,34 @@ namespace Malx_AI
 
         /// <summary>True when <paramref name="modelId"/> is served by the Hybrid Local endpoint.</summary>
         public bool IsCustomEndpointModel(string modelId) => FindModelProfile(modelId)?.IsCustomEndpoint == true;
+
+        /// <summary>True when <paramref name="modelId"/> is served by the Axiom managed subscription gateway.</summary>
+        public bool IsManagedEndpointModel(string modelId) => FindModelProfile(modelId)?.IsManagedEndpoint == true;
+
+        public void SetManagedEndpoint(string baseUrl, string bearerToken)
+        {
+            _managedEndpointBaseUrl = (baseUrl ?? string.Empty).Trim();
+            _managedEndpointToken = (bearerToken ?? string.Empty).Trim();
+        }
+
+        public bool HasValidManagedEndpoint =>
+            !string.IsNullOrWhiteSpace(_managedEndpointBaseUrl)
+            && Uri.TryCreate(_managedEndpointBaseUrl, UriKind.Absolute, out Uri? parsedUrl)
+            && (parsedUrl.Scheme == Uri.UriSchemeHttps || parsedUrl.Scheme == Uri.UriSchemeHttp)
+            && !string.IsNullOrWhiteSpace(_managedEndpointToken);
+
+        public bool HasValidCloudCredential => HasValidKey || HasValidManagedEndpoint;
+
+        public bool HasCredentialForModel(string modelId)
+        {
+            OpenRouterModelProfile profile = FindModelProfile(modelId);
+            if (profile?.IsManagedEndpoint == true)
+                return HasValidManagedEndpoint;
+            if (profile?.IsCustomEndpoint == true)
+                return HasValidCustomEndpoint;
+            return HasValidKey;
+        }
+
         public int CustomEndpointResolvedContextWindowTokens =>
             Math.Max(2048, _customEndpointContextWindowTokens);
 
@@ -557,7 +618,107 @@ namespace Malx_AI
             && !string.IsNullOrWhiteSpace(_customEndpointApiKey)
             && !string.IsNullOrWhiteSpace(_customEndpointModelId);
 
-        public bool HasAnyValidCloudCredential => HasValidKey || HasValidCustomEndpoint;
+        public bool HasAnyValidCloudCredential => HasValidKey || HasValidCustomEndpoint || HasValidManagedEndpoint;
+
+        public async Task<AxiomSubscriptionStatus?> ReadAxiomSubscriptionAsync()
+            => (await ReadAxiomSubscriptionDetailedAsync()).Status;
+
+        public async Task<AxiomSubscriptionReadResult> ReadAxiomSubscriptionDetailedAsync()
+        {
+            if (!HasValidManagedEndpoint
+                && (!HasValidCustomEndpoint || !string.Equals(_customEndpointModelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new AxiomSubscriptionReadResult(null, false);
+            }
+
+            var (statusCode, body) = await SendSubscriptionRequestAsync(HttpMethod.Get, "/subscription");
+            if (statusCode == HttpStatusCode.Unauthorized)
+                return new AxiomSubscriptionReadResult(null, true);
+            if (body is null)
+                return new AxiomSubscriptionReadResult(null, false);
+
+            try
+            {
+                var status = JsonSerializer.Deserialize<AxiomSubscriptionStatus>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                return status is { Service: "axiom-managed-inference", Sandbox: true, MonthlyUsd: 9, Balance: not null }
+                    ? new AxiomSubscriptionReadResult(status, false)
+                    : new AxiomSubscriptionReadResult(null, false);
+            }
+            catch (JsonException)
+            {
+                return new AxiomSubscriptionReadResult(null, false);
+            }
+        }
+
+        public async Task<bool> SynchronizeAxiomSubscriptionAsync()
+            => await RequestSubscriptionAsync(HttpMethod.Post, "/subscription/sync") is not null;
+
+        public async Task<Uri?> CreateAxiomSubscriptionLinkAsync(bool portal)
+        {
+            string operation = portal ? "/subscription/portal" : "/subscription/checkout";
+            string? body = await RequestSubscriptionAsync(HttpMethod.Post, operation);
+            if (body is null)
+                return null;
+            try
+            {
+                using var result = JsonDocument.Parse(body);
+                if (result.RootElement.ValueKind == JsonValueKind.Object
+                    && result.RootElement.TryGetProperty("url", out var url)
+                    && url.ValueKind == JsonValueKind.String
+                    && Uri.TryCreate(url.GetString(), UriKind.Absolute, out var target)
+                    && target.Scheme == Uri.UriSchemeHttps
+                    && target.IsDefaultPort
+                    && string.IsNullOrEmpty(target.UserInfo)
+                    && target.Host == (portal ? "billing.stripe.com" : "checkout.stripe.com"))
+                    return target;
+            }
+            catch (JsonException)
+            {
+                // Only open a verified Stripe destination.
+            }
+            return null;
+        }
+
+        private async Task<string?> RequestSubscriptionAsync(HttpMethod method, string operation)
+        {
+            var (_, body) = await SendSubscriptionRequestAsync(method, operation);
+            return body;
+        }
+
+        private async Task<(HttpStatusCode? StatusCode, string? Body)> SendSubscriptionRequestAsync(HttpMethod method, string operation)
+        {
+            string baseUrl;
+            string bearerToken;
+            if (HasValidManagedEndpoint)
+            {
+                baseUrl = _managedEndpointBaseUrl;
+                bearerToken = _managedEndpointToken;
+            }
+            else if (HasValidCustomEndpoint && string.Equals(_customEndpointModelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase))
+            {
+                baseUrl = _customEndpointBaseUrl;
+                bearerToken = _customEndpointApiKey;
+            }
+            else
+            {
+                return (null, null);
+            }
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var request = new HttpRequestMessage(method, baseUrl.TrimEnd('/') + operation);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+            try
+            {
+                using var response = await CustomEndpointHttp.SendAsync(request, timeout.Token);
+                if (!response.IsSuccessStatusCode)
+                    return (response.StatusCode, null);
+                return (response.StatusCode, await response.Content.ReadAsStringAsync(timeout.Token));
+            }
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+            {
+                return (null, null);
+            }
+        }
 
         public async Task<bool> TestCustomEndpointConnectionAsync(CancellationToken cancellationToken = default)
         {
@@ -1077,13 +1238,19 @@ namespace Malx_AI
             string? originalModelLabel = null,
             bool allowModelFallback = true)
         {
-            if (!HasAnyValidCloudCredential)
-                throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required.");
-
             OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
+            if (!HasCredentialForModel(requestedModelProfile.AliasId))
+            {
+                throw new InvalidOperationException(requestedModelProfile.IsManagedEndpoint
+                    ? "Sign in to your Axiom account and enable your subscription in Settings > Cloud AI."
+                    : requestedModelProfile.IsCustomEndpoint
+                        ? "Configure a valid Custom Endpoint in Settings > Cloud AI."
+                        : "A valid OpenRouter API key is required for this cloud model.");
+            }
+
             if (requestedModelProfile.IsCustomEndpoint)
                 await RefreshCustomEndpointMetadataAsync(cancellationToken);
-            else if (_availableModels.Count == 0)
+            else if (!requestedModelProfile.IsManagedEndpoint && _availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
@@ -1110,9 +1277,10 @@ namespace Malx_AI
             double temperature = ResolveTemperature(requestedModelProfile, isCodingRequest, isPythonRequest);
             double topP = ResolveTopP(requestedModelProfile, isCodingRequest);
 
+            bool usesCustomTransport = requestedModelProfile.IsCustomEndpoint || requestedModelProfile.IsManagedEndpoint;
             HttpStatusCode finalStatusCode = HttpStatusCode.OK;
             string responseBody = string.Empty;
-            HttpClient httpClient = requestedModelProfile.IsCustomEndpoint ? CustomEndpointHttp : Http;
+            HttpClient httpClient = usesCustomTransport ? CustomEndpointHttp : Http;
             for (int retryAttempt = 0; ; retryAttempt++)
             {
                 using var request = BuildChatRequest(
@@ -1124,7 +1292,8 @@ namespace Malx_AI
                     topP,
                     maxCompletionTokens,
                     tools,
-                    isCustomEndpoint: requestedModelProfile.IsCustomEndpoint);
+                    isCustomEndpoint: requestedModelProfile.IsCustomEndpoint,
+                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint);
 
                 using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 finalStatusCode = response.StatusCode;
@@ -1149,11 +1318,18 @@ namespace Malx_AI
                 if (finalStatusCode == HttpStatusCode.TooManyRequests)
                     LastTestFailureReason = OpenRouterConnectionTestFailureReason.RateLimited;
 
+                if (usesCustomTransport
+                    && TryGetCustomEndpointDirectFailure(finalStatusCode, responseBody, requestedModelProfile.IsManagedEndpoint, out string gatewayFailureMessage))
+                {
+                    throw new OpenRouterCustomEndpointFatalException(gatewayFailureMessage);
+                }
+
                 // Key-quota exhaustion (out of credits / past the daily free cap) affects every
                 // model on this key, so model fallback cannot help — surface it immediately as a
                 // typed, user-facing condition.
                 if (IsKeyUsageExhausted(finalStatusCode, responseBody))
-                    throw new OpenRouterKeyExhaustedException(finalStatusCode == HttpStatusCode.TooManyRequests);
+                    throw new OpenRouterKeyExhaustedException(
+                        finalStatusCode == HttpStatusCode.TooManyRequests, usesCustomTransport);
 
                 if (ContainsIgnoredProvidersMessage(responseBody) || IsTransientProviderFailure(finalStatusCode, responseBody))
                 {
@@ -1286,13 +1462,19 @@ namespace Malx_AI
             bool requireCompleteResponse = false,
             Action<string, int>? onToolCallProgress = null)
         {
-            if (!HasAnyValidCloudCredential)
-                throw new InvalidOperationException("A valid OpenRouter API key or custom endpoint is required.");
-
             OpenRouterModelProfile requestedModelProfile = ResolveRequestedModelProfile(modelId);
+            if (!HasCredentialForModel(requestedModelProfile.AliasId))
+            {
+                throw new InvalidOperationException(requestedModelProfile.IsManagedEndpoint
+                    ? "Sign in to your Axiom account and enable your subscription in Settings > Cloud AI."
+                    : requestedModelProfile.IsCustomEndpoint
+                        ? "Configure a valid Custom Endpoint in Settings > Cloud AI."
+                        : "A valid OpenRouter API key is required for this cloud model.");
+            }
+
             if (requestedModelProfile.IsCustomEndpoint)
                 await RefreshCustomEndpointMetadataAsync(cancellationToken);
-            else if (_availableModels.Count == 0)
+            else if (!requestedModelProfile.IsManagedEndpoint && _availableModels.Count == 0)
                 await TryDetectPreferredModelAsync(cancellationToken);
 
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
@@ -1321,7 +1503,8 @@ namespace Malx_AI
             double temperature = ResolveTemperature(requestedModelProfile, isCodingRequest, isPythonRequest);
             double topP = ResolveTopP(requestedModelProfile, isCodingRequest);
 
-            HttpClient httpClient = requestedModelProfile.IsCustomEndpoint ? CustomEndpointHttp : Http;
+            bool usesCustomTransport = requestedModelProfile.IsCustomEndpoint || requestedModelProfile.IsManagedEndpoint;
+            HttpClient httpClient = usesCustomTransport ? CustomEndpointHttp : Http;
             HttpResponseMessage? response = null;
             for (int retryAttempt = 0; ; retryAttempt++)
             {
@@ -1337,7 +1520,8 @@ namespace Malx_AI
                     tools,
                     stream: true,
                     stopSequences,
-                    isCustomEndpoint: requestedModelProfile.IsCustomEndpoint);
+                    isCustomEndpoint: requestedModelProfile.IsCustomEndpoint,
+                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint);
 
                 response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
@@ -1359,11 +1543,18 @@ namespace Malx_AI
                 if (response.StatusCode == HttpStatusCode.TooManyRequests)
                     LastTestFailureReason = OpenRouterConnectionTestFailureReason.RateLimited;
 
+                if (usesCustomTransport
+                    && TryGetCustomEndpointDirectFailure(response.StatusCode, retryBody, requestedModelProfile.IsManagedEndpoint, out string gatewayFailureMessage))
+                {
+                    throw new OpenRouterCustomEndpointFatalException(gatewayFailureMessage);
+                }
+
                 // Key-quota exhaustion (out of credits / past the daily free cap) affects every
                 // model on this key, so model fallback cannot help — surface it immediately as a
                 // typed, user-facing condition.
                 if (IsKeyUsageExhausted(response.StatusCode, retryBody))
-                    throw new OpenRouterKeyExhaustedException(response.StatusCode == HttpStatusCode.TooManyRequests);
+                    throw new OpenRouterKeyExhaustedException(
+                        response.StatusCode == HttpStatusCode.TooManyRequests, usesCustomTransport);
 
                 if (ContainsIgnoredProvidersMessage(retryBody) || IsTransientProviderFailure(response.StatusCode, retryBody))
                 {
@@ -1409,6 +1600,7 @@ namespace Malx_AI
             bool padDegenerationDetected = false;
             bool streamStalled = false;
             string providerStreamError = string.Empty;
+            bool nonRetryableCustomStreamError = false;
             string firstStreamLineSample = string.Empty;
             OpenRouterTokenUsage? usage = null;
 
@@ -1422,16 +1614,16 @@ namespace Malx_AI
                 DateTime streamStartUtc = DateTime.UtcNow;
                 bool firstLineReceived = false;
                 bool anyDeltaReceived = false;
-                TimeSpan firstLineIdle = requestedModelProfile.IsCustomEndpoint
+                TimeSpan firstLineIdle = usesCustomTransport
                     ? CustomEndpointStreamFirstLineIdleTimeout
                     : StreamFirstLineIdleTimeout;
-                TimeSpan lineIdle = requestedModelProfile.IsCustomEndpoint
+                TimeSpan lineIdle = usesCustomTransport
                     ? CustomEndpointStreamLineIdleTimeout
                     : StreamLineIdleTimeout;
                 // A self-hosted server composing a long tool call (a whole file) sends only
                 // keep-alives until the call is complete, so with tools attached the first real
                 // delta can legitimately take minutes.
-                TimeSpan firstContentTimeout = requestedModelProfile.IsCustomEndpoint
+                TimeSpan firstContentTimeout = usesCustomTransport
                     ? (tools != null && tools.Count > 0 ? CustomEndpointToolCallFirstContentTimeout : CustomEndpointStreamFirstContentTimeout)
                     : StreamFirstContentTimeout;
 
@@ -1534,6 +1726,16 @@ namespace Malx_AI
                     if (root.TryGetProperty("error", out JsonElement streamErrorElement))
                     {
                         providerStreamError = ExtractStreamErrorMessage(streamErrorElement);
+                        if (usesCustomTransport
+                            && TryGetStreamErrorCode(streamErrorElement) is string streamErrorCode
+                            && (string.Equals(streamErrorCode, "usage_pending", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(streamErrorCode, "unsupported_capability", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(streamErrorCode, "sign_in_required", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(streamErrorCode, "axiom_session_limit_reached", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(streamErrorCode, "axiom_weekly_limit_reached", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            nonRetryableCustomStreamError = true;
+                        }
                         break;
                     }
 
@@ -1668,6 +1870,9 @@ namespace Malx_AI
                     throw new HttpRequestException("Model provider returned an empty response.");
                 if (noUsableContent && (padDegenerationDetected || streamStalled || providerStreamError.Length > 0 || emptyCompletion))
                 {
+                    if (nonRetryableCustomStreamError)
+                        throw new OpenRouterCustomEndpointFatalException(providerStreamError);
+
                     string failureKind = padDegenerationDetected ? "PadDegeneration"
                         : streamStalled ? "StreamStalled"
                         : providerStreamError.Length > 0 ? "MidStreamError"
@@ -1841,7 +2046,8 @@ namespace Malx_AI
             IReadOnlyList<OpenRouterToolDefinition>? tools,
             bool stream = false,
             IReadOnlyList<string>? stopSequences = null,
-            bool isCustomEndpoint = false)
+            bool isCustomEndpoint = false,
+            bool isManagedEndpoint = false)
         {
             JsonArray messagePayload = BuildMessages(messages, systemPrompt);
             JsonObject payload = new()
@@ -1890,11 +2096,18 @@ namespace Malx_AI
                     payload["tool_choice"] = "auto";
             }
 
-            var request = new HttpRequestMessage(HttpMethod.Post, isCustomEndpoint ? CustomEndpointChatCompletionsUrl : ChatCompletionsUrl)
+            string targetUrl = isManagedEndpoint
+                ? ManagedEndpointChatCompletionsUrl
+                : isCustomEndpoint
+                    ? CustomEndpointChatCompletionsUrl
+                    : ChatCompletionsUrl;
+            var request = new HttpRequestMessage(HttpMethod.Post, targetUrl)
             {
                 Content = new StringContent(payload.ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web)), Encoding.UTF8, "application/json")
             };
-            if (isCustomEndpoint)
+            if (isManagedEndpoint)
+                ApplyManagedEndpointHeaders(request);
+            else if (isCustomEndpoint)
                 ApplyCustomEndpointHeaders(request);
             else
                 ApplyHeaders(request);
@@ -2275,6 +2488,110 @@ namespace Malx_AI
             return repaired;
         }
 
+        private static string? TryGetStreamErrorCode(JsonElement errorElement)
+        {
+            if (errorElement.ValueKind == JsonValueKind.Object
+                && errorElement.TryGetProperty("code", out JsonElement codeElement)
+                && codeElement.ValueKind == JsonValueKind.String)
+            {
+                return codeElement.GetString();
+            }
+
+            return null;
+        }
+
+        private bool TryGetCustomEndpointDirectFailure(
+            HttpStatusCode statusCode,
+            string responseBody,
+            bool isManagedEndpoint,
+            out string message)
+        {
+            message = string.Empty;
+            bool hasGatewayError = TryExtractGatewayError(responseBody, out string? code, out string? gatewayMessage);
+
+            if (statusCode == HttpStatusCode.Unauthorized)
+            {
+                if (isManagedEndpoint
+                    || string.Equals(code, "sign_in_required", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(_customEndpointModelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase))
+                {
+                    message = "Your Axiom account session is no longer active. Sign in again in Settings > Cloud AI.";
+                    return true;
+                }
+
+                if (hasGatewayError && !string.IsNullOrWhiteSpace(gatewayMessage))
+                {
+                    message = gatewayMessage;
+                    return true;
+                }
+            }
+
+            if (statusCode == HttpStatusCode.TooManyRequests
+                && hasGatewayError
+                && (string.Equals(code, "axiom_session_limit_reached", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(code, "axiom_weekly_limit_reached", StringComparison.OrdinalIgnoreCase))
+                && !string.IsNullOrWhiteSpace(gatewayMessage))
+            {
+                message = FormatGatewayResetTimestamps(gatewayMessage);
+                return true;
+            }
+
+            if (statusCode is HttpStatusCode.BadRequest or HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity
+                && hasGatewayError
+                && !string.IsNullOrWhiteSpace(gatewayMessage))
+            {
+                message = gatewayMessage;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string FormatGatewayResetTimestamps(string text)
+            => Regex.Replace(
+                text,
+                @"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b",
+                match => DateTimeOffset.TryParse(match.Value, out DateTimeOffset dto)
+                    ? dto.ToLocalTime().ToString("dddd h:mm tt")
+                    : match.Value);
+
+        private static bool TryExtractGatewayError(string? responseBody, out string? code, out string? message)
+        {
+            code = null;
+            message = null;
+            if (string.IsNullOrWhiteSpace(responseBody))
+                return false;
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(responseBody);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object
+                    || !doc.RootElement.TryGetProperty("error", out JsonElement errorElement)
+                    || errorElement.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
+
+                if (errorElement.TryGetProperty("code", out JsonElement codeElement)
+                    && codeElement.ValueKind == JsonValueKind.String)
+                {
+                    code = codeElement.GetString()?.Trim();
+                }
+
+                if (errorElement.TryGetProperty("message", out JsonElement messageElement)
+                    && messageElement.ValueKind == JsonValueKind.String)
+                {
+                    message = messageElement.GetString()?.Trim();
+                }
+
+                return !string.IsNullOrWhiteSpace(code) || !string.IsNullOrWhiteSpace(message);
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
         private static string ExtractStreamErrorMessage(JsonElement errorElement)
         {
             if (errorElement.ValueKind == JsonValueKind.Object
@@ -2480,6 +2797,11 @@ namespace Malx_AI
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _customEndpointApiKey);
         }
 
+        private void ApplyManagedEndpointHeaders(HttpRequestMessage request)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _managedEndpointToken);
+        }
+
         private void SetDetectedModel(string modelId, string modelLabel)
         {
             DetectedModelId = string.IsNullOrWhiteSpace(modelId) ? DefaultModelId : modelId.Trim();
@@ -2500,12 +2822,14 @@ namespace Malx_AI
         /// actually transmitted — and whether the system prompt may claim they are visible.
         /// </summary>
         public bool HasImageInputCatalog =>
-            _imageInputModelIds.Count > 0 || CustomEndpointResolvedSupportsImageInput;
+            _imageInputModelIds.Count > 0 || CustomEndpointResolvedSupportsImageInput || HasValidManagedEndpoint;
 
         public bool SupportsImageInput(string modelId)
         {
             string normalized = (modelId ?? string.Empty).Trim();
             OpenRouterModelProfile profile = FindModelProfile(normalized);
+            if (profile?.IsManagedEndpoint == true)
+                return true;
             if (profile?.IsCustomEndpoint == true)
             {
                 return CustomEndpointResolvedSupportsImageInput
@@ -2536,6 +2860,12 @@ namespace Malx_AI
             }
 
             string normalizedModelId = (modelId ?? string.Empty).Trim();
+            if (IsManagedEndpointModel(normalizedModelId)
+                || string.Equals(normalizedModelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase))
+            {
+                return !string.Equals(parameterName, "reasoning", StringComparison.OrdinalIgnoreCase);
+            }
+
             if (string.Equals(normalizedModelId, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase)
                 || (!string.IsNullOrEmpty(_customEndpointModelId)
                     && string.Equals(normalizedModelId, _customEndpointModelId, StringComparison.OrdinalIgnoreCase)))
@@ -2645,7 +2975,7 @@ namespace Malx_AI
             string reason,
             CancellationToken cancellationToken)
         {
-            if (failedProfile.IsCustomEndpoint || attemptedModelIds.Contains(FallbackChainRestartMarker))
+            if (failedProfile.IsCustomEndpoint || failedProfile.IsManagedEndpoint || attemptedModelIds.Contains(FallbackChainRestartMarker))
                 return false;
 
             attemptedModelIds.Clear();
@@ -2675,6 +3005,7 @@ namespace Malx_AI
                 // a transient failure should fail cleanly, never silently cross over to a real
                 // OpenRouter model (which could fire with a missing/invalid OpenRouter key).
                 CustomEndpointModelId => [],
+                AxiomManagedModelId => [],
                 _ => AllKnownModelProfiles
             };
 
@@ -2771,6 +3102,8 @@ namespace Malx_AI
 
         private string ResolveRequestedModelId(OpenRouterModelProfile profile)
         {
+            if (profile.IsManagedEndpoint || profile.IsCustomEndpoint)
+                return profile.PrimaryApiModelId;
             return ResolveAvailableApiModelId(profile) ?? profile.PrimaryApiModelId;
         }
 
@@ -2834,6 +3167,25 @@ namespace Malx_AI
                 normalized = Threnody10ModelId;
             }
 
+            if (string.Equals(normalized, AxiomManagedModelId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, AxiomManagedModelLabel, StringComparison.OrdinalIgnoreCase)
+                || (HasValidManagedEndpoint
+                    && !string.Equals(_customEndpointModelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(normalized, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new OpenRouterModelProfile(
+                    AliasId: AxiomManagedModelId,
+                    AliasLabel: AxiomManagedModelLabel,
+                    PrimaryApiModelId: AxiomSubscriptionModel,
+                    AlternativeApiModelIds: [],
+                    IsCodeSpecialized: true,
+                    ApproximateContextWindowTokens: 1_048_576,
+                    DefaultMaxCompletionTokens: 16384,
+                    IsCustomEndpoint: false,
+                    KnownImageInput: true,
+                    IsManagedEndpoint: true);
+            }
+
             if (string.Equals(normalized, CustomEndpointModelId, StringComparison.OrdinalIgnoreCase)
                 || (!string.IsNullOrWhiteSpace(_customEndpointModelId)
                     && string.Equals(normalized, _customEndpointModelId, StringComparison.OrdinalIgnoreCase)))
@@ -2869,7 +3221,8 @@ namespace Malx_AI
             if (string.Equals(profile?.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
                 return isCodingRequest ? (isPythonRequest ? 0.06 : 0.1) : 0.2;
 
-            if (string.Equals(profile?.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(profile?.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(profile?.AliasId, AxiomManagedModelId, StringComparison.OrdinalIgnoreCase))
                 return isCodingRequest ? (isPythonRequest ? 0.06 : 0.1) : 0.25;
 
             if (profile?.IsCodeSpecialized == true)
@@ -2886,7 +3239,8 @@ namespace Malx_AI
             if (string.Equals(profile?.AliasId, Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
                 return isCodingRequest ? 0.7 : 0.82;
 
-            if (string.Equals(profile?.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(profile?.AliasId, Threnody10ModelId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(profile?.AliasId, AxiomManagedModelId, StringComparison.OrdinalIgnoreCase))
                 return isCodingRequest ? 0.75 : 0.85;
 
             if (profile?.IsCodeSpecialized == true)

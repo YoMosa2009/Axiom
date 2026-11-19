@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\tools\AxiomSubscriptionGateway\AxiomSubscriptionGateway.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="Markdig" Version="0.37.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
@@ -63,6 +67,7 @@
     <Compile Include="..\Malx_AI\UpdateApplyService.cs" Link="Production\UpdateApplyService.cs" />
     <Compile Include="..\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
     <Compile Include="..\Malx_AI\OpenRouterContentParts.cs" Link="Production\OpenRouterContentParts.cs" />
+    <Compile Include="..\Malx_AI\AxiomAccountClient.cs" Link="Production\AxiomAccountClient.cs" />
     <Compile Include="..\Malx_AI\CustomEndpointMetadataParser.cs" Link="Production\CustomEndpointMetadataParser.cs" />
     <Compile Include="..\Malx_AI\AtomicFileWriter.cs" Link="Production\AtomicFileWriter.cs" />
     <Compile Include="..\Malx_AI\ArtifactRenderService.cs" Link="Production\ArtifactRenderService.cs" />
@@ -85,6 +90,7 @@
     <Compile Include="..\Malx_AI\Agent\AgentToolSchemas.cs" Link="Production\Agent\AgentToolSchemas.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentToolExecutor.cs" Link="Production\Agent\AgentToolExecutor.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentSession.cs" Link="Production\Agent\AgentSession.cs" />
+    <Compile Include="..\Malx_AI\Agent\CloudAgentModel.cs" Link="Production\Agent\CloudAgentModel.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentModel.cs" Link="Production\Agent\AgentModel.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentContextManager.cs" Link="Production\Agent\AgentContextManager.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentFollowUp.cs" Link="Production\Agent\AgentFollowUp.cs" />

@@ -138,7 +138,11 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
                 return;
 
             ArtifactRenderInfo artifact = ArtifactRenderService.DetectForNormalChat(message.Content);
-            if (!artifact.SupportsPreview || artifact.Kind == ArtifactKind.Document)
+            if (CanvasFileArtifact.TryParse(message.Content, null, out CanvasFile? namedFile) && namedFile != null)
+            {
+                artifact = CanvasFileArtifact.ToArtifact(namedFile);
+            }
+            else if (!artifact.SupportsPreview || artifact.Kind == ArtifactKind.Document)
             {
                 // Small-model replies are structured text Axiom composed the artifact from.
                 foreach (string format in new[] { SkillSmallModelFormats.Outline, SkillSmallModelFormats.Chart, SkillSmallModelFormats.Markdown })
@@ -176,11 +180,11 @@ The user explicitly invoked @ProjectCanvas. Produce a concrete renderable artifa
                 return null;
 
             ArtifactRenderInfo artifact = ArtifactRenderService.DetectForNormalChat(responseText);
-
-            // Small models answer in the outline format, and large ones sometimes return prose
-            // where the artifact should be. Both land here, so compose the deliverable from the
-            // structure the response does have rather than showing an empty canvas.
-            if (directive != null && (!artifact.SupportsPreview || artifact.Kind == ArtifactKind.Document)
+            if (CanvasFileArtifact.TryParse(responseText, null, out CanvasFile? namedFile) && namedFile != null)
+            {
+                artifact = CanvasFileArtifact.ToArtifact(namedFile);
+            }
+            else if (directive != null && (!artifact.SupportsPreview || artifact.Kind == ArtifactKind.Document)
                 && SkillArtifactComposer.TryCompose(directive.SmallModelFormat, responseText, out string composedHtml))
             {
                 artifact = ArtifactRenderService.DetectForNormalChat(composedHtml);

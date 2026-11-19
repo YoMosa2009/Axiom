@@ -323,8 +323,9 @@
                                   VerticalAlignment="Center"
                                   Visibility="Collapsed"
                                   SelectionChanged="WorkplaceCloudModelCombo_SelectionChanged"
-                                  ToolTip="Select OpenRouter cloud model"
+                                  ToolTip="Select cloud model"
                                   AutomationProperties.Name="Workplace cloud model">
+                            <ComboBoxItem x:Name="WorkplaceManagedModelComboItem" Content="DeepSeek 4.1F-1017" Tag="axiom-deepseek-4.1f-1017" ToolTip="Axiom subscription · DeepSeek V4.1 Flash 1017"/>
                             <ComboBoxItem Content="Threnody 1.0" Tag="threnody-1.0" ToolTip="DeepSeek: DeepSeek V4.1 Flash"/>
                             <ComboBoxItem Content="Edios 1.5" Tag="edios-1.5" ToolTip="Google Gemma 4 31B (free)"/>
                             <ComboBoxItem Content="Hepha 2.5 Coder" Tag="hepha-2.5-coder" ToolTip="NVIDIA Nemotron 3 Ultra (free)"/>
@@ -744,7 +745,7 @@
                                             <Button Click="SelectCommandReviewOption_Click" Tag="AutoReview" HorizontalContentAlignment="Left" Padding="8,6" Margin="0,1" Style="{StaticResource SubtleButtonStyle}">
                                                 <StackPanel>
                                                     <TextBlock Text="Auto-Review (Recommended)" FontSize="11" FontWeight="SemiBold" LineHeight="14"/>
-                                                    <TextBlock Text="Approves safe project work; intercepts deletes, system edits &amp; network installs" FontSize="9.5" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" LineHeight="13"/>
+                                                    <TextBlock Text="Automatically approves safe project work and declines risky deletes, system edits &amp; external downloads on your behalf" FontSize="9.5" Foreground="{DynamicResource MutedTextBrush}" TextWrapping="Wrap" LineHeight="13"/>
                                                 </StackPanel>
                                             </Button>
                                             <Button Click="SelectCommandReviewOption_Click" Tag="ManualReview" HorizontalContentAlignment="Left" Padding="8,6" Margin="0,2" Style="{StaticResource SubtleButtonStyle}">
@@ -948,7 +949,7 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText"
+                                    <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText" Hyperlink.Click="WorkplaceCardContentText_HyperlinkClick"
                                                               Document="{Binding FormattedDocument}"
                                                               Background="Transparent"
                                                               BorderThickness="0"
@@ -961,6 +962,38 @@
                                                               VerticalScrollBarVisibility="Disabled"
                                                               HorizontalScrollBarVisibility="Disabled"
                                                               IsTabStop="False"/>
+                                    <ItemsControl x:Name="WorkplaceCanvasFileLinksList" ItemsSource="{Binding CanvasFiles}" Margin="0,10,0,0"
+                                                  Visibility="{Binding HasCanvasFiles, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Click="OpenCanvasFileLink_Click" Tag="{Binding}" HorizontalContentAlignment="Stretch"
+                                                        Cursor="Hand" Margin="0,0,0,6" Padding="10,8"
+                                                        Style="{StaticResource SubtleButtonStyle}"
+                                                        Background="{DynamicResource NotebookBackgroundBrush}"
+                                                        BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                                        BorderThickness="1"
+                                                        ToolTip="{Binding FilePath}">
+                                                    <StackPanel>
+                                                        <DockPanel LastChildFill="True">
+                                                            <Border DockPanel.Dock="Right" Background="#2A241B" BorderBrush="#4A3E2A" BorderThickness="1"
+                                                                    CornerRadius="6" Padding="7,2" VerticalAlignment="Center" Margin="8,0,0,0">
+                                                                <TextBlock Text="{Binding TypeBadge}" FontSize="10" FontWeight="SemiBold" Foreground="#F5D591"/>
+                                                            </Border>
+                                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                                <TextBlock Text="&#xE8A5;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12"
+                                                                           Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                                                                <TextBlock Text="{Binding DisplayName}" FontSize="13" FontWeight="SemiBold"
+                                                                           Foreground="{DynamicResource NotebookTextBrush}" TextTrimming="CharacterEllipsis"/>
+                                                            </StackPanel>
+                                                        </DockPanel>
+                                                        <TextBlock Text="{Binding ActionLabel}" FontSize="11.5"
+                                                                   Foreground="#F5D591" TextDecorations="Underline"
+                                                                   Margin="19,3,0,0" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                     <Expander x:Name="WorkplaceExecutionSteps" IsExpanded="False" Margin="0,12,0,0"
                                               Visibility="{Binding HasExecutionSteps, Converter={StaticResource BooleanToVisibilityConverter}}"
                                               Foreground="{DynamicResource DarkSecondaryBrush}" AutomationProperties.Name="Run activity details">
@@ -1094,7 +1127,15 @@
                         </Grid>
 
                         <!-- Contextual toolbar for Canvas / Codebase patches -->
-                        <WrapPanel Grid.Row="1" Margin="0,8,0,0" x:Name="CanvasActionsRow">
+                        <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                            <ComboBox x:Name="CanvasFileSelectorCombo"
+                                      Height="28"
+                                      FontSize="11.5"
+                                      Margin="0,0,0,8"
+                                      Visibility="Collapsed"
+                                      SelectionChanged="CanvasFileSelectorCombo_SelectionChanged"
+                                      ToolTip="Select a file created or edited in this session"/>
+                            <WrapPanel x:Name="CanvasActionsRow">
                             <WrapPanel.Resources>
                                 <Style x:Key="CanvasActionStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
                                     <Setter Property="FontSize" Value="12"/>
@@ -1136,6 +1177,7 @@
                                 </Button.ContextMenu>
                             </Button>
                         </WrapPanel>
+                        </StackPanel>
                     </Grid>
                 </Border>
 

@@ -246,6 +246,7 @@ namespace Malx_AI
         private System.Windows.Controls.Primitives.ToggleButton? _normalWebSearchToggleButton;
         private Button? _localModeButton;
         private Button? _cloudModeButton;
+        private Button? _axiomManagedModelButton;
         private Button? _edios15ModelButton;
         private Button? _hepha25CoderModelButton;
         private Button? _threnody10ModelButton;
@@ -530,6 +531,7 @@ namespace Malx_AI
                 LoadOpenRouterSettings();
                 LoadStoredOpenRouterApiKey();
                 LoadStoredCustomEndpointSettings();
+                RestoreAxiomAccount();
                 InitializeMcpConnectors();
                 try
                 {
@@ -584,6 +586,7 @@ namespace Malx_AI
                 _chatMessages.CollectionChanged += ChatMessages_CollectionChanged;
                 WorkplaceViewControl.ProjectCanvasShownChanged += WorkplaceView_ProjectCanvasShownChanged;
                 WorkplaceViewControl.SessionMetadataChanged += WorkplaceView_SessionMetadataChanged;
+                WorkplaceViewControl.ManagedUsageChanged += () => Dispatcher.InvokeAsync(() => _ = RefreshAxiomSubscriptionAsync());
                 GenerationTelemetry.OnTokensCommitted = tokens => UserProfileStatsService.Shared.RecordTokens(tokens);
                 UserProfileStatsService.Shared.Changed += () => Dispatcher.InvokeAsync(RefreshUserProfileUi);
                 RefreshUserProfileUi();
@@ -1932,6 +1935,9 @@ namespace Malx_AI
             if (SettingsPageGeneral != null)
                 SettingsPageGeneral.Visibility = string.Equals(key, "General", StringComparison.OrdinalIgnoreCase)
                     ? Visibility.Visible : Visibility.Collapsed;
+            if (SettingsPageUsage != null)
+                SettingsPageUsage.Visibility = string.Equals(key, "Usage", StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Collapsed;
             if (SettingsPageProfile != null)
                 SettingsPageProfile.Visibility = string.Equals(key, "Profile", StringComparison.OrdinalIgnoreCase)
                     ? Visibility.Visible : Visibility.Collapsed;
@@ -1943,9 +1949,17 @@ namespace Malx_AI
             HighlightSettingsNavButton(SettingsNavCloudButton, string.Equals(key, "Cloud", StringComparison.OrdinalIgnoreCase));
             HighlightSettingsNavButton(SettingsNavConnectorsButton, string.Equals(key, "Connectors", StringComparison.OrdinalIgnoreCase));
             HighlightSettingsNavButton(SettingsNavGeneralButton, isGeneralOrProfile);
+            HighlightSettingsNavButton(SettingsNavUsageButton, string.Equals(key, "Usage", StringComparison.OrdinalIgnoreCase));
 
             if (isGeneralOrProfile)
                 RefreshUserProfileUi();
+            if (string.Equals(key, "Cloud", StringComparison.OrdinalIgnoreCase))
+                _ = RefreshAxiomSubscriptionAsync();
+            if (string.Equals(key, "Usage", StringComparison.OrdinalIgnoreCase))
+            {
+                RenderAxiomUsageUi(_lastAxiomSubscriptionStatus);
+                _ = RefreshAxiomSubscriptionAsync();
+            }
         }
 
         private void OpenYourProfileButton_Click(object sender, RoutedEventArgs e)
@@ -2145,6 +2159,14 @@ namespace Malx_AI
 
             if (show)
             {
+                WorkplaceViewControl?.CloseAllPopups();
+                CloseMcpMentionPopup();
+                if (UnifiedTitleBar != null)
+                    UnifiedTitleBar.IsHitTestVisible = false;
+                if (SidebarBorder != null)
+                    SidebarBorder.IsHitTestVisible = false;
+                if (ContentContainer != null)
+                    ContentContainer.IsHitTestVisible = false;
                 WorkplaceViewControl?.SetNativePreviewSuppressedForOverlay(true);
                 SettingsPanel.Visibility = Visibility.Visible;
             }
@@ -2180,6 +2202,12 @@ namespace Malx_AI
                 if (!show)
                 {
                     SettingsPanel.Visibility = Visibility.Collapsed;
+                    if (UnifiedTitleBar != null)
+                        UnifiedTitleBar.IsHitTestVisible = true;
+                    if (SidebarBorder != null)
+                        SidebarBorder.IsHitTestVisible = true;
+                    if (ContentContainer != null)
+                        ContentContainer.IsHitTestVisible = true;
                     WorkplaceViewControl?.SetNativePreviewSuppressedForOverlay(false);
                 }
 

@@ -6,6 +6,15 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Added
 
+- Optional managed Axiom subscription support (`DeepSeek 4.1F-1017` backed by
+  `tools/AxiomSubscriptionGateway` with DPAPI-protected sessions, email verification/recovery,
+  and Stripe test Checkout/billing portal) works across both Normal Chat and Workplace while
+  keeping Local GGUF, Hybrid Local (`Kestral 1`), and personal OpenRouter keys independent.
+- Settings **Usage** tab displaying a 3-hour session window (starts on first message) and a
+  7-day weekly usage meter backed by gateway allowance pacing (`429` reset guidance).
+- Workplace **Project Canvas** renders clickable underlined file links beneath model outputs
+  and created/edited file summaries, and formats `.md`, `.json`/`.jsonc`, `.xml`/`.xaml`/`.csproj`/`.config`,
+  `.yaml`/`.yml`/`.toml`/`.ini`/`.env`, `.csv`/`.tsv`, `.html`/`.svg`, source code, and `.txt`.
 - Workplace replies with recorded edits end with a compact file-change panel:
   added/deleted line totals, three-file preview, expandable list, saved diff review,
   and Undo for the latest eligible Agent run. Shell-command changes are not counted.
@@ -15,6 +24,13 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Changed
 
+- Settings **Inference** defaults to **Cloud** with `DeepSeek 4.1F-1017` when a managed
+  subscription is active instead of mapping managed access onto Hybrid Local (`Kestral 1`).
+- Command Review **Auto-Review** decides autonomously on the user's behalf (approving safe
+  scoped project commands and declining unsafe or out-of-scope operations) without popping up
+  Accept/Decline prompts; **Review Every Command** retains explicit per-command approval.
+- Normal Chat message body, code blocks, reasoning blocks, and composer input font sizes
+  are increased for easier readability.
 - Workplace Send animates while working. Finished activity lists collapse into a
   themed dropdown while retaining the full history.
 - Project Canvas has a useful empty state, visible preview/source/save controls,
@@ -28,6 +44,10 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Fixed
 
+- Opening **Settings** closes Workplace/MCP popups, elevates the Settings overlay above
+  the full window, and disables background hit-testing so title-bar and sidebar controls
+  (`Setup`, `System Log`, etc.) cannot click through or overlay the Settings modal.
+- Project Canvas formatted Preview stays enabled even when connected to a codebase folder.
 - Commands can finish when a launched child keeps the shell's output streams open,
   instead of falsely waiting until the command timeout.
 - Computer Use follow-ups retain their prior goal, result and work application.

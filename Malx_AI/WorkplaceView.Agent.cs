@@ -18,7 +18,7 @@ namespace Malx_AI
         private bool _agentEnabled;
         private bool _agentScopeEntireComputer;
         private string _agentScopeFolder = string.Empty;
-        private AgentApprovalMode _agentApprovalMode = AgentApprovalMode.Manual;
+        private AgentApprovalMode _agentApprovalMode = AgentApprovalMode.Auto;
         private TaskCompletionSource<AgentApprovalOutcome>? _agentPendingApproval;
         private AgentActiveTaskState? _activeAgentTaskState;
 
@@ -49,9 +49,12 @@ namespace Malx_AI
                 _agentEnabled = ReadAgentFlag(AgentEnabledKey);
                 _agentScopeEntireComputer = ReadAgentFlag(AgentScopeAllKey);
                 _agentScopeFolder = AgentSettings.Read(AgentScopeFolderKey) ?? string.Empty;
-                _agentApprovalMode = string.Equals(AgentSettings.Read(AgentApprovalModeKey), "auto", StringComparison.OrdinalIgnoreCase)
-                    ? AgentApprovalMode.Auto
-                    : AgentApprovalMode.Manual;
+                string? storedApproval = AgentSettings.Read(AgentApprovalModeKey);
+                _agentApprovalMode = string.Equals(storedApproval, "manual", StringComparison.OrdinalIgnoreCase)
+                    ? AgentApprovalMode.Manual
+                    : AgentApprovalMode.Auto;
+                if (_commandReviewMode != CommandReviewMode.ManualReview && _agentApprovalMode == AgentApprovalMode.Manual)
+                    _agentApprovalMode = AgentApprovalMode.Auto;
             }
             catch (Exception ex)
             {
@@ -194,7 +197,11 @@ namespace Malx_AI
             }
 
             _agentApprovalMode = auto ? AgentApprovalMode.Auto : AgentApprovalMode.Manual;
+            _commandReviewMode = auto
+                ? (_commandReviewMode == CommandReviewMode.AutoApprove ? CommandReviewMode.AutoApprove : CommandReviewMode.AutoReview)
+                : CommandReviewMode.ManualReview;
             AgentSettings.Write(AgentApprovalModeKey, auto ? "auto" : "manual");
+            UpdateCommandReviewSelectorUi();
             RefreshAgentUi();
         }
 
@@ -1097,6 +1104,7 @@ namespace Malx_AI
             SendButton.ToolTip = null;
             StopButton.IsEnabled = false;
             RelayStatusBlock.Text = "Relay: Idle";
+            NotifyManagedUsageChangedIfActive();
         }
 
         /// <summary>A fresh copy folder for one task, after clearing out ones older than two weeks.</summary>

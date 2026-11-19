@@ -10,6 +10,14 @@ using System.Windows.Media.Imaging;
 
 namespace Malx_AI
 {
+    public sealed record WorkplaceCanvasFileLink(
+        string DisplayName,
+        string FilePath,
+        string Extension,
+        string TypeBadge,
+        string ActionLabel,
+        string? InlineContent = null);
+
     public sealed class WorkplaceChatMessage : INotifyPropertyChanged
     {
         private string _content = "";
@@ -20,8 +28,21 @@ namespace Malx_AI
         private IReadOnlyList<string> _viewedImagePaths = Array.Empty<string>();
         private IReadOnlyList<ImageSource>? _viewedImagesCache;
         private IReadOnlyList<WorkplaceFileChange> _fileChanges = Array.Empty<WorkplaceFileChange>();
+        private IReadOnlyList<WorkplaceCanvasFileLink> _canvasFiles = Array.Empty<WorkplaceCanvasFileLink>();
         private bool _fileChangesExpanded;
         private bool _canUndoFileChanges;
+
+        public IReadOnlyList<WorkplaceCanvasFileLink> CanvasFiles
+        {
+            get => _canvasFiles;
+            set
+            {
+                _canvasFiles = value ?? Array.Empty<WorkplaceCanvasFileLink>();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasCanvasFiles));
+            }
+        }
+        public bool HasCanvasFiles => CanvasFiles.Count > 0;
 
         public IReadOnlyList<WorkplaceFileChange> FileChanges
         {

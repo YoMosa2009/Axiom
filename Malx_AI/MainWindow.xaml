@@ -1451,7 +1451,7 @@
                                                                                      BorderThickness="0"
                                                                                      Padding="0"
                                                                                      FontFamily="Consolas"
-                                                                                     FontSize="12"
+                                                                                     FontSize="13"
                                                                                      Foreground="{DynamicResource NotebookTextBrush}"
                                                                                      IsReadOnly="True"
                                                                                      IsReadOnlyCaretVisible="False"
@@ -1516,7 +1516,7 @@
                                                             <Border x:Name="ThinkingContentBorder" Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Visibility="Collapsed">
                                                                 <Grid>
                                                                     <TextBox x:Name="ThinkingText"
-                                                                             Text="{Binding FormattedThinkingContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="12" FontFamily="Segoe UI"
+                                                                             Text="{Binding FormattedThinkingContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="13" FontFamily="Segoe UI"
                                                                              Foreground="{DynamicResource NotebookTextBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                                                              IsReadOnly="True" IsReadOnlyCaretVisible="False" Cursor="Arrow"
                                                                              SelectionBrush="{DynamicResource PrimaryAccentBrush}" SelectionOpacity="0.3">
@@ -1569,7 +1569,7 @@
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
-                                                <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="12.5" FontFamily="Segoe UI"
+                                                <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="14.5" FontFamily="Segoe UI"
                                                          Foreground="{DynamicResource NotebookTextBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                                          IsReadOnly="True" IsReadOnlyCaretVisible="False" Cursor="Arrow"
                                                          SelectionBrush="{DynamicResource PrimaryAccentBrush}" SelectionOpacity="0.3">
@@ -1825,18 +1825,18 @@
                                                    Margin="0"
                                                    Background="Transparent"
                                                    FontFamily="Segoe UI"
-                                                   FontSize="13"
-                                                   LineHeight="19"
+                                                   FontSize="14"
+                                                   LineHeight="20"
                                                    TextWrapping="Wrap"
                                                    IsHitTestVisible="False"
                                                    Visibility="Collapsed"/>
                                         <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="16,12,16,8"
                                               Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}" BorderThickness="0" CaretBrush="{DynamicResource NotebookTextBrush}"
-                                              FontFamily="Segoe UI" FontSize="13" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
+                                              FontFamily="Segoe UI" FontSize="14" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
                                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="160"
                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                               SelectionBrush="#66B8924A" SelectionOpacity="1"/>
-                                        <TextBlock Text="Ask anything" Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI" FontSize="12.5"
+                                        <TextBlock Text="Ask anything" Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI" FontSize="14"
                                                    Margin="16,12,16,8" IsHitTestVisible="False" VerticalAlignment="Top">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -2088,6 +2088,7 @@
                                                          </Style>
                                                      </Border.Resources>
                                                      <StackPanel Orientation="Horizontal">
+                                                         <Button x:Name="AxiomManagedModelButton" Content="DeepSeek 4.1F-1017" Click="AxiomManagedModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Axiom subscription · DeepSeek V4.1 Flash 1017" Margin="0,0,2,0" Visibility="Collapsed"/>
                                                          <Button x:Name="Edios15ModelButton" Content="Edios 1.5" Click="Edios15ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use Google Gemma 4 31B (free)" Margin="0,0,2,0"/>
                                                          <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)" Margin="0,0,2,0"/>
                                                          <Button x:Name="Threnody10ModelButton" Content="Threnody 1.0" Click="Threnody10ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use DeepSeek: DeepSeek V4.1 Flash"/>
@@ -2188,37 +2189,42 @@
                     </StackPanel>
                 </Grid>
             </DockPanel>
+        </Grid>
 
-            <!-- Global Settings Panel Overlay -->
-            <Border x:Name="SettingsPanel" Panel.ZIndex="100" Visibility="Collapsed" Background="#CC171615" Opacity="0">
-                <Grid>
-                    <Border x:Name="SettingsPanelCard" CornerRadius="16" MaxWidth="980" BorderThickness="1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="24,18" Margin="28,26,28,26" Background="{DynamicResource NotebookSurfaceBrush}" Effect="{StaticResource SoftShadow}">
-                        <Border.RenderTransform>
-                            <TranslateTransform X="28"/>
-                        </Border.RenderTransform>
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
+        <!-- Global Settings Panel Overlay (spans entire client area so titlebar/sidebar buttons stay behind modal) -->
+        <Border x:Name="SettingsPanel" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="2"
+                Panel.ZIndex="1000" Visibility="Collapsed" Background="#CC171615" Opacity="0"
+                KeyboardNavigation.TabNavigation="Cycle" FocusManager.IsFocusScope="True">
+            <Grid>
+                <Border x:Name="SettingsPanelCard" CornerRadius="16" MaxWidth="980" BorderThickness="1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="24,18" Margin="28,26,28,26" Background="{DynamicResource NotebookSurfaceBrush}" Effect="{StaticResource SoftShadow}">
+                    <Border.RenderTransform>
+                        <TranslateTransform X="28"/>
+                    </Border.RenderTransform>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
-                            <StackPanel Grid.Row="0">
-                                <TextBlock Text="Settings" FontSize="28" FontWeight="Normal" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Georgia" Margin="0,0,0,12"/>
+                        <StackPanel Grid.Row="0">
+                            <TextBlock Text="Settings" FontSize="28" FontWeight="Normal" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Georgia" Margin="0,0,0,12"/>
 
-                                <!-- Settings category menu -->
-                                <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="4" Margin="0,0,0,16" HorizontalAlignment="Left">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Button x:Name="SettingsNavInferenceButton" Content="Inference" Click="SettingsNavButton_Click" Tag="Inference"
-                                                MinWidth="88" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
-                                        <Button x:Name="SettingsNavCloudButton" Content="Cloud AI" Click="SettingsNavButton_Click" Tag="Cloud"
-                                                MinWidth="88" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
-                                        <Button x:Name="SettingsNavConnectorsButton" Content="Connectors" Click="SettingsNavButton_Click" Tag="Connectors"
-                                                MinWidth="96" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
-                                        <Button x:Name="SettingsNavGeneralButton" Content="General" Click="SettingsNavButton_Click" Tag="General"
-                                                MinWidth="88" Height="30" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
-                                    </StackPanel>
-                                </Border>
+                            <!-- Settings category menu -->
+                            <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="4" Margin="0,0,0,16" HorizontalAlignment="Left">
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="SettingsNavInferenceButton" Content="Inference" Click="SettingsNavButton_Click" Tag="Inference"
+                                            MinWidth="88" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                    <Button x:Name="SettingsNavCloudButton" Content="Cloud AI" Click="SettingsNavButton_Click" Tag="Cloud"
+                                            MinWidth="88" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                    <Button x:Name="SettingsNavConnectorsButton" Content="Connectors" Click="SettingsNavButton_Click" Tag="Connectors"
+                                            MinWidth="96" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                    <Button x:Name="SettingsNavGeneralButton" Content="General" Click="SettingsNavButton_Click" Tag="General"
+                                            MinWidth="88" Height="30" Margin="0,0,4,0" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                    <Button x:Name="SettingsNavUsageButton" Content="Usage" Click="SettingsNavButton_Click" Tag="Usage"
+                                            MinWidth="88" Height="30" Style="{StaticResource SubtleButtonStyle}" FontSize="11"/>
+                                </StackPanel>
+                            </Border>
 
                                                             </StackPanel>
                             <ScrollViewer x:Name="SettingsContentScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
@@ -2324,7 +2330,7 @@
                                                  <Button x:Name="CloudModeButton" Content="Cloud" Click="CloudModeButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Add an OpenRouter API key in Settings to enable cloud mode"/>
                                              </StackPanel>
                                          </Border>
-                                         <TextBlock Text="Local runs on-device. Hybrid Local sends compute to your own self-hosted inference server. Cloud uses the configured OpenRouter model." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                         <TextBlock Text="Local runs on-device. Hybrid Local sends compute to your own self-hosted inference server. Cloud uses your Axiom subscription or OpenRouter API key." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                      </StackPanel>
                                  </Border>
                                 </StackPanel>
@@ -2390,6 +2396,52 @@
                                          <TextBlock x:Name="OpenRouterDetectedModelIdText" Text="General reasoning profile tuned for Axiom's tool pipeline." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
+                                <Border x:Name="AxiomAccountPanel" Visibility="Collapsed" BorderThickness="0,1,0,0"
+                                        BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,12">
+                                    <StackPanel>
+                                        <TextBlock Text="Axiom account" FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,6"/>
+                                        <TextBlock x:Name="AxiomAccountMessage" TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8"/>
+                                        <StackPanel x:Name="AxiomAccountSignInForm">
+                                            <TextBlock Text="Email" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                            <TextBox x:Name="AxiomAccountEmailBox" AutomationProperties.Name="Axiom account email"
+                                                     Height="32" Padding="8,6" Margin="0,0,0,6"
+                                                     Background="{DynamicResource NotebookBackgroundBrush}"
+                                                     Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
+                                            <Button Content="Send sign-in code" Click="SendAxiomAccountCode_Click" Height="30"
+                                                    HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}" Margin="0,0,0,8"/>
+                                            <TextBlock Text="Email verification code" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                            <PasswordBox x:Name="AxiomAccountCodeBox" AutomationProperties.Name="Axiom email verification code"
+                                                         Height="32" Padding="8,6" Margin="0,0,0,6"
+                                                         Background="{DynamicResource NotebookBackgroundBrush}"
+                                                         Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
+                                            <StackPanel x:Name="AxiomRecoveryKeyEntry" Visibility="Collapsed">
+                                                <TextBlock Text="Saved recovery key" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                                <PasswordBox x:Name="AxiomRecoveryKeyBox" AutomationProperties.Name="Saved Axiom recovery key"
+                                                             Height="32" Padding="8,6" Margin="0,0,0,6"
+                                                             Background="{DynamicResource NotebookBackgroundBrush}"
+                                                             Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
+                                            </StackPanel>
+                                            <WrapPanel>
+                                                <Button x:Name="AxiomConfirmAccountButton" Content="Create account or sign in"
+                                                        Click="ConfirmAxiomAccountCode_Click" Height="30" Margin="0,0,8,4"
+                                                        Style="{StaticResource SubtleButtonStyle}"/>
+                                                <Button x:Name="AxiomRecoveryToggle" Content="Recover with key" Click="ToggleAxiomRecovery_Click"
+                                                        Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                        <WrapPanel x:Name="AxiomAccountActiveActions" Visibility="Collapsed">
+                                            <Button x:Name="AxiomAccountEndpointToggle" Click="ToggleAxiomAccountEndpoint_Click"
+                                                    Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                            <Button Content="Sign out" Click="SignOutAxiomAccount_Click" Height="30" Margin="0,0,8,4"
+                                                    Style="{StaticResource SubtleButtonStyle}"/>
+                                            <Button x:Name="CopyAxiomRecoveryKeyButton" Content="Copy new recovery key"
+                                                    Click="CopyAxiomRecoveryKey_Click" Height="30" Margin="0,0,8,4"
+                                                    Style="{StaticResource SubtleButtonStyle}"/>
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0">
                                     <StackPanel>
                                         <TextBlock Text="Custom Endpoint" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
@@ -2405,6 +2457,21 @@
                                             <Button x:Name="ClearCustomEndpointButton" Content="Clear" Click="ClearCustomEndpointButton_Click" Height="32" MinWidth="90" Margin="8,0,0,0" Style="{StaticResource SubtleButtonStyle}" Background="Transparent" BorderBrush="Transparent" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                             <TextBlock x:Name="CustomEndpointTestingText" Text="Testing" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                                             <TextBlock x:Name="CustomEndpointStatusText" Text="" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="AxiomSubscriptionPanel" Visibility="Collapsed" Margin="0,16,0,0">
+                                            <TextBlock Text="Axiom subscription sandbox" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,6"/>
+                                            <TextBlock x:Name="AxiomSubscriptionStatusText" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8"/>
+                                            <WrapPanel x:Name="AxiomSubscriptionActions">
+                                                <Button x:Name="AxiomSubscribeButton" Content="Test checkout" Click="AxiomSubscribeButton_Click"
+                                                        Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                <Button x:Name="AxiomManageSubscriptionButton" Content="Manage test subscription"
+                                                        Click="AxiomManageSubscriptionButton_Click" Height="30" Margin="0,0,8,4"
+                                                        Style="{StaticResource SubtleButtonStyle}" Visibility="Collapsed"/>
+                                                <Button Content="Refresh payment" Click="AxiomRefreshSubscriptionButton_Click"
+                                                        Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                            </WrapPanel>
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
@@ -2899,6 +2966,153 @@
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
+
+                                <!-- ═══ USAGE (Subscription 3-hour session & weekly pacing) ═══ -->
+                                <StackPanel x:Name="SettingsPageUsage" Visibility="Collapsed">
+                                    <Grid Margin="0,0,0,14">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="Usage" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
+                                            <TextBlock Text="DeepSeek 4.1F-1017 · Axiom subscription" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" Margin="0,3,0,0"/>
+                                        </StackPanel>
+                                        <Button x:Name="RefreshAxiomUsageButton"
+                                                Grid.Column="1"
+                                                Click="RefreshAxiomUsageButton_Click"
+                                                Height="30"
+                                                Padding="12,0"
+                                                Style="{StaticResource SubtleButtonStyle}"
+                                                VerticalAlignment="Center"
+                                                ToolTip="Refresh subscription usage">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="↻" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Refresh" FontSize="11" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </Grid>
+
+                                    <Border x:Name="AxiomUsageNoticeBorder"
+                                            Visibility="Collapsed"
+                                            Background="{DynamicResource NotebookBackgroundBrush}"
+                                            BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10"
+                                            Padding="14,12"
+                                            Margin="0,0,0,14">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="AxiomUsageNoticeText"
+                                                       Text="Sign in to your Axiom account in Settings → Cloud AI to view DeepSeek 4.1F-1017 usage."
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource DarkSecondaryBrush}"
+                                                       TextWrapping="Wrap"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,12,0"/>
+                                            <Button Grid.Column="1"
+                                                    Content="Open Cloud AI"
+                                                    Click="OpenCloudAiFromUsage_Click"
+                                                    Height="30"
+                                                    Padding="12,0"
+                                                    FontSize="11"
+                                                    Style="{StaticResource SubtleButtonStyle}"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <Border Background="{DynamicResource NotebookBackgroundBrush}"
+                                            BorderBrush="{DynamicResource NotebookBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="12"
+                                            Padding="20,18">
+                                        <StackPanel>
+                                            <!-- Row 1: Current session (3-hour window) -->
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="220"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="84"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                    <TextBlock Text="Current session" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
+                                                    <TextBlock x:Name="AxiomSessionUsageResetText" Text="Starts with your first message" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                                <Border x:Name="AxiomSessionUsageTrack"
+                                                        Grid.Column="1"
+                                                        Height="6"
+                                                        CornerRadius="3"
+                                                        Background="#2E2D2C"
+                                                        ClipToBounds="True"
+                                                        VerticalAlignment="Center"
+                                                        Margin="18,0,18,0"
+                                                        SizeChanged="AxiomUsageTrack_SizeChanged">
+                                                    <Border x:Name="AxiomSessionUsageFill"
+                                                            Height="6"
+                                                            Width="0"
+                                                            CornerRadius="3"
+                                                            HorizontalAlignment="Left"
+                                                            Background="#3B82F6"/>
+                                                </Border>
+                                                <TextBlock x:Name="AxiomSessionUsagePercentText"
+                                                           Grid.Column="2"
+                                                           Text="0% used"
+                                                           FontSize="13"
+                                                           Foreground="{DynamicResource DarkSecondaryBrush}"
+                                                           FontFamily="Segoe UI"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"/>
+                                            </Grid>
+
+                                            <!-- Row 2: This week (7-day window) -->
+                                            <Grid Margin="0,24,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="220"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="84"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                    <TextBlock Text="This week" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
+                                                    <TextBlock x:Name="AxiomWeeklyUsageResetText" Text="Resets every 7 days" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                                <Border x:Name="AxiomWeeklyUsageTrack"
+                                                        Grid.Column="1"
+                                                        Height="6"
+                                                        CornerRadius="3"
+                                                        Background="#2E2D2C"
+                                                        ClipToBounds="True"
+                                                        VerticalAlignment="Center"
+                                                        Margin="18,0,18,0"
+                                                        SizeChanged="AxiomUsageTrack_SizeChanged">
+                                                    <Border x:Name="AxiomWeeklyUsageFill"
+                                                            Height="6"
+                                                            Width="0"
+                                                            CornerRadius="3"
+                                                            HorizontalAlignment="Left"
+                                                            Background="#3B82F6"/>
+                                                </Border>
+                                                <TextBlock x:Name="AxiomWeeklyUsagePercentText"
+                                                           Grid.Column="2"
+                                                           Text="0% used"
+                                                           FontSize="13"
+                                                           Foreground="{DynamicResource DarkSecondaryBrush}"
+                                                           FontFamily="Segoe UI"
+                                                           HorizontalAlignment="Right"
+                                                           VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <TextBlock x:Name="AxiomUsageFooterText"
+                                               Text="3-hour session and weekly limits help stretch your monthly DeepSeek 4.1F-1017 subscription."
+                                               FontSize="10.5"
+                                               Foreground="{DynamicResource DarkSecondaryBrush}"
+                                               FontFamily="Segoe UI"
+                                               TextWrapping="Wrap"
+                                               Margin="2,10,2,0"/>
+                                </StackPanel>
                             </StackPanel>
                             </ScrollViewer>
 
@@ -2916,7 +3130,6 @@
                     </Border>
                 </Grid>
             </Border>
-        </Grid>
 
         <!-- Update notification banner: shown on startup when a newer GitHub release exists.
              Slides down + fades in; click downloads and runs the installer; ✕ dismisses. -->

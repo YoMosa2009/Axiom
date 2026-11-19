@@ -38,6 +38,27 @@ public partial class WorkplaceView
                 return WorkplaceFileChange.Merge(canvas == null ? recorded : recorded.Append(canvas));
             });
             message.FileChanges = changes;
+            var fileLinks = new List<WorkplaceCanvasFileLink>();
+            foreach (WorkplaceFileChange change in changes)
+            {
+                if (string.Equals(change.Kind, "Deleted", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(change.Kind, "Canvas", StringComparison.OrdinalIgnoreCase)
+                    || CanvasFileArtifact.IsBinaryFormat(change.DisplayPath))
+                {
+                    continue;
+                }
+
+                WorkplaceCanvasFileLink link = BuildCanvasFileLink(change.DisplayPath, change.Path, change.AfterText);
+                RegisterCanvasFile(link);
+                fileLinks.Add(link);
+            }
+
+            if (fileLinks.Count > 0)
+            {
+                MergeCanvasFilesOntoMessage(message, fileLinks);
+                WorkplaceCanvasFileLink latest = fileLinks[^1];
+                OpenFileInProjectCanvas(latest.FilePath, latest.InlineContent, showSidebar: false);
+            }
             RequestWorkspaceStateSave();
             ChatScrollViewer?.ScrollToEnd();
         }
@@ -77,7 +98,17 @@ public partial class WorkplaceView
     }
 
     private void CompletedChanges_Review(object? sender, WorkplaceChatMessage message) => ShowCapturedChanges(message.FileChanges);
-    private void CompletedChanges_ReviewFile(object? sender, WorkplaceFileChange change) => ShowCapturedChanges(new[] { change });
+    private void CompletedChanges_ReviewFile(object? sender, WorkplaceFileChange change)
+    {
+        if (!string.Equals(change.Kind, "Deleted", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(change.Kind, "Canvas", StringComparison.OrdinalIgnoreCase)
+            && OpenFileInProjectCanvas(change.Path, change.AfterText, showSidebar: true))
+        {
+            return;
+        }
+
+        ShowCapturedChanges(new[] { change });
+    }
     private void CompletedChanges_Undo(object? sender, WorkplaceChatMessage message)
     {
         if (ReferenceEquals(message, _agentUndoMessage) && message.CanUndoFileChanges)

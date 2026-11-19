@@ -4,6 +4,7 @@ using System.Data.SQLite;
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace Malx_AI
 {
@@ -12,6 +13,8 @@ namespace Malx_AI
         private static readonly string DatabasePath = AppDataPaths.DatabaseFile;
         private const string OpenRouterApiKeySettingKey = "openrouter_api_key";
         private const string CustomEndpointApiKeySettingKey = "custom_endpoint_api_key";
+        private const string AxiomAccountSessionSettingKey = "axiom_account_session";
+        internal const string UseAxiomAccountSettingKey = "use_axiom_account_endpoint";
         // Public: shared with WorkplaceView, which loads the same custom-endpoint config into its
         // own separate OpenRouterChatService instance rather than duplicating these literal strings.
         public const string CustomEndpointBaseUrlSettingKey = "custom_endpoint_base_url";
@@ -349,6 +352,33 @@ namespace Malx_AI
         }
 
         public void SaveCustomEndpointApiKey(string apiKey)
+            => SaveProtectedSetting(CustomEndpointApiKeySettingKey, apiKey);
+
+        public string? LoadCustomEndpointApiKey()
+            => LoadProtectedSetting(CustomEndpointApiKeySettingKey);
+
+        internal void SaveAxiomAccount(Uri endpoint, AxiomDesktopSession? session)
+            => SaveProtectedSetting(AxiomAccountSessionSettingKey,
+                session is null ? string.Empty : JsonSerializer.Serialize(new StoredAxiomAccount(endpoint.AbsoluteUri, session)));
+
+        internal AxiomDesktopSession? LoadAxiomAccount(Uri endpoint)
+        {
+            string? stored = LoadProtectedSetting(AxiomAccountSessionSettingKey);
+            if (stored is null)
+                return null;
+            try
+            {
+                var account = JsonSerializer.Deserialize<StoredAxiomAccount>(stored);
+                return account is { Session: not null } && account.Endpoint == endpoint.AbsoluteUri
+                    && account.Session.ExpiresAt > DateTimeOffset.UtcNow ? account.Session : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private void SaveProtectedSetting(string settingKey, string apiKey)
         {
             if (!IsReady) return;
 
@@ -357,29 +387,29 @@ namespace Malx_AI
                 string normalized = (apiKey ?? string.Empty).Trim();
                 if (string.IsNullOrWhiteSpace(normalized))
                 {
-                    SaveSetting(CustomEndpointApiKeySettingKey, string.Empty);
+                    SaveSetting(settingKey, string.Empty);
                     return;
                 }
 
                 byte[] plainBytes = System.Text.Encoding.UTF8.GetBytes(normalized);
                 byte[] protectedBytes = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
                 string base64 = Convert.ToBase64String(protectedBytes);
-                SaveSetting(CustomEndpointApiKeySettingKey, base64);
+                SaveSetting(settingKey, base64);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"SaveCustomEndpointApiKey error: {ex.Message}");
-                _ = BackendLogService.LogErrorAsync("DatabaseService.SaveCustomEndpointApiKey", ex);
+                Debug.WriteLine($"SaveProtectedSetting error: {ex.Message}");
+                _ = BackendLogService.LogErrorAsync("DatabaseService.SaveProtectedSetting", ex);
             }
         }
 
-        public string? LoadCustomEndpointApiKey()
+        private string? LoadProtectedSetting(string settingKey)
         {
             if (!IsReady) return null;
 
             try
             {
-                string stored = GetSetting(CustomEndpointApiKeySettingKey);
+                string stored = GetSetting(settingKey);
                 if (string.IsNullOrWhiteSpace(stored))
                     return null;
 
@@ -390,8 +420,8 @@ namespace Malx_AI
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"LoadCustomEndpointApiKey error: {ex.Message}");
-                _ = BackendLogService.LogErrorAsync("DatabaseService.LoadCustomEndpointApiKey", ex);
+                Debug.WriteLine($"LoadProtectedSetting error: {ex.Message}");
+                _ = BackendLogService.LogErrorAsync("DatabaseService.LoadProtectedSetting", ex);
                 return null;
             }
         }

@@ -214,5 +214,87 @@ namespace Malx_AI.Tests
             Assert.Contains("FILE: notes.md", compact);
             Assert.True(compact.Length < 420, $"compact instruction was {compact.Length} chars");
         }
+
+        [Fact]
+        public void ParseAllExtractsMultipleFilesAndFormatsEachByType()
+        {
+            string output = """
+                Created config and schema:
+
+                FILE: config/app.json
+                ```json
+                {"name":"Axiom","enabled":true,"ports":[5198,8080]}
+                ```
+
+                FILE: docs/guide.xml
+                ```xml
+                <settings><mode>Cloud</mode></settings>
+                ```
+
+                FILE: deploy/settings.yaml
+                ```yaml
+                model: DeepSeek 4.1F-1017
+                enabled: true
+                ```
+
+                FILE: src/Helper.cs
+                ```csharp
+                public sealed class Helper { public int Run() => 42; }
+                ```
+                """;
+
+            var files = CanvasFileArtifact.ParseAll(output);
+            Assert.Equal(4, files.Count);
+            Assert.Equal("app.json", files[0].FileName);
+            Assert.Equal("JSON", CanvasFileArtifact.GetFileTypeBadge(files[0].Extension));
+            Assert.Equal("XML", CanvasFileArtifact.GetFileTypeBadge(".xml"));
+            Assert.Equal("YAML", CanvasFileArtifact.GetFileTypeBadge(".yaml"));
+            Assert.Equal("C#", CanvasFileArtifact.GetFileTypeBadge(".cs"));
+
+            var jsonHtml = CanvasFileArtifact.ToArtifact(files[0]).RenderSource;
+            Assert.Contains("tk-key", jsonHtml);
+            Assert.Contains("tk-kw", jsonHtml);
+            Assert.Contains("<span class='badge'>JSON</span>", jsonHtml);
+            Assert.Contains("codewrap", jsonHtml);
+
+            var xmlHtml = CanvasFileArtifact.ToArtifact(files[1]).RenderSource;
+            Assert.Contains("tk-tag", xmlHtml);
+            Assert.Contains("<span class='badge'>XML</span>", xmlHtml);
+
+            var yamlHtml = CanvasFileArtifact.ToArtifact(files[2]).RenderSource;
+            Assert.Contains("tk-key", yamlHtml);
+            Assert.Contains("<span class='badge'>YAML</span>", yamlHtml);
+
+            var codeHtml = CanvasFileArtifact.ToArtifact(files[3]).RenderSource;
+            Assert.Contains("tk-kw", codeHtml);
+            Assert.Contains("<span class='badge'>C#</span>", codeHtml);
+        }
+
+        [Fact]
+        public void TryFromDiskFileLoadsValidTextAndRejectsBinary()
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), $"axiom-canvas-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                string jsonPath = Path.Combine(tempDir, "sample.json");
+                File.WriteAllText(jsonPath, """{"ok":true}""");
+                Assert.True(CanvasFileArtifact.TryFromDiskFile(jsonPath, "sample.json", out CanvasFile? loaded, out string? error));
+                Assert.Null(error);
+                Assert.NotNull(loaded);
+                Assert.Equal(".json", loaded!.Extension);
+
+                string binPath = Path.Combine(tempDir, "blob.bin");
+                File.WriteAllBytes(binPath, new byte[] { 0x41, 0x00, 0x42, 0x43 });
+                Assert.False(CanvasFileArtifact.TryFromDiskFile(binPath, "blob.bin", out CanvasFile? binLoaded, out string? binError));
+                Assert.Null(binLoaded);
+                Assert.False(string.IsNullOrWhiteSpace(binError));
+            }
+            finally
+            {
+                if (Directory.Exists(tempDir))
+                    Directory.Delete(tempDir, recursive: true);
+            }
+        }
     }
 }

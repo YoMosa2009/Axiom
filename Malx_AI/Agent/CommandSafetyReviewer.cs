@@ -8,7 +8,7 @@ namespace Malx_AI.Agent
 {
     public enum CommandReviewMode
     {
-        /// <summary>Automatically approves safe project commands and intercepts risky/destructive ones for user review.</summary>
+        /// <summary>Automatically approves safe project commands and declines unsafe/destructive ones on the user's behalf.</summary>
         AutoReview,
 
         /// <summary>Asks the user before running every command or file edit.</summary>
@@ -20,31 +20,65 @@ namespace Malx_AI.Agent
 
     /// <summary>
     /// Fast deterministic safety & scope reviewer for commands and tool calls in Workplace.
-    /// Enforces strict folder confinement and flags potentially harmful commands in Auto-Review mode.
+    /// Enforces strict folder confinement and decides safe vs unsafe commands autonomously in Auto-Review mode.
     /// </summary>
     public static class CommandSafetyReviewer
     {
         private sealed record RiskRule(Regex Pattern, string Reason);
 
-        private static readonly RiskRule[] RiskyCommandRules =
+        private static readonly RiskRule[] AutoDenyCommandRules =
         [
-            new(new Regex(@"(?<![\w-])(Remove-Item|del|erase|rd|rmdir|rm)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-                "deletes files or directories"),
-            new(new Regex(@"(?<![\w-])(Move-Item|Rename-Item|Clear-Content|Set-ExecutionPolicy|New-Service|Stop-Service|Stop-Process|taskkill)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+            new(new Regex(@"(?<![\w-])(Set-ExecutionPolicy|New-Service|Stop-Service|Stop-Process|taskkill)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
                 "modifies system processes, services, or execution policy"),
-            new(new Regex(@"(?<![\w-])(Invoke-WebRequest|Invoke-RestMethod|iwr|irm|curl|wget)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-                "makes network requests or downloads external content"),
             new(new Regex(@"(?<![\w-])(reg\s+(add|delete|import)|regedit|schtasks|netsh|icacls|takeown)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
                 "alters Windows registry, permissions, or scheduled tasks"),
             new(new Regex(@"\bgit\s+(push|reset\s+--hard|clean\s+-[a-z]*f|rebase|branch\s+-D)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
                 "runs a potentially destructive or remote-mutating git operation"),
-            new(new Regex(@"\b(pip|npm|pnpm|yarn|winget|choco|scoop)\s+(install|uninstall|upgrade)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-                "installs or uninstalls software packages"),
+            new(new Regex(@"(?<![\w-])(winget|choco|scoop|msiexec)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+                "installs or removes system-wide software"),
+            new(new Regex(@"\b(npm|pnpm|yarn)\s+(?:install|i|add|uninstall|remove)\b[^\r\n]*\s(?:-g|--global)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+                "installs or removes global software packages"),
+            new(new Regex(@"\b(pip|npm|pnpm|yarn)\s+uninstall\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
+                "uninstalls packages"),
             new(new Regex(@"(?<![\w-])(Invoke-Expression|iex)\b|\s-(?:EncodedCommand|enc)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-                "runs dynamically evaluated or encoded shell code"),
-            new(new Regex(@"(?<![\w-])Start-Process\b", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-                "launches an external process")
+                "runs dynamically evaluated or encoded shell code")
         ];
+
+        private static readonly Regex DeleteCommandRegex = new(
+            @"(?<![\w-])(Remove-Item|del|erase|rd|rmdir|rm)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex UnsafeDeleteTargetRegex = new(
+            @"(?:^|[\s""'])(?:\.git(?=[\\/]|$|\s|""|')|\.{1,2}[\\/]?(?=\s|""|'|$)|\*|\.[\\/]\*)(?:$|[\s""'])",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex NetworkCommandRegex = new(
+            @"(?<![\w-])(Invoke-WebRequest|Invoke-RestMethod|iwr|irm|curl|wget)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex HttpUrlRegex = new(
+            @"https?://(?<host>[^\s/""'`;|><:]+)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex PipeToShellRegex = new(
+            @"\|\s*(?:iex|Invoke-Expression|powershell|pwsh|cmd|sh|bash)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex StartProcessRegex = new(
+            @"(?<![\w-])Start-Process\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex UnsafeStartProcessArgsRegex = new(
+            @"-Verb\s+RunAs\b|Start-Process\s+[""']?(?:powershell|pwsh|cmd|wscript|cscript|msiexec)(?:\.exe)?\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex LocalInstallRegex = new(
+            @"\b(pip|pip3|npm|pnpm|yarn)\s+(install|add|i)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex MoveRenameClearRegex = new(
+            @"(?<![\w-])(Move-Item|Rename-Item|Clear-Content)\b",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly Regex WindowsAbsolutePathRegex = new(
             @"""(?<path>(?<![A-Za-z0-9_])[A-Za-z]:(?!//)[\\/][^""\r\n]+)""|'(?<path>(?<![A-Za-z0-9_])[A-Za-z]:(?!//)[\\/][^'\r\n]+)'|(?<path>(?<![A-Za-z0-9_])[A-Za-z]:(?!//)[\\/][^\s""'`;|><\r\n]*)",
@@ -98,19 +132,18 @@ namespace Malx_AI.Agent
                 if (mode == CommandReviewMode.AutoApprove)
                     return new AgentPermissionDecision(AgentPermission.Allow, "Auto-Run enabled.");
 
-                // AutoReview: check allow-list first, then inspect for risky operations
+                // AutoReview: decide autonomously on the user's behalf without interrupting them.
                 if (AgentPermissionPolicy.MatchesAllowList(command, sessionAllowList))
                     return new AgentPermissionDecision(AgentPermission.Allow, "Allowed for this session.");
 
-                RiskRule? risk = RiskyCommandRules.FirstOrDefault(r => r.Pattern.IsMatch(command));
-                if (risk != null)
+                if (EvaluateAutoReviewDangerReason(command, scope) is string denyReason)
                 {
                     return new AgentPermissionDecision(
-                        AgentPermission.Ask,
-                        $"Auto-Review intercepted this command because it {risk.Reason}.");
+                        AgentPermission.Deny,
+                        $"Auto-Review declined this command because it {denyReason}.");
                 }
 
-                return new AgentPermissionDecision(AgentPermission.Allow, "Auto-Review: safe project-local command.");
+                return new AgentPermissionDecision(AgentPermission.Allow, "Auto-Review: approved safe project command.");
             }
 
             if (string.Equals(call.Tool, AgentToolNames.BrowserControl, StringComparison.OrdinalIgnoreCase))
@@ -136,6 +169,8 @@ namespace Malx_AI.Agent
                 {
                     if (mode == CommandReviewMode.AutoApprove)
                         return new AgentPermissionDecision(AgentPermission.Allow, "Auto-Run enabled for browser install.");
+                    if (mode == CommandReviewMode.AutoReview)
+                        return new AgentPermissionDecision(AgentPermission.Deny, "Auto-Review declined running an external installer automatically.");
                     return new AgentPermissionDecision(AgentPermission.Ask, "Review required before running an installer.");
                 }
 
@@ -147,6 +182,50 @@ namespace Malx_AI.Agent
 
             return baseline;
         }
+
+        private static string? EvaluateAutoReviewDangerReason(string command, AgentScope scope)
+        {
+            RiskRule? alwaysDanger = AutoDenyCommandRules.FirstOrDefault(r => r.Pattern.IsMatch(command));
+            if (alwaysDanger != null)
+                return alwaysDanger.Reason;
+
+            bool isUnscoped = scope.EntireComputer || string.IsNullOrWhiteSpace(scope.RootPath);
+
+            if (DeleteCommandRegex.IsMatch(command))
+            {
+                if (isUnscoped)
+                    return "deletes files without a confined project folder";
+                if (UnsafeDeleteTargetRegex.IsMatch(command))
+                    return "targets the project root, wildcards, or repository metadata for deletion";
+            }
+
+            if (MoveRenameClearRegex.IsMatch(command) && isUnscoped)
+                return "modifies or clears files without a confined project folder";
+
+            if (LocalInstallRegex.IsMatch(command) && isUnscoped)
+                return "installs packages without a confined project folder";
+
+            if (NetworkCommandRegex.IsMatch(command))
+            {
+                if (PipeToShellRegex.IsMatch(command))
+                    return "pipes network content into a shell interpreter";
+
+                MatchCollection urls = HttpUrlRegex.Matches(command);
+                if (urls.Count == 0 || urls.Any(m => !IsLoopbackHost(m.Groups["host"].Value)))
+                    return "makes external network requests or downloads content";
+            }
+
+            if (StartProcessRegex.IsMatch(command) && (isUnscoped || UnsafeStartProcessArgsRegex.IsMatch(command)))
+                return "launches a privileged or external host process";
+
+            return null;
+        }
+
+        private static bool IsLoopbackHost(string host)
+            => string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(host, "[::1]", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(host, "::1", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Checks whether a shell command references a filesystem path outside <paramref name="scopeRoot"/>.

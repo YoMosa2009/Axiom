@@ -138,6 +138,19 @@ the current results and linked reports above for the latest verified scope.
   - Files: `Malx_AI/MainWindow.xaml`, `Malx_AI/MessageHtmlRenderer.cs`, `Malx_AI/WorkplaceView.xaml`
   - Verified: Clean Debug build (`0 Error(s)`) & live app startup.
 
+- [x] **21. Managed Cloud Subscription (`DeepSeek 4.1F-1017`), Settings `Usage` Pacing, Modal Click-Through Fix, Multi-Format Project Canvas, Autonomous `Auto-Review` & Chat Typography**
+  - Files:
+    - Gateway: `tools/AxiomSubscriptionGateway/AllowanceLedger.cs`, `AccountGateway.cs`, `LocalGateway.cs`, `OpenRouterInference.cs`
+    - Managed Cloud & Workplace: `Malx_AI/OpenRouterChatService.cs`, `Malx_AI/MainWindow.Cloud.cs`, `Malx_AI/MainWindow.Subscription.cs`, `Malx_AI/WorkplaceView.xaml`, `Malx_AI/WorkplaceView.xaml.cs`, `Malx_AI/WorkplaceView.ComputerUse.cs`, `Malx_AI/WorkplaceView.Agent.cs`
+    - Settings `Usage` & Modal Fix: `Malx_AI/MainWindow.xaml`, `Malx_AI/MainWindow.xaml.cs`, `Malx_AI/WorkplaceView.Overhaul.cs`
+    - Project Canvas & Links: `Malx_AI/CanvasFileArtifact.cs`, `Malx_AI/WorkplaceChatMessage.cs`, `Malx_AI/WorkplaceMarkdownDocumentFactory.cs`, `Malx_AI/WorkplaceChangeSummary.xaml`, `Malx_AI/WorkplaceView.CanvasPresentation.cs`, `Malx_AI/WorkplaceView.ChangeSummary.cs`, `Malx_AI/MainWindow.ProjectCanvas.cs`, `Malx_AI/Agent/AgentPromptBuilder.cs`
+    - Command Review & Typography: `Malx_AI/Agent/CommandSafetyReviewer.cs`, `Malx_AI/RenderedMessageView.xaml`, `Malx_AI/MessageHtmlRenderer.cs`
+    - Tests: `Malx_AI.Tests/AxiomAccountGatewayTests.cs`, `ManagedInferenceGatewayTests.cs`, `CanvasFileArtifactTests.cs`, `CommandSafetyReviewerTests.cs`, `BrowserControlServiceTests.cs`
+  - Verified (2026-11-18):
+    - `dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj -c Release --no-restore`: `Passed: 993, Failed: 0, Skipped: 0, Total: 993`
+    - `dotnet build Malx_AI/Malx_AI.csproj -c Release -r win-x64 --no-restore`: `0 Error(s)` (`352` warnings); Debug `win-x64` build: `0 Error(s)`
+    - MalxPC staging gateway (`AxiomGatewayStaging-MalxPC`) updated with new binaries (`AxiomSubscriptionGateway.dll`, `208384` bytes), listening on `127.0.0.1:5198` (HTTP `401` unauthenticated) and public `https://staging.axiominference.work/v1/subscription` (HTTP `401` unauthenticated), with `accounts.sqlite` migrated cleanly (`created_at` column + `usage_session_window` table) and Account 1 balance preserved (`allowance=5000000`, `spent=580`, `reserved=0`).
+
 ## Historical verification log (2026-11-16)
 - `dotnet build C:\Users\user\source\repos\Axiom\Malx_AI\Malx_AI.csproj -c Debug --no-restore`: `0 Error(s)`
 - `dotnet test C:\Users\user\source\repos\Axiom\Malx_AI.Tests\Malx_AI.Tests.csproj --no-restore`: `Passed: 772, Failed: 0, Skipped: 0, Total: 772`

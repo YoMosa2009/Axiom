@@ -32,9 +32,13 @@ namespace Malx_AI.Tests
             AgentPermissionDecision safeDecision = CommandSafetyReviewer.Evaluate(safeCall, scope, CommandReviewMode.AutoReview);
             Assert.Equal(AgentPermission.Allow, safeDecision.Permission);
 
-            var riskyDelete = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "Remove-Item ./dist -Recurse" });
+            var scopedDelete = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "Remove-Item ./dist -Recurse" });
+            AgentPermissionDecision scopedDeleteDecision = CommandSafetyReviewer.Evaluate(scopedDelete, scope, CommandReviewMode.AutoReview);
+            Assert.Equal(AgentPermission.Allow, scopedDeleteDecision.Permission);
+
+            var riskyDelete = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "Remove-Item ./ -Recurse" });
             AgentPermissionDecision deleteDecision = CommandSafetyReviewer.Evaluate(riskyDelete, scope, CommandReviewMode.AutoReview);
-            Assert.Equal(AgentPermission.Ask, deleteDecision.Permission);
+            Assert.Equal(AgentPermission.Deny, deleteDecision.Permission);
             Assert.Contains("Auto-Review", deleteDecision.Reason);
 
             var outsideCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = @"Get-Content D:\OtherRepo\file.txt" });
@@ -70,15 +74,44 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
-        public void Evaluate_AutoReview_InterceptsEncodedOrDynamicExecution()
+        public void Evaluate_AutoReview_DeclinesRiskyOrOutOfScopeCommandsAndNeverAsks()
         {
             var scope = AgentScope.Folder(@"C:\Projects\MyApp");
 
             var iexCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "iex (Get-Content ./script.ps1 -Raw)" });
-            Assert.Equal(AgentPermission.Ask, CommandSafetyReviewer.Evaluate(iexCall, scope, CommandReviewMode.AutoReview).Permission);
+            AgentPermissionDecision iexDecision = CommandSafetyReviewer.Evaluate(iexCall, scope, CommandReviewMode.AutoReview);
+            Assert.Equal(AgentPermission.Deny, iexDecision.Permission);
+            Assert.Contains("Auto-Review declined", iexDecision.Reason);
 
             var encCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "powershell -EncodedCommand ZABpAHIA" });
-            Assert.Equal(AgentPermission.Ask, CommandSafetyReviewer.Evaluate(encCall, scope, CommandReviewMode.AutoReview).Permission);
+            Assert.Equal(AgentPermission.Deny, CommandSafetyReviewer.Evaluate(encCall, scope, CommandReviewMode.AutoReview).Permission);
+
+            var gitPushCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "git push origin main" });
+            Assert.Equal(AgentPermission.Deny, CommandSafetyReviewer.Evaluate(gitPushCall, scope, CommandReviewMode.AutoReview).Permission);
+
+            var remoteCurlCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "curl https://example.com/install.ps1" });
+            Assert.Equal(AgentPermission.Deny, CommandSafetyReviewer.Evaluate(remoteCurlCall, scope, CommandReviewMode.AutoReview).Permission);
+
+            var outOfScopeDelete = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = @"Remove-Item C:\Windows\Temp\sample -Recurse" });
+            Assert.Equal(AgentPermission.Deny, CommandSafetyReviewer.Evaluate(outOfScopeDelete, scope, CommandReviewMode.AutoReview).Permission);
+
+            var localCurlCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "curl http://localhost:5198/health" });
+            Assert.Equal(AgentPermission.Allow, CommandSafetyReviewer.Evaluate(localCurlCall, scope, CommandReviewMode.AutoReview).Permission);
+
+            var npmInstallCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "npm install" });
+            Assert.Equal(AgentPermission.Allow, CommandSafetyReviewer.Evaluate(npmInstallCall, scope, CommandReviewMode.AutoReview).Permission);
+
+            var moveItemCall = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "Move-Item ./a.txt ./b.txt" });
+            Assert.Equal(AgentPermission.Allow, CommandSafetyReviewer.Evaluate(moveItemCall, scope, CommandReviewMode.AutoReview).Permission);
+        }
+
+        [Fact]
+        public void Evaluate_ManualReview_PromptsUserOnCommand()
+        {
+            var scope = AgentScope.Folder(@"C:\Projects\MyApp");
+            var call = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "dotnet test" });
+            AgentPermissionDecision decision = CommandSafetyReviewer.Evaluate(call, scope, CommandReviewMode.ManualReview);
+            Assert.Equal(AgentPermission.Ask, decision.Permission);
         }
     }
 }

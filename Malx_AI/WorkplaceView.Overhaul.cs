@@ -169,6 +169,11 @@ namespace Malx_AI
             else
                 _commandReviewMode = CommandReviewMode.AutoReview;
 
+            _agentApprovalMode = _commandReviewMode == CommandReviewMode.ManualReview
+                ? AgentApprovalMode.Manual
+                : AgentApprovalMode.Auto;
+            AgentSettings.Write(AgentApprovalModeKey, _agentApprovalMode == AgentApprovalMode.Auto ? "auto" : "manual");
+
             _agentScopeFolder = snapshot.ProjectFolderPath ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(_agentScopeFolder) && Directory.Exists(_agentScopeFolder))
             {
@@ -423,6 +428,28 @@ namespace Malx_AI
                 };
                 SelectProjectRecentList.Children.Add(btn);
             }
+        }
+
+        public void CloseAllPopups()
+        {
+            if (WorkplaceConfigPopup != null)
+                WorkplaceConfigPopup.IsOpen = false;
+            if (NotificationDropdownPopup != null)
+                NotificationDropdownPopup.IsOpen = false;
+            _isNotificationPanelOpen = false;
+            SetSidebarButtonActive(NotificationToggleButton, false);
+            if (WorkplacePlusPopup != null)
+                WorkplacePlusPopup.IsOpen = false;
+            if (SelectProjectPopup != null)
+                SelectProjectPopup.IsOpen = false;
+            if (CommandReviewPopup != null)
+                CommandReviewPopup.IsOpen = false;
+            if (WorkplaceSkillsPopup != null)
+                WorkplaceSkillsPopup.IsOpen = false;
+            if (ProjectKnowledgeBasePopup != null)
+                ProjectKnowledgeBasePopup.IsOpen = false;
+            if (WorkplaceMentionPopup != null)
+                WorkplaceMentionPopup.IsOpen = false;
         }
 
         private void WorkplaceConfigButton_Click(object sender, RoutedEventArgs e)
@@ -881,7 +908,8 @@ namespace Malx_AI
 
                     foreach (string file in items)
                     {
-                        var fileRow = new Grid { Margin = new Thickness(0, 4, 0, 4), ToolTip = file };
+                        string captureFile = file;
+                        var fileRow = new Grid { ToolTip = captureFile };
                         fileRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                         fileRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                         fileRow.Children.Add(new TextBlock
@@ -894,17 +922,39 @@ namespace Malx_AI
                             Margin = new Thickness(0, 0, 7, 0),
                             VerticalAlignment = VerticalAlignment.Center
                         });
-                        var fileName = new TextBlock
+                        var labelStack = new StackPanel();
+                        labelStack.Children.Add(new TextBlock
                         {
-                            Text = Path.GetFileName(file),
+                            Text = Path.GetFileName(captureFile),
                             FontSize = 13,
-                            LineHeight = 19,
-                            VerticalAlignment = VerticalAlignment.Center,
+                            LineHeight = 18,
+                            Foreground = AppTheme.Brush("#EDE8E3"),
                             TextTrimming = TextTrimming.CharacterEllipsis
+                        });
+                        labelStack.Children.Add(new TextBlock
+                        {
+                            Text = "Open in Project Canvas",
+                            FontSize = 11,
+                            LineHeight = 15,
+                            Foreground = AppTheme.Brush("#F5D591"),
+                            TextDecorations = TextDecorations.Underline
+                        });
+                        Grid.SetColumn(labelStack, 1);
+                        fileRow.Children.Add(labelStack);
+
+                        var fileButton = new Button
+                        {
+                            Content = fileRow,
+                            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                            Background = Brushes.Transparent,
+                            BorderThickness = new Thickness(0),
+                            Padding = new Thickness(2, 4, 2, 4),
+                            Margin = new Thickness(0, 2, 0, 2),
+                            Cursor = System.Windows.Input.Cursors.Hand,
+                            ToolTip = captureFile
                         };
-                        Grid.SetColumn(fileName, 1);
-                        fileRow.Children.Add(fileName);
-                        RightSidebarOutputsPanel.Children.Add(fileRow);
+                        fileButton.Click += (_, _) => OpenFileInProjectCanvas(captureFile, showSidebar: true);
+                        RightSidebarOutputsPanel.Children.Add(fileButton);
                     }
                 }
             }

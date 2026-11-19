@@ -70,7 +70,11 @@
                                         HorizontalContentAlignment="Stretch" ToolTip="{Binding Path}" AutomationProperties.Name="{Binding DisplayPath}">
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding DisplayPath}" FontSize="13" TextTrimming="CharacterEllipsis" Margin="0,0,14,0" VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="0" Margin="0,0,14,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayPath}" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock x:Name="CanvasOpenHint" Text="Open formatted preview in Project Canvas" FontSize="11"
+                                                       Foreground="{DynamicResource AccentBrightBrush}" TextDecorations="Underline" Margin="0,2,0,0"/>
+                                        </StackPanel>
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding CountsDescription}">
                                             <TextBlock Text="{Binding AddedLabel}" FontSize="12" Foreground="{DynamicResource SuccessBrush}"/>
                                             <TextBlock Text="{Binding RemovedLabel}" FontSize="12" Foreground="{DynamicResource DangerBrush}" Margin="4,0,0,0"/>
@@ -80,6 +84,8 @@
                                 </Button>
                                 <DataTemplate.Triggers>
                                     <DataTrigger Binding="{Binding Additions}" Value="{x:Null}"><Setter TargetName="UnknownCounts" Property="Visibility" Value="Visible"/></DataTrigger>
+                                    <DataTrigger Binding="{Binding Kind}" Value="Canvas"><Setter TargetName="CanvasOpenHint" Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                    <DataTrigger Binding="{Binding Kind}" Value="Deleted"><Setter TargetName="CanvasOpenHint" Property="Visibility" Value="Collapsed"/></DataTrigger>
                                 </DataTemplate.Triggers>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

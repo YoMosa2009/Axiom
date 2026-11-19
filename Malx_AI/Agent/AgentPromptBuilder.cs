@@ -167,7 +167,7 @@ namespace Malx_AI.Agent
                 // A flat-protocol model ends with TOOL finish in plain text; also asking it for a
                 // "structured Markdown summary" contradicted the protocol it had just been given.
                 ? "6. When the work is done, reply with TOOL finish. In summary write a few plain sentences: what you made or changed, the full path of each file, the check you ran and what it showed, and how to run it. Never just 'Done.'"
-                : "6. End the turn with a concise Markdown summary: what changed, the file paths, what the check actually proved, and what remains broken or unverified. Include how to run it when useful. Do not repeat an older turn's summary or explain every internal step.");
+                : "6. End the turn with a concise Markdown summary: what changed, the file paths (and clickable Project Canvas links like `[Open filename.ext in Project Canvas](canvas:filename.ext)` for text/code/markdown/json deliverables), what the check actually proved, and what remains broken or unverified. Include how to run it when useful. Do not repeat an older turn's summary or explain every internal step.");
             builder.AppendLine("7. When the user asks a question (\"Is it done?\", \"What did you do?\", \"How do I run it?\"), ANSWER it in words straight away from what you already know. A question is not a request to rebuild, re-read or re-verify anything.");
             builder.AppendLine();
             builder.AppendLine("Rules:");

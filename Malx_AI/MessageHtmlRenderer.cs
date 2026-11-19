@@ -124,9 +124,9 @@ body {
     color: #EDE8E3;
     background: #171615;
     font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
-    font-size: 12.5px;
+    font-size: 14.5px;
     font-weight: 400;
-    line-height: 1.55;
+    line-height: 1.62;
     overflow-wrap: anywhere;
     word-break: break-word;
     -webkit-font-smoothing: antialiased;
@@ -164,7 +164,7 @@ pre {
     border: 1px solid #302D2A;
     border-radius: 7px;
     padding: 8px 10px;
-    font-size: 11.5px;
+    font-size: 13px;
     overflow-x: auto;
 }
 code {
@@ -172,7 +172,7 @@ code {
     border: 1px solid #302D2A;
     border-radius: 4px;
     padding: 1px 4px;
-    font-size: 11.5px;
+    font-size: 13px;
 }
 pre code { border: none; background: transparent; padding: 0; }
 blockquote {
@@ -185,7 +185,7 @@ table {
     border-collapse: collapse;
     width: 100%;
     margin: 0 0 8px 0;
-    font-size: 12px;
+    font-size: 13.5px;
 }
 th, td {
     border: 1px solid #302D2A;

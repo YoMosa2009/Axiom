@@ -97,7 +97,8 @@ namespace Malx_AI.Tests
             var installCall = new AgentToolCall(AgentToolNames.BrowserControl, new Dictionary<string, string> { ["action"] = "install", ["url"] = "Git.Git" });
 
             Assert.Equal(AgentPermission.Allow, CommandSafetyReviewer.Evaluate(detectCall, AgentScope.WholeComputer(), CommandReviewMode.AutoReview).Permission);
-            Assert.Equal(AgentPermission.Ask, CommandSafetyReviewer.Evaluate(installCall, AgentScope.WholeComputer(), CommandReviewMode.AutoReview).Permission);
+            Assert.Equal(AgentPermission.Deny, CommandSafetyReviewer.Evaluate(installCall, AgentScope.WholeComputer(), CommandReviewMode.AutoReview).Permission);
+            Assert.Equal(AgentPermission.Ask, CommandSafetyReviewer.Evaluate(installCall, AgentScope.WholeComputer(), CommandReviewMode.ManualReview).Permission);
             Assert.Equal(AgentPermission.Allow, CommandSafetyReviewer.Evaluate(installCall, AgentScope.WholeComputer(), CommandReviewMode.AutoApprove).Permission);
         }
     }

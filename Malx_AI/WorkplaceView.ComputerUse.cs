@@ -71,6 +71,7 @@ namespace Malx_AI
                 try
                 {
                     LoadOpenRouterKeyForWorkplace();
+                    LoadManagedEndpointForWorkplace();
                     await _openRouterChatService.EnsureModelCatalogAsync(CancellationToken.None);
                 }
                 catch (Exception catalogEx)
@@ -213,6 +214,7 @@ namespace Malx_AI
             {
                 _computerUseTurnImages = null;
                 FinishComputerUseRunUi();
+                NotifyManagedUsageChangedIfActive();
             }
         }
 

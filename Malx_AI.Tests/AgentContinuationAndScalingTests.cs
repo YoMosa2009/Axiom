@@ -430,9 +430,9 @@ namespace Malx_AI.Tests
             var executor = new AgentToolExecutor(AgentScope.Folder(_folder));
             var call = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string>
             {
-                // Leave the pipe open beyond the shell deadline, even when PowerShell startup
-                // takes several seconds under load. Cleanup below terminates the child promptly.
-                ["command"] = "$child = Start-Process powershell.exe -NoNewWindow -PassThru -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 45'; "
+                // Keep the inherited pipe open without giving Windows a child-process lock on
+                // the per-test directory. Cleanup below terminates the child promptly.
+                ["command"] = "$child = Start-Process powershell.exe -NoNewWindow -PassThru -WorkingDirectory $env:TEMP -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 45'; "
                     + "Set-Content -LiteralPath child.pid -Value $child.Id; "
                     + $"[Console]::WriteLine('shell stdout'); [Console]::Error.WriteLine('shell stderr'); exit {exitCode}",
                 ["timeout_seconds"] = "15"

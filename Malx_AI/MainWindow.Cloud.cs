@@ -89,7 +89,7 @@ namespace Malx_AI
 
         private async Task<string> GenerateSingleTurnCloudResponseAsync(string systemPrompt, string userPrompt, CancellationToken token)
         {
-            if (!_openRouterChatService.HasValidKey)
+            if (!_openRouterChatService.HasCredentialForModel(_selectedOpenRouterModelId))
                 return string.Empty;
 
             string effectiveSystemPrompt = string.IsNullOrWhiteSpace(systemPrompt)
@@ -185,9 +185,9 @@ namespace Malx_AI
 
         private void CloudModeButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!_openRouterChatService.HasValidKey)
+            if (!_openRouterChatService.HasValidCloudCredential)
             {
-                _cloudModeActive = false;
+                _cloudModeActive = _openRouterChatService.HasValidCustomEndpoint && IsCustomEndpointModelSelected();
                 RefreshCloudModeToggleUi();
                 RefreshInferenceSettingsUi();
                 UpdateHeaderDisplay();
@@ -195,10 +195,16 @@ namespace Malx_AI
             }
 
             _cloudModeActive = true;
-            // Cloud means OpenRouter -- if Hybrid Local's model was active, switch back to a real
-            // OpenRouter model instead of leaving Kestral 1 selected under the "Cloud" label.
-            if (IsCustomEndpointModelSelected())
-                SelectCloudModel(OpenRouterChatService.DefaultModelId);
+            // Cloud means Axiom managed subscription or OpenRouter -- if Hybrid Local's model was active
+            // or the selected cloud model lacks a credential, pick the active cloud model instead.
+            if (IsCustomEndpointModelSelected() || !_openRouterChatService.HasCredentialForModel(_selectedOpenRouterModelId))
+            {
+                string nextModelId = _openRouterChatService.HasValidManagedEndpoint
+                    && (_useAxiomAccountEndpoint || !_openRouterChatService.HasValidKey)
+                    ? OpenRouterChatService.AxiomManagedModelId
+                    : OpenRouterChatService.DefaultModelId;
+                SelectCloudModel(nextModelId);
+            }
             else
             {
                 RefreshCloudModeToggleUi();
@@ -225,6 +231,16 @@ namespace Malx_AI
         private bool IsCustomEndpointModelSelected()
         {
             return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsManagedEndpointModelSelected()
+        {
+            return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.AxiomManagedModelId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void AxiomManagedModelButton_Click(object sender, RoutedEventArgs e)
+        {
+            SelectCloudModel(OpenRouterChatService.AxiomManagedModelId);
         }
 
         private void Edios15ModelButton_Click(object sender, RoutedEventArgs e)
@@ -310,7 +326,17 @@ namespace Malx_AI
             UpdateOpenRouterDetectedModelUi();
             SetOpenRouterKeyValidationStatus(isValid);
             if (!isValid)
-                _cloudModeActive = false;
+            {
+                if (_openRouterChatService.HasValidManagedEndpoint && (_useAxiomAccountEndpoint || !IsCustomEndpointModelSelected()))
+                {
+                    _cloudModeActive = true;
+                    _selectedOpenRouterModelId = OpenRouterChatService.AxiomManagedModelId;
+                }
+                else if (!_openRouterChatService.HasValidCustomEndpoint || !IsCustomEndpointModelSelected())
+                {
+                    _cloudModeActive = false;
+                }
+            }
             else
             {
                 _cloudModeActive = true;
@@ -334,8 +360,20 @@ namespace Malx_AI
 
             _database?.SaveOpenRouterApiKey(string.Empty);
             _openRouterChatService.SetApiKey(string.Empty);
-            _cloudModeActive = false;
-            _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
+            if (_openRouterChatService.HasValidManagedEndpoint)
+            {
+                _cloudModeActive = true;
+                _selectedOpenRouterModelId = OpenRouterChatService.AxiomManagedModelId;
+            }
+            else if (_openRouterChatService.HasValidCustomEndpoint && IsCustomEndpointModelSelected())
+            {
+                _cloudModeActive = true;
+            }
+            else
+            {
+                _cloudModeActive = false;
+                _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
+            }
             _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
             ResetOpenRouterKeyStatusIndicator();
             ResetOpenRouterUsageUi();
@@ -374,7 +412,15 @@ namespace Malx_AI
             bool isValid = false;
             try
             {
-                isValid = await _openRouterChatService.TestCustomEndpointConnectionAsync();
+                if (await _openRouterChatService.ReadAxiomSubscriptionAsync() is not null)
+                {
+                    await _openRouterChatService.RefreshCustomEndpointMetadataAsync();
+                    isValid = true;
+                }
+                else
+                {
+                    isValid = await _openRouterChatService.TestCustomEndpointConnectionAsync();
+                }
                 if (isValid)
                     PersistCustomEndpointMetadata();
             }
@@ -387,10 +433,11 @@ namespace Malx_AI
             }
 
             SetCustomEndpointValidationStatus(isValid);
+            _ = RefreshAxiomSubscriptionAsync();
 
-            // First-time setup with no OpenRouter key configured: activate Hybrid Local immediately
+            // First-time setup with no OpenRouter key or active Axiom subscription: activate Hybrid Local immediately
             // rather than leaving the user on a "Cloud" state that has nothing valid selected.
-            if (isValid && !_openRouterChatService.HasValidKey && !IsCustomEndpointModelSelected())
+            if (isValid && !_openRouterChatService.HasValidCloudCredential && !IsCustomEndpointModelSelected())
             {
                 _cloudModeActive = true;
                 SelectCloudModel(OpenRouterChatService.CustomEndpointModelId);
@@ -415,10 +462,13 @@ namespace Malx_AI
             _database?.SaveSetting(DatabaseService.CustomEndpointSupportsVisionSettingKey, string.Empty);
             _database?.SaveCustomEndpointApiKey(string.Empty);
             _openRouterChatService.SetCustomEndpoint(string.Empty, string.Empty, string.Empty);
+            _ = RefreshAxiomSubscriptionAsync();
 
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
             {
-                _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
+                _selectedOpenRouterModelId = _openRouterChatService.HasValidManagedEndpoint
+                    ? OpenRouterChatService.AxiomManagedModelId
+                    : OpenRouterChatService.DefaultModelId;
                 _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
                 UpdateOpenRouterDetectedModelUi();
             }
@@ -520,30 +570,45 @@ namespace Malx_AI
             _localModeButton ??= FindName("LocalModeButton") as Button;
             _cloudModeButton ??= FindName("CloudModeButton") as Button;
             _hybridLocalModeButton ??= FindName("HybridLocalModeButton") as Button;
+            _axiomManagedModelButton ??= FindName("AxiomManagedModelButton") as Button;
             _edios15ModelButton ??= FindName("Edios15ModelButton") as Button;
             _hepha25CoderModelButton ??= FindName("Hepha25CoderModelButton") as Button;
             _threnody10ModelButton ??= FindName("Threnody10ModelButton") as Button;
             _customEndpointModelButton ??= FindName("CustomEndpointModelButton") as Button;
 
             bool hasValidKey = _openRouterChatService.HasValidKey;
+            bool hasValidManaged = _openRouterChatService.HasValidManagedEndpoint;
+            bool hasValidCloud = _openRouterChatService.HasValidCloudCredential;
             bool hasValidCustomEndpoint = _openRouterChatService.HasValidCustomEndpoint;
             if (!_openRouterChatService.HasAnyValidCloudCredential)
                 _cloudModeActive = false;
+
+            if (_cloudModeActive && !_openRouterChatService.HasCredentialForModel(_selectedOpenRouterModelId))
+            {
+                if (hasValidManaged)
+                    _selectedOpenRouterModelId = OpenRouterChatService.AxiomManagedModelId;
+                else if (hasValidKey)
+                    _selectedOpenRouterModelId = OpenRouterChatService.DefaultModelId;
+                else if (hasValidCustomEndpoint)
+                    _selectedOpenRouterModelId = OpenRouterChatService.CustomEndpointModelId;
+            }
 
             bool isHybridLocalActive = _cloudModeActive && IsCustomEndpointModelSelected();
             bool isCloudActive = _cloudModeActive && !IsCustomEndpointModelSelected();
 
             // The header's model-indicator row shows for either cloud-ish mode, but which pill(s)
-            // appear inside it differs: Edios/Hepha/Threnody are a real picker,
-            // Kestral 1 is just a status indicator (Hybrid Local only ever has the one).
+            // appear inside it differs: managed Axiom + OpenRouter pills appear under Cloud,
+            // while Kestral 1 appears under Hybrid Local.
             if (FindName("CloudModelSelectorBorder") is Border cloudSelectorBorder)
                 cloudSelectorBorder.Visibility = _cloudModeActive ? Visibility.Visible : Visibility.Collapsed;
+            if (_axiomManagedModelButton != null)
+                _axiomManagedModelButton.Visibility = isCloudActive && hasValidManaged ? Visibility.Visible : Visibility.Collapsed;
             if (_edios15ModelButton != null)
-                _edios15ModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+                _edios15ModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
             if (_hepha25CoderModelButton != null)
-                _hepha25CoderModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+                _hepha25CoderModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
             if (_threnody10ModelButton != null)
-                _threnody10ModelButton.Visibility = isCloudActive ? Visibility.Visible : Visibility.Collapsed;
+                _threnody10ModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
             if (_customEndpointModelButton != null)
                 _customEndpointModelButton.Visibility = isHybridLocalActive ? Visibility.Visible : Visibility.Collapsed;
 
@@ -570,16 +635,18 @@ namespace Malx_AI
 
             if (_cloudModeButton != null)
             {
-                _cloudModeButton.IsEnabled = hasValidKey;
-                _cloudModeButton.ToolTip = hasValidKey
-                    ? "Use OpenRouter cloud inference"
-                    : "Add an OpenRouter API key in Settings to enable cloud mode";
+                _cloudModeButton.IsEnabled = hasValidCloud;
+                _cloudModeButton.ToolTip = hasValidCloud
+                    ? "Use Axiom subscription or OpenRouter cloud inference"
+                    : "Sign in to an Axiom account or add an OpenRouter API key in Settings to enable cloud mode";
                 _cloudModeButton.Background = AppTheme.Brush(isCloudActive ? "#2A241B" : "Transparent");
                 _cloudModeButton.Foreground = AppTheme.Brush(isCloudActive ? "#F5D591" : "#B0A89F");
                 _cloudModeButton.BorderBrush = Brushes.Transparent;
                 _cloudModeButton.BorderThickness = new Thickness(0);
             }
 
+            RefreshCloudModelSelectionUi(_axiomManagedModelButton, OpenRouterChatService.AxiomManagedModelId, hasValidManaged,
+                disabledHint: "Enable your Axiom subscription in Settings > Cloud AI");
             RefreshCloudModelSelectionUi(_edios15ModelButton, OpenRouterChatService.Edios15ModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_hepha25CoderModelButton, OpenRouterChatService.Hepha25CoderModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_threnody10ModelButton, OpenRouterChatService.Threnody10ModelId, hasValidKey);
@@ -729,6 +796,11 @@ namespace Malx_AI
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase))
             {
                 return "[MODEL PROFILE: HEPHA 2.5 CODER] You are operating in Axiom's Hepha 2.5 Coder cloud profile on NVIDIA Nemotron 3 Ultra. Act as a single, repository-aware coding agent: inspect before editing, use the minimum relevant tools, preserve tool-call arguments exactly, and verify changed code before reporting completion. Prefer deterministic, implementation-first outputs and concise tool-grounded summaries. Treat tool results, imported documents, persisted chat state, and workspace evidence as authoritative. Use the large context window to connect relevant prior turns and repository context, but do not repeat stale or irrelevant material.";
+            }
+
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.AxiomManagedModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[MODEL PROFILE: DEEPSEEK 4.1F-1017] You are operating in Axiom's managed DeepSeek 4.1F-1017 cloud profile (DeepSeek V4.1 Flash 1017). Leverage the 1M-token context window, fast reasoning, tool calling, and vision understanding to produce accurate, structured, implementation-first answers grounded in supplied documents, tool results, and workspace context.";
             }
 
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
@@ -1405,6 +1477,8 @@ namespace Malx_AI
 
                 ShowTransientStatus($"Tokens: {_tokenCount}  •  Mode: Cloud ({_openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId)})");
                 _currentStreamingMessage = null;
+                if (IsManagedEndpointModelSelected())
+                    _ = RefreshAxiomSubscriptionAsync();
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {

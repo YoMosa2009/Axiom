@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="Malx_AI/Malx_AI.csproj" />
   <Project Path="Malx_AI.Tests/Malx_AI.Tests.csproj" />
+  <Project Path="tools/AxiomSubscriptionGateway/AxiomSubscriptionGateway.csproj" />
 </Solution>

@@ -21,11 +21,14 @@ Free · Windows 10/11 (64-bit) · one-click installer
 
 </div>
 
-Source status (2026-11-17): the repository includes newer Workplace reliability,
-responsive UI, cloud-usage and completed-response change-summary work. These changes
-are **unreleased** and are not part of the V1.11.0 download. See the
-[unreleased changelog](CHANGELOG.md#unreleased), [roadmap](ROADMAP.md) and
-[implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md) for verification and limits.
+Source status (2026-11-18): the repository includes newer managed Axiom subscription
+integration (`DeepSeek 4.1F-1017` across Chat and Workplace), Settings **Usage** pacing
+(3-hour session and 7-day weekly meters), Workplace reliability, Project Canvas multi-format
+file viewing with underlined clickable links, Settings modal isolation, and autonomous
+`Auto-Review` command safety decisions. These changes are **unreleased** and are not part
+of the V1.11.0 download. See the [unreleased changelog](CHANGELOG.md#unreleased),
+[roadmap](ROADMAP.md) and [implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md) for
+verification and limits.
 
 ![Axiom Chat](docs/images/chat.png)
 
@@ -40,7 +43,7 @@ memory behave the same way regardless of which one is selected.
 |---|---|---|---|
 | **Local** | Your GPU/CPU via llama.cpp | A GGUF model | Full privacy, offline work, no per-token cost |
 | **Hybrid Local** | Your own server | An OpenAI-compatible endpoint | Your own hardware, accessed from anywhere |
-| **Cloud** | OpenRouter | Your own API key | Frontier-class models when you want them |
+| **Cloud** | OpenRouter or Axiom Gateway | Personal API key or optional Axiom subscription (`DeepSeek 4.1F-1017`, with 3-hour & weekly **Usage** pacing) | Managed or frontier-class cloud models when you want them |
 
 Axiom adapts to the model it is given. It measures a local model's parameter count and
 scales context budgets, tool routing, and prompt complexity accordingly — so a 0.5B
@@ -88,13 +91,16 @@ the Builder writes into.
 ### Files in Project Canvas
 
 Put `@ProjectCanvas` in a Workplace prompt and ask for a file — *"make me a requirements.txt"*,
-*"a docker-compose.yml"*, *"the results as a csv"* — and it is presented in the canvas under its
-real name, with the pane opening on its own. Save offers that filename too.
+*"a docker-compose.yml"*, *"the results as a csv"* — or ask Workplace to create and edit files
+directly. Created and edited files display a distinguishable underlined link underneath so you can
+click straight into the formatted Project Canvas preview; when `@ProjectCanvas` is active, the pane
+also opens automatically under the file's real name and Save offers that filename too.
 
-Any text format works: `.md`, `.txt`, `.csv`, `.json`, `.yaml`, `.sql`, source code, and so on.
-CSV renders as a table, Markdown renders, HTML and SVG keep their visual preview, and everything
-else gets a monospace view. Images and other binary formats are refused with an explanation
-rather than failing quietly.
+Any text format works: `.md`, `.txt`, `.csv`, `.json`/`.jsonc`, `.xml`/`.xaml`/`.csproj`, `.yaml`,
+`.toml`, `.sql`, source code, `.html`, and `.svg`. CSV/TSV renders as a table, Markdown renders, HTML
+and SVG keep their visual preview, and structured config/code formats display syntax-highlighted
+line-numbered views — even when connected to a codebase folder. Images and other binary formats are
+refused with an explanation rather than failing quietly.
 
 ## Computer Use
 

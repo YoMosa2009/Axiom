@@ -236,6 +236,10 @@ namespace Malx_AI.Agent
                 {
                     throw new AgentFatalException(exhausted.Message, exhausted);
                 }
+                catch (OpenRouterCustomEndpointFatalException fatal)
+                {
+                    throw new AgentFatalException(fatal.Message, fatal);
+                }
                 catch (OpenRouterRateLimitedException rateLimited)
                 {
                     // Free models share an upstream pool that throttles in bursts. Wait what the
