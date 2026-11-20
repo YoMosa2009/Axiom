@@ -181,8 +181,7 @@ internal static class AccountGateway
 
                 string customer = account.StripeCustomerId
                     ?? store.BindStripeCustomer(account.Id, await stripe.CreateCustomerAsync(account, cancellationToken));
-                int priorPeriods = ledger.CountPeriods();
-                string? suffix = priorPeriods > 0 ? $"cycle-{priorPeriods}" : null;
+                string suffix = Guid.NewGuid().ToString("N");
                 var (result, sessionUrl) = await stripe.CreateSessionWithUrlAsync(
                     Billing(customer), ledger, context.Connection.LocalPort, cancellationToken, options.PublicOrigin, suffix);
                 if (sessionUrl is not null)

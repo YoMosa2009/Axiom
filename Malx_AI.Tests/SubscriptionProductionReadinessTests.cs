@@ -271,6 +271,35 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
     }
 
     [Fact]
+    public async Task AccountGateway_FailedCheckoutRetry_UsesFreshIdempotencyKey()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        string dbPath = NewDbPath("checkout-retry-key");
+        var emailStub = new CaptureSignInEmail();
+        var stripeHandler = new StubStripeHandler(liveMode: true, failFirstCheckout: true);
+        var stripe = new StripeTestCheckout("sk_live_fixture", new HttpClient(stripeHandler), allowLiveMode: true);
+        var inference = new OpenRouterInference("openrouter-fixture", new HttpClient(new CaptureUpstreamHandler("{}", "application/json")));
+
+        await using var gateway = AccountGateway.Create(
+            new AccountGatewayOptions(dbPath, "price_fixture", "whsec_fixture", "bpc_fixture"),
+            emailStub, stripe, inference, port: 0);
+        await gateway.StartAsync(timeout.Token);
+
+        string token = await SignInAsync(gateway.Urls.Single(), emailStub, "retry@example.com", timeout.Token);
+        using var authed = new HttpClient { BaseAddress = new Uri(gateway.Urls.Single()) };
+        authed.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        using var first = await authed.PostAsync("v1/subscription/checkout", null, timeout.Token);
+        Assert.Equal(HttpStatusCode.BadGateway, first.StatusCode);
+
+        using var second = await authed.PostAsync("v1/subscription/checkout", null, timeout.Token);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        Assert.Equal(2, stripeHandler.CheckoutIdempotencyKeys.Count);
+        Assert.NotEqual(stripeHandler.CheckoutIdempotencyKeys[0], stripeHandler.CheckoutIdempotencyKeys[1]);
+    }
+
+    [Fact]
     public void AccountDatabaseBackup_RunBackupCycle_VerifiesIntegrityScrubsSecretsAndPrunesRetention()
     {
         string dbPath = NewDbPath("backup-src");
@@ -554,12 +583,13 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
         public string? LastCodeFor(string email) => _codes.TryGetValue(email, out string? code) ? code : null;
     }
 
-    private sealed class StubStripeHandler(bool liveMode, bool uniqueCustomers = false) : HttpMessageHandler
+    private sealed class StubStripeHandler(bool liveMode, bool uniqueCustomers = false, bool failFirstCheckout = false) : HttpMessageHandler
     {
         private int _customerCalls;
         private int _checkoutSessionCalls;
         public int CheckoutSessionCalls => _checkoutSessionCalls;
         public List<string> RequestedPaths { get; } = [];
+        public List<string> CheckoutIdempotencyKeys { get; } = [];
         public string? LastWebhookBody { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -589,6 +619,15 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
             if (path.EndsWith("/checkout/sessions", StringComparison.Ordinal))
             {
                 int n = Interlocked.Increment(ref _checkoutSessionCalls);
+                if (request.Headers.TryGetValues("Idempotency-Key", out var keys))
+                    CheckoutIdempotencyKeys.Add(string.Join(",", keys));
+                if (failFirstCheckout && n == 1)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent("""{"error":{"type":"invalid_request_error","message":"Temporary error"}}""", Encoding.UTF8, "application/json")
+                    };
+                }
                 return JsonResponse($$"""{"id":"cs_fixture_{{n}}","livemode":{{liveJson}},"url":"https://checkout.stripe.com/c/pay/cs_fixture_{{n}}"}""");
             }
             if (path.Contains("/charges/", StringComparison.Ordinal))
