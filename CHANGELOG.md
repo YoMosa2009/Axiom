@@ -6,10 +6,22 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Added
 
-- Optional managed Axiom subscription support (`DeepSeek 4.1F-1017` backed by
+- Optional managed Axiom subscription support (`DeepSeek 4.1F-1017`, `$9/mo` backed by
   `tools/AxiomSubscriptionGateway` with DPAPI-protected sessions, email verification/recovery,
-  and Stripe test Checkout/billing portal) works across both Normal Chat and Workplace while
+  live and sandbox Stripe Checkout, full lifecycle webhooks for `invoice.paid`,
+  `invoice.payment_failed`, `customer.subscription.deleted`, `charge.refunded`, and
+  `charge.dispute.created`, duplicate-Checkout locks, and scheduled verified
+  `AccountDatabaseBackupWorker` snapshots) works across both Normal Chat and Workplace while
   keeping Local GGUF, Hybrid Local (`Kestral 1`), and personal OpenRouter keys independent.
+- Direct upstream inference provider switching in `tools/AxiomSubscriptionGateway`
+  (`AXIOM_UPSTREAM_PROVIDER`: `openrouter`, `digitalocean`, `deepseek`, or OpenAI-compatible
+  custom route with token-rate cost calculation), plus build-time
+  `AXIOM_BUILTIN_MANAGED_GATEWAY_URL` injection via `AxiomAccountBuiltIns.Generated.cs`.
+- Non-intrusive, dismissible contextual Axiom Cloud suggestions (`CloudUpgradeSuggestionPolicy`)
+  on sustained slow local generation (`< 8.0 tok/s` over `>= 25` tokens), exhausted OpenRouter
+  BYOK quotas, and missing local vision projectors, plus [Terms of Service](TERMS.md) and
+  [Privacy Policy](PRIVACY.md).
+- Dedicated **Axiom Cloud (`$9/mo`)** card in the First-Run welcome guide (`FirstRunGuideWindow`).
 - Settings **Usage** tab displaying a 3-hour session window (starts on first message) and a
   7-day weekly usage meter backed by gateway allowance pacing (`429` reset guidance).
 - Workplace **Project Canvas** renders clickable underlined file links beneath model outputs
@@ -68,6 +80,16 @@ These changes are in source and are not included in the V1.11.0 download.
   instead of falsely waiting until the command timeout.
 - Computer Use follow-ups retain their prior goal, result and work application.
   Raw tool evidence is preserved without repeatedly mirroring identical transport results.
+- Redesigned **Settings → Cloud AI** to elevate the **Axiom Cloud (`DeepSeek 4.1F-1017 · $9/mo`)**
+  panel above OpenRouter BYOK and Hybrid Local cards, with clickable Terms/Privacy links and
+  live/sandbox `BillingStatus` display; updated **Settings → Connectors** onboarding copy for
+  both Axiom Cloud and OpenRouter.
+- Fixed `.github/workflows/release.yml` release-packaging PowerShell splatting (`@params`
+  hashtables) and added `AXIOM_BUILTIN_MANAGED_GATEWAY_URL` workflow injection.
+- Fixed Normal Chat **Project Canvas** toggle button visibility by relocating
+  `ProjectCanvasToggleButton` into `UnifiedTitleBar` (`MainWindow.xaml`), and fixed ASP.NET
+  minimal API `IResult` delegate binding (`ASP0016`) on Stripe webhook routes in
+  `tools/AxiomSubscriptionGateway/AccountGateway.cs`.
 - Rapid navigation, Settings scrolling, custom-profile isolation and atomic-save
   staging/cancellation defects found during local testing.
 

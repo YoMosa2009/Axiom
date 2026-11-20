@@ -460,6 +460,9 @@ namespace Malx_AI
                 case FirstRunGuideOutcome.ImportExistingModel:
                     ImportModel_Click(this, new RoutedEventArgs());
                     break;
+                case FirstRunGuideOutcome.SetUpAxiomCloud:
+                    OpenSettingsAt("Cloud", AxiomAccountEmailBox);
+                    break;
                 case FirstRunGuideOutcome.SetUpCloud:
                     OpenSettingsAt("Cloud", OpenRouterApiKeyPasswordBox);
                     break;
@@ -4413,9 +4416,17 @@ namespace Malx_AI
                     .Select(d => $"data:{(string.IsNullOrWhiteSpace(d.MimeType) ? "image/png" : d.MimeType)};base64,{d.Base64Data}")
                     .ToList();
 
-                string userMsg = (pendingUserMessage ?? string.Empty).Trim();
+                    string userMsg = (pendingUserMessage ?? string.Empty).Trim();
                 if (userMsg.Length == 0)
                     userMsg = pendingImageSources.Count > 0 ? "Analyze the attached image(s)." : "Analyze the attached file(s).";
+                if (pendingImageSources.Count > 0 && !_cloudModeActive && !_useGemma4LocalCliMode)
+                {
+                    ShowAxiomCloudSuggestion(CloudUpgradeSuggestionPolicy.TryEvaluateLocalVisionMissing(
+                        _cloudModeActive,
+                        HasActivePaidAxiomSubscription,
+                        _cloudSuggestionDismissedThisSession,
+                        hasLocalVisionProjector: _mtmdWeights != null));
+                }
                 if (explicitUserMessage == null)
                     InputBox.Clear();
                 _nextMessageModelOverride = "Default";
@@ -4481,7 +4492,14 @@ namespace Malx_AI
                                 ? "OpenRouter API key: daily free usage exhausted."
                                 : "OpenRouter API key: out of credits.");
                         if (!keyExhausted.IsCustomEndpoint)
+                        {
                             _ = LoadOpenRouterUsageAsync();
+                            ShowAxiomCloudSuggestion(CloudUpgradeSuggestionPolicy.TryEvaluateByokExhausted(
+                                keyExhausted.IsCustomEndpoint,
+                                HasActivePaidAxiomSubscription,
+                                _cloudSuggestionDismissedThisSession,
+                                keyExhausted.IsDailyLimit));
+                        }
                         SaveCurrentChat();
                     }
                     catch (Exception ex)

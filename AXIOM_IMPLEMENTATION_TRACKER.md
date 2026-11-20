@@ -164,7 +164,17 @@ the current results and linked reports above for the latest verified scope.
 
 - [x] **23. Automated Code Signing (Azure Artifact Signing OIDC) & WinGet Publishing**
   - Files: `.github/workflows/release.yml`, `.github/workflows/winget.yml`, `scripts/Publish-CleanRelease.ps1`, `scripts/Publish-GitHubRelease.ps1`, `scripts/Submit-WingetRelease.ps1`, `RELEASING.md`, `CHANGELOG.md`
-  - Verified (2026-11-19): PowerShell AST parsing clean on all release/WinGet scripts, YAML validation clean on both workflows, and `scripts/Test-VersionConsistency.ps1` passed for `1.11.0`.
+  - Verified (2026-11-20): `axiom-public-trust` (`PublicTrust`, `Active`) provisioned and all six `AZURE_*` GitHub Actions secrets configured; PowerShell hashtable splatting (`@params`) fix applied across all `Publish-GitHubRelease.ps1` invocations in `release.yml`.
+
+- [x] **24. Production Subscription Service, Direct Upstream Provider Switch, Legal Pages & UI/UX Screenshot Audit**
+  - Files:
+    - Gateway: `tools/AxiomSubscriptionGateway/AllowanceLedger.cs`, `AxiomAccountStore.cs`, `StripeTestCheckout.cs`, `StripeTestWebhook.cs`, `AccountDatabaseBackup.cs`, `OpenRouterInference.cs`, `LocalGateway.cs`, `AccountGateway.cs`, `Program.cs`
+    - Client & Onboarding: `Malx_AI/AxiomAccountBuiltIns.cs`, `AxiomAccountClient.cs`, `OpenRouterChatService.cs`, `CloudUpgradeSuggestionPolicy.cs`, `MainWindow.xaml`, `MainWindow.Subscription.cs`, `MainWindow.xaml.cs`, `MainWindow.Inference.cs`, `MainWindow.Mcp.cs`, `WorkplaceView.ComputerUse.cs`, `FirstRunGuideWindow.xaml`, `FirstRunGuideWindow.xaml.cs`
+    - Build & Legal: `TERMS.md`, `PRIVACY.md`, `scripts/Generate-McpOAuthBuiltIns.ps1`, `.gitignore`, `.github/workflows/release.yml`
+    - Tests: `Malx_AI.Tests/Malx_AI.Tests.csproj`, `Malx_AI.Tests/SubscriptionProductionReadinessTests.cs`
+  - Verified (2026-11-20):
+    - UI/UX screenshot pass rendered across First-Run (`720x650`), Chat + Project Canvas (`1366x823`), Workplace, Persona, and all five Settings pages (`Inference`, `Cloud AI`, `Connectors`, `General`, `Usage`) plus live `Malx_AI.exe` startup smoke check. Restored Normal Chat `ProjectCanvasToggleButton` visibility inside `UnifiedTitleBar`, added `ChooseAxiomCloudButton` (`$9/mo`) to `FirstRunGuideWindow`, and updated `MainWindow.Mcp.cs` connector hint text.
+    - `dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj -c Release`: `Passed: 1005, Failed: 0, Skipped: 0, Total: 1005`.
 
 ## Historical verification log (2026-11-16)
 - `dotnet build C:\Users\user\source\repos\Axiom\Malx_AI\Malx_AI.csproj -c Debug --no-restore`: `0 Error(s)`

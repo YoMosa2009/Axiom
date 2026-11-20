@@ -29,18 +29,20 @@ values as the local `%LOCALAPPDATA%\Axiom\SharedOAuth` files:
 - `AXIOM_BUILTIN_GOOGLE_CLIENT_ID`, `AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET`
 - `AXIOM_BUILTIN_GITHUB_CLIENT_ID`
 - `AXIOM_BUILTIN_TODOIST_CLIENT_ID`, `AXIOM_BUILTIN_TODOIST_CLIENT_SECRET`
+- Optional: `AXIOM_BUILTIN_MANAGED_GATEWAY_URL` (HTTPS `/v1` origin baked into `Malx_AI/AxiomAccountBuiltIns.Generated.cs` at release build time so signed-in end users do not set environment variables manually)
 
 ### Code signing (Azure Artifact Signing via OIDC)
 
 `.github/workflows/release.yml` uses `scripts/Publish-CleanRelease.ps1` and
-`scripts/Publish-GitHubRelease.ps1` in split phases so `Malx_AI.exe` and `Malx_AI.dll` are
+`scripts/Publish-GitHubRelease.ps1` in split phases (invoked with PowerShell hashtable splatting
+`@params`) so `Malx_AI.exe` and `Malx_AI.dll` are
 signed before `AXIOM_UPDATE_MANIFEST.txt` is written and the ZIP is packed, and
 `Axiom-Setup-v<version>-win-x64.exe` is signed after Inno Setup finishes. Configure these six
 repository secrets in GitHub (**Settings → Secrets and variables → Actions**) for passwordless
 OIDC signing:
 
 - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
-- `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`
+- `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE` (`axiom-public-trust` Public Trust profile)
 
 If all six secrets are unset, the release workflow skips signing and notes unsigned binaries.
 You can test signing without bumping `<Version>` or publishing a release by running **Release →

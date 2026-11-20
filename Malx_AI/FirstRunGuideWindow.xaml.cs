@@ -19,6 +19,7 @@ namespace Malx_AI
         Skipped,
         ModelDownloaded,
         ImportExistingModel,
+        SetUpAxiomCloud,
         SetUpCloud,
         SetUpServer
     }
@@ -66,6 +67,8 @@ namespace Malx_AI
         }
 
         private void ChooseLocal_Click(object sender, RoutedEventArgs e) => ShowLocalPage();
+
+        private void ChooseAxiomCloud_Click(object sender, RoutedEventArgs e) => Finish(FirstRunGuideOutcome.SetUpAxiomCloud);
 
         private void ChooseCloud_Click(object sender, RoutedEventArgs e) => Finish(FirstRunGuideOutcome.SetUpCloud);
 

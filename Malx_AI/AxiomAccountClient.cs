@@ -20,7 +20,8 @@ namespace Malx_AI
         };
 
         public static Uri? ConfiguredEndpoint()
-            => ParseEndpoint(Environment.GetEnvironmentVariable("AXIOM_MANAGED_GATEWAY_URL"));
+            => ParseEndpoint(Environment.GetEnvironmentVariable("AXIOM_MANAGED_GATEWAY_URL"))
+                ?? ParseEndpoint(AxiomAccountBuiltIns.ManagedGatewayUrl);
 
         internal static Uri? ParseEndpoint(string? value)
         {

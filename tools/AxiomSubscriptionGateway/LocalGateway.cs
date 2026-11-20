@@ -236,7 +236,7 @@ internal static class LocalGateway
         {
             id = Model,
             @object = "model",
-            owned_by = inference is null ? "axiom-local-simulation" : Provider,
+            owned_by = inference is null ? "axiom-local-simulation" : inference.CatalogOwnedBy,
             context_length = inference is null ? 32_768 : OpenRouterInference.ContextTokens,
             architecture = new
             {

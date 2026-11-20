@@ -89,7 +89,10 @@ namespace Malx_AI
             ConversationEvidence.Current?.Record("Computer Use request", goal + "\n" + continuation);
             if (!capability.CanRun)
             {
-                AppendVisibleNotice(capability.Reason);
+                string suggestion = !_isCloudModeEnabled
+                    ? "\n\nTip: In Settings → Cloud AI, Axiom Cloud (DeepSeek 4.1F-1017, $9/mo) includes vision and @ComputerUse out of the box."
+                    : string.Empty;
+                AppendVisibleNotice(capability.Reason + suggestion);
                 FinishComputerUseRunUi();
                 return;
             }

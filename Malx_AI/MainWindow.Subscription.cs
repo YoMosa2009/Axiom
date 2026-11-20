@@ -21,6 +21,12 @@ namespace Malx_AI
         private bool _useAxiomAccountEndpoint;
         private bool _recoveringAxiomAccount;
         private string? _pendingAxiomRecoveryKey;
+        private bool _cloudSuggestionDismissedThisSession;
+
+        private bool HasActivePaidAxiomSubscription =>
+            _lastAxiomSubscriptionStatus is { } status
+            && status.Balance.AllowanceMicros > 0
+            && !string.Equals(status.BillingStatus, "revoked", StringComparison.OrdinalIgnoreCase);
 
         private OpenRouterChatService SubscriptionTransport
             => _axiomAccountSession is not null ? _axiomBillingTransport : _openRouterChatService;
@@ -46,15 +52,25 @@ namespace Malx_AI
 
         private void RenderAxiomAccount()
         {
-            if (AxiomAccountPanel is null || _axiomAccountEndpoint is null)
+            if (AxiomAccountPanel is null)
                 return;
+
+            bool hasEndpoint = _axiomAccountEndpoint is not null;
+            if (AxiomAccountUnconfiguredNotice is not null)
+                AxiomAccountUnconfiguredNotice.Visibility = hasEndpoint ? Visibility.Collapsed : Visibility.Visible;
+            if (!hasEndpoint)
+            {
+                AxiomAccountPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             AxiomAccountPanel.Visibility = Visibility.Visible;
             bool signedIn = _axiomAccountSession is not null;
             AxiomAccountSignInForm.Visibility = signedIn ? Visibility.Collapsed : Visibility.Visible;
             AxiomAccountActiveActions.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;
             AxiomAccountMessage.Text = _axiomAccountSession is { } session
                 ? $"Signed in as {session.Email}"
-                : "Use the same email to restore your subscription on another device.";
+                : "Sign in with your email to subscribe or restore an existing Axiom Cloud plan.";
             AxiomAccountEndpointToggle.Content = _useAxiomAccountEndpoint
                 ? "Stop using Axiom subscription"
                 : "Use Axiom subscription (DeepSeek 4.1F-1017)";
@@ -289,7 +305,10 @@ namespace Malx_AI
                 return null;
             }
 
-            bool paid = subscription.Balance.AllowanceMicros > 0;
+            bool isRevoked = string.Equals(subscription.BillingStatus, "revoked", StringComparison.OrdinalIgnoreCase);
+            bool isPaymentFailed = string.Equals(subscription.BillingStatus, "payment_failed", StringComparison.OrdinalIgnoreCase);
+            bool isCanceled = string.Equals(subscription.BillingStatus, "canceled", StringComparison.OrdinalIgnoreCase);
+            bool paid = subscription.Balance.AllowanceMicros > 0 && !isRevoked;
             if (paid
                 && _axiomAccountSession is not null
                 && !_useAxiomAccountEndpoint
@@ -302,14 +321,35 @@ namespace Malx_AI
                 RenderAxiomAccount();
             }
 
+            if (paid && AxiomCloudSuggestionBanner != null)
+                AxiomCloudSuggestionBanner.Visibility = Visibility.Collapsed;
+
+            if (AxiomCloudPlanTitleText != null)
+                AxiomCloudPlanTitleText.Text = subscription.Sandbox ? "Axiom subscription sandbox" : "Axiom Cloud subscription";
+
+            AxiomSubscribeButton.Content = subscription.Sandbox ? "Test checkout" : "Subscribe — $9/mo";
+            AxiomManageSubscriptionButton.Content = subscription.Sandbox ? "Manage test subscription" : "Manage billing";
             AxiomSubscribeButton.Visibility = paid ? Visibility.Collapsed : Visibility.Visible;
-            AxiomManageSubscriptionButton.Visibility = paid ? Visibility.Visible : Visibility.Collapsed;
-            AxiomSubscriptionStatusText.Text = paid
-                ? FormattableString.Invariant($"${subscription.Balance.AvailableMicros / 1_000_000m:0.00} of inference available")
-                    + (subscription.RenewsAt is DateTimeOffset renewal
-                        ? $" · Period ends {renewal.ToLocalTime():MMM d, yyyy}"
-                        : string.Empty)
-                : "Test plan · $9/month · $5 included inference";
+            AxiomManageSubscriptionButton.Visibility = paid || isPaymentFailed ? Visibility.Visible : Visibility.Collapsed;
+
+            string balanceText = FormattableString.Invariant($"${subscription.Balance.AvailableMicros / 1_000_000m:0.00} of inference available");
+            string periodSuffix = subscription.RenewsAt is DateTimeOffset renewal
+                ? (isCanceled
+                    ? $" · Cancels {renewal.ToLocalTime():MMM d, yyyy}"
+                    : $" · Period ends {renewal.ToLocalTime():MMM d, yyyy}")
+                : string.Empty;
+
+            AxiomSubscriptionStatusText.Text = isRevoked
+                ? "Subscription access revoked due to refund or dispute."
+                : isPaymentFailed && paid
+                    ? $"Payment failed — update your card in Manage billing · {balanceText}{periodSuffix}"
+                    : isPaymentFailed
+                        ? "Payment failed — update your card in Manage billing or start checkout again."
+                        : paid
+                            ? balanceText + periodSuffix
+                            : (subscription.Sandbox
+                                ? "Test plan · $9/month · $5 included inference"
+                                : "$9/month · $5 included DeepSeek 4.1F-1017 inference · Cancel anytime");
             RenderAxiomUsageUi(subscription);
             return subscription;
         }
@@ -352,12 +392,17 @@ namespace Malx_AI
                 return;
             }
 
-            bool paid = status.Balance.AllowanceMicros > 0;
+            bool isRevoked = string.Equals(status.BillingStatus, "revoked", StringComparison.OrdinalIgnoreCase);
+            bool paid = status.Balance.AllowanceMicros > 0 && !isRevoked;
             if (!paid)
             {
                 if (AxiomUsageNoticeBorder != null && AxiomUsageNoticeText != null)
                 {
-                    AxiomUsageNoticeText.Text = "Start the $9/month test plan in Settings → Cloud AI to activate DeepSeek 4.1F-1017 usage.";
+                    AxiomUsageNoticeText.Text = isRevoked
+                        ? "Subscription allowance was revoked following a refund or dispute."
+                        : status.Sandbox
+                            ? "Start the $9/month test plan in Settings → Cloud AI to activate DeepSeek 4.1F-1017 usage."
+                            : "Subscribe for $9/month in Settings → Cloud AI to activate DeepSeek 4.1F-1017 usage.";
                     AxiomUsageNoticeBorder.Visibility = Visibility.Visible;
                 }
                 AxiomSessionUsageResetText.Text = "Starts with your first message";
@@ -473,6 +518,59 @@ namespace Malx_AI
         private void OpenCloudAiFromUsage_Click(object sender, RoutedEventArgs e)
             => ShowSettingsPage("Cloud");
 
+        private void OpenUsageFromCloudAi_Click(object sender, RoutedEventArgs e)
+            => ShowSettingsPage("Usage");
+
+        private void OpenTermsOfService_Click(object sender, RoutedEventArgs e)
+            => OpenExternalUrl("https://github.com/YoMosa2009/Axiom/blob/main/TERMS.md", "Terms of Service");
+
+        private void OpenPrivacyPolicy_Click(object sender, RoutedEventArgs e)
+            => OpenExternalUrl("https://github.com/YoMosa2009/Axiom/blob/main/PRIVACY.md", "Privacy Policy");
+
+        private void OpenExternalUrl(string url, string label)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })?.Dispose();
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                AxiomAccountMessage.Text = $"Open {label} at {url}";
+            }
+        }
+
+        private void ShowAxiomCloudSuggestion(CloudUpgradeSuggestion? suggestion)
+        {
+            if (suggestion is null || _cloudSuggestionDismissedThisSession
+                || HasActivePaidAxiomSubscription
+                || AxiomCloudSuggestionBanner == null
+                || AxiomCloudSuggestionHeadline == null
+                || AxiomCloudSuggestionDetail == null
+                || AxiomCloudSuggestionActionButton == null)
+            {
+                return;
+            }
+
+            AxiomCloudSuggestionHeadline.Text = suggestion.Headline;
+            AxiomCloudSuggestionDetail.Text = suggestion.Detail;
+            AxiomCloudSuggestionActionButton.Content = suggestion.ActionLabel;
+            AxiomCloudSuggestionBanner.Visibility = Visibility.Visible;
+        }
+
+        private void AxiomCloudSuggestionAction_Click(object sender, RoutedEventArgs e)
+        {
+            if (AxiomCloudSuggestionBanner != null)
+                AxiomCloudSuggestionBanner.Visibility = Visibility.Collapsed;
+            OpenSettingsAt("Cloud");
+        }
+
+        private void DismissAxiomCloudSuggestion_Click(object sender, RoutedEventArgs e)
+        {
+            _cloudSuggestionDismissedThisSession = true;
+            if (AxiomCloudSuggestionBanner != null)
+                AxiomCloudSuggestionBanner.Visibility = Visibility.Collapsed;
+        }
+
         private async void AxiomSubscribeButton_Click(object sender, RoutedEventArgs e)
             => await OpenAxiomSubscriptionLinkAsync(portal: false);
 
@@ -500,16 +598,21 @@ namespace Malx_AI
             AxiomSubscriptionActions.IsEnabled = false;
             try
             {
+                bool sandbox = _lastAxiomSubscriptionStatus?.Sandbox ?? true;
                 Uri? link = await SubscriptionTransport.CreateAxiomSubscriptionLinkAsync(portal);
                 if (link is null)
                 {
-                    AxiomSubscriptionStatusText.Text = "Stripe couldn’t open this sandbox session.";
+                    AxiomSubscriptionStatusText.Text = sandbox
+                        ? "Stripe couldn’t open this sandbox session."
+                        : "Stripe couldn’t open Checkout right now. Try again shortly.";
                     return;
                 }
 
                 Process.Start(new ProcessStartInfo(link.AbsoluteUri) { UseShellExecute = true })?.Dispose();
                 if (!portal)
-                    AxiomSubscriptionStatusText.Text = "Complete the test checkout in your browser, then refresh payment here.";
+                    AxiomSubscriptionStatusText.Text = sandbox
+                        ? "Complete the test checkout in your browser, then refresh billing here."
+                        : "Complete Checkout in your browser, then click Refresh billing here.";
             }
             catch (System.ComponentModel.Win32Exception)
             {

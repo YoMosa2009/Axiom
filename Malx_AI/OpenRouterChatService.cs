@@ -51,7 +51,7 @@ namespace Malx_AI
 
     public sealed record AxiomSubscriptionStatus(string Service, bool Sandbox, decimal MonthlyUsd,
         AxiomSubscriptionBalance Balance, DateTimeOffset? RenewsAt,
-        AxiomSubscriptionUsage? Usage = null, string? ModelLabel = null);
+        AxiomSubscriptionUsage? Usage = null, string? ModelLabel = null, string? BillingStatus = null);
 
     public sealed record AxiomSubscriptionReadResult(AxiomSubscriptionStatus? Status, bool Unauthorized);
 
@@ -640,7 +640,7 @@ namespace Malx_AI
             try
             {
                 var status = JsonSerializer.Deserialize<AxiomSubscriptionStatus>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-                return status is { Service: "axiom-managed-inference", Sandbox: true, MonthlyUsd: 9, Balance: not null }
+                return status is { Service: "axiom-managed-inference", MonthlyUsd: 9, Balance: not null }
                     ? new AxiomSubscriptionReadResult(status, false)
                     : new AxiomSubscriptionReadResult(null, false);
             }

@@ -10,8 +10,9 @@ obj/
 # Clean release publish output (never commit packaged builds / zips)
 artifacts/
 
-# Generated OAuth app client id/secret constants for release packaging only
+# Generated OAuth app client id/secret and release gateway endpoint constants for release packaging only
 Malx_AI/Mcp/McpOAuthBuiltIns.Generated.cs
+Malx_AI/AxiomAccountBuiltIns.Generated.cs
 **/oauth*.local.*
 **/*_client_secret.txt
 **/*_client_id.txt

@@ -46,6 +46,12 @@ internal sealed class AxiomAccountStore
                 account_id TEXT PRIMARY KEY REFERENCES axiom_account (id),
                 secret_hash TEXT NOT NULL UNIQUE
             );
+            CREATE TABLE IF NOT EXISTS axiom_checkout_lock (
+                account_id TEXT PRIMARY KEY REFERENCES axiom_account (id),
+                session_url TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
             """);
         command.ExecuteNonQuery();
     }
@@ -194,6 +200,40 @@ internal sealed class AxiomAccountStore
             WHERE id = $id RETURNING stripe_customer_id;
             """, null, ("$id", accountId), ("$customer", stripeCustomer));
         return (string)command.ExecuteScalar()!;
+    }
+
+    public string? TryGetActiveCheckoutUrl(string accountId)
+    {
+        long now = _clock.GetUtcNow().ToUnixTimeSeconds();
+        using var connection = Open();
+        using var command = Command(connection, """
+            SELECT session_url FROM axiom_checkout_lock
+            WHERE account_id = $id AND expires_at > $now;
+            """, null, ("$id", accountId), ("$now", now));
+        return command.ExecuteScalar() as string;
+    }
+
+    public void SaveActiveCheckoutUrl(string accountId, string sessionUrl, TimeSpan ttl)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionUrl);
+        long now = _clock.GetUtcNow().ToUnixTimeSeconds();
+        long expiresAt = now + Math.Max(60, (long)ttl.TotalSeconds);
+        using var connection = Open();
+        using var command = Command(connection, """
+            INSERT INTO axiom_checkout_lock (account_id, session_url, created_at, expires_at)
+            VALUES ($id, $url, $now, $expires)
+            ON CONFLICT(account_id) DO UPDATE SET session_url = excluded.session_url,
+                created_at = excluded.created_at, expires_at = excluded.expires_at;
+            """, null, ("$id", accountId), ("$url", sessionUrl), ("$now", now), ("$expires", expiresAt));
+        command.ExecuteNonQuery();
+    }
+
+    public void ClearActiveCheckout(string accountId)
+    {
+        using var connection = Open();
+        using var command = Command(connection, "DELETE FROM axiom_checkout_lock WHERE account_id = $id;",
+            null, ("$id", accountId));
+        command.ExecuteNonQuery();
     }
 
     public static string? NormalizeEmail(string? email)

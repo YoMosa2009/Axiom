@@ -801,15 +801,94 @@
         <Border x:Name="UnifiedTitleBar" Grid.Row="0" Grid.ColumnSpan="2" MinHeight="48" Padding="0,4"
                 Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1">
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" MinWidth="268"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" MinWidth="268"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
                 <ContentControl x:Name="TitleBarNavigationHost" Margin="8,0" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" VerticalAlignment="Center" Margin="12,0" FontSize="12">
                     <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
                         <DataTrigger Binding="{Binding Visibility, ElementName=WorkplaceViewControl}" Value="Visible"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
                     </Style.Triggers></Style></TextBlock.Style>
                 </TextBlock>
-                <ContentControl x:Name="WorkplaceTitleBarHost" Grid.Column="1" HorizontalContentAlignment="Stretch"
+                <ContentControl x:Name="WorkplaceTitleBarHost" Grid.Column="1" Grid.ColumnSpan="2" HorizontalContentAlignment="Stretch"
                                 Visibility="{Binding Visibility, ElementName=WorkplaceViewControl}"/>
+                <!-- Project Canvas toggle for Normal Chat (Workplace hosts its own canvas toggle in WorkplaceTitleBarHost). -->
+                <Border Grid.Column="2" Margin="0,0,12,0" VerticalAlignment="Center">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Visibility, ElementName=WorkplaceViewControl}" Value="Visible">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <ToggleButton x:Name="ProjectCanvasToggleButton"
+                                  Width="32" Height="32" VerticalAlignment="Center"
+                                  Checked="ProjectCanvasToggle_Changed"
+                                  Unchecked="ProjectCanvasToggle_Changed"
+                                  ToolTip="Show Project Canvas"
+                                  AutomationProperties.Name="Toggle Project Canvas">
+                        <ToggleButton.Style>
+                            <Style TargetType="ToggleButton">
+                                <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
+                                <Setter Property="BorderBrush" Value="Transparent"/>
+                                <Setter Property="BorderThickness" Value="1"/>
+                                <Setter Property="Cursor" Value="Hand"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border x:Name="border"
+                                                    Background="{TemplateBinding Background}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                                    CornerRadius="8">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                                    <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
+                                                </Trigger>
+                                                <Trigger Property="IsChecked" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
+                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
+                                                </Trigger>
+                                                <Trigger Property="IsPressed" Value="True">
+                                                    <Setter TargetName="border" Property="Opacity" Value="0.84"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ToggleButton.Style>
+                        <!-- Panel-right glyph: window outline with the canvas column on its right edge. -->
+                        <Grid Width="16" Height="14">
+                            <Border CornerRadius="3" BorderThickness="1.4"
+                                    BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"/>
+                            <Border Width="5" HorizontalAlignment="Right" Margin="0,1.4,1.4,1.4" CornerRadius="0,1.6,1.6,0"
+                                    Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Opacity" Value="0.35"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=ToggleButton}}" Value="True">
+                                                <Setter Property="Opacity" Value="1"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                            </Border>
+                        </Grid>
+                    </ToggleButton>
+                </Border>
             </Grid>
         </Border>
 
@@ -864,72 +943,6 @@
                         </Path>
                     </Button>
                 </StackPanel>
-
-                <!-- Project Canvas toggle shared by Chat and Workplace: it drives whichever tab is
-                     active. Lives in the tab bar instead of a full-height rail so the content
-                     column keeps the whole window width. -->
-                <ToggleButton x:Name="ProjectCanvasToggleButton" Grid.Column="1"
-                              Width="32" Height="32" VerticalAlignment="Center"
-                              Checked="ProjectCanvasToggle_Changed"
-                              Unchecked="ProjectCanvasToggle_Changed"
-                              ToolTip="Show Project Canvas"
-                              AutomationProperties.Name="Toggle Project Canvas">
-                    <ToggleButton.Style>
-                        <Style TargetType="ToggleButton">
-                            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-                            <Setter Property="Background" Value="Transparent"/>
-                            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
-                            <Setter Property="BorderBrush" Value="Transparent"/>
-                            <Setter Property="BorderThickness" Value="1"/>
-                            <Setter Property="Cursor" Value="Hand"/>
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="border"
-                                                Background="{TemplateBinding Background}"
-                                                BorderBrush="{TemplateBinding BorderBrush}"
-                                                BorderThickness="{TemplateBinding BorderThickness}"
-                                                CornerRadius="8">
-                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                        <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
-                                                <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
-                                            </Trigger>
-                                            <Trigger Property="IsChecked" Value="True">
-                                                <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
-                                                <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
-                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
-                                            </Trigger>
-                                            <Trigger Property="IsPressed" Value="True">
-                                                <Setter TargetName="border" Property="Opacity" Value="0.84"/>
-                                            </Trigger>
-                                        </ControlTemplate.Triggers>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ToggleButton.Style>
-                    <!-- Panel-right glyph: window outline with the canvas column on its right edge. -->
-                    <Grid Width="16" Height="14">
-                        <Border CornerRadius="3" BorderThickness="1.4"
-                                BorderBrush="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"/>
-                        <Border Width="5" HorizontalAlignment="Right" Margin="0,1.4,1.4,1.4" CornerRadius="0,1.6,1.6,0"
-                                Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Setter Property="Opacity" Value="0.35"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsChecked, RelativeSource={RelativeSource AncestorType=ToggleButton}}" Value="True">
-                                            <Setter Property="Opacity" Value="1"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
-                        </Border>
-                    </Grid>
-                </ToggleButton>
             </Grid>
         </Border>
 
@@ -1767,6 +1780,61 @@
                                 </DockPanel>
                             </Border>
 
+                            <!-- Contextual Axiom Cloud suggestion (shown only on slow local, exhausted BYOK, or missing vision; never while paid) -->
+                            <Border x:Name="AxiomCloudSuggestionBanner"
+                                    Visibility="Collapsed"
+                                    HorizontalAlignment="Stretch"
+                                    MaxWidth="900"
+                                    Margin="32,0,32,8"
+                                    Padding="12,8"
+                                    Background="{DynamicResource NotebookSurfaceBrush}"
+                                    BorderBrush="{DynamicResource PrimaryAccentBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock x:Name="AxiomCloudSuggestionHeadline"
+                                                   Text="Axiom Cloud · DeepSeek 4.1F-1017"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource NotebookTextBrush}"/>
+                                        <TextBlock x:Name="AxiomCloudSuggestionDetail"
+                                                   Text=""
+                                                   FontSize="11"
+                                                   Foreground="{DynamicResource DarkSecondaryBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                    <Button x:Name="AxiomCloudSuggestionActionButton"
+                                            Grid.Column="1"
+                                            Content="Explore Axiom Cloud"
+                                            Click="AxiomCloudSuggestionAction_Click"
+                                            Height="28"
+                                            Padding="12,0"
+                                            FontSize="11"
+                                            VerticalAlignment="Center"
+                                            Margin="0,0,8,0"
+                                            Style="{StaticResource SubtleButtonStyle}"/>
+                                    <Button Grid.Column="2"
+                                            Content="✕"
+                                            Click="DismissAxiomCloudSuggestion_Click"
+                                            Width="24"
+                                            Height="24"
+                                            FontSize="11"
+                                            VerticalAlignment="Center"
+                                            Background="Transparent"
+                                            BorderBrush="Transparent"
+                                            Foreground="{DynamicResource MutedTextBrush}"
+                                            Cursor="Hand"
+                                            ToolTip="Dismiss for this session"/>
+                                </Grid>
+                            </Border>
+
                             <!-- Borderless concise status line above composer (Image 6 blue circle) -->
                             <Border x:Name="ToolActivityIndicatorHost"
                                     Visibility="Collapsed"
@@ -2337,11 +2405,107 @@
 
                                 <!-- ═══ CLOUD AI ═══ -->
                                 <StackPanel x:Name="SettingsPageCloud" Visibility="Collapsed">
-                                 <Border BorderThickness="0,0,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,0,0,16">
-                                     <StackPanel>
-                                        <TextBlock Text="Cloud AI" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
+                                <!-- Axiom Cloud primary subscription card -->
+                                <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="12" Padding="16,14" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <DockPanel LastChildFill="False" Margin="0,0,0,6">
+                                            <TextBlock Text="Axiom Cloud" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                                            <Border Background="{DynamicResource AccentSoftBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="10" Padding="8,2" Margin="10,0,0,0" DockPanel.Dock="Left" VerticalAlignment="Center">
+                                                <TextBlock Text="DeepSeek 4.1F-1017 · $9/mo" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrightBrush}"/>
+                                            </Border>
+                                        </DockPanel>
+                                        <TextBlock Text="1M context · native vision · Workplace coding agent &amp; Computer Use · $5.00/mo paced inference credit · Cancel anytime."
+                                                   FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                        <TextBlock x:Name="AxiomAccountUnconfiguredNotice" Visibility="Collapsed" TextWrapping="Wrap" FontSize="11"
+                                                   Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8"
+                                                   Text="This local/open-source build does not point at an Axiom Cloud gateway yet. Official signed releases connect automatically, or set AXIOM_MANAGED_GATEWAY_URL."/>
+
+                                        <StackPanel x:Name="AxiomAccountPanel" Visibility="Collapsed">
+                                            <TextBlock x:Name="AxiomAccountMessage" TextWrapping="Wrap" FontSize="11.5"
+                                                       Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,10"/>
+                                            <StackPanel x:Name="AxiomAccountSignInForm">
+                                                <TextBlock Text="Email" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                                <Grid Margin="0,0,0,8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBox x:Name="AxiomAccountEmailBox" Grid.Column="0" AutomationProperties.Name="Axiom account email"
+                                                             Height="32" Padding="8,6" Margin="0,0,8,0"
+                                                             Background="{DynamicResource NotebookSurfaceBrush}"
+                                                             Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
+                                                    <Button Grid.Column="1" Content="Send sign-in code" Click="SendAxiomAccountCode_Click" Height="32"
+                                                            Padding="12,0" Style="{StaticResource SubtleButtonStyle}"/>
+                                                </Grid>
+                                                <TextBlock Text="Email verification code" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                                <PasswordBox x:Name="AxiomAccountCodeBox" AutomationProperties.Name="Axiom email verification code"
+                                                             Height="32" Padding="8,6" Margin="0,0,0,8"
+                                                             Background="{DynamicResource NotebookSurfaceBrush}"
+                                                             Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
+                                                <StackPanel x:Name="AxiomRecoveryKeyEntry" Visibility="Collapsed">
+                                                    <TextBlock Text="Saved recovery key" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                                    <PasswordBox x:Name="AxiomRecoveryKeyBox" AutomationProperties.Name="Saved Axiom recovery key"
+                                                                 Height="32" Padding="8,6" Margin="0,0,0,8"
+                                                                 Background="{DynamicResource NotebookSurfaceBrush}"
+                                                                 Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
+                                                </StackPanel>
+                                                <WrapPanel Margin="0,2,0,0">
+                                                    <Button x:Name="AxiomConfirmAccountButton" Content="Create account or sign in"
+                                                            Click="ConfirmAxiomAccountCode_Click" Height="32" Margin="0,0,8,4"
+                                                            Padding="14,0" Style="{StaticResource PremiumButtonStyle}"
+                                                            Background="{DynamicResource PrimaryAccentBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}"/>
+                                                    <Button x:Name="AxiomRecoveryToggle" Content="Recover with key" Click="ToggleAxiomRecovery_Click"
+                                                            Height="32" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                </WrapPanel>
+                                            </StackPanel>
+                                            <WrapPanel x:Name="AxiomAccountActiveActions" Visibility="Collapsed" Margin="0,0,0,4">
+                                                <Button x:Name="AxiomAccountEndpointToggle" Click="ToggleAxiomAccountEndpoint_Click"
+                                                        Height="32" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                <Button x:Name="CopyAxiomRecoveryKeyButton" Content="Copy new recovery key"
+                                                        Click="CopyAxiomRecoveryKey_Click" Height="32" Margin="0,0,8,4"
+                                                        Style="{StaticResource SubtleButtonStyle}"/>
+                                                <Button Content="Sign out" Click="SignOutAxiomAccount_Click" Height="32" Margin="0,0,8,4"
+                                                        Style="{StaticResource SubtleButtonStyle}"/>
+                                            </WrapPanel>
+
+                                            <Border x:Name="AxiomSubscriptionPanel" Visibility="Collapsed" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Margin="0,10,0,0" Padding="0,12,0,0">
+                                                <StackPanel>
+                                                    <TextBlock x:Name="AxiomCloudPlanTitleText" Text="Axiom Cloud subscription" FontSize="12.5" FontWeight="SemiBold"
+                                                               Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
+                                                    <TextBlock x:Name="AxiomSubscriptionStatusText" TextWrapping="Wrap" FontSize="11.5"
+                                                               Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,10"/>
+                                                    <WrapPanel x:Name="AxiomSubscriptionActions">
+                                                        <Button x:Name="AxiomSubscribeButton" Content="Subscribe — $9/mo" Click="AxiomSubscribeButton_Click"
+                                                                Height="32" Padding="14,0" Margin="0,0,8,4" Style="{StaticResource PremiumButtonStyle}"
+                                                                Background="{DynamicResource PrimaryAccentBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}"/>
+                                                        <Button x:Name="AxiomManageSubscriptionButton" Content="Manage billing"
+                                                                Click="AxiomManageSubscriptionButton_Click" Height="32" Margin="0,0,8,4"
+                                                                Style="{StaticResource SubtleButtonStyle}" Visibility="Collapsed"/>
+                                                        <Button Content="Refresh billing" Click="AxiomRefreshSubscriptionButton_Click"
+                                                                Height="32" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                        <Button Content="View Usage" Click="OpenUsageFromCloudAi_Click"
+                                                                Height="32" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
+                                                    </WrapPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                            <Button Content="Terms of Service" Click="OpenTermsOfService_Click" Background="Transparent" BorderThickness="0" Padding="0,2" Cursor="Hand"
+                                                    FontSize="10.5" Foreground="{DynamicResource PrimaryAccentBrush}"/>
+                                            <TextBlock Text=" · " FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Center" Margin="6,0"/>
+                                            <Button Content="Privacy Policy" Click="OpenPrivacyPolicy_Click" Background="Transparent" BorderThickness="0" Padding="0,2" Cursor="Hand"
+                                                    FontSize="10.5" Foreground="{DynamicResource PrimaryAccentBrush}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Bring Your Own Key (OpenRouter) -->
+                                <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16,14" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <TextBlock Text="OpenRouter (Bring Your Own Key)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
                                         <TextBlock Text="OpenRouter API Key" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
-                                        <PasswordBox x:Name="OpenRouterApiKeyPasswordBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" PasswordChanged="OpenRouterApiKeyPasswordBox_PasswordChanged"/>
+                                        <PasswordBox x:Name="OpenRouterApiKeyPasswordBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" PasswordChanged="OpenRouterApiKeyPasswordBox_PasswordChanged"/>
                                         <TextBlock Text="Your key is stored locally. Cloud conversations are subject to the selected model/provider via OpenRouter." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,12,0,0" VerticalAlignment="Center">
                                             <Button x:Name="SaveOpenRouterKeyButton" Content="Save Key" Click="SaveOpenRouterKeyButton_Click" Height="32" MinWidth="100" Style="{StaticResource PremiumButtonStyle}" Background="{DynamicResource PrimaryAccentBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}"/>
@@ -2349,129 +2513,70 @@
                                             <TextBlock x:Name="OpenRouterKeyTestingText" Text="Testing" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                                             <TextBlock x:Name="OpenRouterKeyStatusText" Text="" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                                         </StackPanel>
-                                         <StackPanel x:Name="OpenRouterUsagePanel" Margin="0,12,0,0" Visibility="Collapsed">
-                                             <Grid Margin="0,0,0,6">
-                                                 <Grid.ColumnDefinitions>
-                                                     <ColumnDefinition Width="*"/>
-                                                     <ColumnDefinition Width="Auto"/>
-                                                 </Grid.ColumnDefinitions>
-                                                 <TextBlock Text="Daily free-model requests" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" VerticalAlignment="Center"/>
-                                                 <Button x:Name="RefreshOpenRouterUsageButton"
-                                                         Grid.Column="1"
-                                                         Width="22"
-                                                         Height="22"
-                                                         Margin="8,0,0,0"
-                                                         Click="RefreshOpenRouterUsageButton_Click"
-                                                         Style="{StaticResource ChatInputIconButtonStyle}"
-                                                         ToolTip="Refresh usage">
-                                                     <TextBlock Text="↻" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                 </Button>
-                                             </Grid>
-                                             <!-- The fill and label both represent remaining daily requests. -->
-                                             <Border x:Name="OpenRouterUsageTrack" Height="24" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" HorizontalAlignment="Stretch" SizeChanged="OpenRouterUsageTrack_SizeChanged">
-                                                 <Grid>
-                                                     <Border x:Name="OpenRouterUsageFillBar" Width="0" Background="{DynamicResource PrimaryAccentBrush}" Opacity="0.45" CornerRadius="11" HorizontalAlignment="Left" Margin="1"/>
-                                                     <TextBlock x:Name="OpenRouterUsageText"
-                                                                Text="No usage data yet"
-                                                                FontSize="11"
-                                                                FontWeight="SemiBold"
-                                                                Foreground="{DynamicResource NotebookTextBrush}"
-                                                                FontFamily="Segoe UI"
-                                                                HorizontalAlignment="Center"
-                                                                VerticalAlignment="Center"
-                                                                TextTrimming="CharacterEllipsis"/>
-                                                 </Grid>
-                                             </Border>
-                                             <TextBlock x:Name="OpenRouterUsageHintText"
-                                                        Text=""
-                                                        FontSize="10"
-                                                        Foreground="{DynamicResource DarkSecondaryBrush}"
-                                                        FontFamily="Segoe UI"
-                                                        Margin="0,5,0,0"
-                                                        TextWrapping="Wrap"
-                                                        Visibility="Collapsed"/>
-                                         </StackPanel>
-                                         <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,14,0,8"/>
-                                         <TextBlock x:Name="OpenRouterDetectedModelText" Text="Edios 1.5" FontSize="11" Foreground="{DynamicResource NotebookTextBrush}" TextWrapping="Wrap"/>
-                                         <TextBlock x:Name="OpenRouterDetectedModelIdText" Text="General reasoning profile tuned for Axiom's tool pipeline." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                                    </StackPanel>
-                                </Border>
-                                <Border x:Name="AxiomAccountPanel" Visibility="Collapsed" BorderThickness="0,1,0,0"
-                                        BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,12">
-                                    <StackPanel>
-                                        <TextBlock Text="Axiom account" FontSize="13" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,6"/>
-                                        <TextBlock x:Name="AxiomAccountMessage" TextWrapping="Wrap"
-                                                   Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8"/>
-                                        <StackPanel x:Name="AxiomAccountSignInForm">
-                                            <TextBlock Text="Email" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
-                                            <TextBox x:Name="AxiomAccountEmailBox" AutomationProperties.Name="Axiom account email"
-                                                     Height="32" Padding="8,6" Margin="0,0,0,6"
-                                                     Background="{DynamicResource NotebookBackgroundBrush}"
-                                                     Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
-                                            <Button Content="Send sign-in code" Click="SendAxiomAccountCode_Click" Height="30"
-                                                    HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}" Margin="0,0,0,8"/>
-                                            <TextBlock Text="Email verification code" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
-                                            <PasswordBox x:Name="AxiomAccountCodeBox" AutomationProperties.Name="Axiom email verification code"
-                                                         Height="32" Padding="8,6" Margin="0,0,0,6"
-                                                         Background="{DynamicResource NotebookBackgroundBrush}"
-                                                         Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
-                                            <StackPanel x:Name="AxiomRecoveryKeyEntry" Visibility="Collapsed">
-                                                <TextBlock Text="Saved recovery key" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,4"/>
-                                                <PasswordBox x:Name="AxiomRecoveryKeyBox" AutomationProperties.Name="Saved Axiom recovery key"
-                                                             Height="32" Padding="8,6" Margin="0,0,0,6"
-                                                             Background="{DynamicResource NotebookBackgroundBrush}"
-                                                             Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"/>
-                                            </StackPanel>
-                                            <WrapPanel>
-                                                <Button x:Name="AxiomConfirmAccountButton" Content="Create account or sign in"
-                                                        Click="ConfirmAxiomAccountCode_Click" Height="30" Margin="0,0,8,4"
-                                                        Style="{StaticResource SubtleButtonStyle}"/>
-                                                <Button x:Name="AxiomRecoveryToggle" Content="Recover with key" Click="ToggleAxiomRecovery_Click"
-                                                        Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
-                                            </WrapPanel>
+                                        <StackPanel x:Name="OpenRouterUsagePanel" Margin="0,12,0,0" Visibility="Collapsed">
+                                            <Grid Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="Daily free-model requests" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                                                <Button x:Name="RefreshOpenRouterUsageButton"
+                                                        Grid.Column="1"
+                                                        Width="22"
+                                                        Height="22"
+                                                        Margin="8,0,0,0"
+                                                        Click="RefreshOpenRouterUsageButton_Click"
+                                                        Style="{StaticResource ChatInputIconButtonStyle}"
+                                                        ToolTip="Refresh usage">
+                                                    <TextBlock Text="↻" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Button>
+                                            </Grid>
+                                            <!-- The fill and label both represent remaining daily requests. -->
+                                            <Border x:Name="OpenRouterUsageTrack" Height="24" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" HorizontalAlignment="Stretch" SizeChanged="OpenRouterUsageTrack_SizeChanged">
+                                                <Grid>
+                                                    <Border x:Name="OpenRouterUsageFillBar" Width="0" Background="{DynamicResource PrimaryAccentBrush}" Opacity="0.45" CornerRadius="11" HorizontalAlignment="Left" Margin="1"/>
+                                                    <TextBlock x:Name="OpenRouterUsageText"
+                                                               Text="No usage data yet"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="{DynamicResource NotebookTextBrush}"
+                                                               FontFamily="Segoe UI"
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </Grid>
+                                            </Border>
+                                            <TextBlock x:Name="OpenRouterUsageHintText"
+                                                       Text=""
+                                                       FontSize="10"
+                                                       Foreground="{DynamicResource DarkSecondaryBrush}"
+                                                       FontFamily="Segoe UI"
+                                                       Margin="0,5,0,0"
+                                                       TextWrapping="Wrap"
+                                                       Visibility="Collapsed"/>
                                         </StackPanel>
-                                        <WrapPanel x:Name="AxiomAccountActiveActions" Visibility="Collapsed">
-                                            <Button x:Name="AxiomAccountEndpointToggle" Click="ToggleAxiomAccountEndpoint_Click"
-                                                    Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
-                                            <Button Content="Sign out" Click="SignOutAxiomAccount_Click" Height="30" Margin="0,0,8,4"
-                                                    Style="{StaticResource SubtleButtonStyle}"/>
-                                            <Button x:Name="CopyAxiomRecoveryKeyButton" Content="Copy new recovery key"
-                                                    Click="CopyAxiomRecoveryKey_Click" Height="30" Margin="0,0,8,4"
-                                                    Style="{StaticResource SubtleButtonStyle}"/>
-                                        </WrapPanel>
+                                        <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,14,0,6"/>
+                                        <TextBlock x:Name="OpenRouterDetectedModelText" Text="Edios 1.5" FontSize="11" Foreground="{DynamicResource NotebookTextBrush}" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="OpenRouterDetectedModelIdText" Text="General reasoning profile tuned for Axiom's tool pipeline." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
-                                <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0">
+
+                                <!-- Custom Endpoint (Self-Hosted / Hybrid Local) -->
+                                <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16,14">
                                     <StackPanel>
-                                        <TextBlock Text="Custom Endpoint" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Custom Endpoint (Hybrid Local)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
                                         <TextBlock Text="Base URL" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
-                                        <TextBox x:Name="CustomEndpointBaseUrlBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Text="https://your-server.example.com/v1"/>
+                                        <TextBox x:Name="CustomEndpointBaseUrlBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Text="https://your-server.example.com/v1"/>
                                         <TextBlock Text="Model Name" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,12,0,6"/>
-                                        <TextBox x:Name="CustomEndpointModelIdBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
+                                        <TextBox x:Name="CustomEndpointModelIdBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
                                         <TextBlock Text="API Key" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,12,0,6"/>
-                                        <PasswordBox x:Name="CustomEndpointApiKeyPasswordBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
-                                        <TextBlock Text="Points at your own OpenAI-compatible server (e.g. a self-hosted proxy). Stored locally." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                        <PasswordBox x:Name="CustomEndpointApiKeyPasswordBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
+                                        <TextBlock Text="Points at your own OpenAI-compatible server (e.g. Ollama, LM Studio, or self-hosted vLLM). Stored locally." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,12,0,0" VerticalAlignment="Center">
                                             <Button x:Name="SaveCustomEndpointButton" Content="Save" Click="SaveCustomEndpointButton_Click" Height="32" MinWidth="100" Style="{StaticResource PremiumButtonStyle}" Background="{DynamicResource PrimaryAccentBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}"/>
                                             <Button x:Name="ClearCustomEndpointButton" Content="Clear" Click="ClearCustomEndpointButton_Click" Height="32" MinWidth="90" Margin="8,0,0,0" Style="{StaticResource SubtleButtonStyle}" Background="Transparent" BorderBrush="Transparent" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                             <TextBlock x:Name="CustomEndpointTestingText" Text="Testing" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                                             <TextBlock x:Name="CustomEndpointStatusText" Text="" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
-                                        </StackPanel>
-                                        <StackPanel x:Name="AxiomSubscriptionPanel" Visibility="Collapsed" Margin="0,16,0,0">
-                                            <TextBlock Text="Axiom subscription sandbox" FontSize="13" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource NotebookTextBrush}" Margin="0,0,0,6"/>
-                                            <TextBlock x:Name="AxiomSubscriptionStatusText" TextWrapping="Wrap"
-                                                       Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8"/>
-                                            <WrapPanel x:Name="AxiomSubscriptionActions">
-                                                <Button x:Name="AxiomSubscribeButton" Content="Test checkout" Click="AxiomSubscribeButton_Click"
-                                                        Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
-                                                <Button x:Name="AxiomManageSubscriptionButton" Content="Manage test subscription"
-                                                        Click="AxiomManageSubscriptionButton_Click" Height="30" Margin="0,0,8,4"
-                                                        Style="{StaticResource SubtleButtonStyle}" Visibility="Collapsed"/>
-                                                <Button Content="Refresh payment" Click="AxiomRefreshSubscriptionButton_Click"
-                                                        Height="30" Margin="0,0,8,4" Style="{StaticResource SubtleButtonStyle}"/>
-                                            </WrapPanel>
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>

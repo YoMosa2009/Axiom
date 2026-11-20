@@ -60,6 +60,18 @@ internal sealed class AllowanceLedger
                 starts INTEGER NOT NULL,
                 ends INTEGER NOT NULL CHECK (ends > starts)
             );
+            CREATE TABLE IF NOT EXISTS account_billing_state (
+                account TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                detail TEXT
+            );
+            CREATE TABLE IF NOT EXISTS billing_revocation (
+                event_id TEXT PRIMARY KEY,
+                account TEXT NOT NULL,
+                applied_at INTEGER NOT NULL,
+                reason TEXT
+            );
             """;
         command.ExecuteNonQuery();
         EnsureCreatedAtColumn(connection, transaction);
@@ -464,6 +476,131 @@ internal sealed class AllowanceLedger
         return pending;
     }
 
+    public bool HasAnyPeriod()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM allowance_period WHERE account = $account;";
+        command.Parameters.AddWithValue("$account", _account);
+        return Convert.ToInt64(command.ExecuteScalar() ?? 0L) > 0;
+    }
+
+    public int CountPeriods()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM allowance_period WHERE account = $account;";
+        command.Parameters.AddWithValue("$account", _account);
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
+    public void SetBillingStatus(string status, string? detail = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(status);
+        long now = _clock.GetUtcNow().ToUnixTimeSeconds();
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO account_billing_state (account, status, updated_at, detail)
+            VALUES ($account, $status, $now, $detail)
+            ON CONFLICT(account) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at, detail = excluded.detail;
+            """;
+        command.Parameters.AddWithValue("$account", _account);
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$now", now);
+        command.Parameters.AddWithValue("$detail", (object?)detail ?? DBNull.Value);
+        command.ExecuteNonQuery();
+    }
+
+    public BillingStateSnapshot? GetBillingStatus()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT status, updated_at, detail FROM account_billing_state WHERE account = $account;";
+        command.Parameters.AddWithValue("$account", _account);
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? new BillingStateSnapshot(reader.GetString(0), reader.GetInt64(1), reader.IsDBNull(2) ? null : reader.GetString(2))
+            : null;
+    }
+
+    public bool EndActivePeriodAt(long endedAtUnixSeconds)
+    {
+        if (endedAtUnixSeconds <= 0)
+            return false;
+
+        long now = _clock.GetUtcNow().ToUnixTimeSeconds();
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE allowance_period
+            SET ends = CASE
+                WHEN $endedAt <= starts THEN starts + 1
+                WHEN $endedAt < ends THEN $endedAt
+                ELSE ends
+            END
+            WHERE account = $account AND starts <= $now AND ends > $now;
+            """;
+        command.Parameters.AddWithValue("$account", _account);
+        command.Parameters.AddWithValue("$now", now);
+        command.Parameters.AddWithValue("$endedAt", endedAtUnixSeconds);
+        return command.ExecuteNonQuery() > 0;
+    }
+
+    public bool TryRevokeActivePeriod(string eventId, string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventId);
+        long now = _clock.GetUtcNow().ToUnixTimeSeconds();
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+
+        using (var dedupe = connection.CreateCommand())
+        {
+            dedupe.Transaction = transaction;
+            dedupe.CommandText = """
+                INSERT OR IGNORE INTO billing_revocation (event_id, account, applied_at, reason)
+                VALUES ($eventId, $account, $now, $reason);
+                """;
+            dedupe.Parameters.AddWithValue("$eventId", eventId);
+            dedupe.Parameters.AddWithValue("$account", _account);
+            dedupe.Parameters.AddWithValue("$now", now);
+            dedupe.Parameters.AddWithValue("$reason", reason);
+            if (dedupe.ExecuteNonQuery() == 0)
+                return false;
+        }
+
+        using (var revoke = connection.CreateCommand())
+        {
+            revoke.Transaction = transaction;
+            revoke.CommandText = """
+                UPDATE allowance_period
+                SET allowance = spent + reserved,
+                    ends = CASE WHEN $now > starts AND $now < ends THEN $now ELSE ends END
+                WHERE account = $account AND starts <= $now AND ends > $now;
+                """;
+            revoke.Parameters.AddWithValue("$account", _account);
+            revoke.Parameters.AddWithValue("$now", now);
+            revoke.ExecuteNonQuery();
+        }
+
+        using (var status = connection.CreateCommand())
+        {
+            status.Transaction = transaction;
+            status.CommandText = """
+                INSERT INTO account_billing_state (account, status, updated_at, detail)
+                VALUES ($account, 'revoked', $now, $reason)
+                ON CONFLICT(account) DO UPDATE SET status = 'revoked', updated_at = excluded.updated_at, detail = excluded.detail;
+                """;
+            status.Parameters.AddWithValue("$account", _account);
+            status.Parameters.AddWithValue("$now", now);
+            status.Parameters.AddWithValue("$reason", reason);
+            status.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+        return true;
+    }
+
     private void BindActivePeriod(SqliteCommand command)
     {
         command.Parameters.AddWithValue("$account", _account);
@@ -500,6 +637,8 @@ internal sealed record UsageWindowSnapshot(long UsedMicros, long LimitMicros, do
     DateTimeOffset? ResetsAt, int? WindowHours = null);
 
 internal sealed record AllowanceUsageSnapshot(UsageWindowSnapshot Session, UsageWindowSnapshot Week);
+
+internal sealed record BillingStateSnapshot(string Status, long UpdatedAt, string? Detail);
 
 internal sealed record AllowanceBalance(long AllowanceMicros, long SpentMicros, long ReservedMicros)
 {

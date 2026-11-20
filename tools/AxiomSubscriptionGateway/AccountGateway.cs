@@ -8,11 +8,11 @@ namespace AxiomSubscriptionGateway;
 
 internal sealed record AccountGatewayOptions(
     string DatabasePath, string StripePriceId, string? WebhookSecret, string? PortalConfigurationId,
-    Uri? PublicOrigin = null);
+    Uri? PublicOrigin = null, long MonthlyAllowanceMicros = 5_000_000);
 
 internal static class AccountGateway
 {
-    private const long MonthlyAllowanceMicros = 5_000_000;
+    private const long DefaultMonthlyAllowanceMicros = 5_000_000;
     internal const long SessionAllowanceMicros = 350_000;
     internal const long WeeklyAllowanceMicros = 1_250_000;
     private const string RatePolicy = "account-entry";
@@ -26,11 +26,12 @@ internal static class AccountGateway
             || !string.IsNullOrEmpty(origin.Fragment) || !string.IsNullOrEmpty(origin.UserInfo)))
             throw new ArgumentException("The public gateway origin must be an HTTPS origin without a path.");
 
+        long monthlyAllowance = options.MonthlyAllowanceMicros > 0 ? options.MonthlyAllowanceMicros : DefaultMonthlyAllowanceMicros;
         var store = new AxiomAccountStore(options.DatabasePath, clock);
-        var ledgerSchema = new AllowanceLedger(options.DatabasePath, MonthlyAllowanceMicros, "account-gateway", clock,
+        var ledgerSchema = new AllowanceLedger(options.DatabasePath, monthlyAllowance, "account-gateway", clock,
             SessionAllowanceMicros, WeeklyAllowanceMicros);
         AllowanceLedger Ledger(string accountId) => ledgerSchema.ForAccount(accountId);
-        StripeTestWebhook Billing(string customer) => new(customer, options.StripePriceId, options.WebhookSecret, options.PortalConfigurationId);
+        StripeTestWebhook Billing(string customer) => new(customer, options.StripePriceId, options.WebhookSecret, options.PortalConfigurationId, stripe.IsLiveMode);
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.ConfigureKestrel(config =>
         {
@@ -40,6 +41,14 @@ internal static class AccountGateway
         builder.Services.Configure<ConsoleLoggerOptions>(config => config.LogToStandardErrorThreshold = LogLevel.Trace);
         builder.Services.AddHostedService(services => new OpenRouterSettlementWorker(inference, ledgerSchema,
             services.GetRequiredService<ILogger<OpenRouterSettlementWorker>>(), clock, allAccounts: true));
+        string? backupDir = Environment.GetEnvironmentVariable("AXIOM_BACKUP_DIR");
+        if (!string.IsNullOrWhiteSpace(backupDir))
+        {
+            TimeSpan backupInterval = AccountDatabaseBackup.ParseIntervalFromEnvironment();
+            builder.Services.AddHostedService(services => new AccountDatabaseBackupWorker(
+                options.DatabasePath, backupDir, services.GetRequiredService<ILogger<AccountDatabaseBackupWorker>>(),
+                clock, backupInterval));
+        }
         builder.Services.AddRateLimiter(config =>
         {
             config.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -133,10 +142,20 @@ internal static class AccountGateway
             var ledger = Ledger(account.Id);
             var (balance, renewsAt) = ledger.GetPeriod();
             var usage = ledger.GetUsage();
+            var billingState = ledger.GetBillingStatus();
+            string billingStatus = billingState?.Status
+                ?? (balance.AllowanceMicros > 0 ? "active" : "none");
             return Results.Ok(new
             {
-                service = "axiom-managed-inference", sandbox = true, monthlyUsd = 9,
-                email = account.Email, modelLabel = "DeepSeek 4.1F-1017", balance, renewsAt, usage
+                service = "axiom-managed-inference",
+                sandbox = !stripe.IsLiveMode,
+                monthlyUsd = 9,
+                email = account.Email,
+                modelLabel = "DeepSeek 4.1F-1017",
+                billingStatus,
+                balance,
+                renewsAt,
+                usage
             });
         });
 
@@ -145,15 +164,27 @@ internal static class AccountGateway
             var account = Identity(context).Account;
             try
             {
+                var ledger = Ledger(account.Id);
+                if (ledger.GetBalance().AllowanceMicros > 0)
+                    return Results.Conflict(new { error = "This account already has an active paid period." });
+
+                if (store.TryGetActiveCheckoutUrl(account.Id) is { } existingUrl)
+                    return Results.Ok(new { url = existingUrl });
+
                 string customer = account.StripeCustomerId
                     ?? store.BindStripeCustomer(account.Id, await stripe.CreateCustomerAsync(account, cancellationToken));
-                return await stripe.CreateSessionAsync(Billing(customer), Ledger(account.Id), context.Connection.LocalPort,
-                    cancellationToken, options.PublicOrigin);
+                int priorPeriods = ledger.CountPeriods();
+                string? suffix = priorPeriods > 0 ? $"cycle-{priorPeriods}" : null;
+                var (result, sessionUrl) = await stripe.CreateSessionWithUrlAsync(
+                    Billing(customer), ledger, context.Connection.LocalPort, cancellationToken, options.PublicOrigin, suffix);
+                if (sessionUrl is not null)
+                    store.SaveActiveCheckoutUrl(account.Id, sessionUrl.AbsoluteUri, TimeSpan.FromMinutes(25));
+                return result;
             }
             catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException
                 || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
-                return LocalGateway.Error("The Stripe sandbox could not start Checkout.", "billing_unavailable", 502);
+                return LocalGateway.Error("Stripe could not start Checkout.", "billing_unavailable", 502);
             }
         });
 
@@ -162,7 +193,8 @@ internal static class AccountGateway
             var account = Identity(context).Account;
             var ledger = Ledger(account.Id);
             return account.StripeCustomerId is { } customer
-                ? stripe.SynchronizeAsync(Billing(customer), ledger, MonthlyAllowanceMicros, cancellationToken)
+                ? stripe.SynchronizeAsync(Billing(customer), ledger, monthlyAllowance, cancellationToken,
+                    () => store.ClearActiveCheckout(account.Id))
                 : Task.FromResult(Results.Ok(new { applied = 0, balance = ledger.GetBalance() }));
         });
 
@@ -176,18 +208,53 @@ internal static class AccountGateway
 
         if (options.WebhookSecret is { } signingSecret)
         {
-            app.MapPost(StripeTestWebhook.Path, async (HttpContext context) =>
+            async Task<IResult> HandleStripeWebhookAsync(HttpContext context)
             {
-                return await StripeTestWebhook.ReadPaidInvoiceAsync(context, signingSecret, (customer, invoice) =>
+                return await StripeTestWebhook.ReadLifecycleEventAsync(context, signingSecret, stripe.IsLiveMode, async evt =>
                 {
-                    if (store.FindStripeCustomer(customer) is { } account)
-                        Billing(customer).TryApplyPaidInvoice(invoice, Ledger(account.Id), MonthlyAllowanceMicros);
+                    string? customer = evt.CustomerId;
+                    if (customer is null && evt.EventType == "charge.dispute.created")
+                        customer = await stripe.ResolveDisputeCustomerAsync(evt.DataObject, context.RequestAborted);
+                    if (customer is null || store.FindStripeCustomer(customer) is not { } account)
+                        return;
+
+                    var ledger = Ledger(account.Id);
+                    switch (evt.EventType)
+                    {
+                        case "invoice.paid":
+                            if (Billing(customer).TryApplyPaidInvoice(evt.DataObject, ledger, monthlyAllowance))
+                            {
+                                ledger.SetBillingStatus("active");
+                                store.ClearActiveCheckout(account.Id);
+                            }
+                            break;
+                        case "invoice.payment_failed":
+                            ledger.SetBillingStatus("payment_failed", "Latest subscription payment failed.");
+                            break;
+                        case "customer.subscription.deleted":
+                            StripeTestWebhook.TryReadLong(evt.DataObject, "ended_at", out long endedAt);
+                            ledger.EndActivePeriodAt(endedAt);
+                            ledger.SetBillingStatus("canceled", "Subscription canceled.");
+                            store.ClearActiveCheckout(account.Id);
+                            break;
+                        case "charge.refunded":
+                        case "charge.dispute.created":
+                            ledger.TryRevokeActivePeriod(evt.EventId, evt.EventType);
+                            store.ClearActiveCheckout(account.Id);
+                            break;
+                    }
                 });
-            });
+            }
+
+            app.MapPost(StripeTestWebhook.Path, (Func<HttpContext, Task<IResult>>)HandleStripeWebhookAsync);
+            app.MapPost(StripeTestWebhook.LivePath, (Func<HttpContext, Task<IResult>>)HandleStripeWebhookAsync);
         }
         app.MapGet("/stripe/test/checkout/complete", () => Results.Text("Return to Axiom and refresh payment."));
         app.MapGet("/stripe/test/checkout/cancel", () => Results.Text("Test Checkout canceled."));
         app.MapGet("/stripe/test/portal/return", () => Results.Text("Return to Axiom to view your subscription."));
+        app.MapGet("/stripe/checkout/complete", () => Results.Text("Payment submitted. Return to Axiom and click Refresh billing."));
+        app.MapGet("/stripe/checkout/cancel", () => Results.Text("Checkout canceled. You can restart anytime in Axiom."));
+        app.MapGet("/stripe/portal/return", () => Results.Text("Return to Axiom to view your subscription."));
 
         secure.MapGet("/models", () => LocalGateway.ModelCatalog(inference));
         secure.MapPost("/chat/completions", async (HttpContext context) =>

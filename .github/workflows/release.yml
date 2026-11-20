@@ -125,16 +125,17 @@ jobs:
           AXIOM_BUILTIN_GITHUB_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_GITHUB_CLIENT_ID }}
           AXIOM_BUILTIN_TODOIST_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_TODOIST_CLIENT_ID }}
           AXIOM_BUILTIN_TODOIST_CLIENT_SECRET: ${{ secrets.AXIOM_BUILTIN_TODOIST_CLIENT_SECRET }}
+          AXIOM_BUILTIN_MANAGED_GATEWAY_URL: ${{ secrets.AXIOM_BUILTIN_MANAGED_GATEWAY_URL }}
         run: |
-          $argsList = @(
-            '-OutputRoot', "$env:RUNNER_TEMP\Axiom-Updates",
-            '-Repository', '${{ github.repository }}',
-            '-PreparePublishFolderOnly'
-          )
-          if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
-            $argsList += '-PackageOnly'
+          $params = @{
+            OutputRoot               = "$env:RUNNER_TEMP\Axiom-Updates"
+            Repository               = '${{ github.repository }}'
+            PreparePublishFolderOnly = $true
           }
-          .\scripts\Publish-GitHubRelease.ps1 @argsList
+          if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
+            $params['PackageOnly'] = $true
+          }
+          .\scripts\Publish-GitHubRelease.ps1 @params
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Azure Login (OIDC)
@@ -178,15 +179,15 @@ jobs:
         env:
           PACKAGE_ONLY_FLAG: ${{ steps.decide.outputs.package_only }}
         run: |
-          $argsList = @(
-            '-OutputRoot', "$env:RUNNER_TEMP\Axiom-Updates",
-            '-Repository', '${{ github.repository }}',
-            '-PackageFromPreparedFolder'
-          )
-          if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
-            $argsList += '-PackageOnly'
+          $params = @{
+            OutputRoot                = "$env:RUNNER_TEMP\Axiom-Updates"
+            Repository                = '${{ github.repository }}'
+            PackageFromPreparedFolder = $true
           }
-          .\scripts\Publish-GitHubRelease.ps1 @argsList
+          if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
+            $params['PackageOnly'] = $true
+          }
+          .\scripts\Publish-GitHubRelease.ps1 @params
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Sign Windows installer
@@ -208,18 +209,18 @@ jobs:
           PACKAGE_ONLY_FLAG: ${{ steps.decide.outputs.package_only }}
           SIGNING_ENABLED: ${{ steps.signing.outputs.enabled }}
         run: |
-          $argsList = @(
-            '-OutputRoot', "$env:RUNNER_TEMP\Axiom-Updates",
-            '-Repository', '${{ github.repository }}',
-            '-PublishPreparedOnly'
-          )
+          $params = @{
+            OutputRoot          = "$env:RUNNER_TEMP\Axiom-Updates"
+            Repository          = '${{ github.repository }}'
+            PublishPreparedOnly = $true
+          }
           if ($env:SIGNING_ENABLED -eq 'true') {
-            $argsList += '-Signed'
+            $params['Signed'] = $true
           }
           if ($env:PACKAGE_ONLY_FLAG -eq 'true') {
-            $argsList += '-PackageOnly'
+            $params['PackageOnly'] = $true
           }
-          .\scripts\Publish-GitHubRelease.ps1 @argsList
+          .\scripts\Publish-GitHubRelease.ps1 @params
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Keep package for inspection

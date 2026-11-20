@@ -21,12 +21,14 @@ Free · Windows 10/11 (64-bit) · one-click installer
 
 </div>
 
-Source status (2026-11-18): the repository includes newer managed Axiom subscription
-integration (`DeepSeek 4.1F-1017` across Chat and Workplace), Settings **Usage** pacing
-(3-hour session and 7-day weekly meters), Workplace reliability, Project Canvas multi-format
-file viewing with underlined clickable links, Settings modal isolation, and autonomous
-`Auto-Review` command safety decisions. These changes are **unreleased** and are not part
-of the V1.11.0 download. See the [unreleased changelog](CHANGELOG.md#unreleased),
+Source status (2026-11-20): the repository includes managed Axiom Cloud subscription
+integration (`DeepSeek 4.1F-1017`, `$9/mo` across Chat and Workplace with Stripe
+live/sandbox Checkout, lifecycle webhooks, Settings **Usage** 3-hour/weekly meters,
+[Terms](TERMS.md), and [Privacy](PRIVACY.md)), contextual local/BYOK upgrade banners,
+Workplace reliability, Project Canvas multi-format file viewing (including restored
+Normal Chat Project Canvas toggle), Settings modal isolation, autonomous `Auto-Review`
+command decisions, and passwordless Azure Artifact Signing OIDC release automation. These
+changes are **unreleased** and are not part of the V1.11.0 download. See the [unreleased changelog](CHANGELOG.md#unreleased),
 [roadmap](ROADMAP.md) and [implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md) for
 verification and limits.
 
@@ -43,7 +45,7 @@ memory behave the same way regardless of which one is selected.
 |---|---|---|---|
 | **Local** | Your GPU/CPU via llama.cpp | A GGUF model | Full privacy, offline work, no per-token cost |
 | **Hybrid Local** | Your own server | An OpenAI-compatible endpoint | Your own hardware, accessed from anywhere |
-| **Cloud** | OpenRouter or Axiom Gateway | Personal API key or optional Axiom subscription (`DeepSeek 4.1F-1017`, with 3-hour & weekly **Usage** pacing) | Managed or frontier-class cloud models when you want them |
+| **Cloud** | Axiom Cloud or OpenRouter | Optional `$9/mo` Axiom subscription (`DeepSeek 4.1F-1017`, 1M context, vision, tools, 3-hour & weekly **Usage** pacing) or personal OpenRouter API key | Managed zero-setup or frontier-class cloud models when you want them |
 
 Axiom adapts to the model it is given. It measures a local model's parameter count and
 scales context budgets, tool routing, and prompt complexity accordingly — so a 0.5B
@@ -351,7 +353,7 @@ under CC BY-NC-ND 4.0.
 `PolyForm Noncommercial 1.0.0` applies to third-party use of this repository. The author and
 copyright holder ([YoMosa2009](https://github.com/YoMosa2009)) retains all rights to distribute
 official Axiom builds commercially and to operate paid hosted services, including the optional
-managed Axiom cloud subscription. Third-party commercial use requires the author's written
+managed Axiom cloud subscription ([Terms of Service](TERMS.md) · [Privacy Policy](PRIVACY.md)). Third-party commercial use requires the author's written
 permission; see [CONTRIBUTING.md](CONTRIBUTING.md#licensing-of-contributions) for contributor terms.
 
 ## Author

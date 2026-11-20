@@ -68,6 +68,7 @@
     <Compile Include="..\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
     <Compile Include="..\Malx_AI\OpenRouterContentParts.cs" Link="Production\OpenRouterContentParts.cs" />
     <Compile Include="..\Malx_AI\AxiomAccountClient.cs" Link="Production\AxiomAccountClient.cs" />
+    <Compile Include="..\Malx_AI\AxiomAccountBuiltIns.cs" Link="Production\AxiomAccountBuiltIns.cs" />
     <Compile Include="..\Malx_AI\CustomEndpointMetadataParser.cs" Link="Production\CustomEndpointMetadataParser.cs" />
     <Compile Include="..\Malx_AI\AtomicFileWriter.cs" Link="Production\AtomicFileWriter.cs" />
     <Compile Include="..\Malx_AI\ArtifactRenderService.cs" Link="Production\ArtifactRenderService.cs" />
@@ -115,5 +116,6 @@
     <Compile Include="..\Malx_AI\OpenRouterKeyUsage.cs" Link="Production\OpenRouterKeyUsage.cs" />
     <Compile Include="..\Malx_AI\WorkplaceExecutionSummary.cs" Link="Production\WorkplaceExecutionSummary.cs" />
     <Compile Include="..\Malx_AI\OpenRouterChatService.cs" Link="Production\OpenRouterChatService.cs" />
+    <Compile Include="..\Malx_AI\CloudUpgradeSuggestionPolicy.cs" Link="Production\CloudUpgradeSuggestionPolicy.cs" />
   </ItemGroup>
 </Project>

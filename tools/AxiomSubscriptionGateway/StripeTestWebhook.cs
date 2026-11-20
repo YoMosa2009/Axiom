@@ -5,9 +5,11 @@ using System.Text.Json;
 
 namespace AxiomSubscriptionGateway;
 
-internal sealed record StripeTestWebhook(string CustomerId, string PriceId, string? SigningSecret, string? PortalConfigurationId = null)
+internal sealed record StripeTestWebhook(
+    string CustomerId, string PriceId, string? SigningSecret, string? PortalConfigurationId = null, bool IsLiveMode = false)
 {
     public const string Path = "/stripe/test/webhook";
+    public const string LivePath = "/stripe/webhook";
 
     public static StripeTestWebhook? FromEnvironment()
     {
@@ -27,8 +29,17 @@ internal sealed record StripeTestWebhook(string CustomerId, string PriceId, stri
     public Task<IResult> HandleAsync(HttpContext context, AllowanceLedger ledger, long allowanceMicros)
         => ReadPaidInvoiceAsync(context, SigningSecret, (_, invoice) => TryApplyPaidInvoice(invoice, ledger, allowanceMicros));
 
-    internal static async Task<IResult> ReadPaidInvoiceAsync(
+    internal static Task<IResult> ReadPaidInvoiceAsync(
         HttpContext context, string? signingSecret, Action<string, JsonElement> apply)
+        => ReadLifecycleEventAsync(context, signingSecret, expectedLiveMode: false, evt =>
+        {
+            if (evt.EventType == "invoice.paid" && evt.CustomerId is { } customer)
+                apply(customer, evt.DataObject);
+            return Task.CompletedTask;
+        });
+
+    internal static async Task<IResult> ReadLifecycleEventAsync(
+        HttpContext context, string? signingSecret, bool expectedLiveMode, Func<StripeLifecycleEvent, Task> dispatch)
     {
         using var payload = new MemoryStream();
         await context.Request.Body.CopyToAsync(payload, context.RequestAborted);
@@ -41,13 +52,18 @@ internal sealed record StripeTestWebhook(string CustomerId, string PriceId, stri
         {
             using var doc = JsonDocument.Parse(body);
             JsonElement evt = doc.RootElement;
-            if (Read(evt, "livemode").ValueKind != JsonValueKind.False
-                || ReadString(evt, "type") != "invoice.paid")
+            JsonValueKind expectedLive = expectedLiveMode ? JsonValueKind.True : JsonValueKind.False;
+            if (Read(evt, "livemode").ValueKind != expectedLive)
                 return Results.NoContent();
 
-            JsonElement invoice = Read(Read(evt, "data"), "object");
-            if (ReadString(invoice, "customer") is { } customer)
-                apply(customer, invoice);
+            string? eventType = ReadString(evt, "type");
+            if (string.IsNullOrWhiteSpace(eventType))
+                return Results.NoContent();
+
+            string eventId = ReadString(evt, "id") ?? $"{eventType}:{Convert.ToHexString(SHA256.HashData(body))}";
+            JsonElement obj = Read(Read(evt, "data"), "object");
+            string? customer = ReadString(obj, "customer");
+            await dispatch(new StripeLifecycleEvent(eventId, eventType, customer, obj));
             return Results.NoContent();
         }
         catch (JsonException)
@@ -61,8 +77,9 @@ internal sealed record StripeTestWebhook(string CustomerId, string PriceId, stri
         string? invoiceId = ReadString(invoice, "id");
         JsonElement subscription = Read(Read(invoice, "parent"), "subscription_details");
         JsonElement lines = Read(Read(invoice, "lines"), "data");
+        JsonValueKind expectedLive = IsLiveMode ? JsonValueKind.True : JsonValueKind.False;
         if (invoiceId?.StartsWith("in_", StringComparison.Ordinal) != true
-            || Read(invoice, "livemode").ValueKind != JsonValueKind.False
+            || Read(invoice, "livemode").ValueKind != expectedLive
             || ReadString(invoice, "status") != "paid"
             || ReadString(invoice, "customer") != CustomerId
             || ReadString(invoice, "billing_reason") is not ("subscription_create" or "subscription_cycle")
@@ -119,15 +136,21 @@ internal sealed record StripeTestWebhook(string CustomerId, string PriceId, stri
         return false;
     }
 
-    private static JsonElement Read(JsonElement element, string name)
+    internal static JsonElement Read(JsonElement element, string name)
         => element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
 
-    private static string? ReadString(JsonElement element, string name)
+    internal static string? ReadString(JsonElement element, string name)
         => Read(element, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
 
-    private static bool TryReadLong(JsonElement element, string name, out long number)
+    internal static bool TryReadLong(JsonElement element, string name, out long number)
     {
         number = 0;
         return Read(element, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt64(out number);
     }
 }
+
+internal sealed record StripeLifecycleEvent(
+    string EventId,
+    string EventType,
+    string? CustomerId,
+    JsonElement DataObject);

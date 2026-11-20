@@ -110,9 +110,9 @@ namespace Malx_AI
                 bool cloudReady = _openRouterChatService.HasValidKey;
                 if (McpConnectorsCloudHintText != null)
                 {
-                    McpConnectorsCloudHintText.Text = cloudReady
-                        ? "Click Connect — sign in with Google in your browser. Full Gmail + Drive tools (read/write/share). After app updates that add permissions, Disconnect and Connect again. Type @ in chat to mention a connector."
-                        : "Connect anytime. Tools activate when Cloud Mode is on with an OpenRouter key. Type @ in chat to mention a connector.";
+                McpConnectorsCloudHintText.Text = cloudReady
+                    ? "Click Connect — sign in with Google in your browser. Full Gmail + Drive tools (read/write/share). After app updates that add permissions, Disconnect and Connect again. Type @ in chat to mention a connector."
+                    : "Connect anytime. Tools activate when Cloud Mode is on with Axiom Cloud or an OpenRouter key. Type @ in chat to mention a connector.";
                 }
 
                 RefreshMcpOAuthAppStatusUi();

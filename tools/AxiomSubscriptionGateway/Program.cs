@@ -28,22 +28,40 @@ if (args.Length > 0 && args[0] == "--backup-accounts")
     }
 }
 
-if (args is ["--serve-sandbox-accounts"])
+if (args is ["--serve-accounts"] or ["--serve-sandbox-accounts"])
 {
+    bool allowLiveMode = args[0] == "--serve-accounts";
     string accountDatabase = Required("AXIOM_ACCOUNTS_DB");
-    string plan = Required("AXIOM_STRIPE_TEST_PRICE");
-    var stripe = StripeTestCheckout.FromEnvironment()
-        ?? throw new InvalidOperationException("Set AXIOM_STRIPE_TEST_SECRET_KEY.");
+    string plan = allowLiveMode
+        ? (Environment.GetEnvironmentVariable("AXIOM_STRIPE_PRICE")
+            ?? Environment.GetEnvironmentVariable("AXIOM_STRIPE_TEST_PRICE")
+            ?? throw new InvalidOperationException("Set AXIOM_STRIPE_PRICE (or AXIOM_STRIPE_TEST_PRICE)."))
+        : Required("AXIOM_STRIPE_TEST_PRICE");
+    var stripe = StripeTestCheckout.FromEnvironment(allowLiveMode)
+        ?? throw new InvalidOperationException(allowLiveMode
+            ? "Set AXIOM_STRIPE_SECRET_KEY (or AXIOM_STRIPE_TEST_SECRET_KEY)."
+            : "Set AXIOM_STRIPE_TEST_SECRET_KEY.");
     var inference = OpenRouterInference.FromEnvironment()
-        ?? throw new InvalidOperationException("Set AXIOM_GATEWAY_OPENROUTER_KEY.");
+        ?? throw new InvalidOperationException("Set AXIOM_GATEWAY_OPENROUTER_KEY or AXIOM_UPSTREAM_API_KEY.");
     var email = SmtpAxiomSignInEmail.FromEnvironment();
     var origin = Environment.GetEnvironmentVariable("AXIOM_ACCOUNTS_PUBLIC_ORIGIN");
-    var webhook = Environment.GetEnvironmentVariable("AXIOM_STRIPE_TEST_WEBHOOK_SECRET");
-    var portal = Environment.GetEnvironmentVariable("AXIOM_STRIPE_TEST_PORTAL_CONFIGURATION");
+    var webhook = allowLiveMode
+        ? (Environment.GetEnvironmentVariable("AXIOM_STRIPE_WEBHOOK_SECRET")
+            ?? Environment.GetEnvironmentVariable("AXIOM_STRIPE_TEST_WEBHOOK_SECRET"))
+        : Environment.GetEnvironmentVariable("AXIOM_STRIPE_TEST_WEBHOOK_SECRET");
+    var portal = allowLiveMode
+        ? (Environment.GetEnvironmentVariable("AXIOM_STRIPE_PORTAL_CONFIGURATION")
+            ?? Environment.GetEnvironmentVariable("AXIOM_STRIPE_TEST_PORTAL_CONFIGURATION"))
+        : Environment.GetEnvironmentVariable("AXIOM_STRIPE_TEST_PORTAL_CONFIGURATION");
+    int port = int.TryParse(Environment.GetEnvironmentVariable("AXIOM_PORT"), out int parsedPort) && parsedPort > 0
+        ? parsedPort : 5198;
+    long allowanceMicros = long.TryParse(Environment.GetEnvironmentVariable("AXIOM_MONTHLY_ALLOWANCE_MICROS"), out long parsedAllowance)
+        && parsedAllowance > 0
+        ? parsedAllowance : 5_000_000;
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     await stripe.VerifyMonthlyPriceAsync(plan, deadline.Token);
     await using var accounts = AccountGateway.Create(new AccountGatewayOptions(accountDatabase, plan, webhook, portal,
-        origin is null ? null : new Uri(origin, UriKind.Absolute)), email, stripe, inference, port: 5198);
+        origin is null ? null : new Uri(origin, UriKind.Absolute), allowanceMicros), email, stripe, inference, port: port);
     await accounts.RunAsync();
     return 0;
 }

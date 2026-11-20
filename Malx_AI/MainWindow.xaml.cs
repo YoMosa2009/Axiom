@@ -433,6 +433,18 @@ namespace Malx_AI
                 InitializeComponent();
                 InitializeUnifiedTitleBar();
                 _generationReadout = new GenerationReadout(_generationMonitor, GenerationStatsRow, GenerationStatsTitle, GenerationStatsLabel);
+                _generationMonitor.LiveChanged += () => Dispatcher.BeginInvoke(() =>
+                {
+                    (GenerationStatsSnapshot? stats, string modeLabel, bool isLive) = _generationMonitor.Read();
+                    if (!isLive && string.Equals(modeLabel, "Local", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ShowAxiomCloudSuggestion(CloudUpgradeSuggestionPolicy.TryEvaluateSlowLocal(
+                            _cloudModeActive,
+                            HasActivePaidAxiomSubscription,
+                            _cloudSuggestionDismissedThisSession,
+                            stats));
+                    }
+                });
                 // The native caption is not WPF's to paint, so a dark app otherwise sits under a
                 // bright system title bar.
                 WindowTitleBarTheme.Apply(this);

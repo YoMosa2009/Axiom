@@ -7,9 +7,99 @@ using System.Text.Json.Nodes;
 
 namespace AxiomSubscriptionGateway;
 
+internal enum UpstreamProviderKind
+{
+    OpenRouter,
+    DigitalOcean,
+    DeepSeek,
+    CustomOpenAiCompatible
+}
+
+internal sealed record UpstreamInferenceOptions(
+    UpstreamProviderKind ProviderKind,
+    string BaseUrl,
+    string ApiKey,
+    string UpstreamModel,
+    long InputMicrosPerMillion,
+    long CachedInputMicrosPerMillion,
+    long OutputMicrosPerMillion,
+    string CatalogOwnedBy,
+    string? OpenRouterProviderTag = LocalGateway.Provider)
+{
+    public static UpstreamInferenceOptions OpenRouter(
+        string key,
+        string model = LocalGateway.Model,
+        string providerTag = LocalGateway.Provider)
+        => new(
+            UpstreamProviderKind.OpenRouter,
+            "https://openrouter.ai/api/v1/",
+            key.Trim(),
+            model,
+            180_000,
+            3_600,
+            720_000,
+            string.IsNullOrWhiteSpace(providerTag) ? LocalGateway.Provider : providerTag,
+            string.IsNullOrWhiteSpace(providerTag) ? LocalGateway.Provider : providerTag);
+
+    public static UpstreamInferenceOptions DigitalOcean(
+        string key,
+        string model = "deepseek-v4.1-flash-1017",
+        string baseUrl = "https://inference.do-ai.run/v1/")
+        => new(
+            UpstreamProviderKind.DigitalOcean,
+            NormalizeBaseUrl(baseUrl),
+            key.Trim(),
+            model,
+            300_000,
+            6_000,
+            1_200_000,
+            "digitalocean",
+            null);
+
+    public static UpstreamInferenceOptions DeepSeek(
+        string key,
+        string model = "deepseek-chat",
+        string baseUrl = "https://api.deepseek.com/v1/")
+        => new(
+            UpstreamProviderKind.DeepSeek,
+            NormalizeBaseUrl(baseUrl),
+            key.Trim(),
+            model,
+            300_000,
+            3_000,
+            1_200_000,
+            "deepseek",
+            null);
+
+    public static UpstreamInferenceOptions CustomOpenAiCompatible(
+        string key,
+        string baseUrl,
+        string model,
+        long inputMicrosPerMillion = 300_000,
+        long cachedInputMicrosPerMillion = 6_000,
+        long outputMicrosPerMillion = 1_200_000,
+        string catalogOwnedBy = "axiom-upstream")
+        => new(
+            UpstreamProviderKind.CustomOpenAiCompatible,
+            NormalizeBaseUrl(baseUrl),
+            key.Trim(),
+            model,
+            inputMicrosPerMillion,
+            cachedInputMicrosPerMillion,
+            outputMicrosPerMillion,
+            catalogOwnedBy,
+            null);
+
+    internal static string NormalizeBaseUrl(string url)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(url);
+        return url.TrimEnd('/') + "/";
+    }
+}
+
 internal sealed class OpenRouterInference
 {
-    private const string BaseUrl = "https://openrouter.ai/api/v1/";
+    private const string DefaultOpenRouterBaseUrl = "https://openrouter.ai/api/v1/";
     internal const int DefaultMaxOutputTokens = 4_096;
     internal const int MaxOutputTokens = 16_384;
     internal const long MinReservationMicros = 1_000;
@@ -20,21 +110,88 @@ internal sealed class OpenRouterInference
     private const long ConservativeTokensPerInlineImage = 16_384;
     private const long PromptFramingTokenOverhead = 2_048;
     private static readonly HttpClient OpenRouterHttp = new(new HttpClientHandler { AllowAutoRedirect = false });
+    private readonly UpstreamInferenceOptions _options;
     private readonly HttpClient _http;
-    private readonly string _key;
+
+    internal UpstreamProviderKind ProviderKind => _options.ProviderKind;
+    internal string CatalogOwnedBy => _options.CatalogOwnedBy;
+    internal UpstreamInferenceOptions Options => _options;
 
     public OpenRouterInference(string key, HttpClient? http = null)
+        : this(UpstreamInferenceOptions.OpenRouter(key), http)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(key);
-        _key = key.Trim();
+    }
+
+    public OpenRouterInference(UpstreamInferenceOptions options, HttpClient? http = null)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.ApiKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.BaseUrl);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.UpstreamModel);
+        _options = options with
+        {
+            BaseUrl = UpstreamInferenceOptions.NormalizeBaseUrl(options.BaseUrl),
+            ApiKey = options.ApiKey.Trim(),
+            UpstreamModel = options.UpstreamModel.Trim()
+        };
         _http = http ?? OpenRouterHttp;
     }
 
     public static OpenRouterInference? FromEnvironment()
     {
-        var key = Environment.GetEnvironmentVariable("AXIOM_GATEWAY_OPENROUTER_KEY");
-        return key is null ? null : new OpenRouterInference(key);
+        string rawProvider = (Environment.GetEnvironmentVariable("AXIOM_UPSTREAM_PROVIDER") ?? "openrouter")
+            .Trim().ToLowerInvariant();
+
+        UpstreamProviderKind kind = rawProvider switch
+        {
+            "" or "openrouter" => UpstreamProviderKind.OpenRouter,
+            "digitalocean" or "do" => UpstreamProviderKind.DigitalOcean,
+            "deepseek" => UpstreamProviderKind.DeepSeek,
+            "custom" => UpstreamProviderKind.CustomOpenAiCompatible,
+            _ => throw new InvalidOperationException($"Unsupported AXIOM_UPSTREAM_PROVIDER '{rawProvider}'. Expected openrouter, digitalocean, deepseek, or custom.")
+        };
+
+        string? key = Environment.GetEnvironmentVariable("AXIOM_UPSTREAM_API_KEY");
+        if (string.IsNullOrWhiteSpace(key) && kind == UpstreamProviderKind.OpenRouter)
+            key = Environment.GetEnvironmentVariable("AXIOM_GATEWAY_OPENROUTER_KEY");
+        if (string.IsNullOrWhiteSpace(key))
+            return null;
+
+        UpstreamInferenceOptions defaults = kind switch
+        {
+            UpstreamProviderKind.OpenRouter => UpstreamInferenceOptions.OpenRouter(key),
+            UpstreamProviderKind.DigitalOcean => UpstreamInferenceOptions.DigitalOcean(key),
+            UpstreamProviderKind.DeepSeek => UpstreamInferenceOptions.DeepSeek(key),
+            _ => UpstreamInferenceOptions.CustomOpenAiCompatible(
+                key,
+                Environment.GetEnvironmentVariable("AXIOM_UPSTREAM_BASE_URL")
+                    ?? throw new InvalidOperationException("Set AXIOM_UPSTREAM_BASE_URL when AXIOM_UPSTREAM_PROVIDER=custom."),
+                Environment.GetEnvironmentVariable("AXIOM_UPSTREAM_MODEL")
+                    ?? throw new InvalidOperationException("Set AXIOM_UPSTREAM_MODEL when AXIOM_UPSTREAM_PROVIDER=custom."))
+        };
+
+        string? baseUrlOverride = Environment.GetEnvironmentVariable("AXIOM_UPSTREAM_BASE_URL");
+        string? modelOverride = Environment.GetEnvironmentVariable("AXIOM_UPSTREAM_MODEL");
+        long inputRate = ReadEnvRate("AXIOM_UPSTREAM_INPUT_MICROS_PER_M") ?? defaults.InputMicrosPerMillion;
+        long cachedRate = ReadEnvRate("AXIOM_UPSTREAM_CACHED_INPUT_MICROS_PER_M") ?? defaults.CachedInputMicrosPerMillion;
+        long outputRate = ReadEnvRate("AXIOM_UPSTREAM_OUTPUT_MICROS_PER_M") ?? defaults.OutputMicrosPerMillion;
+
+        var configured = defaults with
+        {
+            BaseUrl = string.IsNullOrWhiteSpace(baseUrlOverride) ? defaults.BaseUrl : UpstreamInferenceOptions.NormalizeBaseUrl(baseUrlOverride),
+            UpstreamModel = string.IsNullOrWhiteSpace(modelOverride) ? defaults.UpstreamModel : modelOverride.Trim(),
+            InputMicrosPerMillion = inputRate,
+            CachedInputMicrosPerMillion = cachedRate,
+            OutputMicrosPerMillion = outputRate
+        };
+        return new OpenRouterInference(configured);
     }
+
+    private static long? ReadEnvRate(string name)
+        => long.TryParse(Environment.GetEnvironmentVariable(name), NumberStyles.None, CultureInfo.InvariantCulture, out long value)
+            && value >= 0
+            ? value
+            : null;
 
     public async Task<IResult> CompleteAsync(HttpContext context, JsonElement clientRequest, bool stream, AllowanceLedger ledger)
     {
@@ -42,7 +199,7 @@ internal sealed class OpenRouterInference
         int effectiveMaxTokens;
         try
         {
-            payload = BuildPayload(clientRequest, stream, out effectiveMaxTokens);
+            payload = BuildPayload(clientRequest, stream, _options, out effectiveMaxTokens);
         }
         catch (ArgumentException ex)
         {
@@ -53,7 +210,7 @@ internal sealed class OpenRouterInference
         request.Content = JsonContent.Create(payload);
         string id = Guid.NewGuid().ToString("N");
         context.RequestAborted.ThrowIfCancellationRequested();
-        long reservationMicros = EstimateReservationMicros(clientRequest, effectiveMaxTokens);
+        long reservationMicros = EstimateReservationMicros(clientRequest, effectiveMaxTokens, _options);
         var reserve = ledger.TryReserveDetailed(id, reservationMicros);
         if (reserve.Status == ReserveStatus.SessionLimitReached)
         {
@@ -120,6 +277,9 @@ internal sealed class OpenRouterInference
 
     public async Task<int> ReconcileAsync(AllowanceLedger ledger, CancellationToken cancellationToken, bool allAccounts = false)
     {
+        if (_options.ProviderKind != UpstreamProviderKind.OpenRouter)
+            return 0;
+
         int count = 0;
         foreach (var pending in ledger.PendingUpstreamRequests(allAccounts))
         {
@@ -130,14 +290,14 @@ internal sealed class OpenRouterInference
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
             JsonElement data = Read(doc.RootElement, "data");
             if (ReadString(data, "id") == pending.GenerationId
-                && ReadCost(data, "total_cost", MaxReservationMicros) is long actual
+                && ReadCost(data, "total_cost", ComputeMaxReservationMicros(_options)) is long actual
                 && ledger.ForAccount(pending.AccountId).TrySettle(pending.RequestId, actual))
                 count++;
         }
         return count;
     }
 
-    private static async Task<IResult> StreamAsync(HttpContext context, HttpResponseMessage response, AllowanceLedger ledger,
+    private async Task<IResult> StreamAsync(HttpContext context, HttpResponseMessage response, AllowanceLedger ledger,
         string id, long reservationMicros, CancellationToken cancellationToken)
     {
         if (response.Content.Headers.ContentType?.MediaType != "text/event-stream")
@@ -170,7 +330,7 @@ internal sealed class OpenRouterInference
                 ledger.RecordUpstreamGeneration(id, upstreamId);
                 generationId = upstreamId;
             }
-            if (!settled && ReadCost(Read(frame.RootElement, "usage"), "cost", reservationMicros) is long actual)
+            if (!settled && ResolveUsageCostMicros(Read(frame.RootElement, "usage"), reservationMicros, _options) is long actual)
                 settled = ledger.TrySettle(id, actual);
 
             if (clientConnected)
@@ -200,7 +360,7 @@ internal sealed class OpenRouterInference
         }
     }
 
-    private static JsonObject BuildPayload(JsonElement request, bool stream, out int effectiveMaxTokens)
+    internal static JsonObject BuildPayload(JsonElement request, bool stream, UpstreamInferenceOptions options, out int effectiveMaxTokens)
     {
         foreach (var message in request.GetProperty("messages").EnumerateArray())
         {
@@ -228,18 +388,33 @@ internal sealed class OpenRouterInference
             && requested.TryGetInt32(out int count) ? Math.Clamp(count, 1, MaxOutputTokens) : DefaultMaxOutputTokens;
         var payload = new JsonObject
         {
-            ["model"] = LocalGateway.Model,
+            ["model"] = options.UpstreamModel,
             ["stream"] = stream,
-            ["max_tokens"] = effectiveMaxTokens,
-            ["reasoning"] = BuildReasoningPayload(request),
-            ["provider"] = JsonSerializer.SerializeToNode(new
+            ["max_tokens"] = effectiveMaxTokens
+        };
+
+        if (options.ProviderKind == UpstreamProviderKind.OpenRouter)
+        {
+            payload["reasoning"] = BuildReasoningPayload(request);
+            payload["provider"] = JsonSerializer.SerializeToNode(new
             {
-                only = new[] { LocalGateway.Provider },
+                only = new[] { options.OpenRouterProviderTag ?? LocalGateway.Provider },
                 allow_fallbacks = false,
                 require_parameters = true,
-                max_price = new { prompt = 0.18m, completion = 0.72m, request = 0m, image = 0m }
-            })
-        };
+                max_price = new
+                {
+                    prompt = options.InputMicrosPerMillion / 1_000_000m,
+                    completion = options.OutputMicrosPerMillion / 1_000_000m,
+                    request = 0m,
+                    image = 0m
+                }
+            });
+        }
+        else if (stream)
+        {
+            payload["stream_options"] = new JsonObject { ["include_usage"] = true };
+        }
+
         // DigitalOcean's 1017 OpenRouter endpoint does not list "stop" in supported_parameters,
         // so forwarding client stop sequences would fail require_parameters routing.
         foreach (string property in new[] { "messages", "tools", "tool_choice", "temperature", "top_p" })
@@ -282,6 +457,9 @@ internal sealed class OpenRouterInference
     }
 
     internal static long EstimateReservationMicros(JsonElement request, int effectiveMaxTokens)
+        => EstimateReservationMicros(request, effectiveMaxTokens, UpstreamInferenceOptions.OpenRouter("unused"));
+
+    internal static long EstimateReservationMicros(JsonElement request, int effectiveMaxTokens, UpstreamInferenceOptions options)
     {
         long textBytes = 0;
         long imageCount = 0;
@@ -322,15 +500,21 @@ internal sealed class OpenRouterInference
         if (request.ValueKind == JsonValueKind.Object && request.TryGetProperty("tool_choice", out var toolChoice))
             textBytes += System.Text.Encoding.UTF8.GetByteCount(toolChoice.GetRawText());
 
-        // Upper bound on uncached input cost ($0.18/1M = 0.18 micro-USD/token; 1.25x byte buffer covers worst-case BPE split)
-        // plus 1.15x buffer on max output tokens ($0.72/1M = 0.72 micro-USD/token).
         long estimatedInputTokens = Math.Min(
             ContextTokens,
             (long)Math.Ceiling(textBytes * 1.25m) + (imageCount * ConservativeTokensPerInlineImage) + PromptFramingTokenOverhead);
         long estimatedOutputTokens = (long)Math.Ceiling(Math.Clamp(effectiveMaxTokens, 1, MaxOutputTokens) * 1.15m);
-        long inputMicros = (long)Math.Ceiling(estimatedInputTokens * 0.18m);
-        long outputMicros = (long)Math.Ceiling(estimatedOutputTokens * 0.72m);
-        return Math.Clamp(inputMicros + outputMicros, MinReservationMicros, MaxReservationMicros);
+        long inputMicros = (long)Math.Ceiling(estimatedInputTokens * (options.InputMicrosPerMillion / 1_000_000m));
+        long outputMicros = (long)Math.Ceiling(estimatedOutputTokens * (options.OutputMicrosPerMillion / 1_000_000m));
+        return Math.Clamp(inputMicros + outputMicros, MinReservationMicros, ComputeMaxReservationMicros(options));
+    }
+
+    private static long ComputeMaxReservationMicros(UpstreamInferenceOptions options)
+    {
+        long maxByRates = (long)Math.Ceiling(
+            (ContextTokens * (options.InputMicrosPerMillion / 1_000_000m))
+            + (MaxOutputTokens * 1.15m * (options.OutputMicrosPerMillion / 1_000_000m))) + 10_000;
+        return Math.Max(MaxReservationMicros, maxByRates);
     }
 
     private static bool IsInlineImage(string? url)
@@ -338,11 +522,49 @@ internal sealed class OpenRouterInference
             || url.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal)
             || url.StartsWith("data:image/webp;base64,", StringComparison.Ordinal));
 
-    private static bool RecordReceipt(JsonElement response, AllowanceLedger ledger, string id, long reservationMicros)
+    private bool RecordReceipt(JsonElement response, AllowanceLedger ledger, string id, long reservationMicros)
     {
         if (ReadString(response, "id") is { } upstream)
             ledger.RecordUpstreamGeneration(id, upstream);
-        return ReadCost(Read(response, "usage"), "cost", reservationMicros) is long actual && ledger.TrySettle(id, actual);
+        return ResolveUsageCostMicros(Read(response, "usage"), reservationMicros, _options) is long actual
+            && ledger.TrySettle(id, actual);
+    }
+
+    internal static long? ResolveUsageCostMicros(JsonElement usage, long maxAllowedMicros, UpstreamInferenceOptions options)
+    {
+        if (ReadCost(usage, "cost", maxAllowedMicros) is long directCost)
+            return directCost;
+
+        if (usage.ValueKind != JsonValueKind.Object)
+            return null;
+
+        bool hasPrompt = TryReadNonNegativeLong(usage, "prompt_tokens", out long promptTokens);
+        bool hasCompletion = TryReadNonNegativeLong(usage, "completion_tokens", out long completionTokens);
+        if (!hasPrompt && !hasCompletion)
+            return null;
+
+        long cachedTokens = 0;
+        if (TryReadNonNegativeLong(usage, "prompt_cache_hit_tokens", out long cacheHit))
+            cachedTokens = cacheHit;
+        else if (TryReadNonNegativeLong(Read(usage, "prompt_tokens_details"), "cached_tokens", out long cachedDetail))
+            cachedTokens = cachedDetail;
+
+        cachedTokens = Math.Clamp(cachedTokens, 0, promptTokens);
+        long uncachedInputTokens = Math.Max(0, promptTokens - cachedTokens);
+        decimal rawCostMicros =
+            (uncachedInputTokens * (options.InputMicrosPerMillion / 1_000_000m))
+            + (cachedTokens * (options.CachedInputMicrosPerMillion / 1_000_000m))
+            + (completionTokens * (options.OutputMicrosPerMillion / 1_000_000m));
+
+        long computed = (long)Math.Ceiling(rawCostMicros);
+        return Math.Clamp(computed, 0, maxAllowedMicros);
+    }
+
+    private static bool TryReadNonNegativeLong(JsonElement element, string name, out long value)
+    {
+        value = 0;
+        var raw = Read(element, name);
+        return raw.ValueKind == JsonValueKind.Number && raw.TryGetInt64(out value) && value >= 0;
     }
 
     private static JsonElement Read(JsonElement element, string name)
@@ -450,8 +672,8 @@ internal sealed class OpenRouterInference
 
     private HttpRequestMessage WithAuthentication(HttpMethod method, string path)
     {
-        var request = new HttpRequestMessage(method, BaseUrl + path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _key);
+        var request = new HttpRequestMessage(method, _options.BaseUrl + path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
         return request;
     }
 }
