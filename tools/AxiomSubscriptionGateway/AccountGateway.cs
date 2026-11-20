@@ -8,7 +8,7 @@ namespace AxiomSubscriptionGateway;
 
 internal sealed record AccountGatewayOptions(
     string DatabasePath, string StripePriceId, string? WebhookSecret, string? PortalConfigurationId,
-    Uri? PublicOrigin = null, long MonthlyAllowanceMicros = 5_250_000);
+    Uri? PublicOrigin = null, long MonthlyAllowanceMicros = 5_250_000, int MaxActiveSubscribers = 0);
 
 internal static class AccountGateway
 {
@@ -170,6 +170,14 @@ internal static class AccountGateway
 
                 if (store.TryGetActiveCheckoutUrl(account.Id) is { } existingUrl)
                     return Results.Ok(new { url = existingUrl });
+
+                if (options.MaxActiveSubscribers > 0
+                    && ledgerSchema.CountActivePaidAccounts() >= options.MaxActiveSubscribers)
+                {
+                    return LocalGateway.Error(
+                        "The current Axiom Cloud Founding batch is full while new capacity opens. Check back shortly.",
+                        "founding_seats_full", 503);
+                }
 
                 string customer = account.StripeCustomerId
                     ?? store.BindStripeCustomer(account.Id, await stripe.CreateCustomerAsync(account, cancellationToken));

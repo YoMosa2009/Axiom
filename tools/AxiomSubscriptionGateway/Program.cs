@@ -106,10 +106,13 @@ if (args is ["--serve-accounts"] or ["--serve-sandbox-accounts"])
     long allowanceMicros = long.TryParse(Environment.GetEnvironmentVariable("AXIOM_MONTHLY_ALLOWANCE_MICROS"), out long parsedAllowance)
         && parsedAllowance > 0
         ? parsedAllowance : 5_250_000;
+    int maxActiveSubscribers = int.TryParse(Environment.GetEnvironmentVariable("AXIOM_MAX_ACTIVE_SUBSCRIBERS"), out int parsedCap)
+        && parsedCap > 0
+        ? parsedCap : 0;
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     await stripe.VerifyMonthlyPriceAsync(plan, deadline.Token);
     await using var accounts = AccountGateway.Create(new AccountGatewayOptions(accountDatabase, plan, webhook, portal,
-        origin is null ? null : new Uri(origin, UriKind.Absolute), allowanceMicros), email, stripe, inference, port: port);
+        origin is null ? null : new Uri(origin, UriKind.Absolute), allowanceMicros, maxActiveSubscribers), email, stripe, inference, port: port);
     await accounts.RunAsync();
     return 0;
 }

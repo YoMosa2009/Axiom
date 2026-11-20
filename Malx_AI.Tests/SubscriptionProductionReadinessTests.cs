@@ -418,6 +418,57 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
         Assert.Contains("charge.dispute.created", handler.LastWebhookBody);
     }
 
+    [Fact]
+    public async Task AccountGateway_MaxActiveSubscribersCap_BlocksNewCheckoutsUntilSeatOpens()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        string dbPath = NewDbPath("seat-cap");
+        var emailStub = new CaptureSignInEmail();
+        var stripeHandler = new StubStripeHandler(liveMode: true, uniqueCustomers: true);
+        var stripe = new StripeTestCheckout("sk_live_fixture", new HttpClient(stripeHandler), allowLiveMode: true);
+        var inference = new OpenRouterInference("openrouter-fixture", new HttpClient(new CaptureUpstreamHandler("{}", "application/json")));
+
+        await using var gateway = AccountGateway.Create(
+            new AccountGatewayOptions(dbPath, "price_fixture", "whsec_fixture", "bpc_fixture", MaxActiveSubscribers: 1),
+            emailStub, stripe, inference, port: 0);
+        await gateway.StartAsync(timeout.Token);
+
+        string tokenA = await SignInAsync(gateway.Urls.Single(), emailStub, "founder1@example.com", timeout.Token);
+        string tokenB = await SignInAsync(gateway.Urls.Single(), emailStub, "founder2@example.com", timeout.Token);
+
+        using var clientA = new HttpClient { BaseAddress = new Uri(gateway.Urls.Single()) };
+        clientA.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenA);
+        using var clientB = new HttpClient { BaseAddress = new Uri(gateway.Urls.Single()) };
+        clientB.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokenB);
+
+        // First subscriber checks out and activates the single Founding seat.
+        using (var coA = await clientA.PostAsync("v1/subscription/checkout", null, timeout.Token))
+            Assert.Equal(HttpStatusCode.OK, coA.StatusCode);
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await PostSignedWebhookAsync(clientA, StripeTestWebhook.LivePath, "whsec_fixture",
+            BuildPaidInvoiceEvent("evt_cap_paid", "in_cap_paid", "cus_fixture_1", "price_fixture", now, now + 2_592_000, liveMode: true),
+            timeout.Token);
+
+        // Second account is cleanly gated at Checkout before hitting Stripe.
+        int sessionsBeforeBlocked = stripeHandler.CheckoutSessionCalls;
+        using (var blocked = await clientB.PostAsync("v1/subscription/checkout", null, timeout.Token))
+        {
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
+            Assert.Contains("founding_seats_full", await blocked.Content.ReadAsStringAsync(timeout.Token));
+        }
+        Assert.Equal(sessionsBeforeBlocked, stripeHandler.CheckoutSessionCalls);
+
+        // Revoking the first seat opens capacity for the next user automatically.
+        await PostSignedWebhookAsync(clientA, StripeTestWebhook.LivePath, "whsec_fixture",
+            """{"id":"evt_cap_refund","type":"charge.refunded","livemode":true,"data":{"object":{"customer":"cus_fixture_1"}}}""",
+            timeout.Token);
+
+        using (var unblocked = await clientB.PostAsync("v1/subscription/checkout", null, timeout.Token))
+            Assert.Equal(HttpStatusCode.OK, unblocked.StatusCode);
+        Assert.Equal(sessionsBeforeBlocked + 1, stripeHandler.CheckoutSessionCalls);
+    }
+
     private string NewDbPath(string prefix) => Path.Combine(_tempRoot, $"{prefix}-{Guid.NewGuid():N}.sqlite");
 
     private static async Task<string> SignInAsync(string baseUrl, CaptureSignInEmail emailStub, string address, CancellationToken ct)
@@ -503,8 +554,9 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
         public string? LastCodeFor(string email) => _codes.TryGetValue(email, out string? code) ? code : null;
     }
 
-    private sealed class StubStripeHandler(bool liveMode) : HttpMessageHandler
+    private sealed class StubStripeHandler(bool liveMode, bool uniqueCustomers = false) : HttpMessageHandler
     {
+        private int _customerCalls;
         private int _checkoutSessionCalls;
         public int CheckoutSessionCalls => _checkoutSessionCalls;
         public List<string> RequestedPaths { get; } = [];
@@ -530,7 +582,9 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
             }
             if (path.EndsWith("/customers", StringComparison.Ordinal))
             {
-                return JsonResponse($$"""{"id":"cus_fixture","livemode":{{liveJson}}}""");
+                int custNum = Interlocked.Increment(ref _customerCalls);
+                string custId = uniqueCustomers ? $"cus_fixture_{custNum}" : "cus_fixture";
+                return JsonResponse($$"""{"id":"{{custId}}","livemode":{{liveJson}}}""");
             }
             if (path.EndsWith("/checkout/sessions", StringComparison.Ordinal))
             {

@@ -494,6 +494,22 @@ internal sealed class AllowanceLedger
         return Convert.ToInt32(command.ExecuteScalar() ?? 0);
     }
 
+    public int CountActivePaidAccounts()
+    {
+        long now = _clock.GetUtcNow().ToUnixTimeSeconds();
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(DISTINCT p.account)
+            FROM allowance_period p
+            LEFT JOIN account_billing_state s ON s.account = p.account
+            WHERE p.starts <= $now AND p.ends > $now AND p.allowance > 0
+              AND COALESCE(s.status, 'active') <> 'revoked';
+            """;
+        command.Parameters.AddWithValue("$now", now);
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
     public void SetBillingStatus(string status, string? detail = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(status);

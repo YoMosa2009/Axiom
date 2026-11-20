@@ -52,6 +52,12 @@ if ([string]::IsNullOrWhiteSpace($smtpPort)) { $smtpPort = '587' }
 $smtpUser = (Read-Host -Prompt 'SMTP username').Trim()
 $smtpPass = Read-PlainSecret -Prompt 'SMTP password / API key'
 $smtpFrom = (Read-Host -Prompt 'From address (e.g. Axiom Cloud <noreply@axiominference.work>)').Trim()
+$seatCapInput = (Read-Host -Prompt 'Founding subscriber cap (caps initial OpenRouter float; default: 15, 0 = unlimited)').Trim()
+if ([string]::IsNullOrWhiteSpace($seatCapInput)) { $seatCapInput = '15' }
+$parsedSeatCap = 0
+if (-not [int]::TryParse($seatCapInput, [ref]$parsedSeatCap) -or $parsedSeatCap -lt 0) {
+    throw 'Founding subscriber cap must be a non-negative integer (e.g. 15 or 0).'
+}
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $stripePartialEnv = Join-Path $OutputDir '.stripe-provisioned.env'
@@ -83,6 +89,7 @@ $envContent = @(
     "AXIOM_BACKUP_DIR=$bkpPath"
     'AXIOM_BACKUP_INTERVAL_HOURS=6'
     'AXIOM_MONTHLY_ALLOWANCE_MICROS=5250000'
+    "AXIOM_MAX_ACTIVE_SUBSCRIBERS=$parsedSeatCap"
     "AXIOM_STRIPE_SECRET_KEY=$stripeLiveKey"
 ) + $provisionedLines + @(
     "AXIOM_UPSTREAM_PROVIDER=$provider"
