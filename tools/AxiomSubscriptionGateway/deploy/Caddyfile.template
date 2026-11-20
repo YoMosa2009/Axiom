@@ -1,0 +1,5 @@
+# Replace api.example.com with your gateway subdomain pointing A/AAAA DNS at this host.
+api.example.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:5198
+}

@@ -164,14 +164,14 @@ the current results and linked reports above for the latest verified scope.
 
 - [x] **23. Automated Code Signing (Azure Artifact Signing OIDC) & WinGet Publishing**
   - Files: `.github/workflows/release.yml`, `.github/workflows/winget.yml`, `scripts/Publish-CleanRelease.ps1`, `scripts/Publish-GitHubRelease.ps1`, `scripts/Submit-WingetRelease.ps1`, `RELEASING.md`, `CHANGELOG.md`
-  - Verified (2026-11-20): `axiom-public-trust` (`PublicTrust`, `Active`) provisioned and all six `AZURE_*` GitHub Actions secrets configured; PowerShell hashtable splatting (`@params`) fix applied across all `Publish-GitHubRelease.ps1` invocations in `release.yml`.
+  - Verified (2026-11-20): `axiom-public-trust` (`PublicTrust`, `Active`), all 6 `AZURE_*` secrets, and all 5 `AXIOM_BUILTIN_*` OAuth secrets configured; `package_only=true` signed dry-run `44666730132` succeeded cleanly across OIDC login, binary signing/verification, and Windows installer signing (`Axiom-v1.11.0-package`).
 
-- [x] **24. Production Subscription Service, Direct Upstream Provider Switch, Legal Pages & UI/UX Screenshot Audit**
+- [x] **24. Production Subscription Service (`$5.25` Credits & Auto-Renewal), Provisioning Automation, Landing Site & UI/UX Audit**
   - Files:
-    - Gateway: `tools/AxiomSubscriptionGateway/AllowanceLedger.cs`, `AxiomAccountStore.cs`, `StripeTestCheckout.cs`, `StripeTestWebhook.cs`, `AccountDatabaseBackup.cs`, `OpenRouterInference.cs`, `LocalGateway.cs`, `AccountGateway.cs`, `Program.cs`
-    - Client & Onboarding: `Malx_AI/AxiomAccountBuiltIns.cs`, `AxiomAccountClient.cs`, `OpenRouterChatService.cs`, `CloudUpgradeSuggestionPolicy.cs`, `MainWindow.xaml`, `MainWindow.Subscription.cs`, `MainWindow.xaml.cs`, `MainWindow.Inference.cs`, `MainWindow.Mcp.cs`, `WorkplaceView.ComputerUse.cs`, `FirstRunGuideWindow.xaml`, `FirstRunGuideWindow.xaml.cs`
-    - Build & Legal: `TERMS.md`, `PRIVACY.md`, `scripts/Generate-McpOAuthBuiltIns.ps1`, `.gitignore`, `.github/workflows/release.yml`
-    - Tests: `Malx_AI.Tests/Malx_AI.Tests.csproj`, `Malx_AI.Tests/SubscriptionProductionReadinessTests.cs`
+    - Gateway & Deploy: `tools/AxiomSubscriptionGateway/AllowanceLedger.cs`, `AxiomAccountStore.cs`, `StripeTestCheckout.cs` (`ProvisionLiveAsync`), `StripeTestWebhook.cs`, `AccountDatabaseBackup.cs`, `OpenRouterInference.cs`, `LocalGateway.cs`, `AccountGateway.cs` (`$5.25` default / `$0.38` 3h / `$1.35` 7d), `Program.cs` (`--provision-live`), `tools/AxiomSubscriptionGateway/deploy/*`, `scripts/Setup-AxiomLiveGateway.ps1`
+    - Client & Onboarding: `Malx_AI/AxiomAccountBuiltIns.cs`, `AxiomAccountClient.cs`, `OpenRouterChatService.cs`, `CloudUpgradeSuggestionPolicy.cs`, `MainWindow.xaml`, `MainWindow.Subscription.cs` (auto post-Checkout + renewal sync on window activation/refresh), `MainWindow.xaml.cs`, `MainWindow.Inference.cs`, `MainWindow.Mcp.cs`, `WorkplaceView.ComputerUse.cs`, `FirstRunGuideWindow.xaml`, `FirstRunGuideWindow.xaml.cs`
+    - Storefront, Legal & Docs: `docs/index.html`, `docs/styles.css`, `docs/app.js`, `TERMS.md`, `PRIVACY.md`, `README.md`, `CHANGELOG.md`, `RELEASING.md`, `scripts/Generate-McpOAuthBuiltIns.ps1`, `.gitignore`, `.github/workflows/release.yml`
+    - Tests: `Malx_AI.Tests/Malx_AI.Tests.csproj`, `Malx_AI.Tests/AxiomAccountGatewayTests.cs`, `Malx_AI.Tests/SubscriptionProductionReadinessTests.cs`
   - Verified (2026-11-20):
     - UI/UX screenshot pass rendered across First-Run (`720x650`), Chat + Project Canvas (`1366x823`), Workplace, Persona, and all five Settings pages (`Inference`, `Cloud AI`, `Connectors`, `General`, `Usage`) plus live `Malx_AI.exe` startup smoke check. Restored Normal Chat `ProjectCanvasToggleButton` visibility inside `UnifiedTitleBar`, added `ChooseAxiomCloudButton` (`$9/mo`) to `FirstRunGuideWindow`, and updated `MainWindow.Mcp.cs` connector hint text.
     - `dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj -c Release`: `Passed: 1005, Failed: 0, Skipped: 0, Total: 1005`.

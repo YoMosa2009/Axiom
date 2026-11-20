@@ -28,6 +28,54 @@ if (args.Length > 0 && args[0] == "--backup-accounts")
     }
 }
 
+if (args is ["--provision-live", var publicOriginArg, ..])
+{
+    string? writeEnvPath = args switch
+    {
+        [_, _] => null,
+        [_, _, "--write-env", var envFile] => envFile,
+        _ => throw new ArgumentException("Usage: --provision-live <https-public-origin> [--write-env <path>]")
+    };
+    if (!Uri.TryCreate(publicOriginArg, UriKind.Absolute, out Uri? originUri))
+        throw new InvalidOperationException("Pass a valid HTTPS origin URL to --provision-live.");
+
+    var liveStripe = StripeTestCheckout.FromEnvironment(allowLiveMode: true)
+        ?? throw new InvalidOperationException("Set AXIOM_STRIPE_SECRET_KEY to your Stripe live key.");
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+    var provisioned = await liveStripe.ProvisionLiveAsync(originUri, deadline.Token);
+
+    if (!string.IsNullOrWhiteSpace(writeEnvPath))
+    {
+        string fullEnvPath = Path.GetFullPath(writeEnvPath);
+        string? envDir = Path.GetDirectoryName(fullEnvPath);
+        if (!string.IsNullOrWhiteSpace(envDir))
+            Directory.CreateDirectory(envDir);
+
+        var envLines = new[]
+        {
+            $"AXIOM_STRIPE_PRICE={provisioned.PriceId}",
+            $"AXIOM_STRIPE_PORTAL_CONFIGURATION={provisioned.PortalConfigurationId}",
+            $"AXIOM_STRIPE_WEBHOOK_SECRET={provisioned.WebhookSecret}",
+            $"AXIOM_ACCOUNTS_PUBLIC_ORIGIN={originUri.GetLeftPart(UriPartial.Authority)}"
+        };
+        File.WriteAllLines(fullEnvPath, envLines, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        Console.WriteLine($"Provisioned live Stripe Price ({provisioned.PriceId}), Portal ({provisioned.PortalConfigurationId}), and Webhook ({provisioned.WebhookEndpointId}).");
+        Console.WriteLine($"Saved Stripe config values to {fullEnvPath}.");
+    }
+    else
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            priceId = provisioned.PriceId,
+            portalConfigurationId = provisioned.PortalConfigurationId,
+            webhookEndpointId = provisioned.WebhookEndpointId,
+            webhookSecret = provisioned.WebhookSecret,
+            publicOrigin = originUri.GetLeftPart(UriPartial.Authority)
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+    return 0;
+}
+
 if (args is ["--serve-accounts"] or ["--serve-sandbox-accounts"])
 {
     bool allowLiveMode = args[0] == "--serve-accounts";
@@ -57,7 +105,7 @@ if (args is ["--serve-accounts"] or ["--serve-sandbox-accounts"])
         ? parsedPort : 5198;
     long allowanceMicros = long.TryParse(Environment.GetEnvironmentVariable("AXIOM_MONTHLY_ALLOWANCE_MICROS"), out long parsedAllowance)
         && parsedAllowance > 0
-        ? parsedAllowance : 5_000_000;
+        ? parsedAllowance : 5_250_000;
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     await stripe.VerifyMonthlyPriceAsync(plan, deadline.Token);
     await using var accounts = AccountGateway.Create(new AccountGatewayOptions(accountDatabase, plan, webhook, portal,

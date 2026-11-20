@@ -8,13 +8,13 @@ namespace AxiomSubscriptionGateway;
 
 internal sealed record AccountGatewayOptions(
     string DatabasePath, string StripePriceId, string? WebhookSecret, string? PortalConfigurationId,
-    Uri? PublicOrigin = null, long MonthlyAllowanceMicros = 5_000_000);
+    Uri? PublicOrigin = null, long MonthlyAllowanceMicros = 5_250_000);
 
 internal static class AccountGateway
 {
-    private const long DefaultMonthlyAllowanceMicros = 5_000_000;
-    internal const long SessionAllowanceMicros = 350_000;
-    internal const long WeeklyAllowanceMicros = 1_250_000;
+    private const long DefaultMonthlyAllowanceMicros = 5_250_000;
+    internal const long SessionAllowanceMicros = 380_000;
+    internal const long WeeklyAllowanceMicros = 1_350_000;
     private const string RatePolicy = "account-entry";
     private static readonly object RequestIdentity = new();
 

@@ -2,11 +2,12 @@
 
 # Axiom
 
-**A free, local-first AI assistant and agentic workspace for Windows.**
+**One native Windows workspace for offline local models, codebase work, and optional `$9/mo` cloud speed.**
 
-Run GGUF models on your own hardware, point Axiom at a self-hosted endpoint, or use
-cloud models with your own key. Your chats, models, and data stay on your computer
-unless you deliberately reach out to a cloud model or a connected service.
+Built cleanly in C# and `.NET 10 WPF` (zero Electron or web wrapper). Run GGUF models
+offline on your own GPU/CPU, point Axiom at a project folder for autonomous Workplace edits
+with Project Canvas previews and 1-click Undo, or enable **Axiom Cloud (`DeepSeek 4.1F-1017`, `$9/mo`)**
+with `$5.25/mo` in paced upstream credits and zero API-key setup.
 
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
@@ -15,20 +16,21 @@ unless you deliberately reach out to a cloud model or a connected service.
 
 ### [⬇ Download Axiom for Windows](https://github.com/YoMosa2009/Axiom/releases/latest)
 
-Free · Windows 10/11 (64-bit) · one-click installer
+Free local + BYOK · Signed upcoming releases · Windows 10/11 (64-bit) · `winget install YoMosa2009.Axiom`
 
-[Getting started](#getting-started) · [Report a bug](https://github.com/YoMosa2009/Axiom/issues/new/choose) · [Contributing](#contributing) · [Feedback](#feedback)
+[Website](docs/index.html) · [Getting started](#getting-started) · [Terms](TERMS.md) · [Privacy](PRIVACY.md) · [Contributing](#contributing)
 
 </div>
 
 Source status (2026-11-20): the repository includes managed Axiom Cloud subscription
-integration (`DeepSeek 4.1F-1017`, `$9/mo` across Chat and Workplace with Stripe
-live/sandbox Checkout, lifecycle webhooks, Settings **Usage** 3-hour/weekly meters,
-[Terms](TERMS.md), and [Privacy](PRIVACY.md)), contextual local/BYOK upgrade banners,
-Workplace reliability, Project Canvas multi-format file viewing (including restored
-Normal Chat Project Canvas toggle), Settings modal isolation, autonomous `Auto-Review`
-command decisions, and passwordless Azure Artifact Signing OIDC release automation. These
-changes are **unreleased** and are not part of the V1.11.0 download. See the [unreleased changelog](CHANGELOG.md#unreleased),
+integration (`DeepSeek 4.1F-1017`, `$9/mo` with `$5.25/mo` paced credit, Stripe
+live/sandbox Checkout, `--provision-live`, automatic post-Checkout & monthly auto-renewal
+activation, Settings **Usage** 3-hour/weekly meters, [Terms](TERMS.md), and
+[Privacy](PRIVACY.md)), contextual local/BYOK upgrade banners, Workplace reliability, Project
+Canvas multi-format file viewing (including restored Normal Chat Project Canvas toggle),
+Settings modal isolation, autonomous `Auto-Review` command decisions, Azure Artifact Signing
+OIDC automation (`44666730132` dry-run verified), and static launch storefront (`docs/index.html`).
+These changes are **unreleased** and are not part of the V1.11.0 download. See the [unreleased changelog](CHANGELOG.md#unreleased),
 [roadmap](ROADMAP.md) and [implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md) for
 verification and limits.
 
@@ -45,7 +47,16 @@ memory behave the same way regardless of which one is selected.
 |---|---|---|---|
 | **Local** | Your GPU/CPU via llama.cpp | A GGUF model | Full privacy, offline work, no per-token cost |
 | **Hybrid Local** | Your own server | An OpenAI-compatible endpoint | Your own hardware, accessed from anywhere |
-| **Cloud** | Axiom Cloud or OpenRouter | Optional `$9/mo` Axiom subscription (`DeepSeek 4.1F-1017`, 1M context, vision, tools, 3-hour & weekly **Usage** pacing) or personal OpenRouter API key | Managed zero-setup or frontier-class cloud models when you want them |
+| **Cloud** | Axiom Cloud or OpenRouter | Optional `$9/mo` Axiom subscription (`DeepSeek 4.1F-1017`, `$5.25/mo` credit, 1M ctx, vision, 3-hour & weekly **Usage** pacing) or personal OpenRouter API key | Zero-setup speed or frontier-class cloud models when you want them |
+
+### Exact positioning vs. alternatives
+
+| Workspace | Price | Offline GGUF & BYOK | Native Windows Folder Agent & Undo | Included Cloud Engine |
+|---|---|---|---|---|
+| **Axiom Cloud** | **$9/mo** | Yes (free forever) | Yes (`.NET 10 WPF`, Workplace, Project Canvas, `@ComputerUse`) | `$5.25/mo` DeepSeek 4.1F-1017 (`1M` ctx, native vision, auto-renews) |
+| **LM Studio Bionic+** | `$20/mo` | Yes (GGUF/MLX) | No desktop GUI automation or WPF Canvas | Hosted open-weight tier |
+| **T3 Chat Pro** | `$8/mo` | No (Web only) | No filesystem or repo workflow | Web chat with 4h meter |
+| **Cherry Studio / Jan** | `$0` | Yes (BYOK only) | Requires user-managed API keys | None |
 
 Axiom adapts to the model it is given. It measures a local model's parameter count and
 scales context budgets, tool routing, and prompt complexity accordingly — so a 0.5B

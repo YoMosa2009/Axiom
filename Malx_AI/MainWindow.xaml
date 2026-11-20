@@ -2414,7 +2414,7 @@
                                                 <TextBlock Text="DeepSeek 4.1F-1017 · $9/mo" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrightBrush}"/>
                                             </Border>
                                         </DockPanel>
-                                        <TextBlock Text="1M context · native vision · Workplace coding agent &amp; Computer Use · $5.00/mo paced inference credit · Cancel anytime."
+                                        <TextBlock Text="1M context · native vision · Workplace coding agent &amp; Computer Use · $5.25/mo paced inference credit · Cancel anytime."
                                                    FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <TextBlock x:Name="AxiomAccountUnconfiguredNotice" Visibility="Collapsed" TextWrapping="Wrap" FontSize="11"
                                                    Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8"

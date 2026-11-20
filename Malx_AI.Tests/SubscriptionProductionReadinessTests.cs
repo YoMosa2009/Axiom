@@ -179,20 +179,20 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
         Assert.False(subAfterTestEvt.Sandbox);
         Assert.Equal(0, subAfterTestEvt.Balance.AllowanceMicros);
 
-        // 2. Live invoice.paid activates $5.00 allowance and status = "active".
+        // 2. Live invoice.paid activates $5.25 allowance and status = "active".
         await PostSignedWebhookAsync(authed, StripeTestWebhook.LivePath, "whsec_fixture",
             BuildPaidInvoiceEvent("evt_paid_1", "in_live_1", "cus_fixture", "price_fixture", now, end, liveMode: true), timeout.Token);
         var subPaid = await authed.GetFromJsonAsync<GatewaySubSnapshot>("v1/subscription", timeout.Token);
         Assert.Equal("active", subPaid!.BillingStatus);
         Assert.False(subPaid.Sandbox);
-        Assert.Equal(5_000_000, subPaid.Balance.AvailableMicros);
+        Assert.Equal(5_250_000, subPaid.Balance.AvailableMicros);
 
         // 3. invoice.payment_failed flags payment_failed while keeping existing paid balance usable.
         await PostSignedWebhookAsync(authed, StripeTestWebhook.LivePath, "whsec_fixture",
             """{"id":"evt_fail_1","type":"invoice.payment_failed","livemode":true,"data":{"object":{"customer":"cus_fixture"}}}""", timeout.Token);
         var subFailed = await authed.GetFromJsonAsync<GatewaySubSnapshot>("v1/subscription", timeout.Token);
         Assert.Equal("payment_failed", subFailed!.BillingStatus);
-        Assert.Equal(5_000_000, subFailed.Balance.AvailableMicros);
+        Assert.Equal(5_250_000, subFailed.Balance.AvailableMicros);
 
         // 4. charge.refunded revokes active allowance idempotently and sets billingStatus = "revoked".
         string refundEvent = """{"id":"evt_refund_1","type":"charge.refunded","livemode":true,"data":{"object":{"customer":"cus_fixture"}}}""";
@@ -387,6 +387,37 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
         Assert.Null(CloudUpgradeSuggestionPolicy.TryEvaluateLocalVisionMissing(false, false, true, false));
     }
 
+    [Fact]
+    public async Task StripeProvisionLive_RequiresLiveKeyAndProvisionsPricePortalAndWebhook()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var handler = new StubStripeHandler(liveMode: true);
+        using var http = new HttpClient(handler);
+
+        var sandbox = new StripeTestCheckout("sk_test_fixture", http, allowLiveMode: false);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sandbox.ProvisionLiveAsync(new Uri("https://api.example.com"), timeout.Token));
+
+        var live = new StripeTestCheckout("sk_live_fixture", http, allowLiveMode: true);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            live.ProvisionLiveAsync(new Uri("http://api.example.com"), timeout.Token));
+
+        var result = await live.ProvisionLiveAsync(new Uri("https://api.example.com"), timeout.Token);
+        Assert.Equal("price_live_fixture", result.PriceId);
+        Assert.Equal("bpc_live_fixture", result.PortalConfigurationId);
+        Assert.Equal("we_live_fixture", result.WebhookEndpointId);
+        Assert.Equal("whsec_live_provisioned_fixture", result.WebhookSecret);
+        Assert.Contains("v1/prices", handler.RequestedPaths);
+        Assert.Contains("v1/billing_portal/configurations", handler.RequestedPaths);
+        Assert.Contains("v1/webhook_endpoints", handler.RequestedPaths);
+        Assert.Contains("https%3A%2F%2Fapi.example.com%2Fstripe%2Fwebhook", handler.LastWebhookBody!);
+        Assert.Contains("invoice.paid", handler.LastWebhookBody);
+        Assert.Contains("invoice.payment_failed", handler.LastWebhookBody);
+        Assert.Contains("customer.subscription.deleted", handler.LastWebhookBody);
+        Assert.Contains("charge.refunded", handler.LastWebhookBody);
+        Assert.Contains("charge.dispute.created", handler.LastWebhookBody);
+    }
+
     private string NewDbPath(string prefix) => Path.Combine(_tempRoot, $"{prefix}-{Guid.NewGuid():N}.sqlite");
 
     private static async Task<string> SignInAsync(string baseUrl, CaptureSignInEmail emailStub, string address, CancellationToken ct)
@@ -476,25 +507,41 @@ public sealed class SubscriptionProductionReadinessTests : IDisposable
     {
         private int _checkoutSessionCalls;
         public int CheckoutSessionCalls => _checkoutSessionCalls;
+        public List<string> RequestedPaths { get; } = [];
+        public string? LastWebhookBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             string path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            RequestedPaths.Add(path.TrimStart('/'));
             string liveJson = liveMode ? "true" : "false";
+            if (path.EndsWith("/prices", StringComparison.Ordinal))
+            {
+                return JsonResponse($$"""{"id":"price_live_fixture","livemode":{{liveJson}}}""");
+            }
+            if (path.EndsWith("/billing_portal/configurations", StringComparison.Ordinal))
+            {
+                return JsonResponse($$"""{"id":"bpc_live_fixture","livemode":{{liveJson}}}""");
+            }
+            if (path.EndsWith("/webhook_endpoints", StringComparison.Ordinal))
+            {
+                LastWebhookBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+                return JsonResponse($$"""{"id":"we_live_fixture","livemode":{{liveJson}},"secret":"whsec_live_provisioned_fixture"}""");
+            }
             if (path.EndsWith("/customers", StringComparison.Ordinal))
             {
-                return Task.FromResult(JsonResponse($$"""{"id":"cus_fixture","livemode":{{liveJson}}}"""));
+                return JsonResponse($$"""{"id":"cus_fixture","livemode":{{liveJson}}}""");
             }
             if (path.EndsWith("/checkout/sessions", StringComparison.Ordinal))
             {
                 int n = Interlocked.Increment(ref _checkoutSessionCalls);
-                return Task.FromResult(JsonResponse($$"""{"id":"cs_fixture_{{n}}","livemode":{{liveJson}},"url":"https://checkout.stripe.com/c/pay/cs_fixture_{{n}}"}"""));
+                return JsonResponse($$"""{"id":"cs_fixture_{{n}}","livemode":{{liveJson}},"url":"https://checkout.stripe.com/c/pay/cs_fixture_{{n}}"}""");
             }
             if (path.Contains("/charges/", StringComparison.Ordinal))
             {
-                return Task.FromResult(JsonResponse($$"""{"id":"ch_fixture","livemode":{{liveJson}},"customer":"cus_fixture"}"""));
+                return JsonResponse($$"""{"id":"ch_fixture","livemode":{{liveJson}},"customer":"cus_fixture"}""");
             }
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
 
         private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)

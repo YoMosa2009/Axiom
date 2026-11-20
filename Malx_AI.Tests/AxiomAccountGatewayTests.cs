@@ -128,7 +128,7 @@ public sealed class AxiomAccountGatewayTests : IDisposable
         var reopened = new AxiomAccountStore(_database);
         Assert.Equal(reopened.Authenticate(alice.Token)?.Id, reopened.Authenticate(recovered.Token)?.Id);
         Assert.Equal("cus_alice_fixture", reopened.Authenticate(recovered.Token)?.StripeCustomerId);
-        Assert.Equal(new AllowanceBalance(5_000_000, 8, 0), await BalanceAsync(recovered.Token));
+        Assert.Equal(new AllowanceBalance(5_250_000, 8, 0), await BalanceAsync(recovered.Token));
         Assert.Equal(new AllowanceBalance(0, 0, 0), await BalanceAsync(bob.Token));
         using (var portal = await SendAsync(HttpMethod.Post, "v1/subscription/portal", bob.Token, new { customer = "cus_alice_fixture" }))
             portal.EnsureSuccessStatusCode();
@@ -145,7 +145,7 @@ public sealed class AxiomAccountGatewayTests : IDisposable
         var revokedRead = await aliceTransport.ReadAxiomSubscriptionDetailedAsync();
         Assert.True(revokedRead.Unauthorized);
         Assert.Null(revokedRead.Status);
-        Assert.Equal(5_000_000, (await BalanceAsync(recovered.Token)).AllowanceMicros);
+        Assert.Equal(5_250_000, (await BalanceAsync(recovered.Token)).AllowanceMicros);
 
         var recoveryKey = await desktop.IssueRecoveryKeyAsync(recovered.Token, timeout.Token);
         Assert.NotNull(recoveryKey);
@@ -162,7 +162,7 @@ public sealed class AxiomAccountGatewayTests : IDisposable
         Assert.Equal(replacementEmail, transferred.Email);
         Assert.Null(reopened.Authenticate(recovered.Token));
         Assert.Equal("cus_alice_fixture", reopened.Authenticate(transferred.Token)?.StripeCustomerId);
-        Assert.Equal(new AllowanceBalance(5_000_000, 8, 0), await BalanceAsync(transferred.Token));
+        Assert.Equal(new AllowanceBalance(5_250_000, 8, 0), await BalanceAsync(transferred.Token));
         Assert.Equal(new AllowanceBalance(0, 0, 0), await BalanceAsync(bob.Token));
         Assert.Equal(HttpStatusCode.Accepted, await desktop.RequestCodeAsync(replacementEmail, timeout.Token));
         Assert.Null(await desktop.RecoverAsync(replacementEmail, mail.Codes[replacementEmail], recoveryKey, timeout.Token));
@@ -173,7 +173,7 @@ public sealed class AxiomAccountGatewayTests : IDisposable
         var bobRenewal = await SignInAsync("bob@example.com");
         string failedInvoice = Invoice("invoice.payment_failed", "in_alice_renewal", "open", "subscription_cycle", renewal, end);
         Assert.Equal(HttpStatusCode.NoContent, await DeliverAsync(Signer, failedInvoice));
-        Assert.Equal(new AllowanceBalance(5_000_000, 8, 0), await BalanceAsync(beforeRenewal.Token));
+        Assert.Equal(new AllowanceBalance(5_250_000, 8, 0), await BalanceAsync(beforeRenewal.Token));
         clock.Now = DateTimeOffset.FromUnixTimeSeconds(renewal);
         Assert.Equal(new AllowanceBalance(0, 0, 0), await BalanceAsync(beforeRenewal.Token));
         using (var blocked = await SendAsync(HttpMethod.Post, "v1/chat/completions", beforeRenewal.Token, chat))
@@ -181,11 +181,11 @@ public sealed class AxiomAccountGatewayTests : IDisposable
 
         string paidRenewal = Invoice("invoice.paid", "in_alice_renewal", "paid", "subscription_cycle", renewal, end);
         Assert.Equal(HttpStatusCode.NoContent, await DeliverAsync(Signer, paidRenewal));
-        Assert.Equal(new AllowanceBalance(5_000_000, 0, 0), await BalanceAsync(beforeRenewal.Token));
+        Assert.Equal(new AllowanceBalance(5_250_000, 0, 0), await BalanceAsync(beforeRenewal.Token));
         using (var paid = await SendAsync(HttpMethod.Post, "v1/chat/completions", beforeRenewal.Token, chat))
             paid.EnsureSuccessStatusCode();
         Assert.Equal(HttpStatusCode.NoContent, await DeliverAsync(Signer, paidRenewal));
-        Assert.Equal(new AllowanceBalance(5_000_000, 8, 0), await BalanceAsync(beforeRenewal.Token));
+        Assert.Equal(new AllowanceBalance(5_250_000, 8, 0), await BalanceAsync(beforeRenewal.Token));
         Assert.Equal(new AllowanceBalance(0, 0, 0), await BalanceAsync(bobRenewal.Token));
     }
 

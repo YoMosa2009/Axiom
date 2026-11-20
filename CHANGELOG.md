@@ -6,13 +6,19 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Added
 
-- Optional managed Axiom subscription support (`DeepSeek 4.1F-1017`, `$9/mo` backed by
-  `tools/AxiomSubscriptionGateway` with DPAPI-protected sessions, email verification/recovery,
-  live and sandbox Stripe Checkout, full lifecycle webhooks for `invoice.paid`,
+- Optional managed Axiom subscription support (`DeepSeek 4.1F-1017`, `$9/mo` allocating
+  `$5.25/mo` default upstream allowance backed by `tools/AxiomSubscriptionGateway` with
+  DPAPI-protected sessions, email verification/recovery, live and sandbox Stripe Checkout,
+  `--provision-live` automated Stripe setup, `scripts/Setup-AxiomLiveGateway.ps1` + systemd/Caddy
+  deploy bundle, automatic browser-return Checkout activation and monthly renewal sync in
+  `MainWindow.Subscription.cs`, full lifecycle webhooks for `invoice.paid`,
   `invoice.payment_failed`, `customer.subscription.deleted`, `charge.refunded`, and
   `charge.dispute.created`, duplicate-Checkout locks, and scheduled verified
   `AccountDatabaseBackupWorker` snapshots) works across both Normal Chat and Workplace while
   keeping Local GGUF, Hybrid Local (`Kestral 1`), and personal OpenRouter keys independent.
+- Static Obsidian & Gold landing storefront (`docs/index.html`, `docs/styles.css`, `docs/app.js`)
+  with responsive container-query comparison table, dark/light scheme support, FAQ accordion,
+  and accessible copyable `winget` install command.
 - Direct upstream inference provider switching in `tools/AxiomSubscriptionGateway`
   (`AXIOM_UPSTREAM_PROVIDER`: `openrouter`, `digitalocean`, `deepseek`, or OpenAI-compatible
   custom route with token-rate cost calculation), plus build-time

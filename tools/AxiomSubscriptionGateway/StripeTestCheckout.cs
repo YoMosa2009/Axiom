@@ -71,6 +71,77 @@ internal sealed class StripeTestCheckout
         return new StripeTestWebhook(customer, price, null, portal, IsLiveMode);
     }
 
+    public async Task<LiveStripeProvisionResult> ProvisionLiveAsync(Uri publicOrigin, CancellationToken cancellationToken)
+    {
+        if (!IsLiveMode)
+            throw new InvalidOperationException("Live provisioning requires a Stripe live secret key (sk_live_ or rk_live_).");
+        if (publicOrigin.Scheme != Uri.UriSchemeHttps
+            || publicOrigin.AbsolutePath != "/"
+            || !string.IsNullOrEmpty(publicOrigin.Query)
+            || !string.IsNullOrEmpty(publicOrigin.Fragment)
+            || !string.IsNullOrEmpty(publicOrigin.UserInfo))
+            throw new ArgumentException("Public origin must be a clean HTTPS origin (for example https://api.example.com).", nameof(publicOrigin));
+
+        string price = await CreateTestEntityAsync("prices", "price_", "axiom-live-price-9usd-v1",
+            new Dictionary<string, string>
+            {
+                ["product_data[name]"] = "Axiom Cloud — DeepSeek 4.1F-1017",
+                ["currency"] = "usd",
+                ["unit_amount"] = "900",
+                ["recurring[interval]"] = "month",
+                ["metadata[axiom_plan]"] = "axiom_cloud_9_usd"
+            }, cancellationToken);
+
+        string portal = await CreateTestEntityAsync("billing_portal/configurations", "bpc_", "axiom-live-portal-v1",
+            new Dictionary<string, string>
+            {
+                ["features[invoice_history][enabled]"] = "true",
+                ["features[payment_method_update][enabled]"] = "true",
+                ["features[subscription_cancel][enabled]"] = "true",
+                ["features[subscription_cancel][mode]"] = "at_period_end",
+                ["features[subscription_cancel][proration_behavior]"] = "none",
+                ["metadata[axiom_plan]"] = "axiom_cloud_9_usd"
+            }, cancellationToken);
+
+        string webhookUrl = publicOrigin.GetLeftPart(UriPartial.Authority) + StripeTestWebhook.LivePath;
+        using var request = CreateRequest(HttpMethod.Post, "webhook_endpoints");
+        request.Headers.Add("Idempotency-Key", "axiom-live-webhook-v1");
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["url"] = webhookUrl,
+            ["enabled_events[0]"] = "invoice.paid",
+            ["enabled_events[1]"] = "invoice.payment_failed",
+            ["enabled_events[2]"] = "customer.subscription.deleted",
+            ["enabled_events[3]"] = "charge.refunded",
+            ["enabled_events[4]"] = "charge.dispute.created",
+            ["metadata[axiom_plan]"] = "axiom_cloud_9_usd"
+        });
+        using var response = await _http.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Stripe webhook_endpoints returned HTTP {(int)response.StatusCode}.");
+
+        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var doc = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("livemode", out var live)
+            || live.ValueKind != JsonValueKind.True
+            || !root.TryGetProperty("id", out var idEl)
+            || idEl.GetString() is not { } webhookId
+            || !webhookId.StartsWith("we_", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Stripe did not return a live webhook endpoint.");
+        }
+
+        string? webhookSecret = root.TryGetProperty("secret", out var secretEl) && secretEl.ValueKind == JsonValueKind.String
+            ? secretEl.GetString()
+            : null;
+        if (string.IsNullOrWhiteSpace(webhookSecret) || !webhookSecret.StartsWith("whsec_", StringComparison.Ordinal))
+            throw new InvalidOperationException("Stripe created or reused the webhook endpoint without returning a signing secret; copy the signing secret from Stripe Developers -> Webhooks.");
+
+        return new LiveStripeProvisionResult(price, portal, webhookId, webhookSecret);
+    }
+
     public Task<IResult> CreateSessionAsync(
         StripeTestWebhook billing, AllowanceLedger ledger, int port, CancellationToken cancellationToken,
         Uri? publicOrigin = null)
@@ -310,3 +381,9 @@ internal sealed class StripeTestCheckout
         throw new InvalidOperationException($"Stripe did not confirm a {(IsLiveMode ? "live" : "test-mode")} {resource} object.");
     }
 }
+
+internal sealed record LiveStripeProvisionResult(
+    string PriceId,
+    string PortalConfigurationId,
+    string WebhookEndpointId,
+    string WebhookSecret);

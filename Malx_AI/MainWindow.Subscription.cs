@@ -22,6 +22,10 @@ namespace Malx_AI
         private bool _recoveringAxiomAccount;
         private string? _pendingAxiomRecoveryKey;
         private bool _cloudSuggestionDismissedThisSession;
+        private DateTimeOffset _lastAutoBillingSyncUtc = DateTimeOffset.MinValue;
+        private bool _awaitingCheckoutCompletion;
+        private bool _activatedSyncHooked;
+        private bool _autoBillingSyncInFlight;
 
         private bool HasActivePaidAxiomSubscription =>
             _lastAxiomSubscriptionStatus is { } status
@@ -33,6 +37,11 @@ namespace Malx_AI
 
         private void RestoreAxiomAccount()
         {
+            if (!_activatedSyncHooked)
+            {
+                _activatedSyncHooked = true;
+                Activated += MainWindow_Activated_SyncAxiomBilling;
+            }
             if (_axiomAccountEndpoint is null || _database is null)
                 return;
             _axiomAccountSession = _database.LoadAxiomAccount(_axiomAccountEndpoint);
@@ -297,6 +306,32 @@ namespace Malx_AI
             }
 
             var subscription = read.Status;
+            if (subscription is not null
+                && _axiomAccountSession is not null
+                && subscription.Balance.AllowanceMicros <= 0
+                && !string.Equals(subscription.BillingStatus, "revoked", StringComparison.OrdinalIgnoreCase)
+                && !_autoBillingSyncInFlight
+                && (DateTimeOffset.UtcNow - _lastAutoBillingSyncUtc) >= TimeSpan.FromSeconds(45))
+            {
+                _lastAutoBillingSyncUtc = DateTimeOffset.UtcNow;
+                _autoBillingSyncInFlight = true;
+                try
+                {
+                    if (await SubscriptionTransport.SynchronizeAxiomSubscriptionAsync())
+                    {
+                        var syncedRead = await SubscriptionTransport.ReadAxiomSubscriptionDetailedAsync();
+                        if (version != _subscriptionRefreshVersion)
+                            return null;
+                        if (syncedRead.Status is not null)
+                            subscription = syncedRead.Status;
+                    }
+                }
+                finally
+                {
+                    _autoBillingSyncInFlight = false;
+                }
+            }
+
             _lastAxiomSubscriptionStatus = subscription;
             AxiomSubscriptionPanel.Visibility = subscription is null ? Visibility.Collapsed : Visibility.Visible;
             if (subscription is null)
@@ -309,6 +344,8 @@ namespace Malx_AI
             bool isPaymentFailed = string.Equals(subscription.BillingStatus, "payment_failed", StringComparison.OrdinalIgnoreCase);
             bool isCanceled = string.Equals(subscription.BillingStatus, "canceled", StringComparison.OrdinalIgnoreCase);
             bool paid = subscription.Balance.AllowanceMicros > 0 && !isRevoked;
+            if (paid)
+                _awaitingCheckoutCompletion = false;
             if (paid
                 && _axiomAccountSession is not null
                 && !_useAxiomAccountEndpoint
@@ -348,8 +385,8 @@ namespace Malx_AI
                         : paid
                             ? balanceText + periodSuffix
                             : (subscription.Sandbox
-                                ? "Test plan · $9/month · $5 included inference"
-                                : "$9/month · $5 included DeepSeek 4.1F-1017 inference · Cancel anytime");
+                                ? "Test plan · $9/month · $5.25 included inference"
+                                : "$9/month · $5.25 included DeepSeek 4.1F-1017 inference · Cancel anytime");
             RenderAxiomUsageUi(subscription);
             return subscription;
         }
@@ -571,6 +608,34 @@ namespace Malx_AI
                 AxiomCloudSuggestionBanner.Visibility = Visibility.Collapsed;
         }
 
+        private async void MainWindow_Activated_SyncAxiomBilling(object? sender, EventArgs e)
+        {
+            if (_axiomAccountSession is null || _autoBillingSyncInFlight)
+                return;
+
+            bool pastRenewal = _lastAxiomSubscriptionStatus?.RenewsAt is { } renewAt && DateTimeOffset.UtcNow >= renewAt;
+            if (!_awaitingCheckoutCompletion && !pastRenewal)
+                return;
+            if ((DateTimeOffset.UtcNow - _lastAutoBillingSyncUtc) < TimeSpan.FromSeconds(10))
+                return;
+
+            _lastAutoBillingSyncUtc = DateTimeOffset.UtcNow;
+            _autoBillingSyncInFlight = true;
+            try
+            {
+                if (await SubscriptionTransport.SynchronizeAxiomSubscriptionAsync())
+                    await RefreshAxiomSubscriptionAsync();
+            }
+            catch
+            {
+                // Non-blocking background sync on focus return; manual Refresh remains available.
+            }
+            finally
+            {
+                _autoBillingSyncInFlight = false;
+            }
+        }
+
         private async void AxiomSubscribeButton_Click(object sender, RoutedEventArgs e)
             => await OpenAxiomSubscriptionLinkAsync(portal: false);
 
@@ -610,9 +675,12 @@ namespace Malx_AI
 
                 Process.Start(new ProcessStartInfo(link.AbsoluteUri) { UseShellExecute = true })?.Dispose();
                 if (!portal)
+                {
+                    _awaitingCheckoutCompletion = true;
                     AxiomSubscriptionStatusText.Text = sandbox
-                        ? "Complete the test checkout in your browser, then refresh billing here."
-                        : "Complete Checkout in your browser, then click Refresh billing here.";
+                        ? "Complete test checkout in your browser — Axiom will activate automatically when you return."
+                        : "Complete Checkout in your browser — Axiom will activate your plan automatically when you return.";
+                }
             }
             catch (System.ComponentModel.Win32Exception)
             {
