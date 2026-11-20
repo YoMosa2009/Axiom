@@ -38,9 +38,10 @@ if (-not ($stripeLiveKey.StartsWith('sk_live_') -or $stripeLiveKey.StartsWith('r
     throw 'Expected a Stripe live secret key starting with sk_live_ or rk_live_.'
 }
 
-$provider = (Read-Host -Prompt 'Upstream AI provider [digitalocean / deepseek / openrouter] (recommended: digitalocean)').Trim().ToLowerInvariant()
-if ($provider -notin @('digitalocean', 'deepseek', 'openrouter')) {
-    throw "Unsupported provider '$provider'. Choose digitalocean, deepseek, or openrouter."
+$provider = (Read-Host -Prompt 'Upstream AI provider [openrouter / digitalocean / deepseek] (default: openrouter)').Trim().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($provider)) { $provider = 'openrouter' }
+if ($provider -notin @('openrouter', 'digitalocean', 'deepseek')) {
+    throw "Unsupported provider '$provider'. Choose openrouter, digitalocean, or deepseek."
 }
 $upstreamKey = Read-PlainSecret -Prompt "Upstream API key for $provider"
 if ([string]::IsNullOrWhiteSpace($upstreamKey)) { throw 'Upstream API key cannot be empty.' }
