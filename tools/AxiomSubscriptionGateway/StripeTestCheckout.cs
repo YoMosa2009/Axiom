@@ -86,6 +86,7 @@ internal sealed class StripeTestCheckout
             new Dictionary<string, string>
             {
                 ["product_data[name]"] = "Axiom Cloud — DeepSeek 4.1F-1017",
+                ["product_data[tax_code]"] = "txcd_10103000",
                 ["currency"] = "usd",
                 ["unit_amount"] = "900",
                 ["recurring[interval]"] = "month",
