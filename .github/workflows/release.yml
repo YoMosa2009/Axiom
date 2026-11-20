@@ -119,7 +119,7 @@ jobs:
         shell: powershell
         env:
           PACKAGE_ONLY_FLAG: ${{ steps.decide.outputs.package_only }}
-          AXIOM_REQUIRE_OAUTH_BUILTINS: "1"
+          AXIOM_REQUIRE_OAUTH_BUILTINS: ${{ steps.decide.outputs.package_only == 'true' && '0' || '1' }}
           AXIOM_BUILTIN_GOOGLE_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_GOOGLE_CLIENT_ID }}
           AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET: ${{ secrets.AXIOM_BUILTIN_GOOGLE_CLIENT_SECRET }}
           AXIOM_BUILTIN_GITHUB_CLIENT_ID: ${{ secrets.AXIOM_BUILTIN_GITHUB_CLIENT_ID }}
