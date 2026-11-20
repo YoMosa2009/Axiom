@@ -186,6 +186,10 @@ internal sealed class StripeTestCheckout
                 if (ReadValidatedUrl(json.RootElement, "checkout.stripe.com", IsLiveMode) is { } checkout)
                     return (Results.Ok(new { url = checkout.AbsoluteUri }), checkout);
             }
+            else
+            {
+                await LogStripeFailureAsync("checkout/sessions", response, cancellationToken);
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException
             || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
@@ -219,6 +223,10 @@ internal sealed class StripeTestCheckout
                 using var doc = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
                 if (ReadValidatedUrl(doc.RootElement, "billing.stripe.com", IsLiveMode) is { } portal)
                     return Results.Ok(new { url = portal.AbsoluteUri });
+            }
+            else
+            {
+                await LogStripeFailureAsync("billing_portal/sessions", response, cancellationToken);
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException
@@ -364,7 +372,10 @@ internal sealed class StripeTestCheckout
         request.Content = new FormUrlEncodedContent(values);
         using var response = await _http.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
+        {
+            await LogStripeFailureAsync(resource, response, cancellationToken);
             throw new InvalidOperationException($"Stripe {resource} returned HTTP {(int)response.StatusCode}.");
+        }
 
         JsonValueKind expectedLive = IsLiveMode ? JsonValueKind.True : JsonValueKind.False;
         await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -379,6 +390,42 @@ internal sealed class StripeTestCheckout
             return value;
 
         throw new InvalidOperationException($"Stripe did not confirm a {(IsLiveMode ? "live" : "test-mode")} {resource} object.");
+    }
+
+    private static async Task LogStripeFailureAsync(
+        string operation, HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        string type = "unknown";
+        string code = "none";
+        string param = "none";
+        string msg = string.Empty;
+        try
+        {
+            string raw = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                using var doc = JsonDocument.Parse(raw);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object
+                    && doc.RootElement.TryGetProperty("error", out var err)
+                    && err.ValueKind == JsonValueKind.Object)
+                {
+                    if (err.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String && t.GetString() is { Length: > 0 } ts)
+                        type = ts;
+                    if (err.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String && c.GetString() is { Length: > 0 } cs)
+                        code = cs;
+                    if (err.TryGetProperty("param", out var p) && p.ValueKind == JsonValueKind.String && p.GetString() is { Length: > 0 } ps)
+                        param = ps;
+                    if (err.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String && m.GetString() is { Length: > 0 } ms)
+                        msg = ms.Length <= 200 ? ms : ms[..200];
+                }
+            }
+        }
+        catch
+        {
+            // Keep error logging best-effort and free of raw payloads or request headers.
+        }
+
+        Console.Error.WriteLine($"[Stripe] {operation} failed: HTTP {(int)response.StatusCode} type={type} code={code} param={param} msg={msg}");
     }
 }
 

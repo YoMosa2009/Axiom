@@ -75,19 +75,32 @@ namespace Malx_AI
 
             AxiomAccountPanel.Visibility = Visibility.Visible;
             bool signedIn = _axiomAccountSession is not null;
+            bool paid = HasActivePaidAxiomSubscription;
             AxiomAccountSignInForm.Visibility = signedIn ? Visibility.Collapsed : Visibility.Visible;
             AxiomAccountActiveActions.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;
             AxiomAccountMessage.Text = _axiomAccountSession is { } session
                 ? $"Signed in as {session.Email}"
                 : "Sign in with your email to subscribe or restore an existing Axiom Cloud plan.";
+            AxiomAccountEndpointToggle.Visibility = (signedIn && (paid || _useAxiomAccountEndpoint))
+                ? Visibility.Visible : Visibility.Collapsed;
             AxiomAccountEndpointToggle.Content = _useAxiomAccountEndpoint
-                ? "Stop using Axiom subscription"
-                : "Use Axiom subscription (DeepSeek 4.1F-1017)";
+                ? "Using Axiom Cloud (click to switch off)"
+                : "Use Axiom Cloud";
             AxiomRecoveryKeyEntry.Visibility = _recoveringAxiomAccount ? Visibility.Visible : Visibility.Collapsed;
             AxiomConfirmAccountButton.Content = _recoveringAxiomAccount ? "Recover account" : "Create account or sign in";
             AxiomRecoveryToggle.Content = _recoveringAxiomAccount ? "Back to sign-in" : "Recover with key";
+            if (AxiomViewUsageButton != null && AxiomPaidLinksSeparator != null)
+            {
+                Visibility usageVis = signedIn && paid ? Visibility.Visible : Visibility.Collapsed;
+                AxiomViewUsageButton.Visibility = usageVis;
+                AxiomPaidLinksSeparator.Visibility = usageVis;
+            }
+            bool showRecoveryLink = signedIn && (paid || _pendingAxiomRecoveryKey is not null);
             CopyAxiomRecoveryKeyButton.Content = _pendingAxiomRecoveryKey is null
-                ? "Copy new recovery key" : "Retry copying recovery key";
+                ? "Recovery key" : "Retry copying key";
+            CopyAxiomRecoveryKeyButton.Visibility = showRecoveryLink ? Visibility.Visible : Visibility.Collapsed;
+            if (AxiomRecoverySeparator != null)
+                AxiomRecoverySeparator.Visibility = showRecoveryLink ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private bool CanChangeAxiomAccount()
@@ -232,12 +245,12 @@ namespace Malx_AI
                     Clipboard.SetText(_pendingAxiomRecoveryKey);
                     _pendingAxiomRecoveryKey = null;
                     AxiomAccountMessage.Text = "Recovery key copied. Save it privately. It can be used once.";
-                    CopyAxiomRecoveryKeyButton.Content = "Copy new recovery key";
+                    CopyAxiomRecoveryKeyButton.Content = "Recovery key";
                 }
                 catch (ExternalException)
                 {
                     AxiomAccountMessage.Text = "The clipboard is busy. Retry copying this recovery key.";
-                    CopyAxiomRecoveryKeyButton.Content = "Retry copying recovery key";
+                    CopyAxiomRecoveryKeyButton.Content = "Retry copying key";
                 }
             });
         }
@@ -362,12 +375,18 @@ namespace Malx_AI
                 AxiomCloudSuggestionBanner.Visibility = Visibility.Collapsed;
 
             if (AxiomCloudPlanTitleText != null)
-                AxiomCloudPlanTitleText.Text = subscription.Sandbox ? "Axiom subscription sandbox" : "Axiom Cloud subscription";
+            {
+                AxiomCloudPlanTitleText.Text = "Sandbox mode";
+                AxiomCloudPlanTitleText.Visibility = subscription.Sandbox ? Visibility.Visible : Visibility.Collapsed;
+            }
 
             AxiomSubscribeButton.Content = subscription.Sandbox ? "Test checkout" : "Subscribe — $9/mo";
             AxiomManageSubscriptionButton.Content = subscription.Sandbox ? "Manage test subscription" : "Manage billing";
             AxiomSubscribeButton.Visibility = paid ? Visibility.Collapsed : Visibility.Visible;
             AxiomManageSubscriptionButton.Visibility = paid || isPaymentFailed ? Visibility.Visible : Visibility.Collapsed;
+            if (AxiomRefreshSubscriptionButton != null)
+                AxiomRefreshSubscriptionButton.Visibility = (_awaitingCheckoutCompletion || isPaymentFailed || isRevoked)
+                    ? Visibility.Visible : Visibility.Collapsed;
 
             string balanceText = FormattableString.Invariant($"${subscription.Balance.AvailableMicros / 1_000_000m:0.00} of inference available");
             string periodSuffix = subscription.RenewsAt is DateTimeOffset renewal
@@ -387,6 +406,7 @@ namespace Malx_AI
                             : (subscription.Sandbox
                                 ? "Test plan · $9/month · $5.25 included inference"
                                 : "$9/month · $5.25 included DeepSeek 4.1F-1017 inference · Cancel anytime");
+            RenderAxiomAccount();
             RenderAxiomUsageUi(subscription);
             return subscription;
         }
@@ -664,12 +684,24 @@ namespace Malx_AI
             try
             {
                 bool sandbox = _lastAxiomSubscriptionStatus?.Sandbox ?? true;
-                Uri? link = await SubscriptionTransport.CreateAxiomSubscriptionLinkAsync(portal);
-                if (link is null)
+                AxiomSubscriptionLinkResult result = await SubscriptionTransport.CreateAxiomSubscriptionLinkDetailedAsync(portal);
+                if (result.Url is not { } link)
                 {
-                    AxiomSubscriptionStatusText.Text = sandbox
-                        ? "Stripe couldn’t open this sandbox session."
-                        : "Stripe couldn’t open Checkout right now. Try again shortly.";
+                    _ = BackendLogService.LogEventAsync(
+                        portal ? "AxiomBillingPortal" : "AxiomCheckout",
+                        $"Failed Status:{result.StatusCode?.ToString() ?? "timeout"} Code:{result.ErrorCode ?? "none"} Msg:{result.ErrorMessage ?? "none"}");
+
+                    AxiomSubscriptionStatusText.Text = result.ErrorCode switch
+                    {
+                        "founding_seats_full" => "Axiom Cloud's current Founding batch is temporarily full. Check back shortly.",
+                        _ when result.StatusCode == HttpStatusCode.Conflict => "This account already has an active subscription. Click Refresh billing.",
+                        _ when result.StatusCode is null => "Timed out contacting Axiom Cloud. Check your connection and try again.",
+                        _ => sandbox
+                            ? "Stripe couldn’t open this sandbox session."
+                            : "Stripe couldn’t open Checkout right now. Try again shortly."
+                    };
+                    if (result.StatusCode == HttpStatusCode.Conflict && AxiomRefreshSubscriptionButton != null)
+                        AxiomRefreshSubscriptionButton.Visibility = Visibility.Visible;
                     return;
                 }
 
@@ -677,6 +709,8 @@ namespace Malx_AI
                 if (!portal)
                 {
                     _awaitingCheckoutCompletion = true;
+                    if (AxiomRefreshSubscriptionButton != null)
+                        AxiomRefreshSubscriptionButton.Visibility = Visibility.Visible;
                     AxiomSubscriptionStatusText.Text = sandbox
                         ? "Complete test checkout in your browser — Axiom will activate automatically when you return."
                         : "Complete Checkout in your browser — Axiom will activate your plan automatically when you return.";

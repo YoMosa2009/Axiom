@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AxiomSubscriptionGateway;
 using Malx_AI.Agent;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace Malx_AI.Tests;
@@ -85,6 +87,30 @@ public sealed class ManagedInferenceGatewayTests : IDisposable
         Assert.Equal(4_999_919, paidSubscription.Balance.AvailableMicros);
         var portal = await desktop.CreateAxiomSubscriptionLinkAsync(portal: true);
         Assert.Equal("https://billing.stripe.com/p/session/test_fixture", portal?.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task DetailedSubscriptionLinkSurfacesStructuredGatewayErrorWithoutBreakingSimpleOverload()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var gateway = LocalGateway.Create(LocalToken, _database, port: 0);
+        gateway.MapPost("/v1/subscription/checkout", () =>
+            Microsoft.AspNetCore.Http.Results.Json(
+                new { error = new { message = "Founding batch full.", code = "founding_seats_full" } },
+                statusCode: StatusCodes.Status503ServiceUnavailable));
+        await gateway.StartAsync(timeout.Token);
+
+        var desktop = new OpenRouterChatService();
+        desktop.SetCustomEndpoint(new Uri(new Uri(gateway.Urls.Single()), "v1").AbsoluteUri, LocalToken, LocalGateway.Model);
+
+        var simple = await desktop.CreateAxiomSubscriptionLinkAsync(portal: false);
+        Assert.Null(simple);
+
+        var detailed = await desktop.CreateAxiomSubscriptionLinkDetailedAsync(portal: false);
+        Assert.Null(detailed.Url);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, detailed.StatusCode);
+        Assert.Equal("founding_seats_full", detailed.ErrorCode);
+        Assert.Equal("Founding batch full.", detailed.ErrorMessage);
     }
 
     [Theory]

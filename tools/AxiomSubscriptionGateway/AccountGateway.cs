@@ -192,6 +192,7 @@ internal static class AccountGateway
             catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException
                 || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
+                app.Logger.LogWarning("Axiom Checkout failed ({ExceptionType}): {Message}", ex.GetType().Name, ex.Message);
                 return LocalGateway.Error("Stripe could not start Checkout.", "billing_unavailable", 502);
             }
         });

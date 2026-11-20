@@ -55,6 +55,8 @@ namespace Malx_AI
 
     public sealed record AxiomSubscriptionReadResult(AxiomSubscriptionStatus? Status, bool Unauthorized);
 
+    public sealed record AxiomSubscriptionLinkResult(Uri? Url, HttpStatusCode? StatusCode, string? ErrorCode, string? ErrorMessage);
+
     public sealed class OpenRouterCustomEndpointFatalException : InvalidOperationException
     {
         public OpenRouterCustomEndpointFatalException(string message) : base(message) { }
@@ -631,10 +633,10 @@ namespace Malx_AI
                 return new AxiomSubscriptionReadResult(null, false);
             }
 
-            var (statusCode, body) = await SendSubscriptionRequestAsync(HttpMethod.Get, "/subscription");
+            var (statusCode, isSuccess, body) = await SendSubscriptionRequestAsync(HttpMethod.Get, "/subscription");
             if (statusCode == HttpStatusCode.Unauthorized)
                 return new AxiomSubscriptionReadResult(null, true);
-            if (body is null)
+            if (!isSuccess || body is null)
                 return new AxiomSubscriptionReadResult(null, false);
 
             try
@@ -654,11 +656,18 @@ namespace Malx_AI
             => await RequestSubscriptionAsync(HttpMethod.Post, "/subscription/sync") is not null;
 
         public async Task<Uri?> CreateAxiomSubscriptionLinkAsync(bool portal)
+            => (await CreateAxiomSubscriptionLinkDetailedAsync(portal)).Url;
+
+        public async Task<AxiomSubscriptionLinkResult> CreateAxiomSubscriptionLinkDetailedAsync(bool portal)
         {
             string operation = portal ? "/subscription/portal" : "/subscription/checkout";
-            string? body = await RequestSubscriptionAsync(HttpMethod.Post, operation);
-            if (body is null)
-                return null;
+            var (statusCode, isSuccess, body) = await SendSubscriptionRequestAsync(HttpMethod.Post, operation);
+            if (!isSuccess || body is null)
+            {
+                var (errorCode, errorMessage) = TryParseGatewayError(body);
+                return new AxiomSubscriptionLinkResult(null, statusCode, errorCode, errorMessage);
+            }
+
             try
             {
                 using var result = JsonDocument.Parse(body);
@@ -670,22 +679,24 @@ namespace Malx_AI
                     && target.IsDefaultPort
                     && string.IsNullOrEmpty(target.UserInfo)
                     && target.Host == (portal ? "billing.stripe.com" : "checkout.stripe.com"))
-                    return target;
+                {
+                    return new AxiomSubscriptionLinkResult(target, statusCode, null, null);
+                }
             }
             catch (JsonException)
             {
                 // Only open a verified Stripe destination.
             }
-            return null;
+            return new AxiomSubscriptionLinkResult(null, statusCode, null, null);
         }
 
         private async Task<string?> RequestSubscriptionAsync(HttpMethod method, string operation)
         {
-            var (_, body) = await SendSubscriptionRequestAsync(method, operation);
-            return body;
+            var (_, isSuccess, body) = await SendSubscriptionRequestAsync(method, operation);
+            return isSuccess ? body : null;
         }
 
-        private async Task<(HttpStatusCode? StatusCode, string? Body)> SendSubscriptionRequestAsync(HttpMethod method, string operation)
+        private async Task<(HttpStatusCode? StatusCode, bool IsSuccess, string? Body)> SendSubscriptionRequestAsync(HttpMethod method, string operation)
         {
             string baseUrl;
             string bearerToken;
@@ -701,23 +712,54 @@ namespace Malx_AI
             }
             else
             {
-                return (null, null);
+                return (null, false, null);
             }
 
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
             using var request = new HttpRequestMessage(method, baseUrl.TrimEnd('/') + operation);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
             try
             {
                 using var response = await CustomEndpointHttp.SendAsync(request, timeout.Token);
-                if (!response.IsSuccessStatusCode)
-                    return (response.StatusCode, null);
-                return (response.StatusCode, await response.Content.ReadAsStringAsync(timeout.Token));
+                string? body = response.Content is null
+                    ? null
+                    : await response.Content.ReadAsStringAsync(timeout.Token);
+                return (response.StatusCode, response.IsSuccessStatusCode, body);
             }
             catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
             {
-                return (null, null);
+                return (null, false, null);
             }
+        }
+
+        private static (string? Code, string? Message) TryParseGatewayError(string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+                return (null, null);
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                    return (null, null);
+                if (doc.RootElement.TryGetProperty("error", out var error))
+                {
+                    if (error.ValueKind == JsonValueKind.String)
+                        return (null, Truncate(error.GetString() ?? string.Empty, 200));
+                    if (error.ValueKind == JsonValueKind.Object)
+                    {
+                        string? code = error.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String
+                            ? c.GetString() : null;
+                        string? message = error.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String
+                            ? Truncate(m.GetString() ?? string.Empty, 200) : null;
+                        return (code, message);
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed error payloads.
+            }
+            return (null, null);
         }
 
         public async Task<bool> TestCustomEndpointConnectionAsync(CancellationToken cancellationToken = default)
