@@ -43,3 +43,23 @@ service-account*.json
 *.key
 *.pfx
 *.p12
+
+# Local-only planning, trackers, handoffs, agent instructions, internal docs, and sim reports
+# (Keep strictly on local disk — never commit to public GitHub)
+AGENTS.md
+CLAUDE.md
+ROADMAP.md
+AXIOM_IMPLEMENTATION_TRACKER.md
+HANDOFF_PROMPT.md
+ComputerUse-Handoff.md
+RELEASING.md
+VERSIONING.md
+*_TRACKER*.md
+*_HANDOFF*.md
+*-Handoff.md
+*_PLAN*.md
+*_STRATEGY*.md
+.github/copilot-instructions.md
+.github/agents/
+docs/*.md
+tools/axsim/*.md

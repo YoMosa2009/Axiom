@@ -26,9 +26,6 @@ dotnet test Malx_AI.Tests/Malx_AI.Tests.csproj
 A Debug build keeps its data in `%LOCALAPPDATA%\Axiom-Dev`, separate from a normal install.
 Only one copy of Axiom can run at a time, so close the installed app before starting yours.
 
-`CLAUDE.md` describes the architecture, where things live, and many non-obvious pitfalls.
-It's worth reading before changing the chat pipeline, the Workplace or Agent Access.
-
 ## What makes a pull request easy to accept
 
 - **One change per pull request**, with a clear description of what and why.

@@ -22,17 +22,7 @@ Free local + BYOK · Signed upcoming releases · Windows 10/11 (64-bit) · `wing
 
 </div>
 
-Source status (2026-11-20): the repository includes managed Axiom Cloud subscription
-integration (`DeepSeek 4.1F-1017`, `$9/mo` with `$5.25/mo` paced credit, Stripe
-live/sandbox Checkout, `--provision-live`, automatic post-Checkout & monthly auto-renewal
-activation, Settings **Usage** 3-hour/weekly meters, [Terms](TERMS.md), and
-[Privacy](PRIVACY.md)), contextual local/BYOK upgrade banners, Workplace reliability, Project
-Canvas multi-format file viewing (including restored Normal Chat Project Canvas toggle),
-Settings modal isolation, autonomous `Auto-Review` command decisions, Azure Artifact Signing
-OIDC automation (`44666730132` dry-run verified), and static launch storefront (`docs/index.html`).
-These changes are **unreleased** and are not part of the V1.11.0 download. See the [unreleased changelog](CHANGELOG.md#unreleased),
-[roadmap](ROADMAP.md) and [implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md) for
-verification and limits.
+*See [CHANGELOG.md](CHANGELOG.md#unreleased) for recent changes in `main` ahead of the next release.*
 
 ![Axiom Chat](docs/images/chat.png)
 
@@ -315,8 +305,6 @@ Settings, chats, local models, connectors, and Workplace data are left untouched
 ZIP installation still works for first-time setup and recovery.
 
 Set `AXIOM_UPDATE_DIR` to an absolute path to stage downloads outside `%LOCALAPPDATA%`.
-Maintainers: see [RELEASING.md](RELEASING.md) — update ZIPs need a matching version tag,
-packaged executable version, and `AXIOM_UPDATE_MANIFEST.txt`.
 
 ## System requirements
 
