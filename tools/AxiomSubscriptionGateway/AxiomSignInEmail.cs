@@ -14,7 +14,11 @@ internal sealed class SmtpAxiomSignInEmail(
     public static SmtpAxiomSignInEmail FromEnvironment()
     {
         string host = Required("AXIOM_SMTP_HOST");
-        string user = Required("AXIOM_SMTP_USER");
+        string user = Environment.GetEnvironmentVariable("AXIOM_SMTP_USER") is { Length: > 0 } smtpUser
+            ? smtpUser
+            : Environment.GetEnvironmentVariable("AXIOM_SMTP_USERNAME") is { Length: > 0 } smtpUsername
+                ? smtpUsername
+                : throw new InvalidOperationException("Set AXIOM_SMTP_USER for Axiom account email delivery.");
         string password = Required("AXIOM_SMTP_PASSWORD");
         string from = Required("AXIOM_SMTP_FROM");
         string? configuredPort = Environment.GetEnvironmentVariable("AXIOM_SMTP_PORT");

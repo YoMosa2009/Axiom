@@ -96,7 +96,7 @@ $envContent = @(
     "AXIOM_UPSTREAM_API_KEY=$upstreamKey"
     "AXIOM_SMTP_HOST=$smtpHost"
     "AXIOM_SMTP_PORT=$smtpPort"
-    "AXIOM_SMTP_USERNAME=$smtpUser"
+    "AXIOM_SMTP_USER=$smtpUser"
     "AXIOM_SMTP_PASSWORD=$smtpPass"
     "AXIOM_SMTP_FROM=$smtpFrom"
 )
