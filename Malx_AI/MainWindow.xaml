@@ -2254,7 +2254,7 @@
                     </Grid.RowDefinitions>
 
                     <Grid Grid.Row="0">
-                        <TextBox Text="{Binding PersonaText, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
+                        <TextBox Text="{Binding PersonaText, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
                                  VerticalScrollBarVisibility="Auto" FontFamily="Segoe UI" FontSize="13" Padding="12"
                                  Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
                         <TextBlock IsHitTestVisible="False" TextWrapping="Wrap" FontFamily="Segoe UI" FontSize="13" Padding="14,14,14,0"
