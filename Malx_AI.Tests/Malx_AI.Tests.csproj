@@ -72,6 +72,8 @@
     <Compile Include="..\Malx_AI\CustomEndpointMetadataParser.cs" Link="Production\CustomEndpointMetadataParser.cs" />
     <Compile Include="..\Malx_AI\AtomicFileWriter.cs" Link="Production\AtomicFileWriter.cs" />
     <Compile Include="..\Malx_AI\PersonaReplyPresentation.cs" Link="Production\PersonaReplyPresentation.cs" />
+    <Compile Include="..\Malx_AI\PersonaModelContext.cs" Link="Production\PersonaModelContext.cs" />
+    <Compile Include="..\Malx_AI\PersonaMemoryService.cs" Link="Production\PersonaMemoryService.cs" />
     <Compile Include="..\Malx_AI\ArtifactRenderService.cs" Link="Production\ArtifactRenderService.cs" />
     <Compile Include="..\Malx_AI\JavaExecutionService.cs" Link="Production\JavaExecutionService.cs" />
     <Compile Include="..\Malx_AI\JsonPersistenceRecovery.cs" Link="Production\JsonPersistenceRecovery.cs" />

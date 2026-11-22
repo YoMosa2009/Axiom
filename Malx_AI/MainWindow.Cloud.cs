@@ -1627,6 +1627,7 @@ namespace Malx_AI
             // but proactive injection is needed when the user explicitly enables the toggle.
             bool capabilityWebResearch = _capabilityRegistry.ShouldUseWebResearch(userMsg);
             string webContext = await TryBuildWebContextAsync(userMsg, capabilityWebResearch, token, uiSnapshot.ChatMessages);
+            string personaContext = await _personaMemoryService.GetModelContextAsync(token);
             return await Task.Run(() =>
             {
                 // @ProjectCanvas asks the model to produce one complete, self-contained artifact
@@ -1679,6 +1680,10 @@ namespace Malx_AI
                     sb.Append(block.Trim());
                 }
 
+                // Persona notes ride in the user's turn, as data from the user (never the system
+                // prompt), and only on ordinary chat turns: a canvas turn builds a deliverable.
+                if (!ShouldRouteNormalChatToCanvas(userMsg))
+                    AppendTurnBlock(turnContext, personaContext);
                 AppendTurnBlock(turnContext, BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Cloud or Hybrid Local"));
                 AppendTurnBlock(turnContext, BuildNormalChatProjectCanvasInstruction(userMsg));
 

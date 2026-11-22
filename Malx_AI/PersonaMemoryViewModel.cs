@@ -46,6 +46,34 @@ namespace Malx_AI
             }
         }
 
+        private bool _shareWithModel = true;
+
+        /// <summary>Lets Normal Chat give the saved notes to the model. Changing it saves at once.</summary>
+        public bool ShareWithModel
+        {
+            get => _shareWithModel;
+            set
+            {
+                if (_shareWithModel == value) return;
+                _shareWithModel = value;
+                OnPropertyChanged();
+                _ = SaveShareSettingAsync(value);
+            }
+        }
+
+        private async Task SaveShareSettingAsync(bool share)
+        {
+            try
+            {
+                await _service.SetShareWithModelAsync(share);
+                Status = share ? "Normal Chat will use your saved notes." : "Normal Chat will not use your notes.";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Status = "Could not save that setting.";
+            }
+        }
+
         public int WordCount => string.IsNullOrWhiteSpace(_personaText)
             ? 0
             : Regex.Matches(_personaText, @"\S+").Count;
@@ -59,6 +87,8 @@ namespace Malx_AI
         public async Task InitializeAsync()
         {
             PersonaText = await _service.LoadAsync();
+            _shareWithModel = _service.ShareWithModel;
+            OnPropertyChanged(nameof(ShareWithModel));
             Status = !string.IsNullOrEmpty(_service.LoadStatus) ? _service.LoadStatus : string.IsNullOrWhiteSpace(PersonaText)
                 ? "Empty — add context about yourself and save."
                 : "Loaded.";

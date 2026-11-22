@@ -3209,6 +3209,7 @@ namespace Malx_AI
             await BackendLogService.LogEventAsync("ThinkingGate", $"Score:{thinkingGate.Score}\nDecision:{thinkingGate.Decision}\nToggle:Automatic\nPrompt:{userMsg}");
 
             SandboxPreparation sandboxPreparation = PrepareSandboxContext(userMsg);
+            string personaContext = await _personaMemoryService.GetModelContextAsync();
             bool capabilityWebResearch = _capabilityRegistry.ShouldUseWebResearch(userMsg);
             string webContext = await TryBuildWebContextAsync(userMsg, capabilityWebResearch, token, uiSnapshot.ChatMessages);
 
@@ -3261,6 +3262,10 @@ namespace Malx_AI
                 }
 
                 string effectiveSystemPrompt = AppendSystemInstruction(uiSnapshot.SystemPromptText, EffortPolicy.BuildSystemInstruction());
+                // Persona background for ordinary chat turns. Sub-1B models and small-model canvas
+                // plans skip it: their prompts are deliberately minimal and they copy stray text.
+                if (!useSubOneBMode && smallCanvasPlan == null && !ShouldRouteNormalChatToCanvas(userMsg))
+                    effectiveSystemPrompt = AppendSystemInstruction(effectiveSystemPrompt, personaContext);
 
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))

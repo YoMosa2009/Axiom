@@ -1,11 +1,12 @@
 # Axiom Privacy Policy
 
-*Last updated: 2026-11-19*
+*Last updated: 2026-11-22*
 
 Axiom is built local-first. Your conversations, files, settings, and third-party API keys stay on your Windows PC unless you explicitly send a prompt to a cloud provider or connect an integration.
 
 ## 1. Local Desktop Data
 - **Stored only on your PC** (`%LOCALAPPDATA%\Axiom`, or `Axiom-Dev` in debug builds): chat history, Workplace sessions, Persona memory, DPAPI-encrypted BYOK API keys, connector OAuth tokens, and preferences.
+- **Persona notes:** saved only on your PC. When **Let Normal Chat use these notes** is on (the default) and you chat with a Cloud or Hybrid Local model, the notes are sent with your message like the rest of the conversation. Turn it off in Persona to keep them local.
 - Axiom includes no advertising SDKs or third-party behavioral analytics trackers.
 
 ## 2. Optional Axiom Cloud Subscription Data

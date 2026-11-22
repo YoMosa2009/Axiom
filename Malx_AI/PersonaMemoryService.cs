@@ -21,6 +21,22 @@ namespace Malx_AI
 
         internal string LoadStatus { get; private set; } = string.Empty;
 
+        /// <summary>Whether Normal Chat may give the notes to the model as background. On by default.</summary>
+        internal bool ShareWithModel { get; private set; } = true;
+
+        /// <summary>The background block for a Normal Chat turn, or empty when sharing is off or there are no notes.</summary>
+        public async Task<string> GetModelContextAsync(CancellationToken token = default)
+        {
+            string notes = await LoadAsync(token).ConfigureAwait(false);
+            return ShareWithModel ? PersonaModelContext.Build(notes) : string.Empty;
+        }
+
+        public async Task SetShareWithModelAsync(bool share, CancellationToken token = default)
+        {
+            string notes = await LoadAsync(token).ConfigureAwait(false);
+            await SaveAsync(notes, share, token).ConfigureAwait(false);
+        }
+
         public async Task<string> LoadAsync(CancellationToken token = default)
         {
             await _gate.WaitAsync(token).ConfigureAwait(false);
@@ -35,6 +51,7 @@ namespace Malx_AI
                         .ConfigureAwait(false);
                     LoadStatus = result.StatusMessage;
                     _cachedText = result.Value?.Text ?? string.Empty;
+                    ShareWithModel = result.Value?.ShareWithModel ?? true;
                     Presentation = PersonaReplyPresentation.FromNotes(_cachedText);
                     return _cachedText;
                 }
@@ -50,15 +67,24 @@ namespace Malx_AI
             }
         }
 
-        public async Task SaveAsync(string text, CancellationToken token = default)
+        public Task SaveAsync(string text, CancellationToken token = default)
+            => SaveAsync(text, ShareWithModel, token);
+
+        public async Task SaveAsync(string text, bool shareWithModel, CancellationToken token = default)
         {
             await _gate.WaitAsync(token).ConfigureAwait(false);
             try
             {
                 string savedText = text ?? string.Empty;
-                string json = JsonSerializer.Serialize(new PersonaMemoryDto { Text = savedText, UpdatedAt = DateTime.UtcNow });
+                string json = JsonSerializer.Serialize(new PersonaMemoryDto
+                {
+                    Text = savedText,
+                    ShareWithModel = shareWithModel,
+                    UpdatedAt = DateTime.UtcNow
+                });
                 await AtomicFileWriter.WriteAllTextAsync(_filePath, json, token).ConfigureAwait(false);
                 _cachedText = savedText;
+                ShareWithModel = shareWithModel;
                 Presentation = PersonaReplyPresentation.FromNotes(savedText);
                 LoadStatus = string.Empty;
             }
@@ -71,6 +97,7 @@ namespace Malx_AI
         private sealed class PersonaMemoryDto
         {
             public string Text { get; set; } = string.Empty;
+            public bool ShareWithModel { get; set; } = true;
             public DateTime UpdatedAt { get; set; }
         }
     }

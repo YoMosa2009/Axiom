@@ -4,7 +4,8 @@ using System.Text.RegularExpressions;
 namespace Malx_AI
 {
     // This value is consumed by the chat renderers only. Keep it out of generation, history,
-    // tool authorization and artifact handling. The prose stored in Persona is never a prompt.
+    // tool authorization and artifact handling. Normal Chat separately gives the notes to the
+    // model as labelled background data (PersonaModelContext); never as instructions.
     internal readonly record struct PersonaReplyPresentation(bool HideDecorativeEmoji, bool UseHyphenBullets, bool PlainHeadings)
     {
         private static readonly Regex Fence = new(@"^ {0,3}(?<marker>`{3,}|~{3,})(?<tail>.*)$", RegexOptions.Compiled);

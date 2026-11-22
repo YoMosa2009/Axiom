@@ -2237,8 +2237,13 @@
                 <Border DockPanel.Dock="Top" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="32,20" Background="{DynamicResource NotebookSurfaceBrush}">
                     <StackPanel>
                         <TextBlock Text="Persona Memory" FontSize="28" FontWeight="Normal" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Georgia"/>
-                        <TextBlock Text="Save private notes and reply formatting preferences. Chat and Workplace recognize preferences like “no emojis,” “use hyphen bullets,” and “plain headings.” Your notes stay on this device."
+                        <TextBlock Text="Tell Axiom about yourself and how you like replies. Chat and Workplace apply preferences like “no emojis,” “use hyphen bullets,” and “plain headings.” Notes are saved on this device."
                                    TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0"/>
+                        <CheckBox IsChecked="{Binding ShareWithModel}" Margin="0,10,0,0" Foreground="{DynamicResource NotebookTextBrush}" FontSize="12"
+                                  AutomationProperties.Name="Let Normal Chat use these notes">
+                            <TextBlock TextWrapping="Wrap" LineHeight="Auto" FontSize="12" Foreground="{DynamicResource NotebookTextBrush}"
+                                       Text="Let Normal Chat use these notes as background about you. With a Cloud or Hybrid Local model, they are sent along with your message."/>
+                        </CheckBox>
                     </StackPanel>
                 </Border>
 
