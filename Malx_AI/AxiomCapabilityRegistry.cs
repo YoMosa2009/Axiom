@@ -271,7 +271,7 @@ namespace Malx_AI
                 .Count(term => term.Length >= 2 && normalized.Contains(term, StringComparison.OrdinalIgnoreCase));
         }
 
-        public string BuildSystemInstruction(string userMessage, string surfaceName)
+        public string BuildSystemInstruction(string userMessage, string surfaceName, bool includeMatchedSkills = true)
         {
             lock (_gate)
             {
@@ -290,13 +290,15 @@ namespace Malx_AI
                 {
                     builder.AppendLine("Attached skill catalog:");
                     foreach (AxiomSkillDefinition skill in attachedSkills)
-                        builder.AppendLine($"- {skill.Name}: {skill.Description}");
+                        builder.AppendLine(includeMatchedSkills
+                            ? $"- {skill.Name}: {skill.Description}"
+                            : $"- {skill.Name} ({skill.Id}): {skill.Description}");
 
                     // The Skill delivering this turn's artifact leads the list: it must survive the
                     // three-skill cap, or the canvas contract arrives without the procedure behind it.
                     AxiomSkillDefinition? canvasSkill = FindCanvasSkill(attachedSkills, userMessage);
                     List<AxiomSkillDefinition> relevantSkills = attachedSkills
-                        .Where(skill => IsSkillRelevant(skill, userMessage) && skill != canvasSkill)
+                        .Where(skill => includeMatchedSkills && IsSkillRelevant(skill, userMessage) && skill != canvasSkill)
                         .Take(canvasSkill == null ? 3 : 2)
                         .ToList();
                     if (canvasSkill != null)
@@ -336,6 +338,24 @@ namespace Malx_AI
                 return result.Length <= MaxInjectedInstructionChars
                     ? result
                     : result[..MaxInjectedInstructionChars] + "\n[/AXIOM ATTACHED CAPABILITIES]";
+            }
+        }
+
+        internal string ReadAttachedSkill(string name)
+        {
+            lock (_gate)
+            {
+                EnsureLoaded();
+                var skill = Skills.FirstOrDefault(item => item.IsAttached
+                    && (string.Equals(item.Id, name.Trim(), StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(item.Name, name.Trim(), StringComparison.OrdinalIgnoreCase)));
+                if (skill == null)
+                    return string.Empty;
+
+                string procedure = $"{skill.Name}\n{skill.Instructions.Trim()}";
+                if (!string.IsNullOrWhiteSpace(skill.Boundaries))
+                    procedure += "\nLimits: " + skill.Boundaries.Trim();
+                return procedure.Length <= 4800 ? procedure : procedure[..4800] + "\n[Procedure truncated]";
             }
         }
 

@@ -446,16 +446,24 @@ namespace Malx_AI
                 CommandReviewPopup.IsOpen = false;
             if (WorkplaceSkillsPopup != null)
                 WorkplaceSkillsPopup.IsOpen = false;
+            if (WorkplacePluginsPopup != null)
+                WorkplacePluginsPopup.IsOpen = false;
             if (ProjectKnowledgeBasePopup != null)
                 ProjectKnowledgeBasePopup.IsOpen = false;
-            if (WorkplaceMentionPopup != null)
-                WorkplaceMentionPopup.IsOpen = false;
+            CloseWorkplaceMentionPopup();
         }
 
         private void WorkplaceConfigButton_Click(object sender, RoutedEventArgs e)
         {
             if (WorkplaceConfigPopup != null)
+            {
+                if (!WorkplaceConfigPopup.IsOpen && !_isProcessing)
+                {
+                    LoadCustomEndpointForWorkplace();
+                    RefreshWorkplaceCloudModeUi();
+                }
                 WorkplaceConfigPopup.IsOpen = !WorkplaceConfigPopup.IsOpen;
+            }
         }
 
         private void WorkplaceSessionTitleButton_Click(object sender, RoutedEventArgs e)
@@ -592,9 +600,16 @@ namespace Malx_AI
         private void ApplyRightSidebarTabVisibility()
         {
             bool isContext = _rightSidebarTab == WorkplaceRightSidebarTab.Context;
+            Visibility contextVisibility = isContext ? Visibility.Visible : Visibility.Collapsed;
+            bool contextChanged = ContextEnvironmentPanel.Visibility != contextVisibility;
             RightSidebarHeaderBorder.Visibility = isContext ? Visibility.Collapsed : Visibility.Visible;
-            ContextEnvironmentPanel.Visibility = isContext ? Visibility.Visible : Visibility.Collapsed;
+            ContextEnvironmentPanel.Visibility = contextVisibility;
             CodeOutputPanel.Visibility = isContext ? Visibility.Collapsed : Visibility.Visible;
+            if (contextChanged && _isProjectCanvasShown && ProjectCanvasPane.Visibility == Visibility.Visible)
+            {
+                ProjectCanvasPane.BeginAnimation(WidthProperty, null);
+                ProjectCanvasPane.Width = GetResponsiveProjectCanvasWidth();
+            }
             RefreshCanvasArtifactUi();
         }
 

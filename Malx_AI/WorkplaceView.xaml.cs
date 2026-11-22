@@ -318,16 +318,15 @@ namespace Malx_AI
 
             if (FindName("WorkplaceHybridToggleButton") is Button hybridToggleButton)
             {
-                hybridToggleButton.Visibility = _isCloudModeEnabled ? Visibility.Visible : Visibility.Collapsed;
-                hybridToggleButton.IsEnabled = !_connectedWorkspace.CodebaseEditAccessEnabled;
+                hybridToggleButton.Visibility = _openRouterChatService.HasValidCustomEndpoint || _isHybridLocalCouncilSelected
+                    ? Visibility.Visible : Visibility.Collapsed;
+                hybridToggleButton.IsEnabled = !_connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
                 hybridToggleButton.Content = _isHybridLocalCouncilSelected
-                    ? "Using Hybrid Local (Kestral 1) — switch to Cloud"
-                    : "Use Hybrid Local (Kestral 1)";
+                    ? "Turn off Hybrid Local"
+                    : "Use Hybrid Local";
                 hybridToggleButton.ToolTip = _isHybridLocalCouncilSelected
-                    ? "Switch back to Cloud mode"
-                    : _openRouterChatService.HasValidCustomEndpoint
-                        ? "Route the Council through your self-hosted endpoint instead of Cloud"
-                        : "Configure a custom endpoint in Settings to enable this";
+                    ? "Return to hosted Cloud when configured, or to an on-device model"
+                    : "Use your self-hosted endpoint in Workplace";
             }
         }
 
@@ -530,7 +529,7 @@ namespace Malx_AI
                 || LooksLikeCalculationRequest(runTurnSignalText);
             IReadOnlyList<OpenRouterToolDefinition> tools = _computerUseTurnImages != null
                 ? Array.Empty<OpenRouterToolDefinition>()
-                : BuildCouncilCloudToolDefinitions(includeRunPython, includeCalculate);
+                : BuildCouncilCloudToolDefinitions(includeRunPython, includeCalculate, role == CouncilRole.Builder);
 
             // Bounded retry around transient free-tier rate limits. When every fallback model is 429,
             // the service throws OpenRouterRateLimitedException; rather than killing the whole relay we
@@ -993,10 +992,17 @@ namespace Malx_AI
         // Cloud-only tool surface for council roles. web_search is advertised only when the user's
         // web toggle is on, preserving the existing toggle as the single web gate. run_python and
         // calculate are always available (offline-safe, sandboxed).
-        private IReadOnlyList<OpenRouterToolDefinition> BuildCouncilCloudToolDefinitions(bool includeRunPython = true, bool includeCalculate = true)
+        private IReadOnlyList<OpenRouterToolDefinition> BuildCouncilCloudToolDefinitions(
+            bool includeRunPython, bool includeCalculate, bool includeWorkplaceActions)
         {
             var defs = new List<OpenRouterToolDefinition>();
             if (ConversationEvidence.Current != null) defs.Add(ConversationEvidence.ToolDefinition);
+            if (includeWorkplaceActions)
+            {
+                defs.Add(AgentToolSchemas.LiveBrowserDefinition);
+                if (HasAttachedWorkplaceSkills)
+                    defs.Add(AgentToolSchemas.UseSkillDefinition);
+            }
 
             if (_isWebSearchEnabled)
             {
@@ -1233,6 +1239,15 @@ namespace Malx_AI
             {
                 using JsonDocument argsDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(toolCall.ArgumentsJson) ? "{}" : toolCall.ArgumentsJson);
                 JsonElement root = argsDocument.RootElement;
+
+                if (name.Equals(AgentToolNames.UseSkill, StringComparison.OrdinalIgnoreCase))
+                    return ReadWorkplaceSkill(ReadToolArgument(root, "name")).ToObservation();
+                if (name.Equals(AgentToolNames.BrowserControl, StringComparison.OrdinalIgnoreCase))
+                {
+                    var browser = await ExecuteLiveBrowserAsync(ReadToolArgument(root, "action"), ReadToolArgument(root, "url"),
+                        ReadToolArgument(root, "target_id"), ReadToolArgument(root, "text"), token);
+                    return browser.ToObservation();
+                }
 
                 if (string.Equals(name, "web_search", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2284,6 +2299,7 @@ namespace Malx_AI
             if (snapshot == null)
                 return;
 
+            CloseAllPopups();
             ResetWorkspaceTransientState(clearSessionCollections: true, resetCanvas: true);
             _restoredIsolatedRunState = snapshot.IsRunStateIsolated;
             _computerUseGoal = snapshot.ComputerUseGoal ?? "";
@@ -2520,7 +2536,6 @@ namespace Malx_AI
         private readonly ObservableCollection<ConceptTagViewModel> _conceptTags = new();
         private readonly ObservableCollection<string> _activityLogs = new();
         private readonly Dictionary<CouncilRole, CouncilModelConfig> _council = new();
-        private readonly PersonaMemoryService _personaMemoryService = new();
         private readonly WebSearchService _webSearchService = new();
         private readonly PythonExecutionService _pythonExecutionService = new();
         private readonly WorkspaceAccessService _workspaceAccessService = new();
@@ -2570,6 +2585,8 @@ namespace Malx_AI
         private const double CompactProjectCanvasBreakpoint = 1120;
         private bool _isCodeOutputExpanded = true;
         private const double ProjectCanvasExpandedWidthRatio = 0.30;
+        private const double ProjectCanvasMinWidth = 290;
+        private const double SessionContextPaneWidth = 260;
         private const int ContextCompressionThreshold = 3000;
         private const double AvgCharsPerToken = 4.0;
         private readonly List<(string Role, string Content)> _chatHistory = new();
@@ -3072,6 +3089,16 @@ namespace Malx_AI
                 UpdateWorkplaceMentionPopup();
             };
             QueryInput.TextArea.PreviewKeyDown += WorkplaceQueryInput_PreviewKeyDown;
+            QueryInput.LostKeyboardFocus += (_, _) =>
+            {
+                if (!QueryInput.IsKeyboardFocusWithin)
+                    CloseWorkplaceMentionPopup();
+            };
+            IsVisibleChanged += (_, _) =>
+            {
+                if (!IsVisible)
+                    CloseAllPopups();
+            };
             CommandManager.AddPreviewExecutedHandler(QueryInput, (s, e) =>
             {
                 if (e.Command == ApplicationCommands.Paste)
@@ -3117,6 +3144,7 @@ namespace Malx_AI
             _progressTimer.Tick += ProgressTimer_Tick;
             Unloaded += (_, _) =>
             {
+                CloseAllPopups();
                 SavePersistedSession();
                 DisposeModelCache();
             };
@@ -3446,9 +3474,12 @@ namespace Malx_AI
 
         private double GetResponsiveProjectCanvasWidth()
         {
+            if (_rightSidebarTab == WorkplaceRightSidebarTab.Context)
+                return SessionContextPaneWidth;
+
             double viewportWidth = ActualWidth > 0 ? ActualWidth : 1600;
             double candidate = viewportWidth * ProjectCanvasExpandedWidthRatio;
-            return Math.Max(ProjectCanvasPane.MinWidth, Math.Min(candidate, ProjectCanvasPane.MaxWidth));
+            return Math.Clamp(candidate, ProjectCanvasMinWidth, ProjectCanvasPane.MaxWidth);
         }
 
         private void RefreshRenderedWorkplaceCards()
@@ -4305,7 +4336,8 @@ namespace Malx_AI
             string prompt = (systemPrompt ?? string.Empty).Trim();
             string capabilityInstruction = AxiomCapabilityRegistry.Shared.BuildSystemInstruction(
                 context?.UserPrompt ?? string.Empty,
-                "Workplace / Council or Single Model");
+                "Workplace / Council or Single Model",
+                includeMatchedSkills: false);
             if (!string.IsNullOrWhiteSpace(capabilityInstruction))
                 prompt = string.IsNullOrWhiteSpace(prompt) ? capabilityInstruction : prompt + "\n\n" + capabilityInstruction;
 
@@ -7230,6 +7262,7 @@ namespace Malx_AI
             if (_isCloudModeEnabled)
             {
                 _isCloudModeEnabled = false;
+                _isHybridLocalCouncilSelected = false;
                 RefreshWorkplaceCloudModeUi();
                 UpdateCouncilBlocks();
                 UpdateContextInfo();
@@ -7290,10 +7323,13 @@ namespace Malx_AI
             if (_isHybridLocalCouncilSelected)
             {
                 _isHybridLocalCouncilSelected = false;
+                _isCloudModeEnabled = _openRouterChatService.HasValidCloudCredential;
                 RefreshWorkplaceCloudModeUi();
                 UpdateCouncilBlocks();
                 UpdateContextInfo();
-                AppendChat("system", $"Workplace cloud mode now uses {WorkplaceCloudRoleDisplayName} (OpenRouter).");
+                AppendChat("system", _isCloudModeEnabled
+                    ? $"Workplace now uses {WorkplaceCloudRoleDisplayName}."
+                    : "Workplace returned to on-device models.");
                 SavePersistedSession();
                 return;
             }
@@ -7311,7 +7347,7 @@ namespace Malx_AI
             RefreshWorkplaceCloudModeUi();
             UpdateCouncilBlocks();
             UpdateContextInfo();
-            AppendChat("system", "Workplace cloud mode now uses Kestral 1 (your self-hosted endpoint) for Architect, Builder, and Critic.");
+            AppendChat("system", "Workplace now uses your self-hosted Hybrid Local endpoint.");
             SavePersistedSession();
         }
 
@@ -11692,6 +11728,8 @@ namespace Malx_AI
             RevisionNoticeBlock.Text = "Issues were found and the output was revised.";
             RevisionNoticeBlock.Visibility = Visibility.Collapsed;
             string userQuery = (QueryInput.Text ?? string.Empty).Trim();
+            _liveBrowser.Reset();
+            CloseWorkplaceMentionPopup();
             if (userQuery.Length == 0)
                 userQuery = pendingImagePaths.Count > 0 ? "Analyze the attached image(s)." : "Analyze the attached file(s).";
             EnsureAutoSessionTitle(userQuery);
@@ -11933,7 +11971,7 @@ namespace Malx_AI
             {
                 await CompressChatHistoryIfNeededAsync(token);
 
-                if (_isWebSearchEnabled)
+                if (runContext.WebGroundingRequired && !runContext.IsCloudExecution)
                 {
                     proactiveWebContext = await BuildPromptWebContextAsync(userQuery, objective, token);
                     if (!string.IsNullOrWhiteSpace(proactiveWebContext))
@@ -16656,7 +16694,7 @@ namespace Malx_AI
                 }
             }
 
-            if (role == CouncilRole.Builder && useBuilderToolDecision && !isGemma4)
+            if (role == CouncilRole.Builder && useBuilderToolDecision)
             {
                 return await ExecuteLocalBuilderWithToolDecisionAsync(
                     systemPrompt,
@@ -16669,11 +16707,9 @@ namespace Malx_AI
                     showLiveCard,
                     maxGenerationTokensOverride,
                     contextSizeOverride,
-                    localCapability);
+                    localCapability,
+                    useNativeGrammar: !isGemma4);
             }
-
-            if (role == CouncilRole.Builder && useBuilderToolDecision && isGemma4)
-                LogActivity("Builder grammar-constrained tool decision skipped: Gemma 4 is using the external CLI runner, which has no configured grammar contract.");
 
             if (isGemma4)
             {

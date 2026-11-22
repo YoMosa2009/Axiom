@@ -417,7 +417,8 @@ namespace Malx_AI
 
         private void UpdateWorkplaceMentionPopup()
         {
-            if (QueryInput == null || WorkplaceMentionPopup == null || WorkplaceMentionList == null)
+            if (!IsVisible || QueryInput == null || !QueryInput.IsKeyboardFocusWithin
+                || WorkplaceMentionPopup == null || WorkplaceMentionList == null)
             {
                 CloseWorkplaceMentionPopup();
                 return;
@@ -500,6 +501,7 @@ namespace Malx_AI
                     {
                         _workplaceMentionSelectedIndex = Math.Min(count - 1, _workplaceMentionSelectedIndex + 1);
                         WorkplaceMentionList.SelectedIndex = _workplaceMentionSelectedIndex;
+                        WorkplaceMentionList.ScrollIntoView(WorkplaceMentionList.SelectedItem);
                         e.Handled = true;
                         return;
                     }
@@ -508,6 +510,7 @@ namespace Malx_AI
                     {
                         _workplaceMentionSelectedIndex = Math.Max(0, _workplaceMentionSelectedIndex - 1);
                         WorkplaceMentionList.SelectedIndex = _workplaceMentionSelectedIndex;
+                        WorkplaceMentionList.ScrollIntoView(WorkplaceMentionList.SelectedItem);
                         e.Handled = true;
                         return;
                     }
@@ -557,8 +560,12 @@ namespace Malx_AI
 
         private void WorkplaceMentionList_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            if (WorkplaceMentionList?.SelectedItem is McpConnectorInfo connector)
+            if (e.OriginalSource is DependencyObject source
+                && ItemsControl.ContainerFromElement(WorkplaceMentionList, source) is ListBoxItem { Content: McpConnectorInfo connector })
+            {
                 ApplyWorkplaceMentionCompletion(connector);
+                e.Handled = true;
+            }
         }
 
         private void ApplyWorkplaceMentionCompletion(McpConnectorInfo connector)
@@ -567,9 +574,10 @@ namespace Malx_AI
                 return;
 
             int caret = QueryInput.CaretOffset;
-            string next = McpMentionHelper.ApplyMentionCompletion(QueryInput.Text ?? string.Empty, _workplaceMentionAtIndex, caret, connector.Handle);
+            int atIndex = _workplaceMentionAtIndex;
+            string next = McpMentionHelper.ApplyMentionCompletion(QueryInput.Text ?? string.Empty, atIndex, caret, connector.Handle);
             QueryInput.Document.Text = next;
-            int newCaret = Math.Min(next.Length, _workplaceMentionAtIndex + 1 + connector.Handle.Length + 1);
+            int newCaret = Math.Min(next.Length, atIndex + 1 + connector.Handle.Length + 1);
             QueryInput.CaretOffset = newCaret;
             QueryInput.Focus();
             CloseWorkplaceMentionPopup();

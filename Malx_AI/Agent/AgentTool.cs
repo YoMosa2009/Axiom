@@ -24,6 +24,7 @@ namespace Malx_AI.Agent
         public const string CheckBackgroundTask = "check_background_task";
         public const string StopBackgroundTask = "stop_background_task";
         public const string BrowserControl = "browser_control";
+        public const string UseSkill = "use_skill";
         public const string TakeScreenshot = "take_screenshot";
         public const string Finish = "finish";
         public const string RecallContext = "recall_context";
@@ -42,6 +43,7 @@ namespace Malx_AI.Agent
             CheckBackgroundTask,
             StopBackgroundTask,
             BrowserControl,
+            UseSkill,
             TakeScreenshot,
             Finish, RecallContext
         ];
@@ -50,7 +52,7 @@ namespace Malx_AI.Agent
         public static readonly IReadOnlySet<string> ReadOnly =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                ReadFile, ListDirectory, FindFiles, SearchText, CheckBackgroundTask, TakeScreenshot, Finish, RecallContext
+                ReadFile, ListDirectory, FindFiles, SearchText, CheckBackgroundTask, TakeScreenshot, Finish, RecallContext, UseSkill
             };
 
         public static bool IsReadOnly(string? tool) => tool != null && ReadOnly.Contains(tool);

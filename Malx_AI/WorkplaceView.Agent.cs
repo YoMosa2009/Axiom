@@ -578,6 +578,8 @@ namespace Malx_AI
                 string cwd = call.Arg("cwd");
                 return string.IsNullOrWhiteSpace(cwd) ? call.Arg("command") : $"{call.Arg("command")}\n(in {cwd})";
             }
+            if (string.Equals(call.Tool, AgentToolNames.BrowserControl, StringComparison.OrdinalIgnoreCase))
+                return call.Arg("preview", call.DescribeShort());
 
             var builder = new StringBuilder();
             builder.AppendLine(call.Arg("path"));
@@ -704,6 +706,11 @@ namespace Malx_AI
                 trackerFilePath: GetOrResolveTrackerFilePath(),
                 browserSummary: GetDetectedBrowserSummaryForPrompt(),
                 visionCapable: visionCapable);
+            string capabilities = _capabilityRegistry.BuildSystemInstruction(userQuery, "Workplace Agent", includeMatchedSkills: false);
+            if (capabilities.Length > 0)
+                systemPrompt += "\n\n" + capabilities;
+            if (!_isWebSearchEnabled)
+                systemPrompt += "\nWeb research is off. Use browser navigation only for an explicitly requested browser action.";
 
             _cancellationTokenSource?.Dispose();
             _cancellationTokenSource = new CancellationTokenSource();
@@ -835,7 +842,8 @@ namespace Malx_AI
                         ct),
                     windowCaptureAsync: ComputerUseScreenCapture.CaptureForAgentAsync,
                     readBudgetChars: ObservationBudgetFor(tier) - 256,
-                    screenshotDirectory: Path.Combine(AppDataPaths.Root, "WorkplaceCaptures")));
+                    screenshotDirectory: Path.Combine(AppDataPaths.Root, "WorkplaceCaptures"),
+                    workplaceToolAsync: ExecuteAgentWorkplaceToolAsync));
             var trackedSteps = new List<string>();
             AgentRunResult result;
             _agentSessionRunning = true;

@@ -65,6 +65,7 @@ namespace Malx_AI.Agent
         private readonly AgentFileBackup? _backup;
         private readonly AgentBackgroundTaskManager _backgroundTasks;
         private readonly BrowserControlService _browserControl;
+        private readonly Func<AgentToolCall, CancellationToken, Task<AgentToolResult?>>? _workplaceToolAsync;
         private readonly Func<int, CancellationToken, Task<(byte[] PngBytes, int Width, int Height)>>? _screenCaptureAsync;
         private readonly Func<string, int, CancellationToken, Task<AgentScreenshot>>? _windowCaptureAsync;
 
@@ -76,12 +77,14 @@ namespace Malx_AI.Agent
             Func<int, CancellationToken, Task<(byte[] PngBytes, int Width, int Height)>>? screenCaptureAsync = null,
             Func<string, int, CancellationToken, Task<AgentScreenshot>>? windowCaptureAsync = null,
             int readBudgetChars = 5000,
-            string? screenshotDirectory = null)
+            string? screenshotDirectory = null,
+            Func<AgentToolCall, CancellationToken, Task<AgentToolResult?>>? workplaceToolAsync = null)
         {
             _scope = scope ?? AgentScope.WholeComputer();
             _backup = backup;
             _backgroundTasks = backgroundTasks ?? new AgentBackgroundTaskManager();
             _browserControl = browserControl ?? new BrowserControlService();
+            _workplaceToolAsync = workplaceToolAsync;
             _screenCaptureAsync = screenCaptureAsync;
             _windowCaptureAsync = windowCaptureAsync;
             _maxReadChars = Math.Clamp(readBudgetChars, 256, 5000);
@@ -109,6 +112,12 @@ namespace Malx_AI.Agent
                 return AgentToolResult.Fail(AgentSession.DesktopIsolationMessage);
             try
             {
+                if (_workplaceToolAsync != null && call.Tool.ToLowerInvariant() is AgentToolNames.BrowserControl or AgentToolNames.UseSkill)
+                {
+                    AgentToolResult? result = await _workplaceToolAsync(call, token);
+                    if (result != null)
+                        return result;
+                }
                 return call.Tool.ToLowerInvariant() switch
                 {
                     AgentToolNames.RecallContext => AgentToolResult.Ok(ConversationEvidence.Current?.Read(call.Arg("query"),
@@ -125,6 +134,7 @@ namespace Malx_AI.Agent
                     AgentToolNames.CheckBackgroundTask => await CheckBackgroundTaskAsync(call, token),
                     AgentToolNames.StopBackgroundTask => StopBackgroundTask(call),
                     AgentToolNames.BrowserControl => await RunBrowserControlAsync(call, token),
+                    AgentToolNames.UseSkill => AgentToolResult.Fail("No attached Skills are available in this session."),
                     AgentToolNames.TakeScreenshot => await TakeScreenshotAsync(call, token),
                     AgentToolNames.Finish => AgentToolResult.Ok("done"),
                     _ => AgentToolResult.Fail($"Unknown tool '{call.Tool}'.")

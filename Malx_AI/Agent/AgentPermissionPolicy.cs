@@ -125,7 +125,9 @@ namespace Malx_AI.Agent
             if (string.Equals(call.Tool, AgentToolNames.BrowserControl, StringComparison.OrdinalIgnoreCase))
             {
                 string action = call.Arg("action", "open").Trim().ToLowerInvariant();
-                if (action is "detect" or "status" or "read" or "read_page" or "fetch")
+                if (action is "click" or "fill")
+                    return new AgentPermissionDecision(AgentPermission.Allow, "The browser tool asks for approval after identifying the actual control.");
+                if (action is "detect" or "status" or "read" or "read_page" or "fetch" or "inspect")
                     return new AgentPermissionDecision(AgentPermission.Allow, "Read-only browser inspection.");
 
                 return mode == AgentApprovalMode.Auto

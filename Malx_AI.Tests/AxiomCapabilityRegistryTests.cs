@@ -65,6 +65,21 @@ public sealed class AxiomCapabilityRegistryTests : IDisposable
         Assert.True(registry.ShouldUseWebResearch("Verify the latest release documentation online"));
     }
 
+    [Fact]
+    public void WorkplaceCatalogLetsModelRequestAttachedProcedureWithoutLoadingItUpfront()
+    {
+        AxiomCapabilityRegistry registry = CreateRegistry();
+        AxiomSkillDefinition skill = registry.AddCustomSkill("Team brief", "Prepare a brief.", "Use the current agenda.", "agenda");
+
+        string catalog = registry.BuildSystemInstruction("Summarize the agenda", "Workplace", includeMatchedSkills: false);
+        Assert.Contains(skill.Id, catalog);
+        Assert.DoesNotContain(skill.Instructions, catalog);
+        Assert.Contains(skill.Instructions, registry.ReadAttachedSkill(skill.Id));
+
+        registry.SetSkillAttached(skill.Id, false);
+        Assert.Empty(registry.ReadAttachedSkill(skill.Name));
+    }
+
     private AxiomCapabilityRegistry CreateRegistry()
     {
         var registry = new AxiomCapabilityRegistry(Path.Combine(_testDirectory, "capabilities.json"));

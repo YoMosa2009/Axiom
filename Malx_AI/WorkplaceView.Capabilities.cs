@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -48,6 +48,7 @@ namespace Malx_AI
         private void WorkplaceOpenSkills_Click(object sender, RoutedEventArgs e)
         {
             WorkplacePlusPopup.IsOpen = false;
+            WorkplacePluginsPopup.IsOpen = false;
             RefreshWorkplaceSkillsPanel();
             WorkplaceSkillsPopup.IsOpen = true;
         }
@@ -55,6 +56,26 @@ namespace Malx_AI
         private void WorkplaceCloseSkills_Click(object sender, RoutedEventArgs e) => WorkplaceSkillsPopup.IsOpen = false;
 
         private void WorkplaceSkillsPopup_Opened(object? sender, EventArgs e) => AnimateWorkplaceFlyout(WorkplaceSkillsFlyoutCard);
+
+        private void WorkplaceOpenPlugins_Click(object sender, RoutedEventArgs e)
+        {
+            WorkplacePlusPopup.IsOpen = false;
+            WorkplaceSkillsPopup.IsOpen = false;
+            RefreshWorkplacePluginsPanel();
+            WorkplacePluginsPopup.IsOpen = true;
+        }
+
+        private void WorkplaceClosePlugins_Click(object sender, RoutedEventArgs e) => WorkplacePluginsPopup.IsOpen = false;
+
+        private void WorkplacePluginsPopup_Opened(object? sender, EventArgs e) => AnimateWorkplaceFlyout(WorkplacePluginsFlyoutCard);
+
+        private void RefreshWorkplacePluginsPanel()
+        {
+            CapabilityPanelBuilder.PopulatePlugins(
+                WorkplacePluginsListPanel, _capabilityRegistry, LogActivity, RefreshWorkplacePluginsPanel);
+            int count = _capabilityRegistry.Plugins.Count(plugin => plugin.IsAttached);
+            WorkplacePluginsSummaryText.Text = count == 0 ? "No plugins attached" : $"{count} attached";
+        }
 
         private static void AnimateWorkplaceFlyout(Border card)
         {

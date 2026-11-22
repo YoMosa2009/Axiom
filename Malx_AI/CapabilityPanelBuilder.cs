@@ -81,10 +81,12 @@ namespace Malx_AI
             {
                 removeButton = new Button
                 {
-                    Content = "Remove",
-                    Height = 28,
-                    Margin = new Thickness(0, 7, 0, 0),
-                    Padding = new Thickness(8, 0, 8, 0),
+                    Content = "×",
+                    ToolTip = "Remove custom skill",
+                    Height = 23,
+                    Width = 20,
+                    Margin = new Thickness(4, 0, 0, 0),
+                    Padding = new Thickness(0),
                     Background = Brushes.Transparent,
                     Foreground = AppTheme.Brush(p => p.TextSecondary),
                     BorderBrush = AppTheme.Brush(p => p.BorderStrong),
@@ -92,6 +94,7 @@ namespace Malx_AI
                     Cursor = Cursors.Hand,
                     FontSize = 10
                 };
+                System.Windows.Automation.AutomationProperties.SetName(removeButton, $"Remove {skill.Name}");
                 removeButton.Click += (_, _) =>
                 {
                     if (registry.RemoveCustomSkill(skill.Id))
@@ -103,7 +106,6 @@ namespace Malx_AI
             }
 
             return BuildCapabilityCard(
-                skill.IconGlyph,
                 skill.Name,
                 skill.Description,
                 skill.IsBuiltIn ? "Built in · activates when relevant" : "Custom · instruction-based",
@@ -153,7 +155,6 @@ namespace Malx_AI
                 ? "Cloud/Hybrid · configured connectors only"
                 : "Axiom native · no separate install";
             return BuildCapabilityCard(
-                plugin.IconGlyph,
                 plugin.Name,
                 plugin.Description,
                 plugin.CapabilityLabel + " · " + availability,
@@ -164,7 +165,6 @@ namespace Malx_AI
         }
 
         private static Border BuildCapabilityCard(
-            string glyph,
             string title,
             string description,
             string metadata,
@@ -174,116 +174,58 @@ namespace Malx_AI
             Button? secondaryButton)
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var icon = new Border
-            {
-                Width = 36,
-                Height = 36,
-                CornerRadius = new CornerRadius(10),
-                Background = AppTheme.Brush(attached ? "#3A3226" : "#171615"),
-                BorderBrush = AppTheme.Brush(attached ? "#B8924A" : "#302D2A"),
-                BorderThickness = new Thickness(1),
-                VerticalAlignment = VerticalAlignment.Top,
-                Child = new TextBlock
-                {
-                    Text = glyph,
-                    FontSize = glyph.Length > 2 ? 9 : 14,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = AppTheme.Brush(attached ? "#D8B56B" : "#BFB6AA"),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            };
-            Grid.SetColumn(icon, 0);
-            grid.Children.Add(icon);
-
-            var copy = new StackPanel { Margin = new Thickness(2, 0, 12, 0) };
+            var copy = new StackPanel { Margin = new Thickness(0, 0, 6, 0) };
             copy.Children.Add(new TextBlock
             {
                 Text = title,
                 Foreground = AppTheme.Brush(p => p.Text),
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis
             });
             copy.Children.Add(new TextBlock
             {
                 Text = description,
-                Margin = new Thickness(0, 3, 0, 0),
+                Margin = new Thickness(0, 2, 0, 0),
                 Foreground = AppTheme.Brush(p => p.TextSecondary),
-                FontSize = 11,
-                LineHeight = 15,
-                TextWrapping = TextWrapping.Wrap
+                FontSize = 10.5,
+                TextTrimming = TextTrimming.CharacterEllipsis
             });
-
-            if (!string.IsNullOrWhiteSpace(deliveryTag))
-            {
-                // The pill answers the question the old card left open: does this Skill hand me a
-                // rendered thing, or more text in the transcript?
-                bool rendersToCanvas = deliveryTag.Contains("Canvas", StringComparison.Ordinal);
-                copy.Children.Add(new Border
-                {
-                    Margin = new Thickness(0, 7, 0, 0),
-                    Padding = new Thickness(7, 2, 7, 3),
-                    CornerRadius = new CornerRadius(6),
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Background = AppTheme.Brush(rendersToCanvas ? "#3A3226" : "#24211F"),
-                    BorderBrush = AppTheme.Brush(rendersToCanvas ? "#4B4239" : "#302D2A"),
-                    BorderThickness = new Thickness(1),
-                    Child = new TextBlock
-                    {
-                        Text = deliveryTag,
-                        FontSize = 9,
-                        FontWeight = FontWeights.SemiBold,
-                        Foreground = AppTheme.Brush(rendersToCanvas ? "#D8B56B" : "#8A8279")
-                    }
-                });
-            }
-
-            copy.Children.Add(new TextBlock
-            {
-                Text = metadata,
-                Margin = new Thickness(0, 6, 0, 0),
-                Foreground = AppTheme.Brush(attached ? "#D8B56B" : "#70685F"),
-                FontSize = 9,
-                TextWrapping = TextWrapping.Wrap
-            });
-            Grid.SetColumn(copy, 1);
             grid.Children.Add(copy);
 
-            var actions = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             actions.Children.Add(actionButton);
             if (secondaryButton != null)
                 actions.Children.Add(secondaryButton);
-            Grid.SetColumn(actions, 2);
+            Grid.SetColumn(actions, 1);
             grid.Children.Add(actions);
 
             return new Border
             {
-                Margin = new Thickness(0, 0, 0, 8),
-                Padding = new Thickness(12),
-                Background = AppTheme.Brush(attached ? "#28231E" : "#1B1917"),
-                BorderBrush = AppTheme.Brush(attached ? "#4B4239" : "#302D2A"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
+                Margin = new Thickness(0, 0, 0, 2),
+                Padding = new Thickness(7, 5, 5, 5),
+                Background = attached ? AppTheme.Brush(p => p.SurfaceRaised) : Brushes.Transparent,
+                CornerRadius = new CornerRadius(6),
+                ToolTip = string.Join("\n", new[] { title, description, metadata, deliveryTag }
+                    .Where(line => !string.IsNullOrWhiteSpace(line))),
                 Child = grid
             };
         }
 
         private static Button BuildAttachButton(bool attached) => new()
         {
-            Content = attached ? "Attached ✓" : "Attach",
-            MinWidth = 74,
-            Height = 30,
-            Padding = new Thickness(10, 0, 10, 0),
-            Background = AppTheme.Brush(attached ? "#B8924A" : "#24211F"),
-            Foreground = AppTheme.Brush(attached ? "#171615" : "#EDE8E3"),
-            BorderBrush = AppTheme.Brush(attached ? "#B8924A" : "#4B4239"),
+            Content = attached ? "Attached" : "Attach",
+            MinWidth = 53,
+            Height = 23,
+            Padding = new Thickness(6, 0, 6, 0),
+            Background = Brushes.Transparent,
+            Foreground = attached ? AppTheme.Brush(p => p.Accent) : AppTheme.Brush(p => p.TextSecondary),
+            BorderBrush = AppTheme.Brush(p => p.BorderStrong),
             BorderThickness = new Thickness(1),
             FontSize = 10,
-            FontWeight = FontWeights.SemiBold,
             Cursor = Cursors.Hand
         };
 

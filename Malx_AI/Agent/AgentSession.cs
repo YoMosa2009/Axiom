@@ -649,6 +649,7 @@ namespace Malx_AI.Agent
             || string.Equals(tool, AgentToolNames.FindFiles, StringComparison.OrdinalIgnoreCase)
             || string.Equals(tool, AgentToolNames.SearchText, StringComparison.OrdinalIgnoreCase)
             || string.Equals(tool, AgentToolNames.CheckBackgroundTask, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tool, AgentToolNames.UseSkill, StringComparison.OrdinalIgnoreCase)
             || string.Equals(tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase);
 
         private static readonly System.Text.RegularExpressions.Regex SleepOnlyCommandRegex = new(

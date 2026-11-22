@@ -421,6 +421,22 @@ namespace Malx_AI.ComputerUse
             return found;
         }
 
+        internal static IntPtr FindTopmostBrowserWindow()
+        {
+            IntPtr browser = IntPtr.Zero;
+            EnumWindows((window, _) =>
+            {
+                if (!IsActivatableApplicationWindow(window))
+                    return true;
+                string process = GetForegroundWindowIdentity(window).ProcessName;
+                if (process.ToLowerInvariant() is not ("msedge" or "chrome" or "firefox" or "brave" or "opera" or "opera_gx"))
+                    return true;
+                browser = window;
+                return false;
+            }, IntPtr.Zero);
+            return browser;
+        }
+
         private const int DwmwaCloaked = 14;
         private const int GwOwner = 4;
         private const int GwlExStyle = -20;
