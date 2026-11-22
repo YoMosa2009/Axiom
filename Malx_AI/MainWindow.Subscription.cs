@@ -43,7 +43,10 @@ namespace Malx_AI
                 Activated += MainWindow_Activated_SyncAxiomBilling;
             }
             if (_axiomAccountEndpoint is null || _database is null)
+            {
+                RenderAxiomAccount();
                 return;
+            }
             _axiomAccountSession = _database.LoadAxiomAccount(_axiomAccountEndpoint);
             if (_axiomAccountSession is { } session)
             {

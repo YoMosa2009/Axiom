@@ -106,6 +106,10 @@
                             </Grid>
                         </Border>
 
+                        <Button x:Name="WorkplaceHybridToggleButton" Content="Use Hybrid Local" Click="WorkplaceHybridToggleButton_Click"
+                                Visibility="Collapsed" HorizontalAlignment="Left" FontSize="10.5" Padding="8,3" Margin="0,7,0,0"
+                                Style="{StaticResource SubtleButtonStyle}" ToolTip="Use your self-hosted endpoint in Workplace"/>
+
                         <!-- Builder -->
                         <Border x:Name="RoleContextControlsCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0">
                             <StackPanel>
@@ -157,10 +161,6 @@
                                 <TextBlock x:Name="CouncilContextControlsTitle" Text="Context Controls" FontSize="11" FontWeight="SemiBold"/>
                                 <CheckBox x:Name="AutoOptimizeContextToggle" Content="Auto optimize (model-aware)" IsChecked="True" Margin="0,6,0,6" Checked="AutoOptimizeContextToggle_Changed" Unchecked="AutoOptimizeContextToggle_Changed"/>
                                 <TextBlock x:Name="CloudContextInfoBlock" Visibility="Collapsed" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,6" TextWrapping="Wrap"/>
-                                <Button x:Name="WorkplaceHybridToggleButton" Content="Use Hybrid Local (Kestral 1)" Click="WorkplaceHybridToggleButton_Click"
-                                        Visibility="Collapsed" HorizontalAlignment="Left" FontSize="10" Padding="8,3" Margin="0,0,0,6"
-                                        Style="{StaticResource SubtleButtonStyle}" ToolTip="Route Workplace through your self-hosted endpoint instead of OpenRouter"/>
-
                                 <StackPanel x:Name="ContextSlidersPanel">
                                     <TextBlock Text="Global Context" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                     <Slider x:Name="GlobalContextSlider" Minimum="2048" Maximum="32768" TickFrequency="512" IsSnapToTickEnabled="True" Value="8192" ValueChanged="GlobalContextSlider_ValueChanged"/>
@@ -591,25 +591,50 @@
                                    HorizontalOffset="8"
                                    VerticalOffset="-6">
                                 <Border Background="{DynamicResource NotebookSurfaceBrush}"
-                                        BorderBrush="{DynamicResource PrimaryAccentBrush}"
+                                        BorderBrush="{DynamicResource NotebookBorderBrush}"
                                         BorderThickness="1"
-                                        CornerRadius="10"
-                                        Padding="6"
-                                        MinWidth="240"
-                                        MaxWidth="340"
-                                        MaxHeight="180">
+                                        CornerRadius="8"
+                                        Padding="4"
+                                        Width="284"
+                                        MaxHeight="182">
                                     <ListBox x:Name="WorkplaceMentionList"
                                              Background="Transparent"
                                              BorderThickness="0"
                                              FontFamily="Segoe UI"
                                              FontSize="12"
+                                             Focusable="False"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                              Foreground="{DynamicResource NotebookTextBrush}"
-                                             MouseLeftButtonUp="WorkplaceMentionList_MouseLeftButtonUp">
+                                             PreviewMouseLeftButtonUp="WorkplaceMentionList_MouseLeftButtonUp">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="Focusable" Value="False"/>
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                                <Setter Property="Padding" Value="8,5"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                            <Border x:Name="Row" CornerRadius="5" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                                                <ContentPresenter/>
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="Row" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                                                </Trigger>
+                                                                <Trigger Property="IsSelected" Value="True">
+                                                                    <Setter TargetName="Row" Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
                                         <ListBox.ItemTemplate>
                                             <DataTemplate>
-                                                <StackPanel Margin="2,4">
-                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="#D5DAD3"/>
-                                                    <TextBlock Text="{Binding Description}" FontSize="11" Foreground="#9CA3AF" TextWrapping="Wrap"/>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Description}"/>
                                                 </StackPanel>
                                             </DataTemplate>
                                         </ListBox.ItemTemplate>
@@ -703,6 +728,7 @@
                                                     </Border>
                                                 </StackPanel>
                                             </Button>
+                                            <Button Click="WorkplaceOpenPlugins_Click" Style="{StaticResource WorkplaceToolMenuRowStyle}" Content="Plugins" AutomationProperties.Name="Plugins"/>
                                         </StackPanel>
                                     </Border>
                                 </Popup>
@@ -768,14 +794,13 @@
                                 <Popup x:Name="WorkplaceSkillsPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceAttachFileButton}"
                                        AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-10"
                                        Opened="WorkplaceSkillsPopup_Opened">
-                                    <Border x:Name="WorkplaceSkillsFlyoutCard" Width="460" MaxHeight="480" Padding="16" Background="{DynamicResource NotebookSurfaceBrush}"
-                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="14" Effect="{StaticResource SoftShadow}">
+                                    <Border x:Name="WorkplaceSkillsFlyoutCard" Width="316" MaxHeight="330" Padding="10" Background="{DynamicResource NotebookSurfaceBrush}"
+                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Effect="{StaticResource SoftShadow}">
                                         <Border.RenderTransform>
                                             <TranslateTransform Y="0"/>
                                         </Border.RenderTransform>
                                         <Grid>
                                             <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="*"/>
                                                 <RowDefinition Height="Auto"/>
@@ -786,18 +811,50 @@
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel>
-                                                    <TextBlock Text="Skills" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
+                                                    <TextBlock Text="Skills" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
                                                     <TextBlock x:Name="WorkplaceSkillsSummaryText" Text="Reusable procedures for specialized work" Margin="0,3,0,0" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                                 </StackPanel>
                                                 <Button Grid.Column="1" Width="24" Height="24" Padding="0" Click="WorkplaceCloseSkills_Click" Style="{StaticResource SubtleButtonStyle}" ToolTip="Close">
                                                     <TextBlock Text="&#215;" FontSize="14" VerticalAlignment="Center"/>
                                                 </Button>
                                             </Grid>
-                                            <TextBlock Grid.Row="1" Margin="0,10,0,10" Text="Skills are shared across Axiom modes. Detailed instructions load when relevant." TextWrapping="Wrap" FontSize="10.5" LineHeight="15" Foreground="{DynamicResource MutedTextBrush}"/>
-                                            <ScrollViewer Grid.Row="2" MaxHeight="320" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <ScrollViewer Grid.Row="1" Margin="0,5,0,0" MaxHeight="232" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                                 <StackPanel x:Name="WorkplaceSkillsListPanel"/>
                                             </ScrollViewer>
-                                            <Button Grid.Row="3" Margin="0,12,0,0" Height="32" Click="WorkplaceCreateCustomSkill_Click" Background="{DynamicResource PrimaryAccentBrush}" Foreground="{DynamicResource NotebookBackgroundBrush}" BorderThickness="0" FontWeight="SemiBold" Cursor="Hand" Content="&#65291;  Create custom Skill"/>
+                                            <Button Grid.Row="2" Margin="0,6,0,0" Height="26" Click="WorkplaceCreateCustomSkill_Click" Style="{StaticResource SubtleButtonStyle}" HorizontalAlignment="Left" Padding="7,0" Content="&#65291;  Create custom Skill"/>
+                                        </Grid>
+                                    </Border>
+                                </Popup>
+
+                                <Popup x:Name="WorkplacePluginsPopup" Placement="Top" PlacementTarget="{Binding ElementName=WorkplaceAttachFileButton}"
+                                       AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade" VerticalOffset="-10"
+                                       Opened="WorkplacePluginsPopup_Opened">
+                                    <Border x:Name="WorkplacePluginsFlyoutCard" Width="316" MaxHeight="330" Padding="10" Background="{DynamicResource NotebookSurfaceBrush}"
+                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Effect="{StaticResource SoftShadow}">
+                                        <Border.RenderTransform>
+                                            <TranslateTransform Y="0"/>
+                                        </Border.RenderTransform>
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="*"/>
+                                            </Grid.RowDefinitions>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="Plugins" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
+                                                    <TextBlock x:Name="WorkplacePluginsSummaryText" Text="Available tool packages" Margin="0,3,0,0" FontSize="10.5" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Width="24" Height="24" Padding="0" Click="WorkplaceClosePlugins_Click" Style="{StaticResource SubtleButtonStyle}" ToolTip="Close">
+                                                    <TextBlock Text="&#215;" FontSize="14" VerticalAlignment="Center"/>
+                                                </Button>
+                                            </Grid>
+                                            <ScrollViewer Grid.Row="1" Margin="0,5,0,0" MaxHeight="232" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                <StackPanel x:Name="WorkplacePluginsListPanel"/>
+                                            </ScrollViewer>
                                         </Grid>
                                     </Border>
                                 </Popup>
@@ -1092,7 +1149,7 @@
         <!-- ═══════════════════════════════════════════ -->
         <!-- RIGHT SIDEBAR — Diff / Context & Env / Canvas -->
         <!-- ═══════════════════════════════════════════ -->
-        <Border x:Name="ProjectCanvasPane" Grid.Column="2" MinWidth="290" MaxWidth="620" Width="360" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1,0,0,0" Padding="12">
+        <Border x:Name="ProjectCanvasPane" Grid.Column="2" MaxWidth="620" Width="360" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1,0,0,0" Padding="12">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>

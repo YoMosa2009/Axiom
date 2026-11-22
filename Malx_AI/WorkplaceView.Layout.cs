@@ -9,7 +9,7 @@ namespace Malx_AI
         {
             if (WorkplaceHeaderBorder.Parent is Panel panel)
                 panel.Children.Remove(WorkplaceHeaderBorder);
-            WorkplaceHeaderBorder.Padding = new Thickness(12, 2, 8, 2);
+            WorkplaceHeaderBorder.Padding = new Thickness(8, 2, 8, 2);
             WorkplaceHeaderBorder.BorderThickness = new Thickness(0);
             WorkplaceHeaderActions.SizeChanged += (_, e) =>
             {

@@ -15,12 +15,9 @@
         <Style x:Key="ActiveNavigationTabButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
             <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
-            <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
-            <Setter Property="FontSize" Value="9.5"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="MinHeight" Value="20"/>
-            <Setter Property="Padding" Value="5,0"/>
+            <Setter Property="Padding" Value="0"/>
         </Style>
 
         <Style x:Key="CodeBlockToggleButtonStyle" TargetType="Button">
@@ -62,9 +59,18 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
-            <Setter Property="FontSize" Value="9.5"/>
-            <Setter Property="MinHeight" Value="20"/>
-            <Setter Property="Padding" Value="5,0"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
+
+        <Style x:Key="NavigationGlyphStyle" TargetType="Path">
+            <Setter Property="Width" Value="15"/>
+            <Setter Property="Height" Value="15"/>
+            <Setter Property="Stretch" Value="Uniform"/>
+            <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+            <Setter Property="StrokeThickness" Value="1.45"/>
+            <Setter Property="StrokeStartLineCap" Value="Round"/>
+            <Setter Property="StrokeEndLineCap" Value="Round"/>
+            <Setter Property="StrokeLineJoin" Value="Round"/>
         </Style>
 
         <!-- ═══ Sidebar ═══
@@ -802,12 +808,12 @@
                 Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" MinWidth="268"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <ContentControl x:Name="TitleBarNavigationHost" Margin="8,0" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="1" Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" VerticalAlignment="Center" Margin="12,0" FontSize="12">
+                <ContentControl x:Name="TitleBarNavigationHost" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" VerticalAlignment="Center" Margin="8,0" FontSize="12">
                     <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
                         <DataTrigger Binding="{Binding Visibility, ElementName=WorkplaceViewControl}" Value="Visible"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
                     </Style.Triggers></Style></TextBlock.Style>
@@ -981,20 +987,26 @@
                     <Grid x:Name="SidebarNavigationHeader" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="SidebarBrandText" Grid.Column="0" Text="Axiom" FontSize="13.5" FontWeight="Normal" FontFamily="Georgia" LineHeight="Auto"
-                                   Foreground="{DynamicResource NotebookTextBrush}" VerticalAlignment="Center" Margin="2,0,6,0"/>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Button x:Name="ChatTabButton" Content="Chat" Click="SwitchToChat_Click" Height="20"
-                                    Style="{StaticResource ActiveNavigationTabButtonStyle}" Margin="0,0,2,0"/>
-                            <Button x:Name="WorkplaceTabButton" Content="Workplace" Click="SwitchToWorkplace_Click" Height="20"
-                                    Style="{StaticResource InactiveNavigationTabButtonStyle}" Margin="0,0,2,0"/>
-                            <Button x:Name="PersonaTabButton" Content="Persona" Click="SwitchToPersona_Click" Height="20"
-                                    Style="{StaticResource InactiveNavigationTabButtonStyle}" Margin="0"/>
-                        </StackPanel>
-                        <Button x:Name="SidebarHideButton" Grid.Column="2" Width="20" Height="20" Margin="2,0,0,0"
+                        <Border HorizontalAlignment="Left" VerticalAlignment="Center" Padding="2"
+                                CornerRadius="8" Background="{DynamicResource NotebookSurfaceBrush}">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="ChatTabButton" Width="28" Height="24" Click="SwitchToChat_Click"
+                                        Style="{StaticResource ActiveNavigationTabButtonStyle}" ToolTip="Chat" AutomationProperties.Name="Chat">
+                                    <Path Style="{StaticResource NavigationGlyphStyle}" Data="M9,11 H5 L2,14 V7 A5,5 0 0 1 7,2 H9 A5,5 0 0 1 13,5 M16,14 L18,16 V10 A4,4 0 0 0 10,10 A4,4 0 0 0 14,14 Z"/>
+                                </Button>
+                                <Button x:Name="WorkplaceTabButton" Width="28" Height="24" Click="SwitchToWorkplace_Click"
+                                        Style="{StaticResource InactiveNavigationTabButtonStyle}" ToolTip="Workplace" AutomationProperties.Name="Workplace">
+                                    <Path Style="{StaticResource NavigationGlyphStyle}" Data="M5,5 L1,9 L5,13 M13,5 L17,9 L13,13 M11,2 L7,16"/>
+                                </Button>
+                                <Button x:Name="PersonaTabButton" Width="28" Height="24" Click="SwitchToPersona_Click"
+                                        Style="{StaticResource InactiveNavigationTabButtonStyle}" ToolTip="Persona Memory" AutomationProperties.Name="Persona Memory">
+                                    <Path Style="{StaticResource NavigationGlyphStyle}" Data="M8,8 A3,3 0 1 0 8,2 A3,3 0 1 0 8,8 M2,16 V14 A4,4 0 0 1 6,10 H9 M12,13 H17 M14.5,10.5 V15.5"/>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                        <Button x:Name="SidebarHideButton" Grid.Column="1" Width="24" Height="24" Margin="6,0,0,0"
                                 Click="SidebarCollapseButton_Click" Style="{StaticResource SubtleButtonStyle}" Padding="0"
                                 Background="Transparent" BorderBrush="Transparent"
                                 ToolTip="Hide sidebar (Ctrl+B)" AutomationProperties.Name="Hide sidebar">
@@ -2040,13 +2052,12 @@
                                                    HorizontalOffset="0"
                                                    VerticalOffset="-10"
                                                    Opened="SkillsPopup_Opened">
-                                                <Border x:Name="SkillsFlyoutCard" Width="500" MaxHeight="520" Padding="18" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="16" Effect="{StaticResource SoftShadow}" Opacity="1">
+                                                <Border x:Name="SkillsFlyoutCard" Width="316" MaxHeight="330" Padding="10" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Effect="{StaticResource SoftShadow}" Opacity="1">
                                                     <Border.RenderTransform>
                                                         <TranslateTransform Y="0"/>
                                                     </Border.RenderTransform>
                                                     <Grid>
                                                         <Grid.RowDefinitions>
-                                                            <RowDefinition Height="Auto"/>
                                                             <RowDefinition Height="Auto"/>
                                                             <RowDefinition Height="*"/>
                                                             <RowDefinition Height="Auto"/>
@@ -2057,18 +2068,17 @@
                                                                 <ColumnDefinition Width="Auto"/>
                                                             </Grid.ColumnDefinitions>
                                                             <StackPanel>
-                                                                <TextBlock Text="Skills" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
+                                                                <TextBlock Text="Skills" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
                                                                 <TextBlock x:Name="SkillsFlyoutSummaryText" Text="Reusable procedures for specialized work" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                                             </StackPanel>
-                                                            <Button Grid.Column="1" Width="28" Height="28" Click="CloseSkills_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Close">
-                                                                <TextBlock Text="×" FontSize="18" VerticalAlignment="Center"/>
+                                                            <Button Grid.Column="1" Width="23" Height="23" Click="CloseSkills_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Close">
+                                                                <TextBlock Text="×" FontSize="14" VerticalAlignment="Center"/>
                                                             </Button>
                                                         </Grid>
-                                                        <TextBlock Grid.Row="1" Margin="0,12,0,12" Text="Attach once and the Skill becomes available to Local, Cloud, Hybrid Local, Council, and Single Model modes. Axiom loads detailed instructions only when the request matches." TextWrapping="Wrap" FontSize="11" LineHeight="16" Foreground="{DynamicResource MutedTextBrush}"/>
-                                                        <ScrollViewer Grid.Row="2" MaxHeight="360" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                        <ScrollViewer Grid.Row="1" Margin="0,5,0,0" MaxHeight="232" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                                             <StackPanel x:Name="SkillsListPanel"/>
                                                         </ScrollViewer>
-                                                        <Button Grid.Row="3" Margin="0,14,0,0" Height="38" Click="CreateCustomSkill_Click" Background="{DynamicResource PrimaryAccentBrush}" Foreground="{DynamicResource NotebookBackgroundBrush}" BorderThickness="0" FontWeight="SemiBold" Cursor="Hand" Content="＋  Create custom Skill"/>
+                                                        <Button Grid.Row="2" Margin="0,6,0,0" Height="26" Click="CreateCustomSkill_Click" Style="{StaticResource SubtleButtonStyle}" HorizontalAlignment="Left" Padding="7,0" Content="＋  Create custom Skill"/>
                                                     </Grid>
                                                 </Border>
                                             </Popup>
@@ -2082,13 +2092,12 @@
                                                    HorizontalOffset="0"
                                                    VerticalOffset="-10"
                                                    Opened="PluginsPopup_Opened">
-                                                <Border x:Name="PluginsFlyoutCard" Width="500" MaxHeight="520" Padding="18" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="16" Effect="{StaticResource SoftShadow}" Opacity="1">
+                                                <Border x:Name="PluginsFlyoutCard" Width="316" MaxHeight="330" Padding="10" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Effect="{StaticResource SoftShadow}" Opacity="1">
                                                     <Border.RenderTransform>
                                                         <TranslateTransform Y="0"/>
                                                     </Border.RenderTransform>
                                                     <Grid>
                                                         <Grid.RowDefinitions>
-                                                            <RowDefinition Height="Auto"/>
                                                             <RowDefinition Height="Auto"/>
                                                             <RowDefinition Height="*"/>
                                                         </Grid.RowDefinitions>
@@ -2098,15 +2107,14 @@
                                                                 <ColumnDefinition Width="Auto"/>
                                                             </Grid.ColumnDefinitions>
                                                             <StackPanel>
-                                                                <TextBlock Text="Plugins" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
+                                                                <TextBlock Text="Plugins" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}"/>
                                                                 <TextBlock x:Name="PluginsFlyoutSummaryText" Text="Capability packages built from Axiom's native tools" Margin="0,4,0,0" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                                             </StackPanel>
-                                                            <Button Grid.Column="1" Width="28" Height="28" Click="ClosePlugins_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Close">
-                                                                <TextBlock Text="×" FontSize="18" VerticalAlignment="Center"/>
+                                                            <Button Grid.Column="1" Width="23" Height="23" Click="ClosePlugins_Click" Style="{StaticResource ChatInputIconButtonStyle}" ToolTip="Close">
+                                                                <TextBlock Text="×" FontSize="14" VerticalAlignment="Center"/>
                                                             </Button>
                                                         </Grid>
-                                                        <TextBlock Grid.Row="1" Margin="0,12,0,12" Text="Plugins package operating instructions with tools Axiom already owns. Actual availability still follows the selected mode, web setting, and connector configuration." TextWrapping="Wrap" FontSize="11" LineHeight="16" Foreground="{DynamicResource MutedTextBrush}"/>
-                                                        <ScrollViewer Grid.Row="2" MaxHeight="380" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                                        <ScrollViewer Grid.Row="1" Margin="0,5,0,0" MaxHeight="232" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                                             <StackPanel x:Name="PluginsListPanel"/>
                                                         </ScrollViewer>
                                                     </Grid>
@@ -2229,7 +2237,8 @@
                 <Border DockPanel.Dock="Top" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="32,20" Background="{DynamicResource NotebookSurfaceBrush}">
                     <StackPanel>
                         <TextBlock Text="Persona Memory" FontSize="28" FontWeight="Normal" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Georgia"/>
-                        <TextBlock Text="Dump everything about yourself here — your role, preferences, habits, ongoing projects, and how you like responses. Injected as context in Normal Chat (local and cloud)." FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0"/>
+                        <TextBlock Text="Save private notes and reply formatting preferences. Chat and Workplace recognize preferences like “no emojis,” “use hyphen bullets,” and “plain headings.” Your notes stay on this device."
+                                   TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,6,0,0"/>
                     </StackPanel>
                 </Border>
 
@@ -2246,7 +2255,7 @@
                         <TextBlock IsHitTestVisible="False" TextWrapping="Wrap" FontFamily="Segoe UI" FontSize="13" Padding="14,14,14,0"
                                    Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Top"
                                    Visibility="{Binding IsPersonaEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <Run Text="Example:&#x0a;&#x0a;I'm a software engineer, mostly working in C# and Python. I like concise, direct answers without unnecessary padding.&#x0a;&#x0a;Current project: a WPF desktop AI chat app called Axiom. I'm working on improving the inference pipeline.&#x0a;&#x0a;Preferences: always use code blocks, avoid bullet overuse, assume I know the basics."/>
+                            <Run Text="Example: I prefer plain headings, hyphen bullets, and no emojis in replies."/>
                         </TextBlock>
                     </Grid>
 
@@ -2418,7 +2427,7 @@
                                                    FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <TextBlock x:Name="AxiomAccountUnconfiguredNotice" Visibility="Collapsed" TextWrapping="Wrap" FontSize="11"
                                                    Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,0,0,8"
-                                                   Text="This local/open-source build does not point at an Axiom Cloud gateway yet. Official signed releases connect automatically, or set AXIOM_MANAGED_GATEWAY_URL."/>
+                                                   Text="Axiom Cloud is unavailable in this build until a gateway is configured. Supported signed releases connect automatically."/>
 
                                         <StackPanel x:Name="AxiomAccountPanel" Visibility="Collapsed">
                                             <WrapPanel Margin="0,0,0,8" VerticalAlignment="Center">

@@ -431,6 +431,13 @@ namespace Malx_AI
             try
             {
                 InitializeComponent();
+                Deactivated += (_, _) =>
+                {
+                    WorkplaceViewControl?.CloseAllPopups();
+                    CloseMcpMentionPopup();
+                    SkillsPopup.IsOpen = false;
+                    PluginsPopup.IsOpen = false;
+                };
                 InitializeUnifiedTitleBar();
                 _generationReadout = new GenerationReadout(_generationMonitor, GenerationStatsRow, GenerationStatsTitle, GenerationStatsLabel);
                 _generationMonitor.LiveChanged += () => Dispatcher.BeginInvoke(() =>
@@ -4594,6 +4601,10 @@ namespace Malx_AI
 
         private void AnimateViewSwitch(UIElement hideElement, UIElement showElement)
         {
+            WorkplaceViewControl?.CloseAllPopups();
+            CloseMcpMentionPopup();
+            SkillsPopup.IsOpen = false;
+            PluginsPopup.IsOpen = false;
             _isViewTransitionAnimating = true;
             showElement.Visibility = Visibility.Visible;
 
