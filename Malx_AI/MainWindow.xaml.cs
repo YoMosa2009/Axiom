@@ -77,7 +77,7 @@ namespace Malx_AI
         private bool _isWorkplaceTabActive = false;
         private bool _useGemma4LocalCliMode = false;
         private string _gemma4ModelPath = "";
-        private readonly PersonaMemoryService _personaMemoryService = new();
+        private readonly PersonaMemoryService _personaMemoryService = PersonaMemoryService.Shared;
         private readonly WebSearchService _webSearchService = new();
         private PersonaMemoryViewModel _personaMemoryViewModel;
         private readonly ChatWorkspaceStatePersistence _chatWorkspaceStatePersistence = new();

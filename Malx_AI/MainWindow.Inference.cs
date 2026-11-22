@@ -61,7 +61,6 @@ namespace Malx_AI
             public string SystemPrompt { get; init; } = string.Empty;
             public ThinkingGateDecision ThinkingGate { get; init; } = new();
             public SandboxPreparation SandboxPreparation { get; init; } = new();
-            public string PersonaContext { get; init; } = string.Empty;
             public string WebContext { get; init; } = string.Empty;
             public bool HasWebContext { get; init; }
             public string EffectiveSystemPrompt { get; init; } = string.Empty;
@@ -2336,7 +2335,6 @@ namespace Malx_AI
             string effectiveSystemPrompt,
             string userMsg,
             string modelUserMsg,
-            string personaContext,
             InferenceParams inferenceParams,
             StringBuilder responseBuilder,
             bool thinkingModeEnabled,
@@ -2352,14 +2350,10 @@ namespace Malx_AI
             ChatSessionPromptPlan? sessionPlan = null;
             if (_chatSession != null && !_useGemma4LocalCliMode && !useIsolatedWebTurn && !isStrictChatMl && !isGemma4)
             {
-                string plannedUserText = string.IsNullOrWhiteSpace(personaContext)
-                    ? modelUserMsg
-                    : "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]\n\n" + modelUserMsg;
-
                 sessionPlan = FitChatSessionPlanToContextWindow(
                     effectiveSystemPrompt,
                     selectedHistoryMessages,
-                    plannedUserText,
+                    modelUserMsg,
                     inferenceParams);
                 string untrimmedPrefixSignature = BuildLocalPrefixSignature("chat-session", effectiveSystemPrompt, selectedHistoryMessages);
 
@@ -2373,7 +2367,7 @@ namespace Malx_AI
                     string requestedPrefixSignature = BuildLocalPrefixSignature("chat-session", sessionPlan.SystemPrompt, sessionPlan.HistoryMessages);
                     _normalChatLastTurnCanSeedPrefixCache =
                         string.Equals(untrimmedPrefixSignature, requestedPrefixSignature, StringComparison.Ordinal)
-                        && string.Equals(sessionPlan.UserMessage, plannedUserText, StringComparison.Ordinal);
+                        && string.Equals(sessionPlan.UserMessage, modelUserMsg, StringComparison.Ordinal);
                     if (!string.Equals(_normalChatSessionPrefixSignature, requestedPrefixSignature, StringComparison.Ordinal)
                         || _chatSession == null)
                     {
@@ -2508,10 +2502,7 @@ namespace Malx_AI
             }
 
             int sessionQueuedImages = AttachPendingImageEmbedsToExecutor();
-            string sessionUserText = sessionPlan?.UserMessage
-                ?? (!useIsolatedWebTurn && !string.IsNullOrWhiteSpace(personaContext)
-                    ? "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]\n\n" + modelUserMsg
-                    : modelUserMsg);
+            string sessionUserText = sessionPlan?.UserMessage ?? modelUserMsg;
             var message = new ChatHistory.Message(AuthorRole.User, PrependImageMarkers(AppendLocalVisionOrderNote(sessionUserText), sessionQueuedImages));
 
             if (_chatSession != null && _chatSession.History.Messages.Count > 0)
@@ -2858,7 +2849,6 @@ namespace Malx_AI
                 && !_useGemma4LocalCliMode
                 && !requestContext.UseIsolatedWebTurn
                 && !requestContext.HasWebContext
-                && string.IsNullOrWhiteSpace(requestContext.PersonaContext)
                 && string.IsNullOrWhiteSpace(requestContext.CalculatorContext)
                 && string.IsNullOrWhiteSpace(requestContext.DocumentContext)
                 && requestContext.HistoryInjectionInfos.Count == 0
@@ -3219,7 +3209,6 @@ namespace Malx_AI
             await BackendLogService.LogEventAsync("ThinkingGate", $"Score:{thinkingGate.Score}\nDecision:{thinkingGate.Decision}\nToggle:Automatic\nPrompt:{userMsg}");
 
             SandboxPreparation sandboxPreparation = PrepareSandboxContext(userMsg);
-            string personaContext = await _personaMemoryService.GetRelevantContextAsync(userMsg, 150, 200);
             bool capabilityWebResearch = _capabilityRegistry.ShouldUseWebResearch(userMsg);
             string webContext = await TryBuildWebContextAsync(userMsg, capabilityWebResearch, token, uiSnapshot.ChatMessages);
 
@@ -3271,10 +3260,7 @@ namespace Malx_AI
                         webContext = digestedWeb;
                 }
 
-                string effectiveSystemPrompt = string.IsNullOrWhiteSpace(personaContext)
-                    ? uiSnapshot.SystemPromptText
-                    : (uiSnapshot.SystemPromptText + "\n\n[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]");
-                effectiveSystemPrompt = AppendSystemInstruction(effectiveSystemPrompt, EffortPolicy.BuildSystemInstruction());
+                string effectiveSystemPrompt = AppendSystemInstruction(uiSnapshot.SystemPromptText, EffortPolicy.BuildSystemInstruction());
 
                 string capabilityInstruction = BuildAttachedCapabilityInstruction(userMsg, "Normal Chat / Local");
                 if (!string.IsNullOrWhiteSpace(capabilityInstruction))
@@ -3458,7 +3444,6 @@ namespace Malx_AI
                             : "Effort" + EffortPolicy.DisplayName(EffortPolicy.Current).Replace(" ", string.Empty, StringComparison.Ordinal)
                     },
                     SandboxPreparation = sandboxPreparation,
-                    PersonaContext = personaContext,
                     WebContext = webContext,
                     HasWebContext = hasWebContext,
                     EffectiveSystemPrompt = effectiveSystemPrompt,
@@ -4576,7 +4561,6 @@ namespace Malx_AI
                         requestContext.EffectiveSystemPrompt,
                         userMsg,
                         modelUserMsg,
-                        requestContext.PersonaContext,
                         requestContext.InferenceParams,
                         responseBuilder,
                         thinkingModeEnabled,
@@ -4621,7 +4605,6 @@ namespace Malx_AI
                                 requestContext.EffectiveSystemPrompt,
                                 userMsg,
                                 modelUserMsg,
-                                requestContext.PersonaContext,
                                 requestContext.InferenceParams,
                                 responseBuilder,
                                 thinkingModeEnabled,

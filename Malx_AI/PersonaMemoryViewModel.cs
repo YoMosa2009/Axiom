@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -25,6 +27,7 @@ namespace Malx_AI
             {
                 if (_personaText == value) return;
                 _personaText = value;
+                Status = "Unsaved changes.";
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(WordCount));
                 OnPropertyChanged(nameof(WordCountLabel));
@@ -56,15 +59,24 @@ namespace Malx_AI
         public async Task InitializeAsync()
         {
             PersonaText = await _service.LoadAsync();
-            Status = string.IsNullOrWhiteSpace(PersonaText)
+            Status = !string.IsNullOrEmpty(_service.LoadStatus) ? _service.LoadStatus : string.IsNullOrWhiteSpace(PersonaText)
                 ? "Empty — add context about yourself and save."
                 : "Loaded.";
         }
 
         public async Task SaveAsync()
         {
-            await _service.SaveAsync(PersonaText);
-            Status = "Saved.";
+            string notes = PersonaText;
+            try
+            {
+                await _service.SaveAsync(notes);
+                if (PersonaText == notes)
+                    Status = "Saved.";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Status = "Could not save your notes. Your edits are still here.";
+            }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

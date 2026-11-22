@@ -275,7 +275,7 @@ namespace Malx_AI
 
         public bool HasDisplayContent => !string.IsNullOrWhiteSpace(_displayFormattedContent);
 
-        public string RichRenderContent => NormalizeMathCodeFences(PresentationContent);
+        public string RichRenderContent => NormalizeMathCodeFences(ApplyPersonaPresentation(PresentationContent));
 
         public string RichThinkingContent => NormalizeMathCodeFences(_thinkingContent);
 
@@ -518,8 +518,13 @@ namespace Malx_AI
                     : Environment.NewLine;
             })).Trim();
             prose = ExcessiveBlankLinesRegex.Replace(prose, Environment.NewLine + Environment.NewLine).Trim();
-            DisplayFormattedContent = MarkdownParser.ToDisplayText(prose);
+            DisplayFormattedContent = MarkdownParser.ToDisplayText(ApplyPersonaPresentation(prose));
         }
+
+        private string ApplyPersonaPresentation(string text) =>
+            string.Equals(Role, "assistant", StringComparison.OrdinalIgnoreCase) && !HasCanvasArtifact
+                ? PersonaMemoryService.Shared.Presentation.Apply(text)
+                : text;
 
         private static string NormalizeMathCodeFences(string? content)
         {

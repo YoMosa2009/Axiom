@@ -1627,8 +1627,6 @@ namespace Malx_AI
             // but proactive injection is needed when the user explicitly enables the toggle.
             bool capabilityWebResearch = _capabilityRegistry.ShouldUseWebResearch(userMsg);
             string webContext = await TryBuildWebContextAsync(userMsg, capabilityWebResearch, token, uiSnapshot.ChatMessages);
-            string personaContext = await _personaMemoryService.GetRelevantContextAsync(userMsg, 150, 350, token);
-
             return await Task.Run(() =>
             {
                 // @ProjectCanvas asks the model to produce one complete, self-contained artifact
@@ -1686,9 +1684,6 @@ namespace Malx_AI
 
                 IReadOnlyList<string> mentionedMcp = ResolveMentionedMcpHandles(userMsg);
                 AppendTurnBlock(turnContext, _mcpConnectorService?.BuildSystemInstruction(mentionedMcp, cloudModeActive: true));
-
-                if (!string.IsNullOrWhiteSpace(personaContext))
-                    AppendTurnBlock(turnContext, "[USER CONTEXT]\n" + personaContext + "\n[/USER CONTEXT]");
 
                 AppendTurnBlock(turnContext, BuildCloudCodingSystemInstruction(userMsg));
 

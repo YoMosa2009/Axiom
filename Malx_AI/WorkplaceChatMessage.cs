@@ -202,7 +202,10 @@ namespace Malx_AI
         public bool HasExecutionSteps => ExecutionSummary.Count > 0;
         public string ExecutionStepsLabel => $"{ExecutionSummary.Count} steps · View activity";
         public FlowDocument ExecutionStepsDocument => WorkplaceMarkdownDocumentFactory.Create(ExecutionSummary.Steps);
-        public FlowDocument FormattedDocument => WorkplaceMarkdownDocumentFactory.Create(ExecutionSummary.Body);
+        public FlowDocument FormattedDocument => WorkplaceMarkdownDocumentFactory.Create(
+            Role is "assistant" or "agent" or "builder"
+                ? PersonaMemoryService.Shared.Presentation.Apply(ExecutionSummary.Body)
+                : ExecutionSummary.Body);
         public bool IsGeneratingStatus
         {
             get
