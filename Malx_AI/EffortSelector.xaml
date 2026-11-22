@@ -152,7 +152,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="Light" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" LineHeight="15"/>
-                                <TextBlock Text="Fast, direct single-pass responses" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
+                                <TextBlock Text="Quick answers, fewer tool rounds" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
                             </StackPanel>
                             <Border Grid.Column="1" VerticalAlignment="Center" Padding="6,2" CornerRadius="4" Background="{DynamicResource SurfaceSunkenBrush}">
                                 <TextBlock Text="Builder" FontSize="9.5" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="12"/>
@@ -168,7 +168,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="Medium" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" LineHeight="15"/>
-                                <TextBlock Text="Balanced speed and depth" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
+                                <TextBlock Text="Balanced default" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
                             </StackPanel>
                             <Border Grid.Column="1" VerticalAlignment="Center" Padding="6,2" CornerRadius="4" Background="{DynamicResource SurfaceSunkenBrush}">
                                 <TextBlock Text="Builder" FontSize="9.5" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="12"/>
@@ -184,7 +184,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="High" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" LineHeight="15"/>
-                                <TextBlock Text="Deeper multi-step execution" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
+                                <TextBlock Text="Thinks first, more tool rounds" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
                             </StackPanel>
                             <Border Grid.Column="1" VerticalAlignment="Center" Padding="6,2" CornerRadius="4" Background="{DynamicResource SurfaceSunkenBrush}">
                                 <TextBlock Text="Builder" FontSize="9.5" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="12"/>
@@ -200,7 +200,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="Extra High" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" LineHeight="15"/>
-                                <TextBlock Text="Thorough build + Critic audit pass" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
+                                <TextBlock Text="Longer thinking, more steps, Critic check" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
                             </StackPanel>
                             <Border Grid.Column="1" VerticalAlignment="Center" Padding="6,2" CornerRadius="4" Background="{DynamicResource AccentSoftBrush}">
                                 <TextBlock Text="Builder + Critic" FontSize="9.5" Foreground="{DynamicResource AccentMutedBrush}" LineHeight="12"/>
@@ -216,7 +216,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="Ultra" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrightBrush}" LineHeight="15"/>
-                                <TextBlock Text="Maximum depth + Critic verification" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
+                                <TextBlock Text="Longest runs; uses the most cloud credit" FontSize="10" Foreground="{DynamicResource MutedTextBrush}" LineHeight="14"/>
                             </StackPanel>
                             <Border Grid.Column="1" VerticalAlignment="Center" Padding="6,2" CornerRadius="4" Background="{DynamicResource AccentSoftBrush}">
                                 <TextBlock Text="Builder + Critic" FontSize="9.5" Foreground="{DynamicResource AccentBrightBrush}" LineHeight="12"/>

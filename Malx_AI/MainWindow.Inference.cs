@@ -1506,7 +1506,7 @@ namespace Malx_AI
             InferenceParams inferenceParams)
         {
             int contextSize = GetLoadedLocalContextSize();
-            int generationReserve = Math.Clamp(inferenceParams?.MaxTokens ?? 2048, 256, 2048);
+            int generationReserve = EffortPolicy.LocalGenerationReserve(inferenceParams?.MaxTokens ?? 2048, GetLoadedLocalContextSize());
             int promptBudget = contextSize - generationReserve - 64;
             if (promptBudget < 512)
                 promptBudget = Math.Max(384, contextSize / 2);
@@ -1670,7 +1670,7 @@ namespace Malx_AI
             InferenceParams inferenceParams)
         {
             int contextSize = GetLoadedLocalContextSize();
-            int generationReserve = Math.Clamp(inferenceParams?.MaxTokens ?? 2048, 256, 2048);
+            int generationReserve = EffortPolicy.LocalGenerationReserve(inferenceParams?.MaxTokens ?? 2048, GetLoadedLocalContextSize());
 
             List<ChatMessage> history = NormalizeMessagesForChatSession(historyMessages);
             string system = systemPrompt ?? string.Empty;
@@ -2457,7 +2457,7 @@ namespace Malx_AI
                 {
                     strictPrefixSignature = BuildStrictChatMlPrefixSignature(effectiveSystemPrompt, promptHistoryTurns);
                     int fullStrictPromptTokens = CountLocalPromptTokens(BuildStrictChatMlPrompt(effectiveSystemPrompt, promptHistoryTurns, visionUserMsg));
-                    int generationReserve = Math.Clamp(inferenceParams?.MaxTokens ?? 2048, 256, 2048);
+                    int generationReserve = EffortPolicy.LocalGenerationReserve(inferenceParams?.MaxTokens ?? 2048, GetLoadedLocalContextSize());
                     bool fullPromptStillFits = fullStrictPromptTokens <= GetLoadedLocalContextSize() - generationReserve - 64;
                     canSeedStrictPrefix = fullPromptStillFits;
                     if (fullPromptStillFits

@@ -101,6 +101,47 @@ namespace Malx_AI
         public static bool RequestsReasoning(bool userEnabled)
             => userEnabled || Current >= EffortLevel.High;
 
+        /// <summary>
+        /// Output cap for a cloud or Hybrid Local request. Thinking tokens count against
+        /// max_tokens, so Extra High and Ultra get extra room when thinking is on; otherwise
+        /// longer thinking could crowd out the answer. Never lowers the baseline, and never
+        /// takes more than a quarter of the model's context window.
+        /// </summary>
+        public static int ScaleCompletionTokens(int baseline, bool thinkingEnabled, int contextWindow, EffortLevel level)
+        {
+            if (baseline <= 0 || !thinkingEnabled)
+                return baseline;
+
+            double multiplier = level switch
+            {
+                EffortLevel.ExtraHigh => 1.25,
+                EffortLevel.Ultra => 1.5,
+                _ => 1.0
+            };
+            int scaled = (int)Math.Round(baseline * multiplier, MidpointRounding.AwayFromZero);
+            int ceiling = contextWindow > 0 ? Math.Max(baseline, contextWindow / 4) : baseline;
+            return Math.Min(scaled, ceiling);
+        }
+
+        /// <summary>
+        /// Agent step ceiling on the paid Axiom Cloud plan. Each step is one request against the
+        /// subscriber's paced allowance, so Extra High and Ultra are held to High's ceiling there;
+        /// they still add thinking room and the Critic check.
+        /// </summary>
+        public static int CapManagedAgentSteps(int steps, int highSteps, bool isManagedSubscription)
+            => isManagedSubscription ? Math.Min(steps, highSteps) : steps;
+
+        /// <summary>
+        /// Room to reserve for the reply when fitting a local prompt into the context window.
+        /// Must match the real MaxTokens: a fixed 2,048 reserve let High-and-above replies (up to
+        /// about 3,300 tokens) run past the end of the window on long chats.
+        /// </summary>
+        public static int LocalGenerationReserve(int maxTokens, int contextSize)
+        {
+            int reserve = Math.Max(256, maxTokens <= 0 ? 2048 : maxTokens);
+            return contextSize > 0 ? Math.Min(reserve, Math.Max(256, contextSize / 2)) : reserve;
+        }
+
         public static EffortLevel Current => EffortPreferenceStore.Current;
 
         public static int ScaleGenerationTokens(int baseline, LocalModelCapabilityProfile? capability, int upperBound)

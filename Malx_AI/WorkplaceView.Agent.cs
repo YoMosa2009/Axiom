@@ -822,6 +822,12 @@ namespace Malx_AI
             }
 
             int maxSteps = AgentPromptBuilder.MaxStepsFor(tier, EffortPolicy.Current, capability, _isCloudModeEnabled);
+            bool onManagedSubscription = _isCloudModeEnabled && !_isHybridLocalCouncilSelected
+                && _openRouterChatService.IsManagedEndpointModel(GetEffectiveCouncilModelId());
+            maxSteps = EffortPolicy.CapManagedAgentSteps(
+                maxSteps,
+                AgentPromptBuilder.MaxStepsFor(tier, EffortLevel.High, capability, _isCloudModeEnabled),
+                onManagedSubscription);
             AgentTurnPolicy turnPolicy = AgentTurnPolicy.For(followUpKind, tier);
             if (turnPolicy.AnswerOnly)
                 maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);

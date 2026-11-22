@@ -1303,7 +1303,11 @@ namespace Malx_AI
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
             // choke point so no caller-supplied prompt can omit it.
             systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
-            int maxCompletionTokens = requestedModelProfile.DefaultMaxCompletionTokens;
+            int maxCompletionTokens = EffortPolicy.ScaleCompletionTokens(
+                requestedModelProfile.DefaultMaxCompletionTokens,
+                thinkingEnabled,
+                requestedModelProfile.ApproximateContextWindowTokens,
+                EffortPolicy.Current);
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
             systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
@@ -1528,9 +1532,13 @@ namespace Malx_AI
             // Non-negotiable behavioral foundation for every cloud model, applied at the request
             // choke point so no caller-supplied prompt can omit it.
             systemPrompt = FoundationSystemPrompt.Apply(systemPrompt);
-            int maxCompletionTokens = maxTokensOverride is int tokenLimit && tokenLimit > 0
-                ? tokenLimit
-                : requestedModelProfile.DefaultMaxCompletionTokens;
+            int maxCompletionTokens = EffortPolicy.ScaleCompletionTokens(
+                maxTokensOverride is int tokenLimit && tokenLimit > 0
+                    ? tokenLimit
+                    : requestedModelProfile.DefaultMaxCompletionTokens,
+                thinkingEnabled,
+                requestedModelProfile.ApproximateContextWindowTokens,
+                EffortPolicy.Current);
             systemPrompt = Truncate(systemPrompt, SystemPromptCharacterLimit);
             int promptTokenBudget = GetPromptTokenBudget(requestedModelProfile, maxCompletionTokens, tools);
             systemPrompt = FitSystemPromptToContextBudget(requestedModelProfile, systemPrompt, promptTokenBudget);
@@ -2149,6 +2157,16 @@ namespace Malx_AI
                 // enabled:false turns reasoning off where the provider supports it; exclude:true
                 // keeps any reasoning a provider still produces out of the response.
                 payload["reasoning"] = new JsonObject { ["enabled"] = false, ["exclude"] = true };
+            }
+            else if (thinkingEnabled && isCustomEndpoint)
+            {
+                // Self-hosted servers don't take OpenRouter's reasoning object, so the effort
+                // level used to change nothing on Hybrid Local. llama.cpp and vLLM read
+                // chat_template_kwargs (the Qwen3-style thinking switch); templates without the
+                // switch and servers without the field ignore it. reasoning_effort is NOT sent:
+                // Ollama rejects it outright for models that cannot think. Only sent when
+                // thinking is requested, so turns without thinking behave exactly as before.
+                payload["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = true };
             }
 
             if (tools != null && tools.Count > 0 && SupportsParameter(modelId, "tools"))
