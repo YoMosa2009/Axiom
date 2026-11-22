@@ -28,6 +28,20 @@ namespace Malx_AI
             return new OpenRouterTokenUsage(promptTokens, completionTokens, totalTokens);
         }
 
+        /// <summary>
+        /// Usage estimate for a reply whose server reported none: the corrected prompt estimate,
+        /// plus about four streamed characters per completion token. Null when there is nothing
+        /// to count.
+        /// </summary>
+        public static OpenRouterTokenUsage? Estimate(int promptTokens, int completionChars)
+        {
+            int prompt = Math.Max(0, promptTokens);
+            int completion = completionChars <= 0 ? 0 : (int)Math.Ceiling(completionChars / 4d);
+            if (prompt == 0 && completion == 0)
+                return null;
+            return new OpenRouterTokenUsage(prompt, completion, prompt + completion, IsEstimated: true);
+        }
+
         private static bool TryReadTokenCount(JsonElement usage, string propertyName, out int value)
         {
             value = 0;

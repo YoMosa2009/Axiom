@@ -38,10 +38,13 @@ namespace Malx_AI
         IReadOnlyList<OpenRouterToolCall> ToolCalls,
         OpenRouterTokenUsage? Usage = null);
 
+    /// <param name="IsEstimated">True when the server reported no usage and Axiom estimated it
+    /// from the prompt estimate and the streamed characters (about 4 per token).</param>
     public sealed record OpenRouterTokenUsage(
         int PromptTokens,
         int CompletionTokens,
-        int TotalTokens);
+        int TotalTokens,
+        bool IsEstimated = false);
 
     public sealed record AxiomSubscriptionBalance(long AllowanceMicros, long SpentMicros, long ReservedMicros, long AvailableMicros);
 
@@ -1137,7 +1140,7 @@ namespace Malx_AI
             }
             finally
             {
-                GenerationTelemetry.EndReply(response?.Usage?.CompletionTokens ?? 0);
+                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0);
             }
         }
 
@@ -1191,7 +1194,7 @@ namespace Malx_AI
             }
             finally
             {
-                GenerationTelemetry.EndReply(response?.Usage?.CompletionTokens ?? 0);
+                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0);
             }
         }
 
@@ -1975,6 +1978,13 @@ namespace Malx_AI
                         $"Model:{requestedModelProfile.AliasLabel}\nStalled:{streamStalled}\nError:{Truncate(providerStreamError, 300)}\nChars:{textBuilder.Length}");
                 }
 
+                // Self-hosted servers (Ollama profiles, older llama.cpp builds, proxies that drop
+                // the final chunk) often stream no usage at all, which left the token meter frozen
+                // on Hybrid Local. Fall back to an estimate, marked as one.
+                usage ??= OpenRouterTokenUsageParser.Estimate(
+                    ApplyPromptTokenCorrection(estimatedPromptTokens),
+                    textBuilder.Length + reasoningBuilder.Length
+                        + toolCallAccumulators.Values.Sum(call => call.Name.Length + call.Arguments.Length));
                 RecordTokenUsage(usage, estimatedPromptTokens);
                 SetDetectedModel(requestedModelProfile.AliasId, requestedModelProfile.AliasLabel);
                 return new OpenRouterChatResponse(
@@ -2104,6 +2114,11 @@ namespace Malx_AI
                 ["max_tokens"] = maxTokens,
                 ["stream"] = stream
             };
+
+            // OpenAI-compatible servers (llama.cpp, Ollama, vLLM) only put token usage on a
+            // streamed reply when asked. OpenRouter and the managed gateway already include it.
+            if (stream && isCustomEndpoint)
+                payload["stream_options"] = new JsonObject { ["include_usage"] = true };
 
             if (SupportsParameter(modelId, "temperature"))
                 payload["temperature"] = temperature;
@@ -2390,7 +2405,7 @@ namespace Malx_AI
             lock (_tokenUsageGate)
             {
                 _lastTokenUsage = usage;
-                if (usage.PromptTokens > 0 && estimatedPromptTokens > 0)
+                if (!usage.IsEstimated && usage.PromptTokens > 0 && estimatedPromptTokens > 0)
                 {
                     double observedRatio = Math.Clamp(usage.PromptTokens / (double)estimatedPromptTokens, 0.5d, 3d);
                     _promptTokenEstimateCorrectionFactor = Math.Clamp(
