@@ -52,9 +52,13 @@ namespace Malx_AI.ComputerUse
             }, null);
             if (safety.Dangerous)
                 return AgentToolResult.Fail(safety.Reason);
+            BrowserActionRisk.Level risk = BrowserActionRisk.Classify(target.Name);
+            if (risk == BrowserActionRisk.Level.Blocked)
+                return AgentToolResult.Fail(BrowserActionRisk.BlockedMessage);
 
             string detail = $"{action} “{target.Name}” on “{snapshot.Title}”"
-                + (action == "fill" ? $"\nText: {text}" : "");
+                + (action == "fill" ? $"\nText: {text}" : "")
+                + (risk == BrowserActionRisk.Level.Irreversible ? "\n" + BrowserActionRisk.IrreversibleWarning : "");
             if (!await approve(detail, token))
                 return AgentToolResult.Fail("The user declined this browser action.");
 
@@ -66,8 +70,10 @@ namespace Malx_AI.ComputerUse
         {
             token.ThrowIfCancellationRequested();
             Snapshot? current = Capture();
+            // The title is not compared: pages retitle themselves ("(3) Inbox") and the browser
+            // relabels its profile. The window, document and address identify the page.
             if (current is null || current.Window != snapshot.Window || current.DocumentId != snapshot.DocumentId
-                || current.Address != snapshot.Address || current.Title != snapshot.Title)
+                || current.Address != snapshot.Address)
                 return AgentToolResult.Fail("The browser page changed. Inspect it again before acting.");
             Target? live = current.Targets.FirstOrDefault(candidate => candidate.Name == target.Name
                 && candidate.Kind == target.Kind && Automation.Compare(candidate.Element, target.Element));
@@ -84,6 +90,12 @@ namespace Malx_AI.ComputerUse
                 && value is ValuePattern field && !field.Current.IsReadOnly && !live.Element.Current.IsPassword)
             {
                 field.SetValue(text);
+                // Chromium reports the new value a moment after SetValue returns.
+                for (int attempt = 0; attempt < 10 && field.Current.Value != text; attempt++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    Thread.Sleep(100);
+                }
                 return field.Current.Value == text
                     ? AgentToolResult.Ok("Browser field value verified. The form was not submitted.")
                     : AgentToolResult.Fail("The browser did not report the requested field value.");

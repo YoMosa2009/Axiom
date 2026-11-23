@@ -84,6 +84,9 @@ namespace Malx_AI
 
         public string Role { get; init; } = "system";
 
+        /// <summary>Tool steps a Council or Single Model role took while this card was live.</summary>
+        public List<string> ActivitySteps { get; } = new();
+
         public IReadOnlyList<string> AttachedImagePaths
         {
             get => _attachedImagePaths;
@@ -218,16 +221,17 @@ namespace Malx_AI
 
         public string GenerationStatusText => Role switch
         {
-            "agent" => "Agent generating",
-            "builder" => "Builder generating",
-            "architect" => "Architect generating",
-            "critic" or "critic-final" => "Critic generating",
-            _ => "Generating"
+            "agent" => "Agent working…",
+            "builder" => "Builder working…",
+            "architect" => "Architect planning…",
+            "critic" or "critic-final" => "Critic checking…",
+            _ => "Working…"
         };
 
+        // Every role shows the same shimmer line while it waits for its first words. Builder and
+        // Agent cards used to be excluded, which left an empty card with only a header.
         public bool ShowGeneratingStatusInCard => IsGeneratingStatus
-            && !string.Equals(Role, "builder", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(Role, "agent", StringComparison.OrdinalIgnoreCase);
+            && !string.Equals(Role, "user", StringComparison.OrdinalIgnoreCase);
 
         public DateTime Timestamp { get; init; } = DateTime.Now;
 

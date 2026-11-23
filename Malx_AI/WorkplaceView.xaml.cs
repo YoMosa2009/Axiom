@@ -422,6 +422,7 @@ namespace Malx_AI
                     }
                     _chatCards.Add(streamingCard);
                     _streamingCouncilCards[roleKey] = streamingCard;
+                    _toolStepCard = streamingCard;
                     ChatScrollViewer?.ScrollToEnd();
                 }, DispatcherPriority.Background);
             }
@@ -754,7 +755,10 @@ namespace Malx_AI
                     UpdateCloudCouncilToolStatus(nonNullToolCall, executedToolCount);
                     string toolResult = await ExecuteCouncilCloudToolAsync(nonNullToolCall, messages, token);
                     messages.Add(new OpenRouterMessage("tool", BuildCouncilCloudToolResultMessage(toolResult, nonNullToolCall.Name), nonNullToolCall.Id));
-                    UpdateAgenticPauseStatus($"Resuming generation - {Math.Min(executedToolCount, cloudToolExecutionLimit)}/{cloudToolExecutionLimit} tools used");
+                    int usedTools = Math.Min(executedToolCount, cloudToolExecutionLimit);
+                    UpdateAgenticPauseStatus(WorkplaceRunSteps.LooksLikeFailure(toolResult)
+                        ? WorkplaceRunSteps.ToolFailed(usedTools, cloudToolExecutionLimit)
+                        : WorkplaceRunSteps.Resumed(usedTools, cloudToolExecutionLimit));
                 }
 
                 if (builderHasFinalizingGroundingToolCall)
@@ -871,7 +875,7 @@ namespace Malx_AI
                 : content;
             await Dispatcher.InvokeAsync(() =>
             {
-                streamingCard.Content = cardContent;
+                streamingCard.Content = WorkplaceRunSteps.AppendStepsFooter(cardContent, streamingCard.ActivitySteps);
                 ChatScrollViewer?.ScrollToEnd();
             }, DispatcherPriority.Background);
             UpdateAgenticPauseStatus(string.Empty);
@@ -923,7 +927,7 @@ namespace Malx_AI
                 _ => "Running " + name + detail
             };
 
-            UpdateAgenticPauseStatus($"Agentic Pause {Math.Min(currentToolCount, CloudCouncilToolLoopIterationLimit)}/{CloudCouncilToolLoopIterationLimit} - {label}");
+            UpdateAgenticPauseStatus(WorkplaceRunSteps.ToolStarted(label, Math.Min(currentToolCount, CloudCouncilToolLoopIterationLimit), CloudCouncilToolLoopIterationLimit));
         }
 
         private static string ExtractCloudToolStatusDetail(OpenRouterToolCall? toolCall)
@@ -2745,6 +2749,8 @@ namespace Malx_AI
         };
 
         private AgenticPauseEngine? _agenticPauseEngine;
+        // The live Council / Single Model card that collects tool steps for its activity footer.
+        private WorkplaceChatMessage? _toolStepCard;
         private bool _isWebSearchEnabled = true;
         private string _activeCouncilWebPrompt = "";
         private string _latestCouncilReactiveWebContext = "";
@@ -3335,14 +3341,18 @@ namespace Malx_AI
             {
                 AgenticPauseStatusBlock.Text = message;
 
-                // Parse pause budget (N/3) from the message for the pill display
-                var budgetMatch = System.Text.RegularExpressions.Regex.Match(message, @"(\d+)\s*/\s*(\d+)\s+pauses\s+used|Pause\s+(\d+)/(\d+)");
-                if (budgetMatch.Success)
+                // The live card lists each tool the role used, like Agent Access run cards.
+                if (_toolStepCard != null)
                 {
-                    int used = int.TryParse(budgetMatch.Groups[1].Value, out int u1) ? u1
-                             : int.TryParse(budgetMatch.Groups[3].Value, out int u2) ? u2 : 0;
-                    int max  = int.TryParse(budgetMatch.Groups[2].Value, out int m1) ? m1
-                             : int.TryParse(budgetMatch.Groups[4].Value, out int m2) ? m2 : 3;
+                    if (WorkplaceRunSteps.TryGetStartedLabel(message) is string label)
+                        _toolStepCard.ActivitySteps.Add(WorkplaceRunSteps.StepLine(label));
+                    else if (message.StartsWith(WorkplaceRunSteps.ToolFailedPrefix, StringComparison.Ordinal))
+                        WorkplaceRunSteps.MarkLastFailed(_toolStepCard.ActivitySteps);
+                }
+
+                // Tool budget (N of M) for the pill display
+                if (WorkplaceRunSteps.TryParseBudget(message, out int used, out int max))
+                {
                     AgenticPauseBudgetText.Text = $"{used} / {max}";
                     AgenticPauseBudgetText.Foreground = used >= max
                         ? AppBrushCache.Get(Color.FromRgb(255, 59, 59))
@@ -16805,6 +16815,7 @@ namespace Malx_AI
                     liveCard = new WorkplaceChatMessage { Role = liveRoleKey, Content = "⏳ Generating..." };
                     _chatCards.Add(liveCard);
                     _streamingCouncilCards[liveRoleKey] = liveCard;
+                    _toolStepCard = liveCard;
                     ChatScrollViewer?.ScrollToEnd();
                 }, DispatcherPriority.Background);
             }
@@ -17688,6 +17699,7 @@ namespace Malx_AI
         // so the chat doesn't keep a stuck "Generating..." card.
         private void FinalizeOrphanStreamingCards()
         {
+            _toolStepCard = null;
             if (_streamingCouncilCards.Count == 0)
                 return;
 
@@ -18741,8 +18753,10 @@ namespace Malx_AI
             // Finalize an existing streaming card for this role rather than adding a duplicate card.
             if (_streamingCouncilCards.TryGetValue(role, out WorkplaceChatMessage? streamCard))
             {
-                streamCard.Content = content.Trim();
+                streamCard.Content = WorkplaceRunSteps.AppendStepsFooter(content.Trim(), streamCard.ActivitySteps);
                 _streamingCouncilCards.Remove(role);
+                if (ReferenceEquals(_toolStepCard, streamCard))
+                    _toolStepCard = null;
                 Dispatcher.InvokeAsync(() => ChatScrollViewer?.ScrollToEnd(), DispatcherPriority.Background);
                 UpdateWorkplaceTokenUsageIndicator();
                 RequestWorkspaceStateSave();

@@ -238,7 +238,7 @@ namespace Malx_AI
                         currentPayload = pauseCommand.Tool == ToolWebSearch
                             ? overrideMessage + "\nDo not continue any unsupported current/source-backed answer. Answer current/source-backed portions only with facts already supported by the prompt, or state that web evidence was unavailable; stable non-current background context is allowed when clearly separate from unsupported current claims."
                             : overrideMessage + "\nContinue your response.";
-                        _onStatusUpdate($"▶ Resuming generation  ·  {_pauseCount}/{MaxPausesPerTurn} pauses used");
+                        _onStatusUpdate(WorkplaceRunSteps.ToolFailed(_pauseCount, MaxPausesPerTurn));
                         continue;
                     }
 
@@ -261,7 +261,7 @@ namespace Malx_AI
                         : injectedResult + "\nContinue your response.";
 
                     // Show resuming status — visible while model generates the continuation
-                    _onStatusUpdate($"▶ Resuming generation  ·  {_pauseCount}/{MaxPausesPerTurn} pauses used");
+                    _onStatusUpdate(WorkplaceRunSteps.Resumed(_pauseCount, MaxPausesPerTurn));
                 }
             }
             finally
@@ -695,7 +695,7 @@ namespace Malx_AI
                 ToolListFiles   => $"Listing files: {Truncate(cmd.Query, 48)}",
                 _               => $"Tool '{cmd.Tool}': {Truncate(cmd.Query, 48)}"
             };
-            _onStatusUpdate($"⏸  Agentic Pause {currentPauseCount}/{MaxPausesPerTurn}  ·  {toolLabel}");
+            _onStatusUpdate(WorkplaceRunSteps.ToolStarted(toolLabel, currentPauseCount, MaxPausesPerTurn));
         }
 
         private static string Truncate(string s, int max) =>

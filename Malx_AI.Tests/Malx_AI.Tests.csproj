@@ -37,6 +37,7 @@
     <Compile Include="..\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
     <Compile Include="..\Malx_AI\LocalVisionSupport.cs" Link="Production\LocalVisionSupport.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseModels.cs" Link="Production\ComputerUse\ComputerUseModels.cs" />
+    <Compile Include="..\Malx_AI\ComputerUse\BrowserActionRisk.cs" Link="Production\ComputerUse\BrowserActionRisk.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseStrokeGeometry.cs" Link="Production\ComputerUse\ComputerUseStrokeGeometry.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseLogFormatting.cs" Link="Production\ComputerUse\ComputerUseLogFormatting.cs" />
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseTargetId.cs" Link="Production\ComputerUse\ComputerUseTargetId.cs" />
@@ -119,6 +120,7 @@
     <Compile Include="..\Malx_AI\OpenRouterTokenUsageParser.cs" Link="Production\OpenRouterTokenUsageParser.cs" />
     <Compile Include="..\Malx_AI\OpenRouterKeyUsage.cs" Link="Production\OpenRouterKeyUsage.cs" />
     <Compile Include="..\Malx_AI\WorkplaceExecutionSummary.cs" Link="Production\WorkplaceExecutionSummary.cs" />
+    <Compile Include="..\Malx_AI\WorkplaceRunSteps.cs" Link="Production\WorkplaceRunSteps.cs" />
     <Compile Include="..\Malx_AI\OpenRouterChatService.cs" Link="Production\OpenRouterChatService.cs" />
     <Compile Include="..\Malx_AI\CloudUpgradeSuggestionPolicy.cs" Link="Production\CloudUpgradeSuggestionPolicy.cs" />
   </ItemGroup>

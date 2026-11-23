@@ -46,6 +46,12 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Changed
 
+- Workplace run cards read the same in every mode: Council and Single Model cards list the tools
+  they used under "N steps · View activity", like Agent Access, every role shows a "working…" line
+  while it waits, and the tool banner uses plain wording instead of "Agentic Pause".
+- Workplace browser actions: the agent never presses payment or account-closing controls (it tells
+  you which one to press), and approval prompts for delete/send/submit-style controls carry a
+  warning.
 - Workplace cloud model is now **NVIDIA Nemotron 3.5 Super VL (free)**: OpenRouter withdrew
   Dots3-Note Preview, which made every Workplace cloud run fail.
 - Effort levels: Extra High and Ultra give thinking turns more output room, Hybrid Local turns thinking
@@ -87,6 +93,10 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Fixed
 
+- Browser clicks were refused as "page changed" when a page or the browser updated its title
+  (an unread count, the profile label); the page is now identified by its document and address.
+- Filling a browser text field could report failure because the browser reports the new value a
+  moment late.
 - Long local Normal Chat conversations at High effort and above could overrun the context window.
 - A withdrawn cloud model is reported plainly instead of being retried as a "transient problem".
 - Managed-only accounts without a personal OpenRouter API key no longer fail `CloudAgentModel`
