@@ -107,6 +107,18 @@ namespace Malx_AI
         /// longer thinking could crowd out the answer. Never lowers the baseline, and never
         /// takes more than a quarter of the model's context window.
         /// </summary>
+        /// <summary>
+        /// The reasoning_effort value sent to a Hybrid Local server that lists the parameter.
+        /// Hybrid thinking starts at High, so High asks for a moderate budget and the two
+        /// levels above it for more.
+        /// </summary>
+        public static string CustomEndpointReasoningEffort(EffortLevel level) => level switch
+        {
+            EffortLevel.Ultra => "max",
+            EffortLevel.ExtraHigh => "high",
+            _ => "medium"
+        };
+
         public static int ScaleCompletionTokens(int baseline, bool thinkingEnabled, int contextWindow, EffortLevel level)
         {
             if (baseline <= 0 || !thinkingEnabled)

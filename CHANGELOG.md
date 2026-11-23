@@ -52,6 +52,9 @@ These changes are in source and are not included in the V1.11.0 download.
 - Workplace browser actions: the agent never presses payment or account-closing controls (it tells
   you which one to press), and approval prompts for delete/send/submit-style controls carry a
   warning.
+- Hybrid Local effort: a server whose model list names `reasoning_effort` now receives the level
+  (High → medium, Extra High → high, Ultra → max) and an explicit "thinking off" below High, so
+  each level gets its own thinking budget. Other servers are sent nothing new.
 - Workplace cloud model is now **NVIDIA Nemotron 3.5 Super VL (free)**: OpenRouter withdrew
   Dots3-Note Preview, which made every Workplace cloud run fail.
 - Effort levels: Extra High and Ultra give thinking turns more output room, Hybrid Local turns thinking

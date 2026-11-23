@@ -259,6 +259,8 @@ namespace Malx_AI
         private bool _customEndpointMetadataLoaded;
         private bool _customEndpointMetadataProbed;
         private bool _customEndpointContextWindowAdvertised;
+        // Set only when the server's model list names reasoning_effort in supported_parameters.
+        private bool _customEndpointSupportsReasoningEffort;
         private string _managedEndpointBaseUrl = string.Empty;
         private string _managedEndpointToken = string.Empty;
         private List<(string Id, string Label, bool IsFree)> _availableModels = new();
@@ -546,6 +548,7 @@ namespace Malx_AI
                 _customEndpointMetadataLoaded = false;
                 _customEndpointMetadataProbed = false;
                 _customEndpointContextWindowAdvertised = false;
+                _customEndpointSupportsReasoningEffort = false;
                 _customEndpointContextWindowTokens = CustomEndpointContextWindowTokens;
                 _customEndpointSupportsImageInput = CustomEndpointMetadataParser.LooksLikeVisionModel(nextModelId);
             }
@@ -871,6 +874,7 @@ namespace Malx_AI
             _customEndpointMetadataProbed = true;
             var attempts = new List<string>();
             int consecutiveTransportFailures = 0;
+            bool catalogRead = false;
             try
             {
                 foreach (CustomEndpointProbe probe in BuildCustomEndpointProbes())
@@ -902,6 +906,9 @@ namespace Malx_AI
 
                         string body = await ReadBodyWithTimeoutAsync(response, probeCancellation.Token);
                         metadata = CustomEndpointMetadataParser.Parse(body, _customEndpointModelId);
+                        catalogRead |= probe.Server == "OpenAI-compatible catalog";
+                        if (metadata.SupportsReasoningEffort)
+                            _customEndpointSupportsReasoningEffort = true;
                         if (metadata.ContextWindowTokens == null
                             && probe.ScalarContextResponse
                             && CustomEndpointMetadataParser.TryParseScalarContextWindow(body, out int scalarWindow))
@@ -944,13 +951,40 @@ namespace Malx_AI
                 await BackendLogService.LogErrorAsync("CustomEndpointMetadataRefreshFailed", ex);
             }
 
+            // An earlier probe may have answered the context window first; the model list is the
+            // only place a server says which optional parameters it accepts, so read it once.
+            if (!catalogRead && !cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    using var catalogCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    catalogCancellation.CancelAfter(CustomEndpointProbeTimeout);
+                    using var request = new HttpRequestMessage(HttpMethod.Get, _customEndpointBaseUrl.TrimEnd('/') + "/models");
+                    ApplyCustomEndpointHeaders(request);
+                    using var response = await CustomEndpointHttp.SendAsync(
+                        request, HttpCompletionOption.ResponseHeadersRead, catalogCancellation.Token);
+                    if (response.StatusCode == HttpStatusCode.OK)
+                    {
+                        string body = await ReadBodyWithTimeoutAsync(response, catalogCancellation.Token);
+                        if (CustomEndpointMetadataParser.Parse(body, _customEndpointModelId).SupportsReasoningEffort)
+                            _customEndpointSupportsReasoningEffort = true;
+                    }
+                    attempts.Add($"models list -> {(int)response.StatusCode}");
+                }
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                {
+                    attempts.Add($"models list -> {ex.GetType().Name}");
+                }
+            }
+
             // Always leave a record of what was asked and what came back. When a server is not
             // covered by the probe list, this log is the whole diagnosis and needs no access to
             // the server itself.
             await BackendLogService.LogEventAsync("CustomEndpointMetadata",
                 $"Model:{_customEndpointModelId}; resolved window:{CustomEndpointResolvedContextWindowTokens}"
                 + $" ({(CustomEndpointContextWindowIsAdvertised ? "advertised by server" : "NOT advertised - conservative fallback in use")});"
-                + $" vision:{CustomEndpointResolvedSupportsImageInput}"
+                + $" vision:{CustomEndpointResolvedSupportsImageInput};"
+                + $" reasoning_effort:{(_customEndpointSupportsReasoningEffort ? "listed" : "not listed")}"
                 + Environment.NewLine
                 + string.Join(Environment.NewLine, attempts)).ConfigureAwait(false);
         }
@@ -2167,6 +2201,16 @@ namespace Malx_AI
                 // Ollama rejects it outright for models that cannot think. Only sent when
                 // thinking is requested, so turns without thinking behave exactly as before.
                 payload["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = true };
+                // A server that lists reasoning_effort in its model list gets the effort level
+                // too, so High, Extra High and Ultra ask for different thinking budgets.
+                if (_customEndpointSupportsReasoningEffort)
+                    payload["reasoning_effort"] = EffortPolicy.CustomEndpointReasoningEffort(EffortPolicy.Current);
+            }
+            else if (!thinkingEnabled && isCustomEndpoint && _customEndpointSupportsReasoningEffort)
+            {
+                // A server that lists reasoning_effort controls thinking, so say "off" plainly
+                // instead of leaving it to the server's own default for the loaded model.
+                payload["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false };
             }
 
             if (tools != null && tools.Count > 0 && SupportsParameter(modelId, "tools"))

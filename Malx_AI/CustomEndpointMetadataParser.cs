@@ -8,7 +8,8 @@ namespace Malx_AI
     internal readonly record struct CustomEndpointMetadata(
         int? ContextWindowTokens,
         bool? SupportsImageInput,
-        string? MatchedModelId);
+        string? MatchedModelId,
+        bool SupportsReasoningEffort = false);
 
     internal static class CustomEndpointMetadataParser
     {
@@ -53,11 +54,13 @@ namespace Malx_AI
             bool? vision = null;
             string? matchedId = requestedModelId;
 
+            bool reasoningEffort = false;
             if (matchedModel is JsonElement modelElement)
             {
                 context = ReadContextWindow(modelElement);
                 vision = ReadVisionFlag(modelElement);
                 matchedId = ReadModelId(modelElement) ?? requestedModelId;
+                reasoningEffort = ListsSupportedParameter(modelElement, "reasoning_effort");
             }
 
             context ??= ReadContextWindow(root);
@@ -66,7 +69,27 @@ namespace Malx_AI
             if (vision != true && LooksLikeVisionModel(matchedId ?? requestedModelId))
                 vision = true;
 
-            return new CustomEndpointMetadata(context, vision, matchedId);
+            return new CustomEndpointMetadata(context, vision, matchedId, reasoningEffort);
+        }
+
+        /// <summary>
+        /// Whether a model entry lists <paramref name="parameter"/> in its OpenRouter-style
+        /// "supported_parameters" array. Only an explicit listing counts: Ollama rejects fields it
+        /// does not know, so an unlisted parameter is never sent.
+        /// </summary>
+        public static bool ListsSupportedParameter(JsonElement model, string parameter)
+        {
+            if (model.ValueKind != JsonValueKind.Object
+                || !model.TryGetProperty("supported_parameters", out JsonElement list)
+                || list.ValueKind != JsonValueKind.Array)
+                return false;
+            foreach (JsonElement item in list.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String
+                    && string.Equals(item.GetString(), parameter, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
