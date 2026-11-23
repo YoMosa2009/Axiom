@@ -2,361 +2,134 @@
 
 # Axiom
 
-**One native Windows workspace for offline local models, codebase work, and optional `$9/mo` cloud speed.**
+**A native Windows AI workspace: run models on your own PC, on your own server, or in the cloud.**
 
-Built cleanly in C# and `.NET 10 WPF` (zero Electron or web wrapper). Run GGUF models
-offline on your own GPU/CPU, point Axiom at a project folder for autonomous Workplace edits
-with Project Canvas previews and 1-click Undo, or enable **Axiom Cloud (`DeepSeek 4.1F-1017`, `$9/mo`)**
-with `$5.25/mo` in paced upstream credits and zero API-key setup.
-
-![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Release](https://img.shields.io/badge/release-V1.11.0-brightgreen)
-![.NET](https://img.shields.io/badge/.NET-10-purple)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)
+![.NET](https://img.shields.io/badge/.NET-10%20WPF-purple)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
 
 ### [⬇ Download Axiom for Windows](https://github.com/YoMosa2009/Axiom/releases/latest)
 
-Free local + BYOK · Signed upcoming releases · Windows 10/11 (64-bit) · `winget install YoMosa2009.Axiom`
+Free with local models or your own key · Windows 10/11 (64-bit)
 
-[Website](docs/index.html) · [Getting started](#getting-started) · [Terms](TERMS.md) · [Privacy](PRIVACY.md) · [Contributing](#contributing)
+[Getting started](#getting-started) · [Changelog](CHANGELOG.md) · [Privacy](PRIVACY.md) · [Terms](TERMS.md) · [Feedback](#feedback)
+
+![Axiom Workplace: an agent run with its steps and file changes](docs/images/workplace.png)
 
 </div>
 
-*See [CHANGELOG.md](CHANGELOG.md#unreleased) for recent changes in `main` ahead of the next release.*
-
-![Axiom Chat](docs/images/chat.png)
-
 ---
+
+## Why Axiom
+
+- **Native, not a web wrapper.** C# and WPF on .NET 10, with no Electron.
+- **Your model, your choice.** The same features work on a local GGUF model, your own
+  OpenAI-compatible server, or the cloud.
+- **Adapts to small models.** Axiom measures the model you load and scales prompts, tools and
+  budgets so a 1B model still gives usable results.
+- **Private by default.** Chats, keys and models stay on your PC. Anonymous diagnostics can be
+  switched off in Settings (see [PRIVACY.md](PRIVACY.md)).
 
 ## Three ways to run a model
 
-Axiom treats all three as first-class. Attachments, Skills, tools, Project Canvas, and
-memory behave the same way regardless of which one is selected.
-
-| | Runs on | You need | Good for |
-|---|---|---|---|
-| **Local** | Your GPU/CPU via llama.cpp | A GGUF model | Full privacy, offline work, no per-token cost |
-| **Hybrid Local** | Your own server | An OpenAI-compatible endpoint | Your own hardware, accessed from anywhere |
-| **Cloud** | Axiom Cloud or OpenRouter | Optional `$9/mo` Axiom subscription (`DeepSeek 4.1F-1017`, `$5.25/mo` credit, 1M ctx, vision, 3-hour & weekly **Usage** pacing) or personal OpenRouter API key | Zero-setup speed or frontier-class cloud models when you want them |
-
-### Exact positioning vs. alternatives
-
-| Workspace | Price | Offline GGUF & BYOK | Native Windows Folder Agent & Undo | Included Cloud Engine |
-|---|---|---|---|---|
-| **Axiom Cloud** | **$9/mo** | Yes (free forever) | Yes (`.NET 10 WPF`, Workplace, Project Canvas, `@ComputerUse`) | `$5.25/mo` DeepSeek 4.1F-1017 (`1M` ctx, native vision, auto-renews) |
-| **LM Studio Bionic+** | `$20/mo` | Yes (GGUF/MLX) | No desktop GUI automation or WPF Canvas | Hosted open-weight tier |
-| **T3 Chat Pro** | `$8/mo` | No (Web only) | No filesystem or repo workflow | Web chat with 4h meter |
-| **Cherry Studio / Jan** | `$0` | Yes (BYOK only) | Requires user-managed API keys | None |
-
-Axiom adapts to the model it is given. It measures a local model's parameter count and
-scales context budgets, tool routing, and prompt complexity accordingly — so a 0.5B
-model and a 70B model both produce usable results instead of the small one collapsing.
-
----
-
-## Chat
-
-The everyday surface: one conversation, one model, every tool available.
-
-- **Attachments with previews** — drop in documents, spreadsheets, presentations,
-  e-books, notebooks, source code, subtitles, or images and see a thumbnail of each one
-  above the composer before you send.
-- **Positional references** — say *"in the 3rd attached image"* or *"the first PDF"* and
-  Axiom resolves which attachment you mean, on every model size.
-- **Tools** — Python sandbox, calculator, web search, and Java execution, exposed
-  according to the selected mode.
-- **Project Canvas** — type `@ProjectCanvas` to render the answer as a live artifact in
-  a resizable side pane: HTML, SVG, Markdown, or interactive JavaScript.
-- **Effort control** — dial reasoning, generation, and tool budgets up or down per turn.
-- Markdown and LaTeX that stay stable while you scroll, plus local chat history, persona
-  memory, and document retrieval.
-
-## Workplace
-
-A multi-agent workspace for work that takes more than one pass.
-
-![Axiom Workplace](docs/images/workplace.png)
-
-**Council mode** runs three roles in sequence:
-
-1. **Architect** plans the task.
-2. **Builder** produces the deliverable.
-3. **Critic** reviews it and can send it back for a targeted revision.
-
-**Single Model mode** collapses those handoffs into one agent that plans, uses tools,
-executes, and verifies its own result. Switch between them from the Workplace header
-whenever a run isn't active.
-
-Also in Workplace: persistent sessions, study and document preprocessing, task history,
-per-role context controls, live activity, completion notifications, and the Project Canvas
-the Builder writes into.
-
-### Files in Project Canvas
-
-Put `@ProjectCanvas` in a Workplace prompt and ask for a file — *"make me a requirements.txt"*,
-*"a docker-compose.yml"*, *"the results as a csv"* — or ask Workplace to create and edit files
-directly. Created and edited files display a distinguishable underlined link underneath so you can
-click straight into the formatted Project Canvas preview; when `@ProjectCanvas` is active, the pane
-also opens automatically under the file's real name and Save offers that filename too.
-
-Any text format works: `.md`, `.txt`, `.csv`, `.json`/`.jsonc`, `.xml`/`.xaml`/`.csproj`, `.yaml`,
-`.toml`, `.sql`, source code, `.html`, and `.svg`. CSV/TSV renders as a table, Markdown renders, HTML
-and SVG keep their visual preview, and structured config/code formats display syntax-highlighted
-line-numbered views — even when connected to a codebase folder. Images and other binary formats are
-refused with an explanation rather than failing quietly.
-
-## Computer Use
-
-Type `@ComputerUse` followed by a goal in the Workplace composer and Axiom will drive the
-desktop directly — screen capture, planning, mouse and keyboard, and verification that
-the action actually landed.
-
-```
-@ComputerUse open Notepad and type hello
-```
-
-It needs a **vision-capable model** (a cloud vision model, or a local GGUF with a
-projector). Axiom probes the active model first and tells you plainly why a run can't
-start rather than failing halfway through. Sessions run in a dedicated window with a
-visible pointer overlay, an action log, and safety checks on navigation and target
-selection.
-
-## Computer Agent
-
-Turn it on in the Workplace sidebar and the model operates your machine the way a terminal
-coding agent does — running commands, reading and writing files, searching the disk — then
-answers from what it actually found.
-
-It has eight tools: `run_command`, `read_file`, `write_file`, `append_file`, `edit_file`,
-`list_directory`, `find_files`, and `search_text`. Long files are written in parts
-(`write_file`, then `append_file`), so no single reply is cut off at the model's output limit.
-
-Each run appears as one **Agent** card in the chat that fills in live — every step shows up
-with ✓ or ✗ the moment it finishes — and then becomes the final answer with the step list
-underneath. Before a run may finish, Axiom checks the claimed result against the disk: a
-summary that lists files that were never written, or a page that links to missing files, is
-sent back to the agent to fix.
-
-**You choose how much rope it gets:**
-
-| Mode | Behaviour |
-|---|---|
-| **Manual** | Stops before every command and file change. An approval bar offers Approve, Always allow this, or Deny. |
-| **Auto** | Runs without stopping to ask. |
-
-**And how far it can reach** — a folder you pick, or the entire computer. Whole-computer scope
-and Auto mode each need an explicit confirmation before they turn on.
-
-Works on Local, Hybrid Local, and Cloud. Capable models get JSON tool calls and a long step
-budget; sub-4B models get a flat text protocol they can actually produce, with a shorter budget
-and trimmed tool output, so the feature still works on a small local model.
-
-**What it refuses, in both modes:** formatting a drive, repartitioning, deleting a drive root,
-rewriting the boot configuration, wiping free space, shutting the machine down, and writing into
-Windows system folders. The patterns are narrow — `rm -rf ./build` and `git reset --hard` run
-normally.
-
-While a step is in flight, a quiet line above the composer names it with a live timer
-("Thinking · 12s", "Writing a file · 3.2 KB"), and clears when the run finishes.
-
-## Skills
-
-Skills are reusable procedures you attach once. They apply everywhere — Local, Cloud,
-Hybrid Local, Council, and Single Model — instead of being tied to one chat.
-
-![Skills panel](docs/images/skills.png)
-
-The important part is what a Skill *delivers*. Some answer in chat. Others produce a
-rendered artifact in Project Canvas:
-
-| Skill | Delivers |
-|---|---|
-| **Slide Deck Studio** | A navigable slide deck — 16:9 stages, arrow-key navigation, speaker notes |
-| **PDF Studio** | A print-ready document with a proper `@media print` layout |
-| **Data Analysis** | A charted report with inline SVG charts and the figures beneath them |
-| **Document Summarizer** | A traceable summary in chat |
-| **Code Review** | A review in chat |
-
-Ask for a slide deck with Slide Deck Studio attached and you get an actual deck, not a
-description of one — no `@ProjectCanvas` needed.
-
-**This works on small models too.** A sub-4B model can't author a correct self-contained
-HTML document, so Axiom doesn't ask it to. Below that threshold the model supplies a short
-structured outline and *Axiom builds the artifact itself*. Above it, the model authors the
-artifact directly. Either way the deliverable is the same.
-
-You can also write your own Skills — a name, a procedure, activation terms, and whether it
-renders or answers in chat. Custom Skills are instructions, not scripts; they never
-execute arbitrary code.
-
-## Plugins
-
-Plugins package capabilities Axiom already has, so a model uses them consistently:
-**Web Research**, **Data Lab**, **File Intelligence**, **Connected Apps**, and
-**Creator Studio**.
-
-A Plugin never grants a capability the current model or host doesn't actually expose.
-Connected Apps uses only the MCP connectors you configured in Settings.
-
-## Themes
-
-Settings → General switches the whole app between themes. The change applies instantly —
-no restart — and is remembered.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/images/settings-general.png" alt="Theme picker in Settings"></td>
-<td width="50%"><img src="docs/images/theme-gruvbox.png" alt="Gruvbox Dark theme"></td>
-</tr>
-<tr>
-<td align="center"><em>Axiom Dark (default)</em></td>
-<td align="center"><em>Gruvbox Dark</em></td>
-</tr>
-</table>
-
-Theming reaches every surface: both chats, dialogs, the Effort picker, rendered chat
-bubbles, and the native Windows title bar.
-
-## Neuron
-
-A live map of what Axiom is doing — active sessions, tool usage, and activity across
-Chat, Workplace, Documents, Study, and Calculator.
-
-![Neuron live neural map](docs/images/neuron.png)
-
----
-
-## Models
-
-Local mode accepts any compatible GGUF and can install one for you. Cloud mode uses
-OpenRouter with your own key.
-
-| Axiom profile | Model | Intended use |
+| | Runs on | You need |
 |---|---|---|
-| **Edios 1.5** | Google Gemma 4 31B (free) | General chat, reasoning, documents, tool use |
-| **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Repository-aware coding |
-| **Workplace cloud model** | NVIDIA Nemotron 3.5 Super VL (free) | The one model behind every Workplace cloud run: Council, Single Model, Agent Access, and Computer Use. Text + image input, 1M-token context. |
-| **Kestral 1** | Your self-hosted endpoint | Hybrid Local inference |
+| **Local** | Your GPU or CPU (llama.cpp) | A GGUF model; the first-run guide can download one that fits |
+| **Hybrid Local** | Your own server | Any OpenAI-compatible endpoint |
+| **Cloud** | Axiom Cloud or OpenRouter | An optional Axiom Cloud subscription, or your own OpenRouter key |
 
-The Workplace deliberately runs on exactly one cloud model, with no silent fallback to
-another: council roles build on each other's output, and Computer Use and image attachments
-need a model that can see.
+## What's inside
 
-Cloud availability and routing depend on OpenRouter and its providers. Axiom reports
-exhausted keys and rate limits directly instead of dressing them up as answers.
+**Chat.** One conversation with every tool: attachments with previews, web search, a Python
+sandbox, calculator, Skills and Plugins, and Persona notes that give the model background about
+you. Type `@ProjectCanvas` to render an answer as a live HTML, SVG or Markdown artifact beside the
+chat.
 
-## Tools, memory, and privacy
+**Workplace.** For work that takes more than one pass.
+- **Single Model:** one agent plans, uses tools and checks its own result.
+- **Council:** a Builder does the work; at Extra High and Ultra effort a Critic reviews it.
+- **Agent Access:** a terminal-style agent that runs commands and reads and writes files in a
+  folder you pick. Every run ends with its steps, a file-change summary and one-click **Undo**.
+  You choose Manual (approve each change) or Auto.
+- **Browser actions:** the agent can open pages and click or fill controls, each with your
+  approval. It never presses payment or account-closing buttons.
+- **`@ComputerUse`:** drives the desktop with a vision model, checking each action landed.
 
-| | |
-|---|---|
-| **Calculator** | Scientific expressions and unit conversions |
-| **Python sandbox** | Persistent session, bounded execution, chart capture |
-| **Java sandbox** | Compile and run Java for supported Workplace tasks |
-| **Web search** | Multi-source querying, deduplication, trust scoring, synthesis |
-| **Codebase access** | Inspect and patch an explicitly connected workspace, with validation |
-| **Session memory** | In-session episodic context for Workplace roles and study sessions |
-| **Persona memory** | Persistent preferences stored locally |
-| **Context compaction** | Keeps important requirements intact as conversations grow |
+**Skills.** Reusable procedures you attach once, everywhere. Some answer in chat; others produce
+a finished artifact, such as a slide deck, a print-ready PDF or a charted report. On small models
+Axiom builds the artifact itself from the model's outline.
 
-Your data lives in `%LOCALAPPDATA%\Axiom`; debug runs use a separate `%LOCALAPPDATA%\Axiom-Dev`
-profile. Chats, API keys, connector tokens, local models, and Workplace sessions are never
-placed inside release packages.
+<img src="docs/images/skills.png" alt="Skills panel" width="420">
 
-## Background and system tray
+**Effort.** Pick Light to Ultra per message. Higher levels think longer and allow more tool
+rounds; Extra High and Ultra add the Critic check.
 
-Settings has separate switches for background operation and the system tray. With both on,
-closing the window hides Axiom in the tray instead of ending work in progress; Axiom stops
-UI activity while hidden and releases heavy model caches once work finishes. **Exit Axiom**
-in the tray menu stops the process completely. With either switch off, closing the window
-exits normally.
+**Themes.** Switch themes in Settings › General without restarting.
+
+## Cloud models
+
+| Profile | Model | Use |
+|---|---|---|
+| **Edios 1.5** | Google Gemma 4 31B (free) | General chat, documents, tools |
+| **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Coding |
+| **Threnody 1.0** | DeepSeek V4.1 Flash | Long context, vision |
+| **Workplace** | NVIDIA Nemotron 3.5 Super VL (free) | Every Workplace cloud run |
+| **Kestral 1** | Your own endpoint | Hybrid Local |
+
+Workplace uses exactly one cloud model with no silent fallback, so every step of a run uses the
+same model.
 
 ---
 
 ## Getting started
 
-1. Download **`Axiom-Setup-…-win-x64.exe`** from the [latest release](https://github.com/YoMosa2009/Axiom/releases/latest)
-   and run it. It installs for your Windows account only (no admin prompt) and adds Axiom to
-   the Start menu. Prefer no installer? Download the `…-win-x64-clean.zip` instead, extract the
-   **whole folder**, and run `Malx_AI.exe`.
-2. Launch Axiom.
-3. The first-run guide asks how you want to run AI. For a local model it checks your
-   processor, memory and graphics card, shows which models fit, and downloads the one it
-   recommends. You can also pick a cloud key or your own server, or skip and set things up
-   later (reopen the guide from **Download a model** in the sidebar).
-4. Open Chat, or head to Workplace.
+1. Download **`Axiom-Setup-…-win-x64.exe`** from the
+   [latest release](https://github.com/YoMosa2009/Axiom/releases/latest) and run it. It installs
+   for your account only, with no admin prompt. (Or download the `…-clean.zip`, extract the whole
+   folder and run `Malx_AI.exe`.)
+2. The first-run guide checks your hardware, shows which local models fit and downloads one, or
+   lets you set up a cloud key or your own server.
+3. Open **Chat**, or head to **Workplace**.
 
-To uninstall, use **Settings → Apps** in Windows. Your chats and settings in
-`%LOCALAPPDATA%\Axiom` are kept unless you delete that folder too.
+> **"Windows protected your PC"?** Axiom isn't code-signed yet. Click **More info**, then
+> **Run anyway**. Releases are built by this repository's GitHub Actions, and the in-app updater
+> verifies every update before installing it.
 
-> **"Windows protected your PC"?** Axiom isn't code-signed yet, so Windows SmartScreen shows
-> this warning for new downloads it hasn't seen often. Click **More info**, then **Run anyway**.
-> The release ZIP is built and published by this repository's own GitHub Actions workflow, and
-> the in-app updater verifies each update package before installing it.
+**Updates** install from inside the app (Settings › General › Check for updates). Your chats,
+settings and models are kept. Your data lives in `%LOCALAPPDATA%\Axiom`.
 
-## Updating
-
-V1.7.0 and newer check the stable GitHub Releases feed at startup. Use the in-app
-notification or **Settings → General → Check for updates**. Axiom downloads and verifies
-the package, stages it outside the install directory, replaces only package-managed files
-after shutdown, and restarts in place. Obsolete files, backups, and staging folders are
-cleaned up afterwards.
-
-Settings, chats, local models, connectors, and Workplace data are left untouched. Manual
-ZIP installation still works for first-time setup and recovery.
-
-Set `AXIOM_UPDATE_DIR` to an absolute path to stage downloads outside `%LOCALAPPDATA%`.
-
-## System requirements
-
-| | |
-|---|---|
-| **OS** | Windows 10 or 11 (64-bit) |
-| **RAM** | 4 GB minimum; 16 GB recommended for local models |
-| **CPU** | Modern x64 |
-| **GPU** | Optional NVIDIA CUDA acceleration |
-| **Runtime** | Self-contained release; .NET 10 SDK only for development |
-
-## Built with
-
-C# · WPF · .NET 10 · LLamaSharp / llama.cpp (CUDA 12) · Python.Included · Markdig · KaTeX ·
-HtmlAgilityPack · AvalonEdit · UglyToad.PdfPig · SQLite · WebView2
+**Requirements:** Windows 10 or 11 (64-bit), 4 GB RAM (16 GB recommended for local models),
+optional NVIDIA GPU for faster local models.
 
 ---
 
 ## Feedback
 
-I'd love to hear from you. Bug, feature request, or just how it's going:
-
-- **In the app:** Settings → General → **Send feedback**. It can attach your app version and
-  recent error lines, never your chats, files or keys.
-- **On GitHub:** [open an issue](https://github.com/YoMosa2009/Axiom/issues/new/choose)
-  (bug report or feature request). Issues are public, so leave out keys and personal files.
-- **By email:** malxshrouds@gmail.com.
-
-Your input genuinely shapes what gets built next.
+- **In the app:** Settings › General › **Send feedback** (adds your app version and recent error
+  lines; never your chats, files or keys).
+- **On GitHub:** [open an issue](https://github.com/YoMosa2009/Axiom/issues/new/choose). Issues are
+  public, so leave out keys and personal files.
+- **By email:** malxshrouds@gmail.com
 
 ## Contributing
 
-Contributions are welcome. Fork the repo, make your change on a branch, and open a pull
-request; every change is reviewed and only merged with the maintainer's approval. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing and what makes a pull request easy to
-accept. Found a security problem? Please report it privately (see [SECURITY.md](SECURITY.md)).
+Fork the repo, work on a branch and open a pull request; every change is reviewed before it is
+merged. See [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately as described in
+[SECURITY.md](SECURITY.md).
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE). You may use, study, change and share Axiom for any
-noncommercial purpose, including personal use, research, education and nonprofit work, as long
-as you keep the license and copyright notice with it. Releases before V1.11.0 were published
-under CC BY-NC-ND 4.0.
+[PolyForm Noncommercial 1.0.0](LICENSE): use, study, change and share Axiom for any noncommercial
+purpose, keeping the license and copyright notice. Releases before V1.11.0 were published under
+CC BY-NC-ND 4.0. The author ([YoMosa2009](https://github.com/YoMosa2009)) keeps the right to
+distribute official builds commercially and to run paid hosted services such as Axiom Cloud.
+Third-party commercial use needs written permission; see
+[CONTRIBUTING.md](CONTRIBUTING.md#licensing-of-contributions).
 
-`PolyForm Noncommercial 1.0.0` applies to third-party use of this repository. The author and
-copyright holder ([YoMosa2009](https://github.com/YoMosa2009)) retains all rights to distribute
-official Axiom builds commercially and to operate paid hosted services, including the optional
-managed Axiom cloud subscription ([Terms of Service](TERMS.md) · [Privacy Policy](PRIVACY.md)). Third-party commercial use requires the author's written
-permission; see [CONTRIBUTING.md](CONTRIBUTING.md#licensing-of-contributions) for contributor terms.
+<div align="center">
 
-## Author
+Built by [YoMosa2009](https://github.com/YoMosa2009) ·
+[MalxLabs.work](https://malxlabs.work) · [Axiominference.work](https://axiominference.work/)
 
-Built by [YoMosa2009](https://github.com/YoMosa2009)
-
-[MalxLabs.work](https://malxlabs.work) · [MalxInference.work](https://malxinference.work/) · [Axiominference.work](https://axiominference.work/)
+</div>
