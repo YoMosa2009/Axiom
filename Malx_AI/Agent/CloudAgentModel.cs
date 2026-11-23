@@ -260,6 +260,14 @@ namespace Malx_AI.Agent
                 {
                     lastFailure = ex;
 
+                    // A model the provider has withdrawn fails the same way every time. Say so
+                    // plainly instead of retrying and calling it a transient problem (Dots3-Note
+                    // Preview free left OpenRouter in November 2026 and every run reported that).
+                    if (IsModelWithdrawnFailure(ex.Message))
+                        throw new AgentFatalException(
+                            "The cloud model for this Workplace is no longer offered by the provider, so the agent could not start. "
+                            + "Update Axiom, or switch Workplace to a local model, Hybrid Local or Axiom Cloud.", ex);
+
                     // Self-hosted servers (llama-server behind Ollama) reject a tool call that was
                     // cut off at the output limit with a 500 "invalid tool call arguments ...
                     // unexpected end of JSON input". The same request fails the same way every
@@ -274,6 +282,14 @@ namespace Malx_AI.Agent
 
             return null;
         }
+
+        /// <summary>True for a 404 that means the model itself is gone, not a passing outage.</summary>
+        internal static bool IsModelWithdrawnFailure(string? message)
+            => !string.IsNullOrEmpty(message)
+                && message.Contains("404", StringComparison.Ordinal)
+                && (message.Contains("no longer available", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("No endpoints found", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("not a valid model", StringComparison.OrdinalIgnoreCase));
 
         /// <summary>Output budget for one agent turn: enough for a sizeable file in one call.</summary>
         internal const int AgentTurnMaxTokens = 16384;
