@@ -16,6 +16,8 @@ internal static class AccountGateway
     internal const long SessionAllowanceMicros = 380_000;
     internal const long WeeklyAllowanceMicros = 1_350_000;
     private const string RatePolicy = "account-entry";
+    private const string DiagnosticsRatePolicy = "diagnostics";
+    internal const long MaxDiagnosticsBodyBytes = 256 * 1024;
     private static readonly object RequestIdentity = new();
 
     public static WebApplication Create(AccountGatewayOptions options, IAxiomSignInEmail email,
@@ -56,6 +58,11 @@ internal static class AccountGateway
                 context.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
+                }));
+            config.AddPolicy(DiagnosticsRatePolicy, context => RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
                 }));
         });
         var app = builder.Build();
@@ -109,6 +116,28 @@ internal static class AccountGateway
             context.Response.Headers.CacheControl = "no-store";
             return Results.Ok(session);
         }).RequireRateLimiting(RatePolicy);
+
+        // Anonymous, opt-out desktop diagnostics. No sign-in: the desktop sends a random install
+        // id, never an account or email, and the gateway does not store IP addresses.
+        var diagnostics = new DiagnosticsStore(options.DatabasePath, clock);
+        app.MapPost("/v1/diagnostics", async (HttpContext context) =>
+        {
+            if (context.Request.ContentLength is not (> 0 and <= MaxDiagnosticsBodyBytes))
+                return LocalGateway.Error("Send a diagnostics batch under 256 KB.", "invalid_request", 400);
+            DiagnosticsBatchInput? batch;
+            try
+            {
+                batch = await context.Request.ReadFromJsonAsync<DiagnosticsBatchInput>(
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web), context.RequestAborted);
+            }
+            catch (JsonException)
+            {
+                batch = null;
+            }
+            return batch is not null && diagnostics.Accept(batch) is int stored
+                ? Results.Ok(new { stored })
+                : LocalGateway.Error("The diagnostics batch was not valid.", "invalid_request", 400);
+        }).RequireRateLimiting(DiagnosticsRatePolicy);
 
         var secure = app.MapGroup("/v1").AddEndpointFilter(async (context, next) =>
         {

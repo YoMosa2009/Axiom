@@ -27,8 +27,21 @@ namespace Malx_AI
             return AppendWithRotationAsync("backend-events.log", sb.ToString());
         }
 
+        /// <summary>Raised for every logged error; anonymous diagnostics listens here.</summary>
+        public static event Action<string, Exception>? ErrorLogged;
+
         public static Task LogErrorAsync(string area, Exception ex)
         {
+            try
+            {
+                if (ex is not null)
+                    ErrorLogged?.Invoke(area, ex);
+            }
+            catch
+            {
+                // A listener failure must never stop the error from being logged.
+            }
+
             var sb = new StringBuilder();
             sb.AppendLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{area}]");
             sb.AppendLine(ex.Message);

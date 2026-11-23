@@ -11623,6 +11623,14 @@ namespace Malx_AI
             bool ownsRun = !_isProcessing;
             using var evidence = new ConversationEvidence(AppDataPaths.Root, "workplace-" + _projectKnowledgeBaseId,
                 string.Join("\n\n", _chatCards.Select(c => c.Role + ":\n" + c.Content)) + "\nCurrent user request:\n" + QueryInput.Text);
+            if (ownsRun)
+            {
+                // Anonymous usage counts (mode only, never content); off when diagnostics are off.
+                string backend = !_isCloudModeEnabled ? "local"
+                    : _isHybridLocalCouncilSelected ? "hybrid"
+                    : _openRouterChatService.IsManagedEndpointModel(GetEffectiveCouncilModelId()) ? "axiom-cloud" : "openrouter";
+                DiagnosticsService.RecordFeature("Workplace.Run", backend + (_isSingleModelMode ? " single" : " council"));
+            }
             // Every reply the run produces (architect, builder, agent steps, critic; local, cloud
             // or Hybrid Local) reports its speed to the header readout.
             using (GenerationTelemetry.Use(_generationMonitor))

@@ -28,6 +28,23 @@ if (args.Length > 0 && args[0] == "--backup-accounts")
     }
 }
 
+if (args.Length > 0 && args[0] == "--diagnostics-summary")
+{
+    int days = args.Length > 1 && int.TryParse(args[1], out int parsedDays) ? parsedDays : 7;
+    var store = new DiagnosticsStore(Required("AXIOM_ACCOUNTS_DB"));
+    Console.WriteLine($"Axiom desktop diagnostics, last {days} day(s)");
+    Console.WriteLine("Active installs by version:");
+    foreach (var (version, installs) in store.ActiveInstalls(days))
+        Console.WriteLine($"  {version,-12} {installs,6}");
+    Console.WriteLine();
+    Console.WriteLine($"{"Count",7} {"Installs",8}  {"Kind",-8} {"Area",-34} {"Type",-30} Latest   Message");
+    foreach (var row in store.Summarize(days))
+        Console.WriteLine($"{row.Occurrences,7} {row.Installs,8}  {row.Kind,-8} {Trim(row.Area, 34),-34} {Trim(row.ExceptionType, 30),-30} {row.LatestVersion,-8} {Trim(row.Message, 70)}");
+    return 0;
+
+    static string Trim(string value, int max) => value.Length <= max ? value : value[..(max - 1)] + "…";
+}
+
 if (args is ["--provision-live", var publicOriginArg, ..])
 {
     string? writeEnvPath = args switch

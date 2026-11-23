@@ -3558,6 +3558,13 @@ namespace Malx_AI
             }
         }
 
+        private void DiagnosticsToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            bool enabled = DiagnosticsToggle.IsChecked == true;
+            if (enabled != DiagnosticsService.Enabled)
+                DiagnosticsService.SetEnabled(enabled);
+        }
+
         private void SmartCompactionToggle_Changed(object sender, RoutedEventArgs e)
         {
             _compactionEngine.SetEnabled(SmartCompactionToggle.IsChecked == true);
@@ -4346,6 +4353,11 @@ namespace Malx_AI
 
         private async Task SendUserMessageFromInputAsync(string? explicitUserMessage = null, string? temporaryCloudModelId = null)
         {
+            // Anonymous usage counts (mode and effort only, never content); off when diagnostics are off.
+            DiagnosticsService.RecordFeature("Chat.Send", !_cloudModeActive ? "local"
+                : IsManagedEndpointModelSelected() ? "axiom-cloud"
+                : IsCustomEndpointModelSelected() ? "hybrid" : "openrouter");
+            DiagnosticsService.RecordFeature("Effort", EffortPolicy.Current.ToString());
             // Every reply this turn produces (local, cloud or Hybrid Local) reports its speed here.
             using (GenerationTelemetry.Use(_generationMonitor))
                 await SendUserMessageFromInputCoreAsync(explicitUserMessage, temporaryCloudModelId);

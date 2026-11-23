@@ -580,6 +580,7 @@ namespace Malx_AI
                 UpdateTokenUsageIndicator();
                 InitializeWorkplaceChats();
                 SmartCompactionToggle.IsChecked = _compactionEngine.IsEnabled;
+                DiagnosticsToggle.IsChecked = DiagnosticsService.Enabled;
 
                 _ = InitializeProcessingModeAsync();
                 string? installedUpdateVersion = UpdateApplyService.ConsumeSuccessMarker();

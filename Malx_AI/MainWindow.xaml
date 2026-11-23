@@ -2934,6 +2934,18 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
                                     <StackPanel>
+                                        <TextBlock Text="Diagnostics" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="DiagnosticsToggle" Content="Send anonymous error reports and usage counts" IsChecked="True"
+                                                  Checked="DiagnosticsToggle_Changed" Unchecked="DiagnosticsToggle_Changed"
+                                                  Foreground="{DynamicResource NotebookTextBrush}" FontSize="11"
+                                                  AutomationProperties.Name="Send anonymous error reports and usage counts"/>
+                                        <TextBlock Text="Helps fix crashes and errors. Sends the error type, where in Axiom it happened (with personal details removed), the app and Windows version, and counts such as which mode you chat in. Never your chats, files, notes, keys or account. Turning this off also deletes anything not yet sent."
+                                                   FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
+                                    <StackPanel>
                                         <TextBlock Text="Application updates" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
                                         <TextBlock Text="Axiom checks the official YoMosa2009/Axiom GitHub releases. New ZIP releases can be downloaded, verified, installed, and restarted from inside the app."
                                                    FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>

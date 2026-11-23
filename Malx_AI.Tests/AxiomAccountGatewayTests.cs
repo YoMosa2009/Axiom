@@ -11,7 +11,7 @@ using Xunit;
 
 namespace Malx_AI.Tests;
 
-public sealed class AxiomAccountGatewayTests : IDisposable
+public sealed partial class AxiomAccountGatewayTests : IDisposable
 {
     private const string Signer = "whsec_account_fixture";
     private readonly string _database = Path.Combine(Path.GetTempPath(), $"axiom-accounts-{Guid.NewGuid():N}.sqlite");

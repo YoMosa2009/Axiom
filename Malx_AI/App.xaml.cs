@@ -156,6 +156,8 @@ namespace Malx_AI
             }
 
             WindowsToastNotificationService.Initialize();
+            if (!IsUpdateHelperProcess)
+                DiagnosticsService.Start("start");
             base.OnStartup(e);
         }
 
@@ -196,6 +198,9 @@ namespace Malx_AI
             // see NativeDecodeForensics.MarkCleanShutdown).
             try { NativeDecodeForensics.MarkCleanShutdown(); } catch { }
 
+            // Unsent diagnostics are saved to disk, not sent: no network wait at exit.
+            try { DiagnosticsService.SaveOnExit(); } catch { }
+
             // The embedded CPython interpreter's threads genuinely can outlive the UI, so it is
             // told to stop. It bounds its own wait internally.
             try { PythonExecutionService.ShutdownRuntime(); } catch { }
@@ -234,6 +239,7 @@ namespace Malx_AI
         private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
         {
             Debug.WriteLine($"Unhandled dispatcher exception: {e.Exception}");
+            DiagnosticsService.RecordCrash("App.DispatcherUnhandledException", e.Exception);
             _ = BackendLogService.LogErrorAsync("App.DispatcherUnhandledException", e.Exception);
             MessageBox.Show(BuildUserFacingErrorText(e.Exception, critical: false), "Axiom — Error", MessageBoxButton.OK, MessageBoxImage.Error);
             e.Handled = true;
@@ -243,6 +249,7 @@ namespace Malx_AI
         {
             Exception ex = (Exception)e.ExceptionObject;
             Debug.WriteLine($"Unhandled domain exception: {ex}");
+            DiagnosticsService.RecordCrash("App.CurrentDomainUnhandledException", ex);
             _ = BackendLogService.LogErrorAsync("App.CurrentDomainUnhandledException", ex);
             MessageBox.Show(BuildUserFacingErrorText(ex, critical: true), "Axiom — Critical Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
