@@ -24,7 +24,7 @@ namespace Malx_AI.Agent
         private static readonly Regex BareObjectRegex =
             new(@"""(?:tool|name)""\s*:\s*""[a-z_]+""", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex ToolHeaderRegex =
-            new(@"(?im)^\s*(?:TOOL|ACTION)\s*[:\-]?\s*(?<tool>[a-z_]{3,30})\s*$", RegexOptions.Compiled);
+            new(@"(?im)^\s*(?:TOOL|ACTION)\s*[:\-]?\s*(?<tool>[a-z_]{3,30})(?:[ \t]+(?<inline>[^\r\n]*?))?[ \t]*\r?$", RegexOptions.Compiled);
         private static readonly Regex KeyValueRegex =
             new(@"(?im)^\s*(?<key>[a-z_]{2,24})\s*:\s*(?<value>.*)$", RegexOptions.Compiled);
         private static readonly Regex HeredocRegex =
@@ -191,8 +191,17 @@ namespace Malx_AI.Agent
                 return false;
 
             string tool = header.Groups["tool"].Value.ToLowerInvariant();
+            string inline = header.Groups["inline"].Success ? header.Groups["inline"].Value.Trim() : string.Empty;
+            // The one-line form only counts when the reply opens with it; elsewhere a line such as
+            // "Tool run_command failed earlier" is part of an answer.
+            if (inline.Length > 0 && !text.TrimStart().StartsWith(header.Value.Trim(), StringComparison.Ordinal))
+                return false;
             if (!AgentToolNames.IsKnown(tool))
             {
+                // "Action: open the page" in prose is not a tool call; only a bare header line is
+                // a failed attempt worth reporting back to the model.
+                if (inline.Length > 0)
+                    return false;
                 error = $"'{tool}' is not an available tool. Use one of: {string.Join(", ", AgentToolNames.All)}.";
                 return false;
             }
@@ -214,10 +223,26 @@ namespace Malx_AI.Agent
             foreach (Match pair in KeyValueRegex.Matches(remainder))
             {
                 string key = pair.Groups["key"].Value.ToLowerInvariant();
-                if (key is "tool" or "action" or "end")
+                string value = pair.Groups["value"].Value.Trim().Trim('"');
+                // "action:" is an argument (browser_control's open/inspect/click), except when it
+                // just repeats a tool name in the "ACTION: run_command" header style.
+                if (key is "tool" or "end" || key == "action" && AgentToolNames.IsKnown(value.ToLowerInvariant()))
                     continue;
                 if (!arguments.ContainsKey(key))
-                    arguments[key] = pair.Groups["value"].Value.Trim().Trim('"');
+                    arguments[key] = value;
+            }
+
+            if (inline.Length > 0)
+                ApplyInlineArgument(tool, inline, arguments);
+            if (tool == AgentToolNames.BrowserControl && !arguments.ContainsKey("action"))
+            {
+                // Small models often leave the action out; the other arguments say which one it is.
+                string? inferred = arguments.ContainsKey("text") && arguments.ContainsKey("target_id") ? "fill"
+                    : arguments.ContainsKey("target_id") ? "click"
+                    : arguments.ContainsKey("url") ? "open"
+                    : null;
+                if (inferred != null)
+                    arguments["action"] = inferred;
             }
 
             if (arguments.Count == 0 && !string.Equals(tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))
@@ -228,6 +253,43 @@ namespace Malx_AI.Agent
 
             call = new AgentToolCall(tool, arguments);
             return true;
+        }
+
+        /// <summary>
+        /// Reads the one-line form "TOOL browser_control open https://example.com",
+        /// "TOOL use_skill brand-voice" or "TOOL run_command dir". Explicit "key: value" lines win.
+        /// </summary>
+        private static void ApplyInlineArgument(string tool, string inline, Dictionary<string, string> arguments)
+        {
+            string[] words = inline.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0)
+                return;
+            switch (tool)
+            {
+                case AgentToolNames.BrowserControl:
+                    arguments.TryAdd("action", words[0].ToLowerInvariant());
+                    if (words.Length > 1)
+                        arguments.TryAdd(words[0].Equals("click", StringComparison.OrdinalIgnoreCase)
+                            || words[0].Equals("fill", StringComparison.OrdinalIgnoreCase) ? "target_id" : "url", words[1].Trim());
+                    break;
+                case AgentToolNames.UseSkill:
+                    arguments.TryAdd("name", inline);
+                    break;
+                case AgentToolNames.RunCommand:
+                    arguments.TryAdd("command", inline);
+                    break;
+                case AgentToolNames.Finish:
+                    arguments.TryAdd("summary", inline);
+                    break;
+                case AgentToolNames.ReadFile:
+                case AgentToolNames.ListDirectory:
+                    arguments.TryAdd("path", inline);
+                    break;
+                case AgentToolNames.FindFiles:
+                case AgentToolNames.SearchText:
+                    arguments.TryAdd("pattern", inline);
+                    break;
+            }
         }
 
         private static void CopyProperties(

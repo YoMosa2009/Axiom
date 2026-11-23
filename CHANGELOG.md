@@ -96,6 +96,10 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Fixed
 
+- Agent Access on small local models: browser calls lost their action (the reply parser dropped
+  every `action:` line), and the instructions showed only a shell example. Small models now get
+  browser, Skill and "just answer" examples, and one-line calls such as `TOOL use_skill brand-voice`
+  are understood.
 - Browser clicks were refused as "page changed" when a page or the browser updated its title
   (an unread count, the profile label); the page is now identified by its document and address.
 - Filling a browser text field could report failure because the browser reports the new value a
