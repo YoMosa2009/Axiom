@@ -46,6 +46,8 @@ sandbox, calculator, Skills and Plugins, and Persona notes that give the model b
 you. Type `@ProjectCanvas` to render an answer as a live HTML, SVG or Markdown artifact beside the
 chat.
 
+![Chat: a reply with a formatted table, and the composer with Skills, Plugins, effort and web search](docs/images/chat.png)
+
 **Workplace.** For work that takes more than one pass.
 - **Single Model:** one agent plans, uses tools and checks its own result.
 - **Council:** a Builder does the work; at Extra High and Ultra effort a Critic reviews it.
@@ -60,7 +62,7 @@ chat.
 a finished artifact, such as a slide deck, a print-ready PDF or a charted report. On small models
 Axiom builds the artifact itself from the model's outline.
 
-<img src="docs/images/skills.png" alt="Skills panel" width="420">
+<img src="docs/images/skills.png" alt="Skills panel: built-in Skills to attach, and Create custom Skill" width="360">
 
 **Effort.** Pick Light to Ultra per message. Higher levels think longer and allow more tool
 rounds; Extra High and Ultra add the Critic check.
@@ -90,6 +92,9 @@ same model.
    folder and run `Malx_AI.exe`.)
 2. The first-run guide checks your hardware, shows which local models fit and downloads one, or
    lets you set up a cloud key or your own server.
+
+   <img src="docs/images/first-run.png" alt="First-run guide: hardware check and local models that fit this PC" width="560">
+
 3. Open **Chat**, or head to **Workplace**.
 
 > **"Windows protected your PC"?** Axiom isn't code-signed yet. Click **More info**, then
