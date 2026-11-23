@@ -235,7 +235,7 @@ OpenRouter with your own key.
 |---|---|---|
 | **Edios 1.5** | Google Gemma 4 31B (free) | General chat, reasoning, documents, tool use |
 | **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Repository-aware coding |
-| **Workplace cloud model** | Dots Studio Dots3-Note Preview (free) | The one model behind every Workplace cloud run: Council, Single Model, Agent Access, and Computer Use. Text + image input, 51[...]
+| **Workplace cloud model** | NVIDIA Nemotron 3.5 Super VL (free) | The one model behind every Workplace cloud run: Council, Single Model, Agent Access, and Computer Use. Text + image input, 1M-token context. |
 | **Kestral 1** | Your self-hosted endpoint | Hybrid Local inference |
 
 The Workplace deliberately runs on exactly one cloud model, with no silent fallback to

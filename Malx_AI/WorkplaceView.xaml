@@ -329,7 +329,7 @@
                             <ComboBoxItem Content="Threnody 1.0" Tag="threnody-1.0" ToolTip="DeepSeek: DeepSeek V4.1 Flash"/>
                             <ComboBoxItem Content="Edios 1.5" Tag="edios-1.5" ToolTip="Google Gemma 4 31B (free)"/>
                             <ComboBoxItem Content="Hepha 2.5 Coder" Tag="hepha-2.5-coder" ToolTip="NVIDIA Nemotron 3 Ultra (free)"/>
-                            <ComboBoxItem Content="Dots3-Note" Tag="workplace-gpt-oss-20b" ToolTip="Dots Studio: Dots3-Note Preview (free)"/>
+                            <ComboBoxItem Content="Nemotron 3.5 Super VL" Tag="workplace-gpt-oss-20b" ToolTip="NVIDIA: Nemotron 3.5 Super VL (free)"/>
                         </ComboBox>
 
                         <Button x:Name="WorkplaceConfigButton"

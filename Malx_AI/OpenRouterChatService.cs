@@ -198,10 +198,10 @@ namespace Malx_AI
                 // Exactly one model for Council / Single Model / Agent Access / Computer Use: a
                 // mid-task swap breaks role continuity, and every Workplace feature (Computer Use
                 // screenshots, image attachments) needs image input, so there are no alternates.
-                PrimaryApiModelId: "dots-studio/dots-3-note-preview:free",
+                PrimaryApiModelId: "nvidia/nemotron-3.5-super-vl:free",
                 AlternativeApiModelIds: [],
                 IsCodeSpecialized: true,
-                ApproximateContextWindowTokens: 512000,
+                ApproximateContextWindowTokens: 1_000_000,
                 DefaultMaxCompletionTokens: 16384,
                 // Known to take images, so Computer Use is not blocked before the model catalog
                 // has been fetched (the name alone gives no hint that it can see).
@@ -328,7 +328,7 @@ namespace Malx_AI
         public const string Threnody10ApiModelId = "deepseek/deepseek-v4.1-flash";
         public const string Threnody10OpenRouterDisplayName = "DeepSeek: DeepSeek V4.1 Flash";
         public const string WorkplaceCouncilDefaultModelId = "workplace-gpt-oss-20b";
-        public const string WorkplaceCouncilDefaultModelLabel = "Dots Studio: Dots3-Note Preview (free)";
+        public const string WorkplaceCouncilDefaultModelLabel = "NVIDIA: Nemotron 3.5 Super VL (free)";
         public const string CustomEndpointModelId = "custom-endpoint";
         public const string CustomEndpointModelLabel = "Kestral 1";
         public const string AxiomManagedModelId = "axiom-deepseek-4.1f-1017";

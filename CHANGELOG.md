@@ -6,6 +6,10 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Added
 
+- Anonymous diagnostics (errors, crashes and usage counts), on by default with a switch in
+  Settings › General. No prompts, files, notes, keys or account details; see PRIVACY.md.
+- Persona notes reach Normal Chat as background about you, with a switch to keep them local.
+- Hybrid Local replies now update the token meter (usage requested from the server, estimate as fallback).
 - Optional managed Axiom subscription support (`DeepSeek 4.1F-1017`, `$9/mo` allocating
   `$5.25/mo` default upstream allowance backed by `tools/AxiomSubscriptionGateway` with
   DPAPI-protected sessions, email verification/recovery, live and sandbox Stripe Checkout,
@@ -42,6 +46,13 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Changed
 
+- Workplace cloud model is now **NVIDIA Nemotron 3.5 Super VL (free)**: OpenRouter withdrew
+  Dots3-Note Preview, which made every Workplace cloud run fail.
+- Effort levels: Extra High and Ultra give thinking turns more output room, Hybrid Local turns thinking
+  on at High and above, Ultra agent runs on Axiom Cloud are held to High's step limit, and the menu
+  says what each level does.
+- Workplace status lines use the same plain wording in every mode; only warnings and errors raise the
+  notification badge.
 - Raised managed gateway output limits (`4,096` default, up to `16,384` tokens), added opt-in
   managed `reasoning` forwarding (`ExtraHigh`/`Ultra` Workplace Agent & Chat Thinking), and
   switched gateway pre-request holds to dynamic prompt/budget estimation so subscribers can spend
@@ -76,6 +87,8 @@ These changes are in source and are not included in the V1.11.0 download.
 
 ### Fixed
 
+- Long local Normal Chat conversations at High effort and above could overrun the context window.
+- A withdrawn cloud model is reported plainly instead of being retried as a "transient problem".
 - Managed-only accounts without a personal OpenRouter API key no longer fail `CloudAgentModel`
   availability checks in Workplace Agent Access.
 - Opening **Settings** closes Workplace/MCP popups, elevates the Settings overlay above
