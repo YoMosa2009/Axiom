@@ -280,7 +280,7 @@ namespace Malx_AI
             Guid? refinementParentId)
         {
             UpdateStageIndicator(CouncilRole.Builder, false, false, false);
-            RelayStatusBlock.Text = "Agent: Working...";
+            RelayStatusBlock.Text = "Agent working…";
             LogActivity("Single agent run started.");
 
             UpdateWorkplaceStatusLine("Working");

@@ -482,7 +482,7 @@
                                     <TextBlock x:Name="ContextPressureBlock" Text="Context pressure: --" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource NotebookTextBrush}" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </DockPanel.ToolTip>
-                            <TextBlock x:Name="RelayStatusBlock" DockPanel.Dock="Left" Text="Relay: Idle" Style="{StaticResource HeaderStatusTextStyle}" Foreground="{DynamicResource PrimaryAccentBrush}"/>
+                            <TextBlock x:Name="RelayStatusBlock" DockPanel.Dock="Left" Text="Ready" Style="{StaticResource HeaderStatusTextStyle}" Foreground="{DynamicResource PrimaryAccentBrush}"/>
                             <TextBlock DockPanel.Dock="Left" Style="{StaticResource HeaderStatusSeparatorStyle}"/>
                             <TextBlock x:Name="TaskTypeBadgeText" DockPanel.Dock="Left" Text="General Task" Style="{StaticResource HeaderStatusTextStyle}"/>
                             <TextBlock DockPanel.Dock="Left" Style="{StaticResource HeaderStatusSeparatorStyle}"/>

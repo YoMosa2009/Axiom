@@ -832,7 +832,7 @@ namespace Malx_AI
             if (turnPolicy.AnswerOnly)
                 maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);
             LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, {followUpKind} turn, scope {scope.Describe()}.");
-            RelayStatusBlock.Text = enableCouncilSynergy ? "Relay: Builder executing agent mission..." : "Relay: Agent running";
+            RelayStatusBlock.Text = "Agent working…";
 
             AgentRunJournal runJournal = BeginAgentRunJournal(fileBackup);
             var session = new AgentSession(
@@ -954,7 +954,7 @@ namespace Malx_AI
             if (enableCouncilSynergy && useCriticPass && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Critic)))
             {
                 UpdateStageIndicator(CouncilRole.Critic, architectPlan != null, true, false);
-                RelayStatusBlock.Text = "Relay: Critic is reviewing...";
+                RelayStatusBlock.Text = "Checking the work…";
                 LogActivity("Critic auditing agent execution...");
 
                 string touchedFilesList = _activeAgentTaskState?.TouchedFiles.Count > 0
@@ -1118,7 +1118,7 @@ namespace Malx_AI
             SendButton.ToolTip = _isSingleModelMode ? "Run Single Model Agent" : "Run Builder";
             SendButton.ToolTip = null;
             StopButton.IsEnabled = false;
-            RelayStatusBlock.Text = "Relay: Idle";
+            RelayStatusBlock.Text = "Ready";
             NotifyManagedUsageChangedIfActive();
         }
 

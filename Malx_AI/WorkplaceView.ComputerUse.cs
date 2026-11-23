@@ -143,7 +143,7 @@ namespace Malx_AI
                 }
             }
 
-            RelayStatusBlock.Text = "Relay: Computer Use";
+            RelayStatusBlock.Text = "Computer Use running…";
             PublishCouncilPetStatus("Computer Use", "Operating the desktop.");
             const string runTitle = "Computer Use";
             AgentRunCard runCard = StartAgentRunCard(goal, runTitle);
@@ -410,7 +410,7 @@ namespace Malx_AI
             _isProcessing = false;
             SendButton.IsEnabled = true;
             StopButton.IsEnabled = false;
-            RelayStatusBlock.Text = "Relay: Idle";
+            RelayStatusBlock.Text = "Ready";
             _cancellationTokenSource?.Dispose();
             _cancellationTokenSource = null;
         }

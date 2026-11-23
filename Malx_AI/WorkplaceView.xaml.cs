@@ -553,7 +553,7 @@ namespace Malx_AI
                     await BackendLogService.LogEventAsync("Workplace.CloudRateLimitRetry", $"Role:{roleName}\nWaitSeconds:{waitSeconds}\nAttempt:{attempt + 1}/{CloudCouncilRateLimitRetryLimit}");
                     await Dispatcher.InvokeAsync(() =>
                     {
-                        RelayStatusBlock.Text = $"Relay: Rate-limited — retrying in {waitSeconds}s...";
+                        RelayStatusBlock.Text = $"Rate-limited, retrying in {waitSeconds}s…";
                         streamingCard.Content = $"⏳ Provider rate-limited. Retrying in {waitSeconds}s (attempt {attempt + 1}/{CloudCouncilRateLimitRetryLimit})...";
                     }, DispatcherPriority.Background);
 
@@ -2172,7 +2172,7 @@ namespace Malx_AI
 
             QueryInput.Text = string.Empty;
             MemoryFocusBlock.Text = "Memory Focus: None";
-            RelayStatusBlock.Text = "Relay: Idle";
+            RelayStatusBlock.Text = "Ready";
             PipelineProgressBlock.Text = string.Empty;
             RevisionNoticeBlock.Visibility = Visibility.Collapsed;
             RevisionNoticeBlock.Text = "Issues were found and the output was revised.";
@@ -4430,7 +4430,7 @@ namespace Malx_AI
                 return;
             }
 
-            RelayStatusBlock.Text = "Relay: Semantic search...";
+            RelayStatusBlock.Text = "Searching your files…";
             LogActivity($"Filtering semantic memory with tag '{concept}'...");
 
             try
@@ -4454,7 +4454,7 @@ namespace Malx_AI
             }
             finally
             {
-                RelayStatusBlock.Text = "Relay: Idle";
+                RelayStatusBlock.Text = "Ready";
             }
         }
 
@@ -4770,7 +4770,7 @@ namespace Malx_AI
 
         private void StopMessage_Click(object sender, RoutedEventArgs e)
         {
-            RelayStatusBlock.Text = "Relay: Stopping...";
+            RelayStatusBlock.Text = "Stopping…";
             PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "Stopping the run.");
             StopButton.IsEnabled = false;
             NoteAgentStopRequested();
@@ -7303,7 +7303,7 @@ namespace Malx_AI
                 : $"Workplace cloud mode enabled. Builder and Critic use {WorkplaceCloudRoleDisplayName}; provider availability is checked when the run starts.");
             RefreshSingleModelModeUi();
             SavePersistedSession();
-            RelayStatusBlock.Text = "Relay: Idle";
+            RelayStatusBlock.Text = "Ready";
         }
 
         private void WorkplaceHybridToggleButton_Click(object sender, RoutedEventArgs e)
@@ -7412,7 +7412,7 @@ namespace Malx_AI
 
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    RelayStatusBlock.Text = "Relay: Web search in progress...";
+                    RelayStatusBlock.Text = "Searching the web…";
                     HardwareInfoBlock.Text = "Runtime: web tool engaged by council";
                 }, DispatcherPriority.Background);
 
@@ -12141,7 +12141,7 @@ namespace Malx_AI
                 else if (false && (HasEffectiveLocalRoleModel(CouncilRole.Architect) || CanUseCloudCouncil))
                 {
                     UpdateStageIndicator(CouncilRole.Architect, false, false, false);
-                    RelayStatusBlock.Text = "Relay: Architect is planning...";
+                    RelayStatusBlock.Text = "Planning…";
                     LogActivity("Architect relay started — analyzing request...");
 
                     var architectConfig = GetEffectiveRoleConfig(CouncilRole.Architect);
@@ -12385,7 +12385,7 @@ namespace Malx_AI
                 {
                     UpdateStageIndicator(CouncilRole.Builder, false, false, false);
                     ReportAgentActivity("Builder is writing");
-                    RelayStatusBlock.Text = "Relay: Builder is executing...";
+                    RelayStatusBlock.Text = "Working…";
                     LogActivity("Builder relay started — generating implementation...");
 
                     var builderConfig = GetEffectiveRoleConfig(CouncilRole.Builder);
@@ -13361,7 +13361,7 @@ namespace Malx_AI
                     if (detectedLang is "python" or "java" or "html")
                     {
                         LogActivity($"Code sandbox triggered for '{detectedLang}'. Executing...");
-                        RelayStatusBlock.Text = $"Relay: Running {detectedLang} sandbox...";
+                        RelayStatusBlock.Text = $"Running {detectedLang} code…";
                         PublishCouncilPetStatus("Sandbox", $"Validating {detectedLang.ToUpperInvariant()}.");
                         _activePythonSandboxPreamble = detectedLang == "python" ? _builderPythonSandboxPreamble : string.Empty;
                         sandboxResult = await ExecuteCodeSandboxAsync(builderOutput, detectedLang, runContext);
@@ -13528,7 +13528,7 @@ namespace Malx_AI
                 {
                     ReportAgentActivity("Critic is reviewing");
                     UpdateStageIndicator(CouncilRole.Critic, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), !string.IsNullOrWhiteSpace(runContext.BuilderOutput), false);
-                    RelayStatusBlock.Text = "Relay: Critic is reviewing...";
+                    RelayStatusBlock.Text = "Checking the work…";
                     LogActivity("Critic relay started — auditing builder output...");
 
                     string criticSystem = GetEmbeddedSystemPrompt(CouncilRole.Critic)
@@ -13798,7 +13798,7 @@ namespace Malx_AI
                             PipelineProgressBlock.Text = "Repair pass: Builder is patching Critic findings.";
 
                             UpdateStageIndicator(CouncilRole.Builder, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), false, true);
-                            RelayStatusBlock.Text = "Relay: Bounded repair pass...";
+                            RelayStatusBlock.Text = "Fixing what the check found…";
                             PublishCouncilPetStatus("Builder", "Applying a small repair.");
 
                             string patchSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
@@ -13997,7 +13997,7 @@ namespace Malx_AI
 
                             // --- Revision Builder: full rewrite with Critic findings as structured checklist ---
                             UpdateStageIndicator(CouncilRole.Builder, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), false, true);
-                            RelayStatusBlock.Text = "Relay: Bounded repair pass...";
+                            RelayStatusBlock.Text = "Fixing what the check found…";
                             PublishCouncilPetStatus("Builder", "Revising the artifact.");
 
                             string revisionBuilderSystem = GetEmbeddedSystemPrompt(CouncilRole.Builder)
@@ -14144,7 +14144,7 @@ namespace Malx_AI
                 {
                     // Critic reviews architect output when no builder is loaded
                     UpdateStageIndicator(CouncilRole.Critic, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), false, false);
-                    RelayStatusBlock.Text = "Relay: Critic is reviewing...";
+                    RelayStatusBlock.Text = "Checking the work…";
                     string criticSystem = GetEmbeddedSystemPrompt(CouncilRole.Critic)
                         + (_criticSensitivity == CriticSensitivityLevel.Strict
                             ? "\n[SENSITIVITY: STRICT] Apply heightened scrutiny to all sections and flag anything that could cause incorrect behavior, even if minor."
@@ -14272,8 +14272,8 @@ namespace Malx_AI
                 SavePersistedSession();
 
                 RelayStatusBlock.Text = runContext.FinalVerificationFailed
-                    ? "Relay: Completed with unresolved requirements"
-                    : "Relay: Completed";
+                    ? "Done, with open requirements"
+                    : "Done";
                 PublishCouncilPetStatus(
                     runContext.FinalVerificationFailed ? "Review" : "Council",
                     runContext.FinalVerificationFailed ? "Done, but needs review." : "Done. Looks good.");
@@ -14289,7 +14289,7 @@ namespace Malx_AI
             }
             catch (OperationCanceledException)
             {
-                RelayStatusBlock.Text = "Relay: Stopped";
+                RelayStatusBlock.Text = "Stopped";
                 PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "Run stopped.");
                 UpdateStageIndicator(null, false, false, false);
                 PipelineProgressBlock.Text = string.Empty;
@@ -14311,8 +14311,8 @@ namespace Malx_AI
             catch (OpenRouterKeyExhaustedException keyExhausted)
             {
                 RelayStatusBlock.Text = keyExhausted.IsCustomEndpoint
-                    ? "Relay: Allowance exhausted"
-                    : "Relay: API key out of usage";
+                    ? "Axiom Cloud allowance used up"
+                    : "API key out of usage";
                 PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council",
                     keyExhausted.IsCustomEndpoint ? "Usage allowance exhausted." : "API key out of usage.");
                 UpdateStageIndicator(null, false, false, false);
@@ -14330,7 +14330,7 @@ namespace Malx_AI
             }
             catch (Exception ex)
             {
-                RelayStatusBlock.Text = "Relay: Error";
+                RelayStatusBlock.Text = "Something went wrong";
                 PublishCouncilPetStatus(_isSingleModelMode ? "Agent" : "Council", "Something needs attention.");
                 UpdateStageIndicator(null, false, false, false);
                 LogActivity($"Relay error: {ex.Message}");
@@ -14493,7 +14493,7 @@ namespace Malx_AI
             for (int i = 0; i < segments.Count; i++)
             {
                 LogActivity($"Builder segment {i + 1}/{segments.Count}: steps {string.Join(", ", segments[i].Select(s => s.TrimStart().Split(['.', ')'])[0]))}");
-                RelayStatusBlock.Text = $"Relay: Builder segment {i + 1}/{segments.Count}...";
+                RelayStatusBlock.Text = $"Writing part {i + 1} of {segments.Count}…";
 
                 var segmentPayload = new StringBuilder();
                 segmentPayload.AppendLine(BuildCouncilGoalContractBlock(runContext.GoalContract));
@@ -14620,7 +14620,7 @@ namespace Malx_AI
                 LogActivity($"Document retrieval builder: selected {selected.Count}/{chunks.Count} chunks (~{selectedTokens}t) for one focused pass.");
                 AppendChat("system", $"The document is long; this answer focuses on the {selected.Count} most relevant of {chunks.Count} sections. Ask about a specific section to cover the rest.");
             }
-            RelayStatusBlock.Text = "Relay: Builder is analyzing the document...";
+            RelayStatusBlock.Text = "Reading the document…";
 
             var combined = new StringBuilder();
             foreach (var chunk in selected)
@@ -18762,12 +18762,18 @@ namespace Malx_AI
                 while (_systemNotifications.Count > 200)
                     _systemNotifications.RemoveAt(0);
 
-                _unreadNotificationCount++;
-                Dispatcher.InvokeAsync(() =>
+                // Quiet by default: routine "system" and "memory" entries are kept in the bell's
+                // list but don't raise the badge. Only warnings and errors ask for attention.
+                if (role.Equals("warning", StringComparison.OrdinalIgnoreCase)
+                    || role.Equals("error", StringComparison.OrdinalIgnoreCase))
                 {
-                    NotificationBadge.Visibility = Visibility.Visible;
-                    NotificationBadgeText.Text = _unreadNotificationCount > 99 ? "99+" : _unreadNotificationCount.ToString();
-                }, System.Windows.Threading.DispatcherPriority.Background);
+                    _unreadNotificationCount++;
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        NotificationBadge.Visibility = Visibility.Visible;
+                        NotificationBadgeText.Text = _unreadNotificationCount > 99 ? "99+" : _unreadNotificationCount.ToString();
+                    }, System.Windows.Threading.DispatcherPriority.Background);
+                }
             }
             else
             {
@@ -19932,7 +19938,7 @@ namespace Malx_AI
 
             try
             {
-                RelayStatusBlock.Text = "Relay: Builder re-run...";
+                RelayStatusBlock.Text = "Retrying…";
 
                 string objectiveClause = string.IsNullOrWhiteSpace(_lastRunContext.Objective)
                     ? ""
@@ -20077,7 +20083,7 @@ namespace Malx_AI
                     CouncilRunFinished?.Invoke("Builder re-run ended. Open Axiom to review the result.");
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
-                RelayStatusBlock.Text = "Relay: Idle";
+                RelayStatusBlock.Text = "Ready";
             }
         }
 
@@ -20108,7 +20114,7 @@ namespace Malx_AI
 
             try
             {
-                RelayStatusBlock.Text = "Relay: Critic re-run...";
+                RelayStatusBlock.Text = "Checking again…";
 
                 string objectiveClause = string.IsNullOrWhiteSpace(_lastRunContext.Objective)
                     ? ""
@@ -20154,7 +20160,7 @@ namespace Malx_AI
                     CouncilRunFinished?.Invoke("Critic re-run ended. Open Axiom to review the result.");
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
-                RelayStatusBlock.Text = "Relay: Idle";
+                RelayStatusBlock.Text = "Ready";
             }
         }
 
@@ -20174,11 +20180,11 @@ namespace Malx_AI
                 return;
             }
 
-            RelayStatusBlock.Text = "Relay: Sandbox re-run...";
+            RelayStatusBlock.Text = "Running the code again…";
             string result = await ExecuteCodeSandboxAsync(code, lang);
             _lastSandboxOutput = result;
             AppendChat("sandbox", $"{lang} re-run output:\n{result}");
-            RelayStatusBlock.Text = "Relay: Idle";
+            RelayStatusBlock.Text = "Ready";
             SavePersistedSession();
         }
 
