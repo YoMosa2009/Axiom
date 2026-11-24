@@ -283,9 +283,9 @@ if ($Signed) {
 }
 
 $installerGuidance = if ($Signed) {
-    "New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (Authenticode code-signed; installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Malx_AI.exe."
+    "New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (Authenticode code-signed; installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Axiom Harness.exe."
 } else {
-    "New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Malx_AI.exe. Windows may show `"Windows protected your PC`" because Axiom isn't code-signed yet: click **More info**, then **Run anyway**."
+    "New users: download **Axiom-Setup-v$version-win-x64.exe** and run it (installs for your Windows account, no admin rights needed). Or download the ZIP, extract the complete folder, and run Axiom Harness.exe. Windows may show `"Windows protected your PC`" because Axiom isn't code-signed yet: click **More info**, then **Run anyway**."
 }
 
 $notesDocument = @"

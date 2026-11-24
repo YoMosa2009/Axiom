@@ -40,8 +40,8 @@ $script = Join-Path $repoRoot "installer\Axiom.iss"
 $SourceDir = [System.IO.Path]::GetFullPath($SourceDir)
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 
-if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "Malx_AI.exe"))) {
-    throw "The package folder has no Malx_AI.exe: $SourceDir"
+if (-not (Test-Path -LiteralPath (Join-Path $SourceDir "Axiom Harness.exe"))) {
+    throw "The package folder has no Axiom Harness.exe: $SourceDir"
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null

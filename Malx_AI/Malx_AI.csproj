@@ -17,8 +17,11 @@
     <WebView2EnableCsWinRTProjection>false</WebView2EnableCsWinRTProjection>
     <!-- Source of truth for the GitHub release update check: bump this for every release
          so it matches the release tag (e.g. tag v1.4.0 -> Version 1.4.0). -->
-    <Version>1.11.0</Version>
+    <Version>1.12.0</Version>
     <ApplicationIcon>Assets\AxiomLogo.ico</ApplicationIcon>
+    <!-- Task Manager and file properties show this name. -->
+    <AssemblyTitle>Axiom Harness</AssemblyTitle>
+    <Product>Axiom</Product>
   </PropertyGroup>
 
   <ItemGroup>
@@ -125,11 +128,18 @@
     <None Update="**/WebView2\**\*" CopyToPublishDirectory="Never" CopyToOutputDirectory="Never" />
   </ItemGroup>
 
+  <!-- The app starts as "Axiom Harness.exe". Malx_AI.exe stays as the same launcher because
+       V1.11 and earlier update only through it (see UpdateApplyService.MainExecutableFileName). -->
+  <Target Name="CopyAxiomHarnessLauncher" AfterTargets="Build" Condition="Exists('$(TargetDir)$(AssemblyName).exe')">
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).exe" DestinationFiles="$(TargetDir)Axiom Harness.exe" SkipUnchangedFiles="true" />
+  </Target>
+
   <!-- Defense-in-depth: delete residual personal runtime files from the publish folder. -->
   <Target Name="ScrubUserDataFromPublish" AfterTargets="Publish">
     <PropertyGroup>
       <_ScrubPublishDir>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_ScrubPublishDir>
     </PropertyGroup>
+    <Copy SourceFiles="$(_ScrubPublishDir)$(AssemblyName).exe" DestinationFiles="$(_ScrubPublishDir)Axiom Harness.exe" Condition="Exists('$(_ScrubPublishDir)$(AssemblyName).exe')" />
 
     <ItemGroup Condition="Exists('$(_ScrubPublishDir)')">
       <_UserDataDirs Include="$(_ScrubPublishDir)ChatHistory" />
@@ -174,7 +184,7 @@
       <_SmokeCmdLines Include="set &quot;AXIOM_DATA_DIR=%25TEMP%25\Axiom-CleanSmoke-%25RANDOM%25%25RANDOM%25&quot;" />
       <_SmokeCmdLines Include="mkdir &quot;%25AXIOM_DATA_DIR%25&quot; &gt;nul 2&gt;&amp;1" />
       <_SmokeCmdLines Include="echo Using clean profile: %25AXIOM_DATA_DIR%25" />
-      <_SmokeCmdLines Include="start &quot;&quot; &quot;%25~dp0Malx_AI.exe&quot;" />
+      <_SmokeCmdLines Include="start &quot;&quot; &quot;%25~dp0Axiom Harness.exe&quot;" />
       <_SmokeCmdLines Include="endlocal" />
     </ItemGroup>
 

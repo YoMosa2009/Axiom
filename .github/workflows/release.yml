@@ -165,7 +165,9 @@ jobs:
         shell: powershell
         run: |
           $root = "$env:RUNNER_TEMP\Axiom-Updates\Axiom-v${{ steps.decide.outputs.version }}"
-          foreach ($name in @('Malx_AI.exe', 'Malx_AI.dll')) {
+          # "Axiom Harness.exe" is the same launcher as Malx_AI.exe; copy the signed one over it.
+          Copy-Item -LiteralPath (Join-Path $root 'Malx_AI.exe') -Destination (Join-Path $root 'Axiom Harness.exe') -Force
+          foreach ($name in @('Axiom Harness.exe', 'Malx_AI.exe', 'Malx_AI.dll')) {
             $path = Join-Path $root $name
             $sig = Get-AuthenticodeSignature -LiteralPath $path
             if ($sig.Status -ne 'Valid') {

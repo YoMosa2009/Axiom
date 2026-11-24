@@ -2,135 +2,58 @@
 
 ## [Unreleased]
 
-These changes are in source and are not included in the V1.11.0 download.
+Nothing yet.
+
+## [V1.12.0] - 2026-11-23
+
+The first code-signed release: Windows no longer shows "Windows protected your PC" when you install
+Axiom. The app now starts as **Axiom Harness.exe**, and it brings an optional Axiom Cloud plan,
+steadier Workplace agents and a cleaner look.
 
 ### Added
 
-- Anonymous diagnostics (errors, crashes and usage counts), on by default with a switch in
-  Settings › General. No prompts, files, notes, keys or account details; see PRIVACY.md.
-- Persona notes reach Normal Chat as background about you, with a switch to keep them local.
-- Hybrid Local replies now update the token meter (usage requested from the server, estimate as fallback).
-- Optional managed Axiom subscription support (`DeepSeek 4.1F-1017`, `$9/mo` allocating
-  `$5.25/mo` default upstream allowance backed by `tools/AxiomSubscriptionGateway` with
-  DPAPI-protected sessions, email verification/recovery, live and sandbox Stripe Checkout,
-  `--provision-live` automated Stripe setup, `scripts/Setup-AxiomLiveGateway.ps1` + systemd/Caddy
-  deploy bundle, automatic browser-return Checkout activation and monthly renewal sync in
-  `MainWindow.Subscription.cs`, full lifecycle webhooks for `invoice.paid`,
-  `invoice.payment_failed`, `customer.subscription.deleted`, `charge.refunded`, and
-  `charge.dispute.created`, duplicate-Checkout locks, and scheduled verified
-  `AccountDatabaseBackupWorker` snapshots) works across both Normal Chat and Workplace while
-  keeping Local GGUF, Hybrid Local (`Kestral 1`), and personal OpenRouter keys independent.
-- Static Obsidian & Gold landing storefront (`docs/index.html`, `docs/styles.css`, `docs/app.js`)
-  with responsive container-query comparison table, dark/light scheme support, FAQ accordion,
-  and accessible copyable `winget` install command.
-- Direct upstream inference provider switching in `tools/AxiomSubscriptionGateway`
-  (`AXIOM_UPSTREAM_PROVIDER`: `openrouter`, `digitalocean`, `deepseek`, or OpenAI-compatible
-  custom route with token-rate cost calculation), plus build-time
-  `AXIOM_BUILTIN_MANAGED_GATEWAY_URL` injection via `AxiomAccountBuiltIns.Generated.cs`.
-- Non-intrusive, dismissible contextual Axiom Cloud suggestions (`CloudUpgradeSuggestionPolicy`)
-  on sustained slow local generation (`< 8.0 tok/s` over `>= 25` tokens), exhausted OpenRouter
-  BYOK quotas, and missing local vision projectors, plus [Terms of Service](TERMS.md) and
-  [Privacy Policy](PRIVACY.md).
-- Dedicated **Axiom Cloud (`$9/mo`)** card in the First-Run welcome guide (`FirstRunGuideWindow`).
-- Settings **Usage** tab displaying a 3-hour session window (starts on first message) and a
-  7-day weekly usage meter backed by gateway allowance pacing (`429` reset guidance).
-- Workplace **Project Canvas** renders clickable underlined file links beneath model outputs
-  and created/edited file summaries, and formats `.md`, `.json`/`.jsonc`, `.xml`/`.xaml`/`.csproj`/`.config`,
-  `.yaml`/`.yml`/`.toml`/`.ini`/`.env`, `.csv`/`.tsv`, `.html`/`.svg`, source code, and `.txt`.
-- Workplace replies with recorded edits end with a compact file-change panel:
-  added/deleted line totals, three-file preview, expandable list, saved diff review,
-  and Undo for the latest eligible Agent run. Shell-command changes are not counted.
-- Full per-chat tool evidence can be recalled across follow-ups and compaction.
-- Passive window and isolated page screenshots appear as small activity previews
-  while the model works, without minimizing Axiom for capture.
+- **Code-signed downloads.** The installer and the app are signed through Azure Artifact Signing,
+  so they install without the SmartScreen warning.
+- **Axiom Cloud (optional, $9/month).** A managed cloud model (DeepSeek 4.1 Flash) with a monthly
+  allowance, for Chat and Workplace, set up from the first-run guide or Settings › Cloud AI. Local
+  models, your own server and your own OpenRouter key keep working without it.
+- **Usage in Settings.** A Usage tab shows your current session window and weekly usage.
+- **File changes and Undo in Workplace.** Replies that edited files end with a short panel: lines
+  added and removed, the files touched, a diff view, and one-click Undo for the latest Agent run.
+- **Project Canvas previews** for Markdown, JSON, XML, YAML, CSV, HTML, SVG and source files, with
+  clickable file links under Workplace replies.
+- **Persona notes in Chat** as background about you, with a switch to keep them local.
+- **Anonymous diagnostics** (errors, crashes and usage counts, never your chats, files or keys), on
+  by default with a switch in Settings › General. See [PRIVACY.md](PRIVACY.md).
 
 ### Changed
 
-- Workplace run cards read the same in every mode: Council and Single Model cards list the tools
-  they used under "N steps · View activity", like Agent Access, every role shows a "working…" line
-  while it waits, and the tool banner uses plain wording instead of "Agentic Pause".
-- Workplace browser actions: the agent never presses payment or account-closing controls (it tells
-  you which one to press), and approval prompts for delete/send/submit-style controls carry a
-  warning.
-- Hybrid Local effort: a server whose model list names `reasoning_effort` now receives the level
-  (High → medium, Extra High → high, Ultra → max) and an explicit "thinking off" below High, so
-  each level gets its own thinking budget. Other servers are sent nothing new.
-- Workplace cloud model is now **NVIDIA Nemotron 3.5 Super VL (free)**: OpenRouter withdrew
-  Dots3-Note Preview, which made every Workplace cloud run fail.
-- Effort levels: Extra High and Ultra give thinking turns more output room, Hybrid Local turns thinking
-  on at High and above, Ultra agent runs on Axiom Cloud are held to High's step limit, and the menu
-  says what each level does.
-- Workplace status lines use the same plain wording in every mode; only warnings and errors raise the
-  notification badge.
-- Raised managed gateway output limits (`4,096` default, up to `16,384` tokens), added opt-in
-  managed `reasoning` forwarding (`ExtraHigh`/`Ultra` Workplace Agent & Chat Thinking), and
-  switched gateway pre-request holds to dynamic prompt/budget estimation so subscribers can spend
-  over 99% of their monthly allowance cleanly.
-- Improved provider prompt-cache prefix stability across Workplace and Normal Chat by keeping
-  system instructions static at the top, placing dynamic session/turn context afterward, using
-  deterministic fallback tool-call IDs, and keeping `tools` definitions intact with `tool_choice: "none"`
-  during forced no-tools synthesis passes.
-- Clarified open-source `PolyForm Noncommercial 1.0.0` vs. official maintainer commercial/subscription
-  and contributor terms across `README.md`, `CONTRIBUTING.md`, and `.github/pull_request_template.md`,
-  and hardened `.gitignore` secret/database exclusions.
-- Added passwordless Azure Artifact Signing (OIDC) split-phase support to `.github/workflows/release.yml`,
-  `scripts/Publish-CleanRelease.ps1`, and `scripts/Publish-GitHubRelease.ps1`, plus WinGet
-  automation (`scripts/Submit-WingetRelease.ps1` and `.github/workflows/winget.yml`).
-- Settings **Inference** defaults to **Cloud** with `DeepSeek 4.1F-1017` when a managed
-  subscription is active instead of mapping managed access onto Hybrid Local (`Kestral 1`).
-- Command Review **Auto-Review** decides autonomously on the user's behalf (approving safe
-  scoped project commands and declining unsafe or out-of-scope operations) without popping up
-  Accept/Decline prompts; **Review Every Command** retains explicit per-command approval.
-- Normal Chat message body, code blocks, reasoning blocks, and composer input font sizes
-  are increased for easier readability.
-- Workplace Send animates while working. Finished activity lists collapse into a
-  themed dropdown while retaining the full history.
-- Project Canvas has a useful empty state, visible preview/source/save controls,
-  responsive actions and clearer diff and syntax presentation.
-- Background completion notifications cover Agent Access and Computer Use as well
-  as Council work, and request the Windows notification sound when enabled.
-- Native Windows caption controls are restored. Chat/composer widths adapt to open
-  panels; Context text is larger and duplicate sidebar controls are removed.
-- Cloud usage displays the remaining daily free-model quota as a percentage with
-  a theme-colored fill, with explicit unknown/error states.
+- **New executable name:** `Axiom Harness.exe`. Start menu and desktop shortcuts point to it.
+  `Malx_AI.exe` stays in the folder for now so older copies can update.
+- **Workplace run cards** look the same in every mode: each lists its tools under
+  "N steps · View activity" and shows what it is doing while it works.
+- **Browser actions** never press payment or account-closing buttons (the agent tells you which one
+  to press), and delete/send/submit-style buttons come with a warning in the approval prompt.
+- **Workplace cloud model** is NVIDIA Nemotron 3.5 Super VL (free), after OpenRouter withdrew the
+  previous one.
+- **Effort levels** say what each one does. Extra High and Ultra give thinking more room, and Hybrid
+  Local servers that support it get a matching thinking budget.
+- Larger chat text, a Project Canvas that explains itself when empty, restored Windows title-bar
+  buttons, and notifications for finished Agent Access and Computer Use runs.
+- Command Review's **Auto-Review** decides safe project commands for you; **Review Every Command**
+  still asks each time.
 
 ### Fixed
 
-- Agent Access on small local models: browser calls lost their action (the reply parser dropped
-  every `action:` line), and the instructions showed only a shell example. Small models now get
-  browser, Skill and "just answer" examples, and one-line calls such as `TOOL use_skill brand-voice`
-  are understood.
-- Browser clicks were refused as "page changed" when a page or the browser updated its title
-  (an unread count, the profile label); the page is now identified by its document and address.
-- Filling a browser text field could report failure because the browser reports the new value a
-  moment late.
-- Long local Normal Chat conversations at High effort and above could overrun the context window.
-- A withdrawn cloud model is reported plainly instead of being retried as a "transient problem".
-- Managed-only accounts without a personal OpenRouter API key no longer fail `CloudAgentModel`
-  availability checks in Workplace Agent Access.
-- Opening **Settings** closes Workplace/MCP popups, elevates the Settings overlay above
-  the full window, and disables background hit-testing so title-bar and sidebar controls
-  (`Setup`, `System Log`, etc.) cannot click through or overlay the Settings modal.
-- Project Canvas formatted Preview stays enabled even when connected to a codebase folder.
-- Commands can finish when a launched child keeps the shell's output streams open,
-  instead of falsely waiting until the command timeout.
-- Computer Use follow-ups retain their prior goal, result and work application.
-  Raw tool evidence is preserved without repeatedly mirroring identical transport results.
-- Redesigned **Settings → Cloud AI** to elevate the **Axiom Cloud (`DeepSeek 4.1F-1017 · $9/mo`)**
-  panel above OpenRouter BYOK and Hybrid Local cards, with clickable Terms/Privacy links and
-  live/sandbox `BillingStatus` display; updated **Settings → Connectors** onboarding copy for
-  both Axiom Cloud and OpenRouter.
-- Fixed `.github/workflows/release.yml` release-packaging PowerShell splatting (`@params`
-  hashtables) and added `AXIOM_BUILTIN_MANAGED_GATEWAY_URL` workflow injection.
-- Fixed Normal Chat **Project Canvas** toggle button visibility by relocating
-  `ProjectCanvasToggleButton` into `UnifiedTitleBar` (`MainWindow.xaml`), and fixed ASP.NET
-  minimal API `IResult` delegate binding (`ASP0016`) on Stripe webhook routes in
-  `tools/AxiomSubscriptionGateway/AccountGateway.cs`.
-- Rapid navigation, Settings scrolling, custom-profile isolation and atomic-save
-  staging/cancellation defects found during local testing.
-
-Validation and remaining limits: [implementation tracker](AXIOM_IMPLEMENTATION_TRACKER.md)
-and [roadmap](ROADMAP.md). No new release version is assigned.
+- Small local models in Agent Access now use browser actions and Skills correctly instead of
+  falling back to shell commands.
+- Browser clicks were sometimes refused as "page changed" when only the page title changed, and a
+  filled text field could be reported as empty.
+- Long local chats at High effort and above could overrun the context window.
+- A cloud model that was withdrawn is reported plainly instead of retried.
+- Commands no longer wait for their full timeout when a launched program keeps the output open.
+- Settings no longer lets clicks fall through to the window behind it.
+- Computer Use follow-ups keep their earlier goal and result.
 
 ## [V1.11.0] - 2026-10-10
 

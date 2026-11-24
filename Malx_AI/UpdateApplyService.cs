@@ -37,7 +37,11 @@ namespace Malx_AI
         // App.xaml.cs's OnStartup.
         internal const string SilentRestartArgument = "--axiom-silent-restart";
         internal const string UpdateManifestFileName = "AXIOM_UPDATE_MANIFEST.txt";
-        private const string MainExecutableFileName = "Malx_AI.exe";
+        // V1.12 renamed the app to "Axiom Harness.exe". Packages still carry Malx_AI.exe (the same
+        // launcher) because V1.11 and earlier only accept a ZIP with Malx_AI.exe and restart it,
+        // and old shortcuts point at it. Keep shipping both names.
+        internal const string MainExecutableFileName = "Axiom Harness.exe";
+        internal const string LegacyExecutableFileName = "Malx_AI.exe";
         private const int MaximumArchiveEntries = 75000;
         private const long MaximumExpandedBytes = 12L * 1024 * 1024 * 1024;
         private static readonly TimeSpan GracefulProcessExitTimeout = TimeSpan.FromSeconds(20);
@@ -167,7 +171,7 @@ namespace Malx_AI
                 ApplyPackageTransaction(source, target);
                 WriteSuccessMarker(version);
 
-                string installedExecutable = Path.Combine(target, MainExecutableFileName);
+                string installedExecutable = InstalledExecutablePath(target);
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = installedExecutable,
@@ -275,7 +279,7 @@ namespace Malx_AI
         {
             string[] executables = Directory.GetFiles(extractRoot, MainExecutableFileName, SearchOption.AllDirectories);
             if (executables.Length != 1)
-                throw new InvalidDataException("The update ZIP must contain exactly one Malx_AI.exe.");
+                throw new InvalidDataException($"The update ZIP must contain exactly one {MainExecutableFileName}.");
 
             string payloadRoot = Path.GetDirectoryName(executables[0])!;
             ValidateSourceRoot(payloadRoot);
@@ -386,7 +390,7 @@ namespace Malx_AI
                     TryDeleteFile(transition.BackupPath);
 
                 WriteUpdateLog(
-                    $"Updated Axiom to {FileVersionInfo.GetVersionInfo(Path.Combine(targetRoot, MainExecutableFileName)).ProductVersion} " +
+                    $"Updated Axiom to {FileVersionInfo.GetVersionInfo(InstalledExecutablePath(targetRoot)).ProductVersion} " +
                     $"({transitions.Count} file(s) replaced, {skippedUnchanged} already up to date).");
             }
             catch
@@ -437,7 +441,7 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(fullRoot)
                 || string.Equals(fullRoot, driveRoot, StringComparison.OrdinalIgnoreCase)
                 || !Directory.Exists(fullRoot)
-                || !File.Exists(Path.Combine(fullRoot, MainExecutableFileName)))
+                || !File.Exists(InstalledExecutablePath(fullRoot)))
             {
                 throw new InvalidOperationException("Axiom could not verify its installation folder, so the update was not applied.");
             }
@@ -452,6 +456,9 @@ namespace Malx_AI
             try
             {
                 using Process process = Process.GetProcessById(processId);
+                // The running copy may have been started through the legacy name (an old shortcut,
+                // or a V1.11 updater that restarts Malx_AI.exe).
+                expectedExecutable = Path.Combine(Path.GetFullPath(targetDirectory), ExecutableFileNameForProcess(process.ProcessName));
                 UpdateProcessGuard.WaitForExitOrTerminate(
                     process,
                     expectedExecutable,
@@ -472,8 +479,23 @@ namespace Malx_AI
             // about the one process id this run was launched to wait for -- sweep for and
             // terminate any OTHER process actually running the installed executable so a backlog
             // of earlier failures can never permanently block every later update attempt.
-            TerminateOtherInstancesAtPath(expectedExecutable, processId, Path.GetFileNameWithoutExtension(MainExecutableFileName));
+            foreach (string name in new[] { MainExecutableFileName, LegacyExecutableFileName })
+                TerminateOtherInstancesAtPath(
+                    Path.Combine(Path.GetFullPath(targetDirectory), name), processId, Path.GetFileNameWithoutExtension(name));
         }
+
+        /// <summary>The executable to start in an install folder: the current name, else the legacy one.</summary>
+        internal static string InstalledExecutablePath(string installRoot)
+        {
+            string main = Path.Combine(installRoot, MainExecutableFileName);
+            string legacy = Path.Combine(installRoot, LegacyExecutableFileName);
+            return File.Exists(main) || !File.Exists(legacy) ? main : legacy;
+        }
+
+        internal static string ExecutableFileNameForProcess(string processName)
+            => string.Equals(processName, Path.GetFileNameWithoutExtension(LegacyExecutableFileName), StringComparison.OrdinalIgnoreCase)
+                ? LegacyExecutableFileName
+                : MainExecutableFileName;
 
         // processName is a parameter (rather than always deriving it from MainExecutableFileName)
         // specifically so UpdateApplyServiceTests can point this at a short-lived non-Axiom
@@ -593,7 +615,7 @@ namespace Malx_AI
             {
                 Dictionary<string, string> values = ParseArguments(arguments);
                 string target = RequireArgument(values, "--target");
-                string executable = Path.Combine(Path.GetFullPath(target), MainExecutableFileName);
+                string executable = InstalledExecutablePath(Path.GetFullPath(target));
                 if (File.Exists(executable))
                 {
                     var restartInfo = new ProcessStartInfo

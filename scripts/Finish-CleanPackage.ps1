@@ -6,7 +6,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $OutputDir = Join-Path $repoRoot "artifacts\Axiom-Release"
 $zipPath = Join-Path $repoRoot "artifacts\Axiom-v1.6.0-win-x64-clean.zip"
 
-if (-not (Test-Path -LiteralPath (Join-Path $OutputDir "Malx_AI.exe"))) {
+if (-not (Test-Path -LiteralPath (Join-Path $OutputDir "Axiom Harness.exe"))) {
 	throw "Published exe missing at $OutputDir. Run Publish-CleanRelease.ps1 first."
 }
 
@@ -70,7 +70,7 @@ rem Launches Axiom with an empty temporary profile so this machine's %LOCALAPPDA
 set "AXIOM_DATA_DIR=%TEMP%\Axiom-CleanSmoke-%RANDOM%%RANDOM%"
 mkdir "%AXIOM_DATA_DIR%" >nul 2>&1
 echo Using clean profile: %AXIOM_DATA_DIR%
-start "" "%~dp0Malx_AI.exe"
+start "" "%~dp0Axiom Harness.exe"
 endlocal
 "@
 Set-Content -LiteralPath (Join-Path $OutputDir "RUN-CLEAN-SMOKE-TEST.cmd") -Value $smokeCmd -Encoding ASCII

@@ -4,14 +4,14 @@
 
 **A native Windows AI workspace: run models on your own PC, on your own server, or in the cloud.**
 
-![Release](https://img.shields.io/badge/release-V1.11.0-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.12.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)
 ![.NET](https://img.shields.io/badge/.NET-10%20WPF-purple)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
 
 ### [⬇ Download Axiom for Windows](https://github.com/YoMosa2009/Axiom/releases/latest)
 
-Free with local models or your own key · Windows 10/11 (64-bit)
+Free with local models or your own key · Code-signed installer · Windows 10/11 (64-bit)
 
 [Getting started](#getting-started) · [Changelog](CHANGELOG.md) · [Privacy](PRIVACY.md) · [Terms](TERMS.md) · [Feedback](#feedback)
 
@@ -87,9 +87,9 @@ same model.
 ## Getting started
 
 1. Download **`Axiom-Setup-…-win-x64.exe`** from the
-   [latest release](https://github.com/YoMosa2009/Axiom/releases/latest) and run it. It installs
-   for your account only, with no admin prompt. (Or download the `…-clean.zip`, extract the whole
-   folder and run `Malx_AI.exe`.)
+   [latest release](https://github.com/YoMosa2009/Axiom/releases/latest) and run it. It is
+   code-signed and installs for your account only, with no admin prompt. (Or download the
+   `…-clean.zip`, extract the whole folder and run `Axiom Harness.exe`.)
 2. The first-run guide checks your hardware, shows which local models fit and downloads one, or
    lets you set up a cloud key or your own server.
 
@@ -97,12 +97,9 @@ same model.
 
 3. Open **Chat**, or head to **Workplace**.
 
-> **"Windows protected your PC"?** Axiom isn't code-signed yet. Click **More info**, then
-> **Run anyway**. Releases are built by this repository's GitHub Actions, and the in-app updater
-> verifies every update before installing it.
-
 **Updates** install from inside the app (Settings › General › Check for updates). Your chats,
-settings and models are kept. Your data lives in `%LOCALAPPDATA%\Axiom`.
+settings and models are kept. Your data lives in `%LOCALAPPDATA%\Axiom`, never in the install
+folder, so every new install starts empty.
 
 **Requirements:** Windows 10 or 11 (64-bit), 4 GB RAM (16 GB recommended for local models),
 optional NVIDIA GPU for faster local models.

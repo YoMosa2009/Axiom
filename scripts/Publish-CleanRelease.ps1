@@ -136,7 +136,7 @@ rem Launches Axiom with an empty temporary profile so this machine's %LOCALAPPDA
 set "AXIOM_DATA_DIR=%TEMP%\Axiom-CleanSmoke-%RANDOM%%RANDOM%"
 mkdir "%AXIOM_DATA_DIR%" >nul 2>&1
 echo Using clean profile: %AXIOM_DATA_DIR%
-start "" "%~dp0Malx_AI.exe"
+start "" "%~dp0Axiom Harness.exe"
 endlocal
 "@
 	Set-Content -LiteralPath (Join-Path $Root "RUN-CLEAN-SMOKE-TEST.cmd") -Value $smokeCmd -Encoding ASCII
@@ -232,7 +232,7 @@ function Assert-PackageClean {
 	}
 }
 
-$exePath = Join-Path $OutputDir "Malx_AI.exe"
+$exePath = Join-Path $OutputDir "Axiom Harness.exe"
 
 if (-not $FinalizeZipOnly) {
 	if (Test-Path -LiteralPath $OutputDir) {
@@ -338,7 +338,7 @@ Write-Host "  - Package is a self-contained folder (not single-file) so WinAppSD
 Write-Host "  - Upload the generated ZIP as a GitHub Release asset and tag it v$version (or V$version)."
 Write-Host "  - Axiom 1.7+ can download, verify, swap, and restart this exact ZIP automatically."
 Write-Host "  - AXIOM_UPDATE_MANIFEST.txt is required; do not modify the ZIP after publishing."
-Write-Host "  - First-time users can still unzip and run Malx_AI.exe (keep all files together)."
+Write-Host "  - First-time users can still unzip and run 'Axiom Harness.exe' (keep all files together)."
 Write-Host "  - End users start with an empty %LOCALAPPDATA%\Axiom profile."
 Write-Host "  - Your own chats/settings stay on this PC under LocalAppData and are NOT inside the zip."
 Write-Host "  - To test the package as a brand-new user on this machine, run:"

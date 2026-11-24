@@ -36,7 +36,7 @@ DisableDirPage=yes
 DefaultGroupName=Axiom
 DisableProgramGroupPage=yes
 UninstallDisplayName=Axiom
-UninstallDisplayIcon={app}\Malx_AI.exe
+UninstallDisplayIcon={app}\Axiom Harness.exe
 SetupIconFile=..\Malx_AI\Assets\AxiomLogo.ico
 LicenseFile=..\LICENSE
 OutputDir={#OutputDir}
@@ -62,11 +62,11 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\Axiom"; Filename: "{app}\Malx_AI.exe"; WorkingDir: "{app}"
-Name: "{userdesktop}\Axiom"; Filename: "{app}\Malx_AI.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userprograms}\Axiom"; Filename: "{app}\Axiom Harness.exe"; WorkingDir: "{app}"
+Name: "{userdesktop}\Axiom"; Filename: "{app}\Axiom Harness.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Malx_AI.exe"; Description: "Launch Axiom"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Axiom Harness.exe"; Description: "Launch Axiom"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; In-app updates add files the installer never recorded; remove the whole (fixed) app folder.
