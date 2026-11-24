@@ -4,6 +4,39 @@
 
 Nothing yet.
 
+## [V1.13.0] - 2026-11-24
+
+Agent runs no longer stop after three minutes, effort levels now improve the result instead of
+adding a commentary, and you can quote part of a reply in your next message.
+
+### Added
+
+- **Attach a reply as context.** Right-click an AI reply in Chat or Workplace and choose **Attach
+  selection as context**, or select text and press **Ctrl+Shift+L**. The quote appears above the
+  input box (remove it with ✕) and is sent with your next message. The same menu has **Copy**.
+- **Ultra fresh review (Agent Access).** When the agent says it is done, the same model reads your
+  request and the changed files in a fresh context; real problems it finds go back into the run to
+  be fixed.
+
+### Changed
+
+- **The Critic is gone from Extra High and Ultra.** Research shows a model commenting on its own
+  output rarely improves it, while checks against real evidence do. Now:
+  - Extra High: Workplace answers are checked by Axiom (code checks, sandbox and acceptance runs,
+    whether the request is covered, page validation) and fixed when a check fails. Agent Access must
+    check its changes (run them, open them or read them back) before it can finish.
+  - Ultra: the same, plus a fresh review of the result on models of 4B and up.
+- **No more "did not finish within 3 minutes".** An agent step is stopped only when the model has
+  been silent for a long time (4 minutes in the cloud, 8 on your own server) or runs past a limit
+  that grows with effort (10 to 25 minutes). A slow step no longer ends the run: the agent is asked
+  to continue in smaller steps, and only two slow steps in a row pause it.
+- The agent can open a page it just built (a local `.html`, `.svg` or `.pdf` file) in your browser
+  to check it, without starting a web server first.
+- Agent Access reminds the model to start building after many steps with nothing written, points
+  failed `python -c` one-liners to a script file, and runs its disk check on the finish tool too.
+- Local Qwen3 models in Agent Access use the sampling temperature Qwen recommends (0.6); near-greedy
+  decoding made them repeat themselves.
+
 ## [V1.12.0] - 2026-11-23
 
 The first code-signed release: Windows no longer shows "Windows protected your PC" when you install

@@ -1939,6 +1939,7 @@ namespace Malx_AI
                     foreach (StreamingToolCallAccumulator accumulator in toolCallAccumulators.Values)
                         toolArgumentChars += accumulator.Arguments.Length;
                     GenerationTelemetry.ReportCharacters(textBuilder.Length + reasoningBuilder.Length + toolArgumentChars);
+                    StreamActivity.Ping();
                 }
                 }
 

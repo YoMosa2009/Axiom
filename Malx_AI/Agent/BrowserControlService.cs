@@ -199,7 +199,9 @@ namespace Malx_AI.Agent
         {
             string url = NormalizeHttpUrl(rawUrl);
             if (string.IsNullOrWhiteSpace(url))
-                return AgentToolResult.Fail("A valid http:// or https:// URL is required for browser_control action 'open'.");
+                url = LocalPageUrl(rawUrl) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(url))
+                return AgentToolResult.Fail("A valid http:// or https:// URL, or the path of a local .html/.htm/.svg/.pdf file, is required for browser_control action 'open'.");
 
             try
             {
@@ -227,6 +229,34 @@ namespace Malx_AI.Agent
             {
                 return AgentToolResult.Fail($"Failed to open {url} in {browser.DisplayName}: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// A file:// URL for a page the agent just built (index.html and similar), so it can be
+        /// checked without starting a web server. A live run (2026-11-24) was refused here and
+        /// spent four steps finding Python to serve one HTML file. Only page-like files that exist.
+        /// </summary>
+        internal static string? LocalPageUrl(string? raw)
+        {
+            string text = (raw ?? string.Empty).Trim().Trim('"');
+            if (text.Length == 0)
+                return null;
+            string path;
+            if (text.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Uri.TryCreate(text, UriKind.Absolute, out Uri? fileUri) || !fileUri.IsFile)
+                    return null;
+                path = fileUri.LocalPath;
+            }
+            else if (Path.IsPathFullyQualified(text))
+                path = text;
+            else
+                return null;
+
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            if (extension is not (".html" or ".htm" or ".svg" or ".pdf") || !File.Exists(path))
+                return null;
+            return new Uri(Path.GetFullPath(path)).AbsoluteUri;
         }
 
         public async Task<AgentToolResult> SearchAsync(DetectedBrowserInfo browser, string query, CancellationToken token)

@@ -4389,6 +4389,11 @@ namespace Malx_AI
                     AppendSystemMessage("ERROR: Input is empty.");
                     return;
                 }
+                if (explicitUserMessage == null && _replyContextText != null)
+                {
+                    pendingUserMessage = ReplyContextAttachment.Compose(_replyContextText, pendingUserMessage);
+                    ClearReplyContext();
+                }
 
                 if (_currentChatId < 0)
                     NewChat_Click(null, null);

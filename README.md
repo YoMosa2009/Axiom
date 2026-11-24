@@ -4,7 +4,7 @@
 
 **A native Windows AI workspace: run models on your own PC, on your own server, or in the cloud.**
 
-![Release](https://img.shields.io/badge/release-V1.12.0-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.13.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)
 ![.NET](https://img.shields.io/badge/.NET-10%20WPF-purple)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
@@ -50,7 +50,7 @@ chat.
 
 **Workplace.** For work that takes more than one pass.
 - **Single Model:** one agent plans, uses tools and checks its own result.
-- **Council:** a Builder does the work; at Extra High and Ultra effort a Critic reviews it.
+- **Council:** a Builder does the work; at Extra High and Ultra Axiom checks the result and has it fixed.
 - **Agent Access:** a terminal-style agent that runs commands and reads and writes files in a
   folder you pick. Every run ends with its steps, a file-change summary and one-click **Undo**.
   You choose Manual (approve each change) or Auto.
@@ -65,7 +65,11 @@ Axiom builds the artifact itself from the model's outline.
 <img src="docs/images/skills.png" alt="Skills panel: built-in Skills to attach, and Create custom Skill" width="360">
 
 **Effort.** Pick Light to Ultra per message. Higher levels think longer and allow more tool
-rounds; Extra High and Ultra add the Critic check.
+rounds and time per step. Extra High checks the result (runs it, validates files) and fixes what
+the checks find; Ultra adds a fresh review of the finished work.
+
+**Reply as context.** Right-click any AI reply, or select part of it and press Ctrl+Shift+L, to
+attach it to your next message. It shows as a short quote above the input box.
 
 **Themes.** Switch themes in Settings › General without restarting.
 

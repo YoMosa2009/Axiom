@@ -440,6 +440,11 @@ namespace Malx_AI
             bool hasPendingAttachments = _documents.Any(d => d.IsPending);
 
             string text = (QueryInput.Text ?? string.Empty).Trim();
+            if (text.Length > 0 && _replyContextText != null)
+            {
+                text = ReplyContextAttachment.Compose(_replyContextText, text);
+                ClearReplyContext();
+            }
             if (text.Length == 0)
             {
                 if (!hasPendingAttachments)
@@ -796,22 +801,14 @@ namespace Malx_AI
             SendButton.IsEnabled = true;
             SendButton.ToolTip = "Send a steering message to the running agent.";
 
-            // Architect removed completely: Builder executes directly without Architect/Builder role split.
-            // Extra High / Ultra add Critic verification after Builder completes.
-            bool useCriticPass = EffortPolicy.Current is EffortLevel.ExtraHigh or EffortLevel.Ultra;
-            bool enableCouncilSynergy = !_isSingleModelMode && useCriticPass;
-            string? architectPlan = null;
+            // Extra High and Ultra no longer add a Critic: the run itself must check its changes,
+            // and at Ultra a fresh review of the changed files sends real problems back to be
+            // fixed in the same run (AgentQualityGates).
+
             EnsureAutoSessionTitle(userQuery);
             EnsureSessionTrackerUpdated(userQuery, "Agent execution started");
 
-            if (enableCouncilSynergy)
-            {
-                UpdateStageIndicator(CouncilRole.Builder, false, false, false);
-            }
-            else
-            {
-                UpdateStageIndicator(CouncilRole.Builder, false, false, false);
-            }
+            UpdateStageIndicator(CouncilRole.Builder, false, false, false);
 
             IAgentModel model = BuildAgentModel(tier, systemPrompt, _chatHistory);
             if (!string.IsNullOrWhiteSpace(model.Unavailable))
@@ -828,7 +825,9 @@ namespace Malx_AI
                 maxSteps,
                 AgentPromptBuilder.MaxStepsFor(tier, EffortLevel.High, capability, _isCloudModeEnabled),
                 onManagedSubscription);
-            AgentTurnPolicy turnPolicy = AgentTurnPolicy.For(followUpKind, tier);
+            AgentTurnPolicy turnPolicy = AgentTurnPolicy.For(followUpKind, tier).WithEffort(EffortPolicy.Current, tier);
+            if (EffortPolicy.Current == EffortLevel.Ultra && tier == AgentTier.Full && !turnPolicy.AnswerOnly)
+                turnPolicy = turnPolicy with { Reviewer = (request, ct) => ReviewAgentWorkAsync(request, scope.WorkingDirectory, ct) };
             if (turnPolicy.AnswerOnly)
                 maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);
             LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, {followUpKind} turn, scope {scope.Describe()}.");
@@ -950,65 +949,7 @@ namespace Malx_AI
             _activeAgentTaskState?.Turns.Add(new AgentTurnRecord(
                 userQuery, result.FinalMessage, result.Steps.Count, result.StoppedOnStepLimit));
 
-            // Council synergy: Critic review phase (Extra High & Ultra effort only)
-            if (enableCouncilSynergy && useCriticPass && (_isCloudModeEnabled || HasEffectiveLocalRoleModel(CouncilRole.Critic)))
-            {
-                UpdateStageIndicator(CouncilRole.Critic, architectPlan != null, true, false);
-                RelayStatusBlock.Text = "Checking the work…";
-                LogActivity("Critic auditing agent execution...");
-
-                string touchedFilesList = _activeAgentTaskState?.TouchedFiles.Count > 0
-                    ? string.Join(", ", _activeAgentTaskState.TouchedFiles.Select(Path.GetFileName))
-                    : "none";
-
-                string criticSystem = "You are the Council Critic. The Council Builder just completed executing an agent mission on the machine.\n"
-                    + "Review the Builder's work against the goal and provide a concise verification audit (2-3 bullet points):\n"
-                    + "- Did the Builder meet the user's requirements without unnecessary re-downloading or re-installing?\n"
-                    + "- Are the files, code, and executed commands verified and intact?\n"
-                    + "- Final verdict: [VERIFIED] or [NEEDS REVISION].\n"
-                    + "Output ONLY the concise audit.";
-
-                string criticPayload = $"User Request: {userQuery}\n"
-                    + (architectPlan != null ? $"Architect Blueprint: {architectPlan}\n" : "")
-                    + $"Files Touched: {touchedFilesList}\n"
-                    + $"Builder Execution Report:\n{result.FinalMessage}";
-
-                ReportAgentActivity("Critic is reviewing");
-                try
-                {
-                    ReasoningParser.ParsedResponse criticResult = await ExecuteCouncilRoleAsync(
-                        CouncilRole.Critic,
-                        criticSystem,
-                        criticPayload,
-                        token,
-                        temperatureOverride: 0.2f,
-                        showLiveCard: false);
-
-                    if (!string.IsNullOrWhiteSpace(criticResult.Answer))
-                    {
-                        string criticAudit = criticResult.Answer.Trim();
-                        finalChatMessage = $"{result.FinalMessage}\n\n**Council Critic Verification**\n{criticAudit}";
-                        UpdateStageIndicator(null, architectPlan != null, true, true);
-                    }
-                }
-                catch (Exception criticEx)
-                {
-                    LogActivity($"Critic review pass skipped: {criticEx.Message}");
-                    UpdateStageIndicator(null, architectPlan != null, true, false);
-                }
-                finally
-                {
-                    ReportAgentActivity(null);
-                }
-            }
-            else if (enableCouncilSynergy)
-            {
-                UpdateStageIndicator(null, architectPlan != null, true, false);
-            }
-            else
-            {
-                UpdateStageIndicator(null, false, true, false);
-            }
+            UpdateStageIndicator(null, false, true, false);
 
             string backupNote = DescribeBackups(fileBackup, backupsBeforeRun);
             if (backupNote.Length > 0)
@@ -1059,7 +1000,10 @@ namespace Malx_AI
                     systemPrompt,
                     chatHistory,
                     imageDataUrls,
-                    thinkingEnabled: EffortPolicy.Current >= EffortLevel.ExtraHigh);
+                    thinkingEnabled: EffortPolicy.Current >= EffortLevel.ExtraHigh)
+                {
+                    Limits = AgentTurnLimits.For(EffortPolicy.Current, selfHosted: _isHybridLocalCouncilSelected),
+                };
                 cloudModel.OnToolCallProgress = (toolName, chars) =>
                     ReportAgentActivityDetail(DescribeToolCallProgress(toolName, chars));
                 cloudModel.OnWaiting = message => ReportAgentActivityDetail(message);
@@ -1084,7 +1028,9 @@ namespace Malx_AI
                         prompt,
                         transcript,
                         cancellation,
-                        temperatureOverride: 0.1f,
+                        // Qwen3's model card: near-greedy decoding causes endless repetition; it
+                        // recommends 0.6 (thinking) / 0.7. Other families keep a low setting.
+                        temperatureOverride: IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty) ? 0.6f : 0.2f,
                         baseStateVault: null,
                         loadBaseState: false,
                         allowBatchRecovery: true,
@@ -1100,6 +1046,92 @@ namespace Malx_AI
                 systemPrompt,
                 ObservationBudgetFor(tier),
                 chatHistory);
+        }
+
+        /// <summary>
+        /// Ultra's fresh review: the same model, with a clean context, reads the request and the
+        /// changed files as they are on disk now and lists concrete defects. Returns none on any
+        /// failure, so a review problem never blocks a finished run.
+        /// </summary>
+        private async Task<IReadOnlyList<string>> ReviewAgentWorkAsync(AgentReviewRequest request, string? workingDirectory, CancellationToken token)
+        {
+            var files = new List<(string Path, string Content)>();
+            foreach (string changed in request.ChangedFiles.Take(8))
+            {
+                try
+                {
+                    string full = Path.IsPathRooted(changed) || string.IsNullOrWhiteSpace(workingDirectory)
+                        ? changed
+                        : Path.Combine(workingDirectory, changed);
+                    var info = new FileInfo(full);
+                    if (!info.Exists || info.Length > 400_000)
+                        continue;
+                    string content = await File.ReadAllTextAsync(full, token).ConfigureAwait(true);
+                    if (content.Contains('\0'))
+                        continue;
+                    files.Add((changed, content));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                }
+            }
+            if (files.Count == 0)
+                return [];
+
+            string payload = AgentQualityGates.BuildReviewPayload(request.Goal, files);
+            try
+            {
+                string reply;
+                if (_isCloudModeEnabled)
+                {
+                    string modelId = _isHybridLocalCouncilSelected
+                        ? (_openRouterChatService.CustomEndpointConfiguredModelId ?? GetEffectiveCouncilModelId())
+                        : GetEffectiveCouncilModelId();
+                    using var limit = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    limit.CancelAfter(TimeSpan.FromMinutes(_isHybridLocalCouncilSelected ? 8 : 4));
+                    OpenRouterChatResponse response = await _openRouterChatService.SendConversationStreamAsync(
+                        [new OpenRouterMessage("user", payload, PreserveFullText: true)],
+                        AgentQualityGates.ReviewSystemPrompt,
+                        thinkingEnabled: false,
+                        modelId: modelId,
+                        cancellationToken: limit.Token,
+                        maxTokensOverride: 1500,
+                        allowModelFallback: false).ConfigureAwait(true);
+                    reply = response.Text ?? string.Empty;
+                }
+                else
+                {
+                    ReasoningParser.ParsedResponse response = await ExecuteCouncilRoleAsync(
+                        CouncilRole.Builder,
+                        AgentQualityGates.ReviewSystemPrompt,
+                        payload,
+                        token,
+                        temperatureOverride: 0.2f,
+                        baseStateVault: null,
+                        loadBaseState: false,
+                        allowBatchRecovery: true,
+                        showLiveCard: false,
+                        maxGenerationTokensOverride: 1024,
+                        contextSizeOverride: null,
+                        useBuilderToolDecision: false,
+                        outputGrammar: null,
+                        allowAgenticPauses: false,
+                        internalInferenceStep: true).ConfigureAwait(true);
+                    reply = response.Answer ?? string.Empty;
+                }
+                IReadOnlyList<string> issues = AgentQualityGates.ParseReviewIssues(reply);
+                _ = BackendLogService.LogEventAsync("ComputerAgent.Review", $"files:{files.Count} issues:{issues.Count}");
+                return issues;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _ = BackendLogService.LogEventAsync("ComputerAgent.Review", $"skipped: {ex.Message}");
+                return [];
+            }
         }
 
         private static int ObservationBudgetFor(AgentTier tier) => tier switch

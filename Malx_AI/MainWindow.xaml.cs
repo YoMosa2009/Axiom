@@ -431,6 +431,7 @@ namespace Malx_AI
             try
             {
                 InitializeComponent();
+                InitializeReplyContext();
                 Deactivated += (_, _) =>
                 {
                     WorkplaceViewControl?.CloseAllPopups();

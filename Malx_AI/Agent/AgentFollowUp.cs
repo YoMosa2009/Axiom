@@ -4,9 +4,14 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Malx_AI.Agent
 {
+    /// <summary>What an Ultra fresh review gets: the request, the agent's summary and the changed files.</summary>
+    public sealed record AgentReviewRequest(string Goal, string Summary, IReadOnlyList<string> ChangedFiles);
+
     /// <summary>What a message sent after an agent run is asking for.</summary>
     public enum AgentFollowUpKind
     {
@@ -38,6 +43,44 @@ namespace Malx_AI.Agent
     public sealed record AgentTurnPolicy(bool AnswerOnly = false, int VerificationBudget = 0,
         bool LimitFileInspection = true)
     {
+        /// <summary>
+        /// Steps a run may take without changing any file before it is reminded, once, to start
+        /// on the deliverable. 0 turns the reminder off. A logged run spent 59 steps probing an
+        /// API with one-liners and ended with nothing built.
+        /// </summary>
+        public int ExplorationBudget { get; init; }
+
+        /// <summary>
+        /// Extra High and Ultra: a run that changed files must check them (read them back, run
+        /// them or open them) after its last change before it may finish. Sent back once.
+        /// </summary>
+        public bool RequireCheckedFinish { get; init; }
+
+        /// <summary>
+        /// Ultra: a fresh review of the finished work, with a clean context that sees the request
+        /// and the changed files, not the agent's own account. Problems it finds go back into the
+        /// same run to be fixed (once). Replaces the Critic, which only commented.
+        /// </summary>
+        public Func<AgentReviewRequest, CancellationToken, Task<IReadOnlyList<string>>>? Reviewer { get; init; }
+
+        /// <summary>Adds the effort-level quality steps to a turn's policy.</summary>
+        public AgentTurnPolicy WithEffort(EffortLevel effort, AgentTier tier)
+        {
+            if (AnswerOnly)
+                return this;
+            return this with
+            {
+                ExplorationBudget = tier switch
+                {
+                    AgentTier.Micro => 5,
+                    AgentTier.Compact => 8,
+                    _ => effort >= EffortLevel.ExtraHigh ? 20 : 15
+                },
+                // Small models loop on extra rules; the check is for models that can act on it.
+                RequireCheckedFinish = effort >= EffortLevel.ExtraHigh && tier == AgentTier.Full,
+            };
+        }
+
         /// <summary>Steps a question turn gets: two quick looks and the answer.</summary>
         public const int QuestionTurnSteps = 3;
 

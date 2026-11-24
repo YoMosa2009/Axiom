@@ -278,7 +278,7 @@ namespace Malx_AI.Agent
                 string body = string.IsNullOrWhiteSpace(combined)
                     ? "(Command failed with no output)"
                     : combined;
-                return AgentToolResult.Fail($"{exitPrefix}\n{body}{ShellMismatchHint(command)}");
+                return AgentToolResult.Fail($"{exitPrefix}\n{body}{ShellMismatchHint(command)}{InlineScriptHint(command)}");
             }
         }
 
@@ -857,6 +857,18 @@ namespace Malx_AI.Agent
             UnixShellSyntaxRegex.IsMatch(command ?? string.Empty)
                 ? "\n[Hint: commands run in Windows PowerShell 5.1, not bash. Use PowerShell forms: Get-ChildItem -Force 'F:\\', Test-Path, New-Item, Select-String, ';' between commands (not '&&'), '2>$null' (not '2>/dev/null'), and Windows paths such as F:\\folder (not /mnt/f).]"
                 : string.Empty;
+
+        /// <summary>
+        /// A pointer to a script file when an inline "python -c" / "node -e" command failed. The
+        /// owner's logs (2026-11-23) show a run spending 40 steps on python -c one-liners whose
+        /// nested quotes PowerShell mangled, and never writing the deliverable.
+        /// </summary>
+        internal static string InlineScriptHint(string command) =>
+            InlineScriptRegex.IsMatch(command ?? string.Empty)
+                ? "\n[Hint: inline scripts (python -c / node -e) break easily on PowerShell quoting. Write the script to a file with write_file (for example check.py) and run that file instead; the user can then reuse it.]"
+                : string.Empty;
+
+        private static readonly Regex InlineScriptRegex = new(@"(?i)\b(?:python3?|py|node)(?:\.exe)?\s+(?:-\S+\s+)*-(?:c|e)\s", RegexOptions.Compiled);
 
         /// <summary>
         /// Hands the command to PowerShell byte-for-byte as -EncodedCommand (UTF-16LE Base64).

@@ -37,7 +37,7 @@ namespace Malx_AI
             ResetWorkplaceTokenUsageIndicator();
             AppendChat("system", _isSingleModelMode
                 ? "Single Model mode enabled. One agent now plans, uses tools, executes, and verifies each request."
-                : "Council mode enabled. Builder executes directly; Extra High / Ultra add Critic verification.");
+                : "Council mode enabled. Builder executes directly; Extra High / Ultra check the result before it is final.");
             SavePersistedSession();
         }
 
@@ -123,7 +123,8 @@ namespace Malx_AI
                 : AppTheme.Brush(p => p.TextSecondary);
 
             RoleContextControlsCard.Visibility = councilVisibility;
-            ManualRoleContextControlsCard.Visibility = councilVisibility;
+            // The Critic no longer runs at any effort level (EffortQualityChecks), so its settings are hidden.
+            ManualRoleContextControlsCard.Visibility = Visibility.Collapsed;
             SingleModelModelCard.Visibility = singleVisibility;
             SingleModelContextCard.Visibility = _isSingleModelMode && !_isCloudModeEnabled
                 ? Visibility.Visible

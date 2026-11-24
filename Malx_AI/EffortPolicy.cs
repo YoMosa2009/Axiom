@@ -138,7 +138,7 @@ namespace Malx_AI
         /// <summary>
         /// Agent step ceiling on the paid Axiom Cloud plan. Each step is one request against the
         /// subscriber's paced allowance, so Extra High and Ultra are held to High's ceiling there;
-        /// they still add thinking room and the Critic check.
+        /// they still add thinking room and the result checks.
         /// </summary>
         public static int CapManagedAgentSteps(int steps, int highSteps, bool isManagedSubscription)
             => isManagedSubscription ? Math.Min(steps, highSteps) : steps;

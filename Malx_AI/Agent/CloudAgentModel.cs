@@ -91,26 +91,53 @@ namespace Malx_AI.Agent
             }
 
             OpenRouterChatResponse? response;
-            // Bound the complete decision, including retries. Transport deadlines can allow
-            // eight minutes of silent tool composition per attempt on a custom endpoint.
+            // A turn is stopped only when the model goes quiet for Limits.Idle, or runs past
+            // Limits.Total. A fixed 3-minute deadline killed healthy turns: at Ultra a Hybrid
+            // Local model thinks for minutes and writes whole files at ~30 tok/s.
             using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(token))
             {
                 var timer = System.Diagnostics.Stopwatch.StartNew();
-                deadline.CancelAfter(TurnTimeout);
+                long lastActivityMs = 0;
+                string? stopReason = null;
+                using IDisposable activity = StreamActivity.Use(() => Interlocked.Exchange(ref lastActivityMs, timer.ElapsedMilliseconds));
+                using var watchdog = new Timer(_ =>
+                {
+                    long now = timer.ElapsedMilliseconds;
+                    if (now >= Limits.Total.TotalMilliseconds)
+                        stopReason = $"ran for {AgentTurnLimits.Describe(Limits.Total)} without finishing";
+                    else if (now - Interlocked.Read(ref lastActivityMs) >= Limits.Idle.TotalMilliseconds)
+                        stopReason = $"produced no output for {AgentTurnLimits.Describe(Limits.Idle)}";
+                    else
+                        return;
+                    try { deadline.Cancel(); } catch (ObjectDisposedException) { }
+                }, null, WatchdogInterval, WatchdogInterval);
                 try
                 {
                     response = await SendWithRetryAsync(deadline.Token).ConfigureAwait(false);
+                    _consecutiveTimeouts = 0;
                 }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested)
                 {
-                    throw new AgentFatalException(
-                        "The model did not finish its next step within 3 minutes, so this run stopped. "
-                        + "Completed tool steps are preserved; the pending tool call was not executed. Try smaller file changes or continue later.");
+                    _consecutiveTimeouts++;
+                    string reason = stopReason ?? "did not finish in time";
+                    // One slow step is not a failed run: the completed steps stand and the model
+                    // is asked to continue in smaller steps. Two in a row means the server is
+                    // stuck or overloaded, so stop and say so.
+                    if (_consecutiveTimeouts >= MaxConsecutiveTimeouts)
+                    {
+                        throw new AgentFatalException(
+                            $"The model's last two steps each {reason}, so this run paused. "
+                            + "Completed steps are kept and nothing half-written was saved. Send \"continue\" to pick up from here, "
+                            + "or lower the effort level if your model or server is slow.");
+                    }
+                    OnWaiting?.Invoke("That step took too long - asking for a smaller step");
+                    return AgentModelReply.Malformed(SlowTurnGuidance(reason));
                 }
                 finally
                 {
                     await BackendLogService.LogEventAsync("ComputerAgent.ModelTurn",
-                        $"model:{_modelId} elapsedMs:{timer.ElapsedMilliseconds} deadlineExpired:{deadline.IsCancellationRequested && !token.IsCancellationRequested}")
+                        $"model:{_modelId} elapsedMs:{timer.ElapsedMilliseconds} deadlineExpired:{deadline.IsCancellationRequested && !token.IsCancellationRequested}"
+                        + (stopReason != null ? $" reason:{stopReason}" : string.Empty))
                         .ConfigureAwait(false);
                 }
             }
@@ -167,7 +194,22 @@ namespace Malx_AI.Agent
 
         /// <summary>Attempts per turn before the turn is reported as failed.</summary>
         private const int MaxAttempts = 3;
-        internal TimeSpan TurnTimeout { get; init; } = TimeSpan.FromMinutes(3);
+
+        /// <summary>How long one turn may stay silent, and run in total. Set from the effort level.</summary>
+        internal AgentTurnLimits Limits { get; init; } = AgentTurnLimits.For(EffortLevel.Medium, selfHosted: false);
+
+        /// <summary>How often the silence and total limits are checked. Overridable for tests.</summary>
+        internal TimeSpan WatchdogInterval { get; init; } = TimeSpan.FromSeconds(5);
+
+        private const int MaxConsecutiveTimeouts = 2;
+        private int _consecutiveTimeouts;
+
+        /// <summary>What the model is told after a step was stopped for taking too long.</summary>
+        internal static string SlowTurnGuidance(string reason)
+            => $"Your last step {reason} and was stopped before it finished, so that tool call did not run. "
+                + "Continue the task with a smaller step: write a large file in parts (write_file for the first "
+                + "~150 lines, then append_file for the rest), make one change per edit_file, and keep your "
+                + "thinking short. Do not repeat the steps that already succeeded.";
 
         /// <summary>Overridable so tests do not actually wait.</summary>
         internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;

@@ -11682,6 +11682,7 @@ namespace Malx_AI
                 AppendChat("error", "Query is empty.");
                 return;
             }
+            ApplyReplyContextToQuery();
 
             bool hasRequiredLocalModel = _isSingleModelMode
                 ? !string.IsNullOrWhiteSpace(_singleModel.ModelPath)
@@ -13532,144 +13533,77 @@ namespace Malx_AI
                 bool hasBuilder = HasEffectiveLocalRoleModel(CouncilRole.Builder) || CanUseCloudCouncil;
                 bool skipCriticForSandbox = (taskType == CouncilTaskType.Coding && !sandboxFailed && sandboxAutoFixRetries > 0)
                     || codebasePatchCaptured;
-                bool effortUsesCritic = EffortPolicy.Current is EffortLevel.ExtraHigh or EffortLevel.Ultra;
+                // Extra High and Ultra no longer run a Critic model. Evidence decides instead:
+                // Axiom's own checks of the output, plus a fresh-context review at Ultra on
+                // models of 4B and up (EffortQualityChecks). Findings drive the existing repair flow.
+                bool effortUsesChecks = EffortQualityChecks.UsesEvidenceChecks(EffortPolicy.Current);
+                _ = hasCritic;
 
-                if (effortUsesCritic && hasCritic && !string.IsNullOrWhiteSpace(builderOutput) && !skipCriticForSandbox)
+                if (effortUsesChecks && hasBuilder && !string.IsNullOrWhiteSpace(builderOutput) && !skipCriticForSandbox)
                 {
-                    ReportAgentActivity("Critic is reviewing");
-                    UpdateStageIndicator(CouncilRole.Critic, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), !string.IsNullOrWhiteSpace(runContext.BuilderOutput), false);
+                    ReportAgentActivity("Checking the work");
                     RelayStatusBlock.Text = "Checking the work…";
-                    LogActivity("Critic relay started — auditing builder output...");
+                    LogActivity("Effort checks started - validating the Builder output...");
 
-                    string criticSystem = GetEmbeddedSystemPrompt(CouncilRole.Critic)
-                        + (_criticSensitivity == CriticSensitivityLevel.Strict
-                            ? "\n[SENSITIVITY: STRICT] Apply heightened scrutiny to all sections and flag anything that could cause incorrect behavior, even if minor."
-                            : _criticSensitivity == CriticSensitivityLevel.CriticalOnly
-                                ? "\n[SENSITIVITY: CRITICAL ONLY] Report only failures that would cause incorrect results or complete failure. Ignore style and minor structure issues."
-                                : "")
-                        + objectiveClause
-                        + (useArtifactCanvasContract
-                            ? BuildArtifactTaskTypeBoost(CouncilRole.Critic, runContext)
-                            : GetTaskTypeBoost(taskType, CouncilRole.Critic))
-                        + (useArtifactCanvasContract ? BuildArtifactCanvasBoost(CouncilRole.Critic, runContext.PreferredArtifactFormatHint, runContext) : "")
-                        + (isCalcTask ? GetCalculationBoost(CouncilRole.Critic) : "")
-                        + (runContext.CalculatorUsed ? "\n[CALCULATOR TOOL] Verify Builder math against [[CALCULATOR TOOL RESULTS]] and flag numeric inconsistencies." : "")
-                        + BuildCriticContract(taskType, useArtifactCanvasContract)
-                        + "\n[CRITIC VISIBILITY RULE] Do not output thinking, hidden reasoning, chain-of-thought, scratch analysis, or deliberation. Output only the final review contract."
-                        + webSearchSystemNote
-                        + "\nIf any PIPELINE HEALTH flag is true, increase scrutiny and verify Builder output against Architect plan step-by-step."
-                        + (runContext.Complexity == TaskComplexity.Complex ? "\n[COMPLEX TASK MODE] Perform requirement-by-requirement verification against every requirement item." : "");
-                    criticSystem = ComposeCouncilSystemPrompt(criticSystem, CouncilRole.Critic, runContext, GetSystemPromptDocumentBudgetChars(CouncilRole.Critic));
-                    if (IsQwen3Model(GetEffectiveRoleConfig(CouncilRole.Critic).ModelPath ?? string.Empty))
-                        criticSystem = BuildQwen3SystemPrompt(criticSystem, false);
-
-                    string architectSummaryForCritic = BuildArchitectSummaryFromPlan(runContext.ArchitectOutput);
-                    string builderSummaryForCritic = BuildBuilderSummaryFromCode(runContext.BuilderOutput);
-                    string criticStateHeader = BuildPipelineStateHeader(architectSummaryForCritic, builderSummaryForCritic);
-                    string criticPriorKnowledge = string.Empty;
-                    contextState.BuilderOutput = runContext.BuilderOutput;
-                    contextState.SandboxLogs = sandboxResult;
-                    string criticPayloadStr = criticStateHeader
-                        + criticPriorKnowledge
-                        + BuildPipelineHealthSection(runContext)
-                        + BuildRolePrimedPayload(CouncilRole.Critic, taskType, BuildCriticPayload(runContext, sandboxResult))
-                        + BuildCouncilClosingAnchor(CouncilRole.Critic);
-                    string previousCriticOutput = GetPreviousRoleOutput("critic");
-
-                    var criticResult = await ExecuteCouncilRoleAsync(
-                        CouncilRole.Critic, criticSystem, criticPayloadStr, token, null, baseStateVault, true);
-                    criticOutput = criticResult.Answer;
-                    string criticThinking = criticResult.ThinkingContent;
-                    string criticCleaned = "";
-                    bool criticReasoningLeak = criticResult.IsReasoningFallback || CriticContainsReasoningLeak(criticOutput);
-                    bool criticMarkerFound = false;
-                    bool criticContractOk = !criticReasoningLeak
-                        && TryNormalizeCriticReview(criticOutput, taskType, out criticCleaned, out criticMarkerFound)
-                        && !CriticHasRoleDrift(criticCleaned, taskType)
-                        && !IsRepetitionLoop(criticCleaned, previousCriticOutput);
-
-                    if (!criticContractOk)
+                    var effortFindings = new List<string>(runContext.StaticValidationFindings);
+                    if (useArtifactCanvasContract)
+                        effortFindings.AddRange(BuildProjectCanvasFinalVerificationFailures(runContext, builderOutput));
+                    else if (taskType == CouncilTaskType.Coding || DetectCodeOutput(builderOutput).IsCode)
                     {
-                        string loopBreak = IsRepetitionLoop(criticOutput, previousCriticOutput)
-                            ? "LOOP BREAK: your previous response repeated prior output. Produce a different, specific review." : "";
-                        string previousCriticForRetry = criticReasoningLeak
-                            ? "[Suppressed: previous Critic turn emitted hidden/internal reasoning instead of a final structured review.]"
-                            : criticOutput;
-
-                        string correctionPayload = criticStateHeader
-                            + criticPriorKnowledge
-                            + BuildPipelineHealthSection(runContext)
-                            + BuildRolePrimedPayload(CouncilRole.Critic, taskType, BuildCriticPayload(runContext, sandboxResult))
-                            + "\nROLE CORRECTION: Critic must provide specific references (line/function/step), must not output thinking or analysis notes, and must end with CRITIC REVIEW COMPLETE. "
-                            + loopBreak + "\n\n" + BuildLabeledBlock("PREVIOUS CRITIC OUTPUT", previousCriticForRetry);
-
-                        var criticRetry = await ExecuteCouncilRoleAsync(
-                            CouncilRole.Critic, criticSystem, correctionPayload, token, null, baseStateVault, true);
-                        criticOutput = criticRetry.Answer;
-                        if (!string.IsNullOrWhiteSpace(criticRetry.ThinkingContent))
-                            criticThinking = criticRetry.ThinkingContent;
-                        bool retryReasoningLeak = criticRetry.IsReasoningFallback || CriticContainsReasoningLeak(criticOutput);
-
-                        if (retryReasoningLeak
-                            || !TryNormalizeCriticReview(criticOutput, taskType, out criticCleaned, out criticMarkerFound)
-                            || CriticHasRoleDrift(criticCleaned, taskType))
-                        {
-                            if (runContext.IsDocumentTask)
-                            {
-                                LogActivity("Critic document validation retry failed; using deterministic critic review fallback.");
-                                criticCleaned = BuildDeterministicDocumentCritic(runContext);
-                                criticMarkerFound = true;
-                            }
-                            else
-                            {
-                                // The Builder output is already delivered to chat/canvas at this
-                                // point; aborting the relay over an unparseable review discarded a
-                                // usable result. Record a clean pass and tell the user no structured
-                                // critique was produced this run.
-                                LogActivity("Critic correction failed validation; recording no-findings result instead of aborting the relay.");
-                                AppendChat("warning", "Critic review could not be validated after retry. The Builder output above is kept; no structured critique was produced this run.");
-                                criticCleaned = "No issues found.";
-                                criticMarkerFound = true;
-                            }
-                        }
+                        effortFindings.AddRange(RunStaticValidation(builderOutput));
+                        effortFindings.AddRange(VerifyFulfillment(runContext, builderOutput));
                     }
-
-                    criticOutput = criticCleaned;
-
-                    if (!criticMarkerFound)
-                    {
-                        if (runContext.IsDocumentTask)
-                        {
-                            LogActivity("Critic output missing marker for document task; switching to deterministic critic report.");
-                            criticOutput = BuildDeterministicDocumentCritic(runContext);
-                            criticMarkerFound = true;
-                        }
-                        else
-                        {
-                            AppendChat("warning", "Critic output missing termination marker; accepted via normalization.");
-                            LogActivity("Critic output accepted without marker using fallback normalization.");
-                        }
-                    }
-
                     if (runContext.IsDocumentTask)
                     {
                         runContext.BuilderOutput = BuildDeterministicDocumentQualityPass(runContext);
                         contextState.BuilderOutput = runContext.BuilderOutput;
                         builderOutput = runContext.BuilderOutput;
+                        string documentFindings = BuildDeterministicDocumentCritic(runContext);
+                        if (!documentFindings.StartsWith("No issues found", StringComparison.OrdinalIgnoreCase))
+                            effortFindings.Add(documentFindings);
+                    }
 
-                        string deterministicCritic = BuildDeterministicDocumentCritic(runContext);
-                        bool deterministicHasIssues = !deterministicCritic.StartsWith("No issues found", StringComparison.OrdinalIgnoreCase);
-                        bool criticLooksWeak = string.IsNullOrWhiteSpace(criticOutput)
-                            || (criticOutput.StartsWith("No issues found", StringComparison.OrdinalIgnoreCase) && deterministicHasIssues)
-                            || CriticHasRoleDrift(criticOutput, taskType);
-
-                        if (criticLooksWeak)
+                    bool localAtLeastFourB = !_isCloudModeEnabled
+                        && LocalModelCapabilityProfile.FromModel(GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty).SizeClass
+                            is LocalModelSizeClass.FourToTenB or LocalModelSizeClass.TenBPlus;
+                    bool freshReview = EffortQualityChecks.UsesFreshReview(EffortPolicy.Current, _isCloudModeEnabled, localAtLeastFourB);
+                    if (freshReview)
+                    {
+                        ReportAgentActivity("Reviewing the answer with fresh eyes");
+                        try
                         {
-                            LogActivity("Critic document output was weak/incomplete; replaced with deterministic critic findings.");
-                            criticOutput = deterministicCritic;
+                            var reviewResult = await ExecuteCouncilRoleAsync(
+                                CouncilRole.Builder,
+                                EffortQualityChecks.AnswerReviewSystemPrompt,
+                                EffortQualityChecks.BuildAnswerReviewPayload(runContext.UserPrompt, builderOutput),
+                                token,
+                                temperatureOverride: 0.2f,
+                                baseStateVault: null,
+                                loadBaseState: false,
+                                allowBatchRecovery: true,
+                                showLiveCard: false,
+                                maxGenerationTokensOverride: 1024,
+                                contextSizeOverride: null,
+                                useBuilderToolDecision: false,
+                                outputGrammar: null,
+                                allowAgenticPauses: false,
+                                internalInferenceStep: true);
+                            effortFindings.AddRange(Malx_AI.Agent.AgentQualityGates.ParseReviewIssues(reviewResult.Answer));
+                        }
+                        catch (OperationCanceledException) when (token.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception reviewEx)
+                        {
+                            LogActivity($"Fresh review skipped: {reviewEx.Message}");
                         }
                     }
 
+                    criticOutput = EffortQualityChecks.ToReviewContract(effortFindings);
+                    string criticThinking = string.Empty;
+                    int effortFindingCount = CriticContractParser.Parse(criticOutput).Issues?.Count ?? 0;
+                    AppendChat("system", EffortQualityChecks.DescribeForChat(effortFindingCount, freshReview));
                     runContext.CriticReview = criticOutput;
                     runContext.CriticBaselineArtifact = runContext.BuilderOutput;
                     runContext.PreviousCriticReview = criticOutput;
@@ -13691,10 +13625,8 @@ namespace Malx_AI
                     _lastCriticReport = criticReport;
                     _lastCriticRawOutput = criticOutput;
 
-                    AppendChat("critic", criticOutput);
-                    _chatHistory.Add(("critic", criticOutput));
                     UpdateWorkplaceTokenUsageIndicator();
-                    LogActivity($"Critic responded ({criticOutput.Length} chars). Audit complete.");
+                    LogActivity($"Effort checks complete ({effortFindingCount} finding(s)).");
                     UpdateStageIndicator(null, !string.IsNullOrWhiteSpace(runContext.ArchitectOutput), !string.IsNullOrWhiteSpace(runContext.BuilderOutput), true);
 
                     // Safety net: if executable gates failed but Critic missed them, force revision.

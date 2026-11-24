@@ -76,7 +76,7 @@
                                         Click="CouncilModeSegmentButton_Click"
                                         FontSize="10.5" FontWeight="SemiBold"
                                         Cursor="Hand" Padding="6,0"
-                                        ToolTip="Council mode: Builder executes directly; Extra High / Ultra add Critic verification">
+                                        ToolTip="Council mode: Builder executes directly; Extra High / Ultra check the result before it is final">
                                     <Button.Template>
                                         <ControlTemplate TargetType="Button">
                                             <Border Background="{TemplateBinding Background}"
@@ -575,6 +575,7 @@
                         </Border>
                         <TextBlock x:Name="RevisionNoticeBlock" Margin="8,2,8,2" Text="Issues were found and the output was revised." FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource DarkSecondaryBrush}" Visibility="Collapsed"/>
 
+                        <Border x:Name="WorkplaceReplyContextHost" Margin="6,6,6,0" Visibility="Collapsed"/>
                         <Grid>
                             <avalonedit:TextEditor x:Name="QueryInput"
                                      Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}"
@@ -1007,6 +1008,7 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                     <FlowDocumentScrollViewer x:Name="WorkplaceCardContentText" Hyperlink.Click="WorkplaceCardContentText_HyperlinkClick"
+                                                              ContextMenuOpening="WorkplaceReplyText_ContextMenuOpening"
                                                               Document="{Binding FormattedDocument}"
                                                               Background="Transparent"
                                                               BorderThickness="0"

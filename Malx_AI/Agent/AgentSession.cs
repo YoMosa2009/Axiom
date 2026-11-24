@@ -129,6 +129,74 @@ namespace Malx_AI.Agent
             int stepsSinceLastChange = 0;
             int blockedInARow = 0;
             string? wrapUpReason = null;
+            bool checkedSinceLastChange = true;
+            bool checkGateUsed = false;
+            bool explorationNudged = false;
+            int reviewPasses = 0;
+            var changedFiles = new List<string>();
+            int currentStep = 0;
+
+            void SendBack(string activity, string message)
+            {
+                reportActivity?.Invoke(activity);
+                history.Add(new AgentExchange(
+                    new AgentToolCall("(verification)", new Dictionary<string, string>()),
+                    message));
+            }
+
+            // Decides whether a claimed finish is accepted. In order: the claim against the disk
+            // (always), then at Extra High and Ultra a check of the changed files, then at Ultra
+            // a fresh review. Each sends the run back with concrete work instead of commenting.
+            async Task<bool> SendBackIfUnfinishedAsync(string answer)
+            {
+                if (verificationPasses < MaxVerificationPasses)
+                {
+                    IReadOnlyList<string> problems = AgentWorkVerifier.FindProblems(answer, steps, _scope.WorkingDirectory);
+                    if (problems.Count > 0)
+                    {
+                        verificationPasses++;
+                        SendBack("Checking the work",
+                            "Not finished yet - checking the files on disk found:\n- "
+                            + string.Join("\n- ", problems)
+                            + "\nFix these with the tools (create the missing files or correct the references), then give your final summary.");
+                        return true;
+                    }
+                }
+
+                if (policy.RequireCheckedFinish && changedSomething && !checkedSinceLastChange && !checkGateUsed
+                    && currentStep < _maxSteps - 2)
+                {
+                    checkGateUsed = true;
+                    SendBack("Checking the work", AgentQualityGates.CheckBeforeFinishMessage(changedFiles));
+                    return true;
+                }
+
+                if (policy.Reviewer != null && changedSomething && reviewPasses == 0 && currentStep < _maxSteps - 4)
+                {
+                    reviewPasses++;
+                    reportActivity?.Invoke("Reviewing the work with fresh eyes");
+                    IReadOnlyList<string> issues;
+                    try
+                    {
+                        issues = await policy.Reviewer(new AgentReviewRequest(goal, answer, changedFiles.ToList()), token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        issues = [];
+                    }
+                    if (issues.Count > 0)
+                    {
+                        SendBack("Fixing what the review found", AgentQualityGates.ReviewFindingsMessage(issues));
+                        return true;
+                    }
+                }
+
+                return false;
+            }
 
             // A step Axiom refused to run. Three in a row means the model is not reading the
             // refusals, so the run stops asking it for tool calls and asks for the summary.
@@ -175,7 +243,7 @@ namespace Malx_AI.Agent
 
             try
             {
-                for (int step = 0; step < _maxSteps; step++)
+                for (int step = 0; step < _maxSteps; step++, currentStep = step)
                 {
                     token.ThrowIfCancellationRequested();
                     if (wrapUpReason != null)
@@ -253,24 +321,8 @@ namespace Malx_AI.Agent
                         if (DeliverUserMessages(answer))
                             continue;
 
-                        // Check the claimed result against the disk before accepting it: a
-                        // summary listing files that were never written, or a page linking to
-                        // missing assets, gets sent back for one more pass (bounded).
-                        if (verificationPasses < MaxVerificationPasses)
-                        {
-                            IReadOnlyList<string> problems = AgentWorkVerifier.FindProblems(answer, steps, _scope.WorkingDirectory);
-                            if (problems.Count > 0)
-                            {
-                                verificationPasses++;
-                                reportActivity?.Invoke("Checking the work");
-                                history.Add(new AgentExchange(
-                                    new AgentToolCall("(verification)", new Dictionary<string, string>()),
-                                    "Not finished yet - checking the files on disk found:\n- "
-                                    + string.Join("\n- ", problems)
-                                    + "\nFix these with the tools (create the missing files or correct the references), then give your final summary."));
-                                continue;
-                            }
-                        }
+                        if (await SendBackIfUnfinishedAsync(answer).ConfigureAwait(false))
+                            continue;
 
                         return new AgentRunResult(
                             string.IsNullOrWhiteSpace(answer) ? "Done." : answer.Trim(),
@@ -285,6 +337,10 @@ namespace Malx_AI.Agent
                     {
                         string summary = call.Arg("summary");
                         if (DeliverUserMessages(summary))
+                            continue;
+
+                        // The finish tool used to skip every check a plain-text answer gets.
+                        if (await SendBackIfUnfinishedAsync(summary).ConfigureAwait(false))
                             continue;
 
                         AddStep(new AgentStep(call, AgentPermission.Allow, AgentToolResult.Ok("done"), "finished"));
@@ -388,6 +444,36 @@ namespace Malx_AI.Agent
                     if (policy.VerificationBudget > 0 && changedSomething && !IsProgressTool(call.Tool)
                         && stepsSinceLastChange >= policy.VerificationBudget)
                     {
+                        // Ultra: a run that ends by running out of checking steps still gets its
+                        // fresh review (a live run on 2026-11-24 ended this way and skipped it).
+                        // Real findings reopen the run for fixing instead of closing it.
+                        if (policy.Reviewer != null && reviewPasses == 0 && currentStep < _maxSteps - 6)
+                        {
+                            reviewPasses++;
+                            reportActivity?.Invoke("Reviewing the work with fresh eyes");
+                            IReadOnlyList<string> issues;
+                            try
+                            {
+                                issues = await policy.Reviewer(new AgentReviewRequest(goal, "(the agent was still checking its work)", changedFiles.ToList()), token).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException) when (token.IsCancellationRequested)
+                            {
+                                throw;
+                            }
+                            catch
+                            {
+                                issues = [];
+                            }
+                            reportActivity?.Invoke(null);
+                            if (issues.Count > 0)
+                            {
+                                stepsSinceLastChange = 0;
+                                AddStep(new AgentStep(call, decision.Permission, null, "review found problems"));
+                                history.Add(new AgentExchange(call, "Blocked: that call did not run. " + AgentQualityGates.ReviewFindingsMessage(issues)));
+                                continue;
+                            }
+                        }
+
                         wrapUpReason = $"{stepsSinceLastChange} steps in a row changed nothing";
                         NoteBlocked(call, decision.Permission,
                             $"Blocked: {stepsSinceLastChange} steps in a row have changed nothing, so the checking phase is over. Do not call another tool.",
@@ -481,11 +567,19 @@ namespace Malx_AI.Agent
                         changedSomething = true;
                         stepsSinceLastChange = 0;
                         if (!call.Tool.Equals(AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase))
+                        {
                             fileReadCounts.Remove(InspectionPath(call.Arg("path")));
+                            string changedPath = call.Arg("path");
+                            if (changedPath.Length > 0 && !changedFiles.Contains(changedPath, StringComparer.OrdinalIgnoreCase))
+                                changedFiles.Add(changedPath);
+                            checkedSinceLastChange = false;
+                        }
                     }
                     else
                     {
                         stepsSinceLastChange++;
+                        if (result.Succeeded && AgentQualityGates.IsCheckTool(call.Tool))
+                            checkedSinceLastChange = true;
                     }
 
                     if (result.Succeeded)
@@ -518,6 +612,12 @@ namespace Malx_AI.Agent
                         && stepsSinceLastChange == Math.Max(2, policy.VerificationBudget - 3))
                     {
                         observation += $"\n[WRAP-UP WARNING: {stepsSinceLastChange} steps in a row have changed nothing. If the work is verified, stop calling tools and write your final Markdown summary now. If something is actually broken, fix it with edit_file. Only {policy.VerificationBudget - stepsSinceLastChange} more checking steps are allowed.]";
+                    }
+                    else if (policy.ExplorationBudget > 0 && !changedSomething && !explorationNudged
+                        && steps.Count >= policy.ExplorationBudget)
+                    {
+                        explorationNudged = true;
+                        observation += AgentQualityGates.ExplorationNudge(steps.Count);
                     }
                     history.Add(new AgentExchange(call, observation, result.ImageDataUrl));
                 }

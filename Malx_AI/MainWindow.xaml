@@ -1595,6 +1595,7 @@
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
                                                 <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="14.5" FontFamily="Segoe UI"
+                                                         ContextMenuOpening="ReplyText_ContextMenuOpening"
                                                          Foreground="{DynamicResource NotebookTextBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                                          IsReadOnly="True" IsReadOnlyCaretVisible="False" Cursor="Arrow"
                                                          SelectionBrush="{DynamicResource PrimaryAccentBrush}" SelectionOpacity="0.3">
@@ -1617,6 +1618,8 @@
                                                     </TextBox.Style>
                                                 </TextBox>
                                                 <local:RenderedMessageView x:Name="RenderedBubble"
+                                                                           ContextMenuOpening="ReplyText_ContextMenuOpening"
+                                                                           Background="Transparent"
                                                                            RawText="{Binding RichRenderContent, Mode=OneWay}"
                                                                             PlainText="{Binding DisplayFormattedContent, Mode=OneWay}"
                                                                            IsHtmlRenderingEnabled="False"
@@ -1894,8 +1897,11 @@
 
                                     <!-- Attachment preview tray: thumbnail chips built in code-behind,
                                          sitting above the prompt text so the user sees what they attached. -->
-                                    <WrapPanel x:Name="AttachmentTrayPanel" Grid.Row="0" Orientation="Horizontal"
-                                               Margin="14,12,14,0" Visibility="Collapsed"/>
+                                    <StackPanel Grid.Row="0">
+                                        <Border x:Name="ReplyContextHost" Margin="10,10,10,0" Visibility="Collapsed"/>
+                                        <WrapPanel x:Name="AttachmentTrayPanel" Orientation="Horizontal"
+                                                   Margin="14,12,14,0" Visibility="Collapsed"/>
+                                    </StackPanel>
 
                                     <Grid Grid.Row="1" MinHeight="56" MaxHeight="160">
                                         <!-- Underlay: gold @MCP mentions (PrimaryAccent) while InputBox ink is transparent -->
@@ -3262,7 +3268,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.12.0" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.13.0" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Grid.Column="1" Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>
