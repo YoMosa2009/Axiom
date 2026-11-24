@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark light">
   <title>Axiom — Native Windows AI Workspace</title>
-  <meta name="description" content="Native .NET 10 WPF Windows workspace for offline local GGUF models, Workplace codebase agents with 1-click Undo, and optional $9/mo DeepSeek 4.1F-1017 Cloud.">
+  <meta name="description" content="Native .NET 10 WPF Windows workspace for offline local GGUF models, Workplace agents that edit files and can undo their latest run, and optional $9/mo DeepSeek 4.1F-1017 Cloud.">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -18,7 +18,7 @@
         <ul class="nav-list">
           <li><a class="nav-link" href="#architecture">Workspace</a></li>
           <li><a class="nav-link" href="#pricing">Axiom Cloud</a></li>
-          <li><a class="nav-link" href="#comparison">Compare</a></li>
+          <li><a class="nav-link" href="#comparison">Options</a></li>
           <li><a class="nav-link" href="#faq">FAQ</a></li>
           <li><a class="nav-link" href="https://github.com/YoMosa2009/Axiom">GitHub</a></li>
         </ul>
@@ -32,7 +32,7 @@
         <p class="eyebrow">Windows Native · .NET 10 WPF · Local + Cloud</p>
         <h1 id="main-heading" tabindex="-1">One Windows workspace for local models, cloud speed, and desktop work.</h1>
         <p class="lead">
-          Run GGUF models offline for free, connect a project folder for autonomous Workplace edits with Project Canvas and 1-click Undo, or turn on DeepSeek 4.1F-1017 Cloud for $9/month with no API key setup.
+          Run GGUF models offline for free, connect a project folder for Workplace edits you can review in Project Canvas and undo, or turn on DeepSeek 4.1F-1017 Cloud for $9/month with no API key setup.
         </p>
         <div class="cta-row">
           <a class="btn-primary" href="https://github.com/YoMosa2009/Axiom/releases/latest">Download Signed Windows Installer</a>
@@ -50,7 +50,7 @@
           width="2099"
           height="1290"
           fetchpriority="high">
-        <figcaption>Axiom Workplace: an agent run with its steps, the files it changed, and one-click Undo.</figcaption>
+        <figcaption>Axiom Workplace: an agent run with its steps, the files it changed, and Undo for the run.</figcaption>
       </figure>
     </section>
 
@@ -68,7 +68,7 @@
           </article>
           <article class="card">
             <h3>Workplace Agent &amp; Undo</h3>
-            <p>Point Axiom at a project folder. Inspect changes line-by-line in Project Canvas, approve safely via Auto-Review, and undo in one click.</p>
+            <p>Point Axiom at a project folder. Inspect changes line-by-line in Project Canvas, approve safely via Auto-Review, and undo the latest Agent run in one click.</p>
           </article>
           <article class="card card-highlight">
             <span class="pill">$9/mo · Optional</span>
@@ -84,11 +84,11 @@
         <div>
           <div class="section-head">
             <h2>Honest $9/mo cloud engine. Free locally forever.</h2>
-            <p>Every local GGUF feature and Personal OpenRouter BYOK tool stays free. Upgrade only when your hardware wants instant 85 tok/s speed, 1M context, vision, or Computer Use.</p>
+            <p>Every local GGUF feature and Personal OpenRouter BYOK tool stays free. Upgrade only when your PC is too slow for local models, or you want 1M context, vision, or Computer Use without managing an API key.</p>
           </div>
           <ul class="feature-list">
-            <li><strong>$5.25/mo upstream inference budget:</strong> Enough for ~4,000+ everyday chats or ~200+ cache-warm Workplace coding runs each billing cycle.</li>
-            <li><strong>Transparent usage meters:</strong> Live 3-hour rolling session ($0.38) and 7-day weekly ($1.35) gauges inside Settings → Usage.</li>
+            <li><strong>$5.25 of inference each month:</strong> spent at the model's real token price, with no hidden "unlimited" throttling.</li>
+            <li><strong>Clear usage meters:</strong> a 3-hour session meter and a weekly meter in Settings → Usage, so you always see how much is left.</li>
             <li><strong>Zero friction billing:</strong> Subscribe with email + Stripe Checkout, auto-activates on focus return, and auto-renews monthly cleanly.</li>
           </ul>
         </div>
@@ -100,7 +100,7 @@
             width="1900"
             height="1400"
             loading="lazy">
-          <figcaption>Workplace mode: repository-scoped agent edits, underlined Canvas links, and tracked file-change Undo.</figcaption>
+          <figcaption>Workplace mode: repository-scoped agent edits, underlined Canvas links, and Undo for the latest run.</figcaption>
         </figure>
       </div>
     </section>
@@ -108,50 +108,45 @@
     <section id="comparison" class="section">
       <div class="container">
         <div class="section-head">
-          <h2>Exact numbers vs. alternatives.</h2>
-          <p>Axiom competes by combining a native Windows desktop harness with half-price managed open-weight cloud speed.</p>
+          <h2>Four ways to run a model.</h2>
+          <p>Every feature works with each of them. Start free; add the cloud only if you want it.</p>
         </div>
 
         <div tabindex="0" role="region" aria-labelledby="compare-caption" class="table-wrapper">
           <table class="compare-table">
-            <caption id="compare-caption">Axiom Cloud compared with desktop AI workspaces and web subscriptions</caption>
+            <caption id="compare-caption">Ways to run models in Axiom</caption>
             <thead>
               <tr>
-                <th scope="col">Product</th>
+                <th scope="col">Option</th>
                 <th scope="col">Price</th>
-                <th scope="col">Offline GGUF &amp; BYOK</th>
-                <th scope="col">Windows Folder Agent &amp; Canvas</th>
-                <th scope="col">Included Cloud Engine</th>
+                <th scope="col">Runs on</th>
+                <th scope="col">You need</th>
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <th scope="row">Local</th>
+                <td>Free</td>
+                <td>Your GPU or CPU (llama.cpp)</td>
+                <td>A GGUF model; the first-run guide picks one that fits</td>
+              </tr>
+              <tr>
+                <th scope="row">Your own server</th>
+                <td>Free</td>
+                <td>Any OpenAI-compatible server (Ollama, llama.cpp)</td>
+                <td>The server address</td>
+              </tr>
+              <tr>
+                <th scope="row">OpenRouter</th>
+                <td>Free models, or pay OpenRouter</td>
+                <td>OpenRouter's cloud</td>
+                <td>Your own OpenRouter key</td>
+              </tr>
               <tr class="row-axiom">
                 <th scope="row">Axiom Cloud</th>
                 <td>$9/mo</td>
-                <td>Yes (Free local + BYOK)</td>
-                <td>Yes (Workplace + @ComputerUse + 1-click Undo)</td>
-                <td>$5.25 DeepSeek 4.1F-1017 credits (1M ctx, vision)</td>
-              </tr>
-              <tr>
-                <th scope="row">LM Studio Bionic+</th>
-                <td>$20/mo</td>
-                <td>Yes (Local MLX/GGUF)</td>
-                <td>No desktop GUI automation or WPF Canvas</td>
-                <td>Hosted open-weight cloud tier</td>
-              </tr>
-              <tr>
-                <th scope="row">T3 Chat Pro</th>
-                <td>$8/mo</td>
-                <td>No (Web only)</td>
-                <td>No local filesystem or repo tools</td>
-                <td>Web multi-model chat with 4h limits</td>
-              </tr>
-              <tr>
-                <th scope="row">Cherry Studio / Jan</th>
-                <td>$0</td>
-                <td>Yes (Local + BYOK)</td>
-                <td>BYOK setup required for cloud agents</td>
-                <td>None (requires user-managed API billing)</td>
+                <td>DeepSeek V4.1 Flash (1M context, vision)</td>
+                <td>An email address; no API key</td>
               </tr>
             </tbody>
           </table>
@@ -172,7 +167,7 @@
           </details>
           <details class="faq-item" name="faq">
             <summary>How do monthly credits and auto-renewal work?</summary>
-            <p>Your $9/month Stripe subscription automatically provisions $5.25 of managed DeepSeek 4.1F-1017 inference credit each month. Pacing gauges reset every 3 hours and 7 days, and monthly renewals activate automatically in Axiom with zero manual token swaps.</p>
+            <p>Your $9/month Stripe subscription automatically provisions $5.25 of managed DeepSeek 4.1F-1017 inference credit each month. Usage is paced by a 3-hour and a weekly limit, shown in Settings → Usage, and renewals activate automatically in Axiom.</p>
           </details>
           <details class="faq-item" name="faq">
             <summary>Is Axiom Electron or web-wrapped?</summary>
@@ -180,7 +175,7 @@
           </details>
           <details class="faq-item" name="faq">
             <summary>Where do my chats and API keys stay?</summary>
-            <p>Local chats, documents, settings, and session credentials stay in encrypted DPAPI storage on your Windows PC. Cloud prompts are only sent when you actively invoke a Cloud model or connected tool.</p>
+            <p>On your PC, in <code>%LOCALAPPDATA%\Axiom</code>. API keys and sign-in tokens are encrypted with Windows DPAPI. Prompts leave your PC only when you use a cloud model, your own server, or a connected tool.</p>
           </details>
         </div>
       </div>
