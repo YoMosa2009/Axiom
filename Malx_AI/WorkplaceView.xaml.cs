@@ -3084,6 +3084,17 @@ namespace Malx_AI
         private readonly GenerationMonitor _generationMonitor = new();
         private GenerationReadout? _generationReadout;
 
+        /// <summary>
+        /// The empty composer shows a hint, and Send is dimmed (not disabled: Send also posts
+        /// mid-run messages and is enabled by the run state) until there is text, matching Chat.
+        /// </summary>
+        private void UpdateWorkplaceComposerEmptyState()
+        {
+            bool empty = string.IsNullOrWhiteSpace(QueryInput.Text);
+            WorkplaceQueryPlaceholder.Visibility = string.IsNullOrEmpty(QueryInput.Text) ? Visibility.Visible : Visibility.Collapsed;
+            SendButton.Opacity = empty && !_isProcessing ? 0.45 : 1.0;
+        }
+
         public WorkplaceView()
         {
             InitializeComponent();
@@ -3093,7 +3104,9 @@ namespace Malx_AI
             {
                 UpdateWorkplaceTokenUsageIndicator();
                 UpdateWorkplaceMentionPopup();
+                UpdateWorkplaceComposerEmptyState();
             };
+            UpdateWorkplaceComposerEmptyState();
             QueryInput.TextArea.PreviewKeyDown += WorkplaceQueryInput_PreviewKeyDown;
             QueryInput.LostKeyboardFocus += (_, _) =>
             {

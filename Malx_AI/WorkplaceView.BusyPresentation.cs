@@ -34,6 +34,7 @@ public partial class WorkplaceView
     private void UpdateWorkplaceBusyPresentation()
     {
         if (WorkplaceSendSpinner == null || WorkplaceSendArrow == null) return;
+        UpdateWorkplaceComposerEmptyState();
         bool wasSpinning = WorkplaceSendSpinner.Visibility == Visibility.Visible;
         WorkplaceSendArrow.Visibility = _isProcessing ? Visibility.Collapsed : Visibility.Visible;
         WorkplaceSendSpinner.Visibility = _isProcessing ? Visibility.Visible : Visibility.Collapsed;

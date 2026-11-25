@@ -240,9 +240,22 @@ namespace Malx_AI
                     McpDropboxAccountStatusText.Foreground = AppTheme.Brush(p => p.TextMuted);
                 }
 
+                // Only connected services are "active". Listing every connector here, with a dash
+                // for the unconnected ones, read as if they were connected (UI test 2026-11-25).
                 McpConnectorsPanel.Children.Clear();
-                foreach (McpConnectorInfo connector in connectors)
+                List<McpConnectorInfo> active = connectors.Where(c => c.IsConnected).ToList();
+                foreach (McpConnectorInfo connector in active)
                     McpConnectorsPanel.Children.Add(BuildConnectorStatusCard(connector));
+                if (active.Count == 0)
+                {
+                    McpConnectorsPanel.Children.Add(new TextBlock
+                    {
+                        Text = "No services connected yet. Connect one above to use it in Chat.",
+                        FontSize = 11,
+                        Foreground = AppTheme.Brush(p => p.TextMuted),
+                        TextWrapping = TextWrapping.Wrap,
+                    });
+                }
             }
             finally
             {
@@ -255,7 +268,7 @@ namespace Malx_AI
             var card = new Border
             {
                 Background = AppTheme.Brush(p => p.Background),
-                BorderBrush = AppTheme.Brush(connector.IsConnected ? "#3A3226" : "#302D2A"),
+                BorderBrush = AppTheme.Brush(p => connector.IsConnected ? p.BorderStrong : p.Border),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(12, 10, 12, 10),
@@ -273,7 +286,7 @@ namespace Malx_AI
                 Height = 36,
                 CornerRadius = new CornerRadius(8),
                 Background = AppTheme.Brush(p => p.Surface),
-                BorderBrush = AppTheme.Brush(connector.IsConnected ? "#B8924A" : "#302D2A"),
+                BorderBrush = AppTheme.Brush(p => connector.IsConnected ? p.Accent : p.Border),
                 BorderThickness = new Thickness(1),
                 Margin = new Thickness(0, 0, 10, 0),
                 Child = new TextBlock
@@ -300,7 +313,7 @@ namespace Malx_AI
                     ? $"Ready · @{connector.Handle}"
                     : $"{connector.Description} · @{connector.Handle}",
                 FontSize = 10,
-                Foreground = AppTheme.Brush(connector.IsConnected ? "#B8924A" : "#8A8279"),
+                Foreground = AppTheme.Brush(p => connector.IsConnected ? p.Accent : p.TextMuted),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 2, 0, 0)
             });
@@ -311,7 +324,7 @@ namespace Malx_AI
                 Text = connector.IsConnected ? "Connected" : "—",
                 FontSize = 11,
                 FontWeight = FontWeights.Medium,
-                Foreground = AppTheme.Brush(connector.IsConnected ? "#B8924A" : "#8A8279"),
+                Foreground = AppTheme.Brush(p => connector.IsConnected ? p.Accent : p.TextMuted),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(10, 0, 0, 0)
             };

@@ -93,7 +93,7 @@ namespace Malx_AI
             AgentScopeCombo.SelectedIndex = _agentScopeEntireComputer ? 1 : 0;
 
             AgentScopeDetailText.Text = _agentScopeEntireComputer
-                ? "Every folder on this computer is reachable."
+                ? (_agentEnabled ? "Every folder on this computer is reachable." : "When on, every folder on this computer will be reachable.")
                 : string.IsNullOrWhiteSpace(_agentScopeFolder)
                     ? "No folder chosen yet."
                     : _agentScopeFolder;
