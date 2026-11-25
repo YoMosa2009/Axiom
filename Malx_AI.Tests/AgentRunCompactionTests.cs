@@ -117,6 +117,55 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public async Task AFewPrunedStepsAreNotWorthAModelCheckpoint()
+        {
+            // Live run, Hybrid Local 2026-11-25: with only a few large steps to replace, the model
+            // was asked twice per compaction for a checkpoint longer than the pruned steps.
+            var history = new List<AgentExchange>
+            {
+                Write("C:\\proj\\a.js", 6000), Write("C:\\proj\\b.js", 6000), Write("C:\\proj\\c.js", 6000),
+                Run("node a.js", 200), Run("node b.js", 200), Run("node c.js", 200), Run("node d.js", 200),
+            };
+            var model = new SummarizingModel(GoodCheckpoint("- C:\\proj\\a.js"));
+            var compactor = new AgentRunCompactor(new AgentCompactionPolicy(6_000, AgentCompactionMode.ModelSummary) { TargetRatio = 0.05 });
+
+            string? description = await compactor.CompactIfNeededAsync("goal", history, model,
+                ["C:\\proj\\a.js", "C:\\proj\\b.js", "C:\\proj\\c.js"], null, null, CancellationToken.None);
+
+            Assert.Equal(0, model.SummaryCalls);
+            Assert.StartsWith("pruned old steps", description);
+            Assert.Equal(7, history.Count);
+        }
+
+        [Fact]
+        public void ACheckpointIsCheckedAgainstTheOriginalStepsSize()
+        {
+            // The same checkpoint is too long for a 100-character span and fine for the original steps.
+            Assert.Null(AgentRunCompactor.ValidateAndRepair(GoodCheckpoint("(none)"), [], null, replacedChars: 100, out _));
+            Assert.NotNull(AgentRunCompactor.ValidateAndRepair(GoodCheckpoint("(none)"), [], null, replacedChars: 18_000, out _));
+        }
+
+        [Fact]
+        public void ADigestOfADigestDoesNotRepeatTheFileListOrPlan()
+        {
+            AgentPlan plan = AgentPlan.TryParse("[>] a\n[ ] b", null, 12, out _)!;
+            string first = AgentRunCompactor.BuildDigest([Run("one", 10)], ["x.js"], plan);
+            var older = new List<AgentExchange>
+            {
+                new(new AgentToolCall(AgentRunCompactor.SummaryTool, new Dictionary<string, string>()), first),
+                Run("two", 10)
+            };
+
+            string second = AgentRunCompactor.BuildDigest(older, ["x.js", "y.js"], plan);
+
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(second, "Files changed in this run"));
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(second, "Current plan"));
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(second, "EARLIER STEPS"));
+            Assert.Contains("run_command (command: one)", second);
+            Assert.Contains("run_command (command: two)", second);
+        }
+
+        [Fact]
         public async Task AnUnusableCheckpointGetsOneNudgeThenTheDigestIsUsed()
         {
             List<AgentExchange> history = LongHistory(60);
@@ -203,7 +252,9 @@ namespace Malx_AI.Tests
 
                 Assert.Equal("Wrote them.", result.FinalMessage);
                 Assert.NotEmpty(compactions);
-                Assert.True(model.SeenHistories.Last().Count < 14);
+                // Old steps no longer carry their 4,000-character file bodies.
+                Assert.True(model.SeenHistories.Last()
+                    .Count(exchange => exchange.Call.Arguments.TryGetValue("content", out string? body) && body.Length >= 4000) <= 7);
             }
             finally
             {

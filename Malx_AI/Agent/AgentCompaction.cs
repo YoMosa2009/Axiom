@@ -111,6 +111,9 @@ namespace Malx_AI.Agent
         private const int MinExchangesBetweenCompactions = 3;
         private const int DigestMaxLines = 40;
 
+        /// <summary>Pruned older steps must be bigger than this (about a 900-word checkpoint) before a summary is worth writing.</summary>
+        internal const int CheckpointWorthTokens = 1500;
+
         private readonly AgentCompactionPolicy _policy;
         private int _summaryFailures;
         private int _ineffectiveInARow;
@@ -179,18 +182,29 @@ namespace Malx_AI.Agent
             {
                 List<AgentExchange> pruned = Prune(history, _policy);
                 how = "pruned old steps";
-                if (!FitsTarget(goal, pruned))
+                int keep = Math.Min(_policy.KeepRecentExchanges, pruned.Count);
+                int splitAt = pruned.Count - keep;
+                // Pruned older steps that are already shorter than a checkpoint would be cannot be
+                // shrunk by one: asking the model then only costs requests (a live run on Hybrid
+                // Local spent two ~1-minute requests per compaction this way).
+                bool summaryCanHelp = pruned.Take(splitAt).Sum(EstimateTokens) > CheckpointWorthTokens
+                    || pruned.Count > _policy.MaxExchanges;
+                if (!FitsTarget(goal, pruned) && summaryCanHelp)
                 {
-                    int keep = Math.Min(_policy.KeepRecentExchanges, pruned.Count);
-                    int splitAt = pruned.Count - keep;
-                    List<AgentExchange> older = pruned.Take(splitAt).ToList();
+                    // Pruning keeps every entry in place, so the same index splits the original
+                    // history. The checkpoint's size check and the digest read the ORIGINAL steps:
+                    // measured against the already-pruned stubs (a few hundred characters), every
+                    // real checkpoint looked "longer than what it replaces" and was rejected
+                    // (live run on Hybrid Local, 2026-11-25), and the digest showed placeholder sizes.
+                    List<AgentExchange> older = history.Take(splitAt).ToList();
                     List<AgentExchange> recent = pruned.Skip(splitAt).ToList();
 
                     string? summary = null;
+                    string? rejected = null;
                     if (_policy.Mode == AgentCompactionMode.ModelSummary && model is IAgentSummarizer summarizer
                         && _summaryFailures < MaxSummaryFailures)
                     {
-                        summary = await WriteCheckpointAsync(summarizer, goal, history, older, changedFiles, plan, token).ConfigureAwait(false);
+                        (summary, rejected) = await WriteCheckpointAsync(summarizer, goal, history, older, changedFiles, plan, token).ConfigureAwait(false);
                         if (summary == null)
                             _summaryFailures++;
                     }
@@ -200,14 +214,20 @@ namespace Malx_AI.Agent
                     else
                     {
                         summary = BuildDigest(older, changedFiles, plan);
-                        how = "deterministic digest";
+                        how = rejected == null ? "deterministic digest" : $"deterministic digest (checkpoint rejected: {rejected.TrimEnd('.')})";
                     }
 
-                    pruned = new List<AgentExchange>(recent.Count + 1)
+                    var summarised = new List<AgentExchange>(recent.Count + 1)
                     {
                         new(new AgentToolCall(SummaryTool, new Dictionary<string, string>()), summary)
                     };
-                    pruned.AddRange(recent);
+                    summarised.AddRange(recent);
+                    // A summary of a few short steps can be longer than the steps themselves (a
+                    // live run grew from ~8,100 to ~8,190 tokens); then the pruned steps stay.
+                    if (EstimateTokens(goal, summarised) < EstimateTokens(goal, pruned) || pruned.Count > _policy.MaxExchanges)
+                        pruned = summarised;
+                    else
+                        how = "pruned old steps (a summary would not have been shorter)";
                 }
 
                 history.Clear();
@@ -315,7 +335,9 @@ namespace Malx_AI.Agent
             {
                 if (exchange.Call.Tool == SummaryTool)
                 {
-                    lines.Add("Earlier checkpoint:\n" + exchange.Observation.Trim());
+                    // An earlier digest or checkpoint keeps its content but not its file list, plan
+                    // or header: those are added once, current, below (a live run repeated them).
+                    lines.AddRange(EarlierSummaryLines(exchange.Observation));
                     continue;
                 }
 
@@ -328,7 +350,8 @@ namespace Malx_AI.Agent
                 if (exchange.Call.Tool.StartsWith('('))
                     continue;
 
-                lines.Add("- " + exchange.Call.DescribeForModel(120) + " -> " + FirstLine(exchange.Observation, 160));
+                lines.Add("- " + exchange.Call.DescribeForModel(100) + " -> "
+                    + FirstLine(AgentContextManager.CompactObservationForHistory(exchange.Call, exchange.Observation, 120), 120));
             }
 
             int skipped = Math.Max(0, lines.Count - DigestMaxLines);
@@ -341,6 +364,31 @@ namespace Malx_AI.Agent
             if (plan is { IsEmpty: false })
                 builder.AppendLine("Current plan:").AppendLine(plan.Render());
             return builder.ToString().TrimEnd();
+        }
+
+        private static IEnumerable<string> EarlierSummaryLines(string summary)
+        {
+            bool inPlan = false;
+            foreach (string raw in summary.Replace("\r", string.Empty).Split('\n'))
+            {
+                string line = raw.TrimEnd();
+                if (line.StartsWith("Current plan", StringComparison.Ordinal))
+                {
+                    inPlan = true;
+                    continue;
+                }
+                if (inPlan && (line.StartsWith("[x] ", StringComparison.Ordinal) || line.StartsWith("[>] ", StringComparison.Ordinal)
+                        || line.StartsWith("[ ] ", StringComparison.Ordinal)))
+                    continue;
+                inPlan = false;
+                if (line.Length == 0
+                    || line.StartsWith("[EARLIER STEPS OF THIS RUN", StringComparison.Ordinal)
+                    || line.StartsWith("The full tool results are not repeated", StringComparison.Ordinal)
+                    || line.StartsWith("Files changed in this run", StringComparison.Ordinal)
+                    || line.StartsWith("Older tool results can be read again", StringComparison.Ordinal))
+                    continue;
+                yield return line;
+            }
         }
 
         private static void AppendLedger(StringBuilder builder, IReadOnlyCollection<string> changedFiles)
@@ -377,7 +425,7 @@ namespace Malx_AI.Agent
                 ? string.Empty
                 : "\nAn earlier checkpoint is part of the history above: update it rather than copying it. Newer facts win; finished items move out of In progress.");
 
-        private static async Task<string?> WriteCheckpointAsync(
+        private static async Task<(string? Checkpoint, string? Problem)> WriteCheckpointAsync(
             IAgentSummarizer summarizer,
             string goal,
             IReadOnlyList<AgentExchange> fullHistory,
@@ -391,6 +439,7 @@ namespace Malx_AI.Agent
             int replacedChars = older.Sum(exchange => exchange.Observation.Length
                 + exchange.Call.Arguments.Sum(pair => pair.Value?.Length ?? 0));
 
+            string? problem = null;
             for (int attempt = 0; attempt < 2; attempt++)
             {
                 string? reply;
@@ -404,20 +453,20 @@ namespace Malx_AI.Agent
                 {
                     throw;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    return null;
+                    return (null, "the request failed: " + ex.Message);
                 }
 
-                string? checkpoint = ValidateAndRepair(reply, changedFiles, plan, replacedChars, out string? problem);
+                string? checkpoint = ValidateAndRepair(reply, changedFiles, plan, replacedChars, out problem);
                 if (checkpoint != null)
-                    return checkpoint;
+                    return (checkpoint, null);
 
                 // One nudge (OpenCode does the same when the template is not filled in).
                 instruction = CheckpointInstruction(previous) + $"\nYour last reply was not usable: {problem} Reply again with the headings filled in.";
             }
 
-            return null;
+            return (null, problem);
         }
 
         private static readonly Regex HeadingRegex = new(@"(?m)^\s{0,3}#{1,3}\s*(?<name>[^\r\n#]+?)\s*:?\s*$", RegexOptions.Compiled);
