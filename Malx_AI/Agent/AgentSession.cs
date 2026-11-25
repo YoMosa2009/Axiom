@@ -128,6 +128,7 @@ namespace Malx_AI.Agent
             bool changedSomething = false;
             int stepsSinceLastChange = 0;
             int blockedInARow = 0;
+            int recallsInARow = 0;
             string? wrapUpReason = null;
             bool checkedSinceLastChange = true;
             bool checkGateUsed = false;
@@ -484,6 +485,26 @@ namespace Malx_AI.Agent
                     // Cycles that alternate (rewrite a file, rerun the same failing command,
                     // rewrite, rerun...) slip past the consecutive check above; a live run spent
                     // its whole 30-step budget that way. Count exact repeats across the run.
+                    // A follow-up turn on 2026-11-24 spent its first five steps (about 90 s) on
+                    // recall_context with different queries before touching the project. The
+                    // archive does not change between those calls, so after a few in a row the
+                    // model is told to act on what it already has.
+                    if (call.Tool == AgentToolNames.RecallContext)
+                    {
+                        if (++recallsInARow > MaxRecallsInARow)
+                        {
+                            NoteBlocked(call, decision.Permission,
+                                $"Blocked: recall_context has already been used {recallsInARow - 1} times in a row. The earlier context will not change. "
+                                + "Act on what you have now: inspect the project files or continue the work.",
+                                "recall limit");
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        recallsInARow = 0;
+                    }
+
                     string signature = CallSignature(call);
                     int seen = callCounts.TryGetValue(signature, out int previous) ? previous + 1 : 1;
                     callCounts[signature] = seen;
@@ -679,6 +700,7 @@ namespace Malx_AI.Agent
 
         /// <summary>How many refused tool calls in a row end the tool-calling part of a run.</summary>
         private const int MaxBlockedCallsInARow = 3;
+        internal const int MaxRecallsInARow = 3;
 
         /// <summary>The pseudo-tool name the closing-summary request is recorded under.</summary>
         internal const string WrapUpTool = "(wrap_up)";

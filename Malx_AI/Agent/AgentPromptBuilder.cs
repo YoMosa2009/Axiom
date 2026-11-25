@@ -112,7 +112,8 @@ namespace Malx_AI.Agent
             bool nativeToolCalling = false,
             string? trackerFilePath = null,
             string? browserSummary = null,
-            bool visionCapable = false)
+            bool visionCapable = false,
+            bool includeProjectInstructions = true)
         {
             var builder = new StringBuilder();
             builder.AppendLine("[AXIOM COMPUTER AGENT]");
@@ -189,6 +190,8 @@ namespace Malx_AI.Agent
             builder.AppendLine(mode == AgentApprovalMode.Auto
                 ? "Approval mode: Auto. Your calls run immediately (safe/reviewed per policy)."
                 : "Approval mode: Manual. Commands and edits wait for user approval; a refusal is a normal answer, not an error.");
+            if (includeProjectInstructions && AgentProjectInstructions.Load(scope, tier) is { } projectInstructions)
+                builder.AppendLine(projectInstructions);
             builder.Append("[/AXIOM COMPUTER AGENT]");
             return builder.ToString();
         }

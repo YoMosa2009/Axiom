@@ -116,7 +116,8 @@ namespace Malx_AI.Agent
                 builder.Append("You ran: ").AppendLine(exchange.Call.DescribeForModel());
                 string observation = exchange.Observation;
                 if (observation.Length > _observationBudget)
-                    observation = observation[.._observationBudget] + "\n[Observation shortened for the prompt. Use recall_context to recover the full tool result.]";
+                    observation = AgentOutputClip.HeadTail(observation, _observationBudget,
+                        "Observation shortened for the prompt. Use recall_context to recover the full tool result.");
                 builder.Append("Result: ").AppendLine(observation);
             }
 

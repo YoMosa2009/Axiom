@@ -106,6 +106,10 @@
     <Compile Include="..\Malx_AI\Agent\AgentBackgroundTaskManager.cs" Link="Production\Agent\AgentBackgroundTaskManager.cs" />
     <Compile Include="..\Malx_AI\Agent\BrowserControlService.cs" Link="Production\Agent\BrowserControlService.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentPageCapture.cs" Link="Production\Agent\AgentPageCapture.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentEditMatcher.cs" Link="Production\Agent\AgentEditMatcher.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentOutputClip.cs" Link="Production\Agent\AgentOutputClip.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentSyntaxCheck.cs" Link="Production\Agent\AgentSyntaxCheck.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentProjectInstructions.cs" Link="Production\Agent\AgentProjectInstructions.cs" />
     <Compile Include="..\Malx_AI\ConversationEvidence.cs" Link="Production\ConversationEvidence.cs" />
     <Compile Include="..\Malx_AI\Agent\WorkplaceTaskTrackerFileService.cs" Link="Production\Agent\WorkplaceTaskTrackerFileService.cs" />
     <Compile Include="..\Malx_AI\Agent\CommandSafetyReviewer.cs" Link="Production\Agent\CommandSafetyReviewer.cs" />

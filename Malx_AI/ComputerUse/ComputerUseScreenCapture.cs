@@ -143,9 +143,21 @@ namespace Malx_AI.ComputerUse
                         if (targetWindow != IntPtr.Zero)
                         {
                             using var targetImage = CaptureWindowBitmapBounded(targetWindow);
-                            if (targetImage == null || !GetWindowRect(targetWindow, out RECT targetRect))
-                                throw new InvalidOperationException("The work window could not be captured behind Axiom. No window was hidden or minimized.");
-                            graphics.DrawImageUnscaled(targetImage, targetRect.Left - originX, targetRect.Top - originY);
+                            if (targetImage != null && GetWindowRect(targetWindow, out RECT targetRect))
+                            {
+                                graphics.DrawImageUnscaled(targetImage, targetRect.Left - originX, targetRect.Top - originY);
+                            }
+                            else
+                            {
+                                // Some windows (GPU-composited, cloaked, or blank while loading) cannot
+                                // be drawn while Axiom is in front. This used to throw and end the whole
+                                // session on its first step (owner log 2026-11-24). Give the actor an
+                                // empty target and an honest state instead: no input can reach a window
+                                // it cannot see, and "open" brings the app to the front for a real capture.
+                                string unseen = string.IsNullOrWhiteSpace(processName) ? "The work application" : $"The work application '{processName}'";
+                                targetWindow = IntPtr.Zero;
+                                (windowTitle, processName) = ($"{unseen} could not be captured while Axiom is in front. Use open to bring it to the front before sending input.", "");
+                            }
                         }
                     }
                     else

@@ -29,6 +29,22 @@ namespace Malx_AI.Agent
         public static async Task<AgentScreenshot> CaptureAsync(string url, AgentScope scope, CancellationToken token)
         {
             Uri uri = ResolveUrl(url, scope);
+            try
+            {
+                return await CaptureOnceAsync(uri, token).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException) when (!token.IsCancellationRequested && !uri.IsFile)
+            {
+                // A live run (2026-11-24) asked for its local server's page a few seconds after
+                // starting the server, and the first render failed in under a second. The same
+                // URL rendered fine later. One short retry covers a server that is still starting.
+                await Task.Delay(TimeSpan.FromSeconds(2), token).ConfigureAwait(false);
+                return await CaptureOnceAsync(uri, token).ConfigureAwait(false);
+            }
+        }
+
+        private static async Task<AgentScreenshot> CaptureOnceAsync(Uri uri, CancellationToken token)
+        {
             DetectedBrowserInfo? browser = BrowserControlService.GetInstalledBrowserCandidates()
                 .FirstOrDefault(b => b.BrowserId is "edge" or "chrome" or "brave");
             if (browser == null)
@@ -62,7 +78,10 @@ namespace Malx_AI.Agent
                 await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
                 await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
                 if (process.ExitCode != 0 || !File.Exists(png))
-                    throw new InvalidOperationException("The background browser could not render the page. No desktop windows were changed.");
+                    throw new InvalidOperationException(
+                        $"The background browser could not render the page (exit code {process.ExitCode}). "
+                        + (uri.IsFile ? "" : "If the page comes from a local server, check that the server is running and answers this URL. ")
+                        + "No desktop windows were changed.");
                 byte[] bytes = await File.ReadAllBytesAsync(png, deadline.Token).ConfigureAwait(false);
                 if (bytes.Length < 24 || !bytes.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }))
                     throw new InvalidOperationException("The background browser did not return a PNG image.");

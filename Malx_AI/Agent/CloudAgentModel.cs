@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -189,6 +189,7 @@ namespace Malx_AI.Agent
             }
 
             _pendingToolCall = toolCall;
+            _pendingReasoning = ShouldReturnReasoning(_modelId, _thinkingEnabled) ? ClipReasoning(response.Reasoning) : null;
             return AgentModelReply.Tool(new AgentToolCall(toolCall.Name.ToLowerInvariant(), arguments));
         }
 
@@ -231,9 +232,11 @@ namespace Malx_AI.Agent
 
             for (int attempt = 0; attempt < MaxAttempts; attempt++)
             {
-                if (attempt > 0)
+                if (attempt > 0 && !_lastTurnWasRateLimited)
                 {
-                    await Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt - 1)), token).ConfigureAwait(false);
+                    // Exponential backoff with jitter (2 s, 4 s, ...), so a provider that just
+                    // failed is not hit again at the same instant by every retry.
+                    await Delay(BackoffDelay(attempt), token).ConfigureAwait(false);
                     await BackendLogService.LogEventAsync(
                         "ComputerAgent",
                         $"retrying turn (attempt {attempt + 1}/{MaxAttempts}): {lastFailure?.Message ?? "empty response"}")
@@ -293,7 +296,8 @@ namespace Malx_AI.Agent
                     _lastTurnWasRateLimited = true;
                     if (attempt < MaxAttempts - 1)
                     {
-                        int waitSeconds = Math.Clamp(rateLimited.RetryAfterSeconds > 0 ? rateLimited.RetryAfterSeconds : 8, 4, 30);
+                        // Honour the provider's retry-after; without one, back off exponentially.
+                        int waitSeconds = Math.Clamp(rateLimited.RetryAfterSeconds > 0 ? rateLimited.RetryAfterSeconds : (int)Math.Ceiling(BackoffDelay(attempt + 2).TotalSeconds), 4, 30);
                         OnWaiting?.Invoke($"Model is rate-limited, retrying in {waitSeconds}s");
                         await Delay(TimeSpan.FromSeconds(waitSeconds), token).ConfigureAwait(false);
                     }
@@ -323,6 +327,13 @@ namespace Malx_AI.Agent
             }
 
             return null;
+        }
+
+        /// <summary>Exponential backoff (2^attempt seconds, capped at 30) with +/-25% jitter.</summary>
+        internal static TimeSpan BackoffDelay(int attempt)
+        {
+            double seconds = Math.Min(30, Math.Pow(2, Math.Max(1, attempt)));
+            return TimeSpan.FromSeconds(seconds * (0.75 + Random.Shared.NextDouble() * 0.5));
         }
 
         /// <summary>True for a 404 that means the model itself is gone, not a passing outage.</summary>
@@ -397,6 +408,29 @@ namespace Malx_AI.Agent
             + "then call append_file with each following part until the file is complete.";
 
         private OpenRouterToolCall? _pendingToolCall;
+        private string? _pendingReasoning;
+
+        /// <summary>
+        /// DeepSeek thinking mode (the Axiom Cloud subscription model and Threnody) expects the
+        /// assistant's reasoning_content back on the following requests of the same tool loop.
+        /// Other families either ignore it or use signed formats Axiom does not carry, so the
+        /// field is only sent where it is documented to matter.
+        /// </summary>
+        internal static bool ShouldReturnReasoning(string? modelId, bool thinkingEnabled) =>
+            thinkingEnabled
+            && !string.IsNullOrWhiteSpace(modelId)
+            && (modelId.Contains("deepseek", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(modelId, OpenRouterChatService.AxiomManagedModelId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(modelId, OpenRouterChatService.Threnody10ModelId, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Very long reasoning is cut from the front: the conclusion that led to the call is at the end.</summary>
+        internal static string? ClipReasoning(string? reasoning)
+        {
+            if (string.IsNullOrWhiteSpace(reasoning))
+                return null;
+            const int max = 12000;
+            return reasoning.Length <= max ? reasoning : reasoning[^max..];
+        }
 
         private void AppendExchange(AgentExchange exchange, int index)
         {
@@ -406,6 +440,7 @@ namespace Malx_AI.Agent
             if (exchange.Call.Tool.StartsWith('('))
             {
                 _pendingToolCall = null;
+                _pendingReasoning = null;
                 // A message the user typed mid-run is theirs, not Axiom's: no "[Axiom]" prefix.
                 string text = string.Equals(exchange.Call.Tool, AgentSession.UserMessageTool, StringComparison.Ordinal)
                     ? exchange.Observation
@@ -422,9 +457,11 @@ namespace Malx_AI.Agent
             OpenRouterToolCall call = _pendingToolCall
                 ?? new OpenRouterToolCall($"call_{index}", exchange.Call.Tool, argsJson);
             _pendingToolCall = null;
+            string? reasoning = _pendingReasoning;
+            _pendingReasoning = null;
 
             bool preserveToolText = string.Equals(exchange.Call.Tool, AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase);
-            _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call]));
+            _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call], ReasoningContent: reasoning));
             _messages.Add(new OpenRouterMessage("tool", exchange.Observation, ToolCallId: call.Id, PreserveFullText: preserveToolText));
 
             if (!string.IsNullOrWhiteSpace(exchange.ImageDataUrl) && _service.SupportsImageInput(_modelId))
