@@ -206,6 +206,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("- Use use_skill with the name of an attached Skill only if its procedure materially helps with this request.");
             builder.AppendLine("- take_screenshot captures a live screen image for visual verification on vision-capable models.");
             builder.AppendLine("- read_file, write_file, append_file, edit_file, list_directory, find_files and search_text work on the user's real files (including reading images for visual inspection).");
+            builder.AppendLine("- update_plan keeps a short checklist the user sees live. Use it for work of 3 or more steps: send the whole list, one step in_progress at a time, and mark steps completed as soon as they are done.");
             builder.AppendLine();
             builder.AppendLine("Call one tool at a time and wait for its result before the next. When the task is done, reply with a complete, well-structured Markdown summary covering everything you did, changed files, verification results, and next steps.");
         }
@@ -231,6 +232,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("- list_directory: path");
             builder.AppendLine("- find_files: pattern, optional path");
             builder.AppendLine("- search_text: pattern, optional path, optional file_pattern");
+            builder.AppendLine("- update_plan: plan  (for work of 3+ steps: the whole checklist, one step per line as [ ] pending, [>] in progress or [x] done)");
             builder.AppendLine("- finish: summary  (call this when the task is done)");
             builder.AppendLine();
             builder.AppendLine("When the work is complete, call finish with a short summary. Any message without a JSON block is treated as your final answer to the user.");
@@ -258,6 +260,10 @@ namespace Malx_AI.Agent
             builder.AppendLine("- write_file            with: path, content (the whole file, in the shape below)");
             builder.AppendLine("- finish                with: summary");
             builder.AppendLine("- recall_context        with: query (literal text), optional offset; use it for earlier conversation/tool evidence");
+            // Compact (1-4B) gets a tiny plan tool with up to 5 steps; Micro (under 1B) does not:
+            // a sub-1B model picks arbitrary tools and would spend its few steps on the list.
+            if (tier == AgentTier.Compact)
+                builder.AppendLine("- update_plan           with: plan (up to 5 steps, e.g. [x] read the file | [>] fix the bug | [ ] test it); only for 3+ step work");
 
             // Both flat tiers write files this way. Micro had no write tool at all, so a simulated
             // sub-1B model packed a Python file into one Set-Content line to create it.

@@ -18,7 +18,7 @@ namespace Malx_AI.Agent
     /// "I can't open Notepad, I'm running in a cloud environment" instead of calling a tool: the
     /// model was being told it was a council Builder with no machine access.
     /// </remarks>
-    public sealed class CloudAgentModel : IAgentModel
+    public sealed class CloudAgentModel : IAgentModel, IAgentSummarizer
     {
         private readonly OpenRouterChatService _service;
         private readonly string _modelId;
@@ -27,6 +27,16 @@ namespace Malx_AI.Agent
         private readonly bool _thinkingEnabled;
         private readonly List<OpenRouterMessage> _messages = new();
         private int _renderedExchanges;
+        private int _seedMessageCount;
+        private bool _rebuildPending;
+
+        /// <summary>
+        /// The provider id and reasoning each rendered tool call was sent with, so a rebuilt
+        /// conversation (after compaction) sends the kept calls exactly as before. DeepSeek
+        /// thinking mode rejects an assistant tool call that lost its reasoning_content.
+        /// </summary>
+        private readonly Dictionary<AgentToolCall, (OpenRouterToolCall Call, string? Reasoning)> _nativeCalls =
+            new(ReferenceEqualityComparer.Instance);
 
         public CloudAgentModel(
             OpenRouterChatService service,
@@ -56,7 +66,12 @@ namespace Malx_AI.Agent
                     _messages.Add(new OpenRouterMessage(normalizedRole, content, PreserveFullText: true));
                 }
             }
+
+            _seedMessageCount = _messages.Count;
         }
+
+        /// <inheritdoc />
+        public void HistoryRewritten() => _rebuildPending = true;
 
         public string? Unavailable =>
             _service.HasCredentialForModel(_modelId)
@@ -67,6 +82,19 @@ namespace Malx_AI.Agent
 
         public async Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
         {
+            SyncMessages(goal, history);
+            return await NextAfterSyncAsync(token).ConfigureAwait(false);
+        }
+
+        /// <summary>Brings the conversation sent to the provider up to date with the session's history.</summary>
+        private void SyncMessages(string goal, IReadOnlyList<AgentExchange> history)
+        {
+            if (_rebuildPending)
+            {
+                Rebuild(goal, history);
+                return;
+            }
+
             bool hasCurrentGoalMessage = _messages.Any(m => m.Role == "user" && string.Equals(m.Text, goal, StringComparison.Ordinal));
             if (!hasCurrentGoalMessage)
             {
@@ -89,7 +117,94 @@ namespace Malx_AI.Agent
                     AppendExchange(history[i], i);
                 _renderedExchanges = history.Count;
             }
+        }
 
+        /// <summary>
+        /// Re-renders the conversation after the session compacted its history: the seeded chat,
+        /// the goal, then each exchange. A call already sent natively is sent again with its
+        /// original id and reasoning; a compacted one becomes a short "[Axiom]" note, which keeps
+        /// tool-call pairing valid for every provider.
+        /// </summary>
+        private void Rebuild(string goal, IReadOnlyList<AgentExchange> history)
+        {
+            _rebuildPending = false;
+            _messages.RemoveRange(_seedMessageCount, _messages.Count - _seedMessageCount);
+            _messages.Add(new OpenRouterMessage("user", goal, PreserveFullText: true, ImageDataUrls: _imageDataUrls));
+
+            int lastToolExchange = -1;
+            for (int i = history.Count - 1; i >= 0; i--)
+            {
+                if (!history[i].Call.Tool.StartsWith('('))
+                {
+                    lastToolExchange = i;
+                    break;
+                }
+            }
+
+            for (int i = 0; i < history.Count; i++)
+            {
+                AgentExchange exchange = history[i];
+                if (exchange.Call.Tool.StartsWith('(')
+                    || _nativeCalls.ContainsKey(exchange.Call)
+                    || (i == lastToolExchange && _pendingToolCall != null))
+                {
+                    AppendExchange(exchange, i);
+                    continue;
+                }
+
+                _messages.Add(new OpenRouterMessage("user",
+                    "[Axiom] Earlier step (compacted): you ran " + exchange.Call.DescribeForModel(200) + "\nResult: " + exchange.Observation,
+                    PreserveFullText: true));
+            }
+
+            _pendingToolCall = null;
+            _pendingReasoning = null;
+            _renderedExchanges = history.Count;
+        }
+
+        /// <summary>
+        /// Asks for a compaction checkpoint: the conversation as already sent (so the provider's
+        /// prompt cache applies), plus the instruction as a final user message. The tools stay
+        /// attached because some providers reject tool messages without them; a tool call in
+        /// reply counts as a failure. The one Workplace model, no fallback.
+        /// </summary>
+        public async Task<string?> SummarizeAsync(string goal, IReadOnlyList<AgentExchange> history, string instruction, CancellationToken token)
+        {
+            SyncMessages(goal, history);
+            var request = new List<OpenRouterMessage>(_messages)
+            {
+                new("user", instruction, PreserveFullText: true)
+            };
+
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(token);
+            limit.CancelAfter(Limits.Total);
+            try
+            {
+                OpenRouterChatResponse response = await _service.SendConversationStreamAsync(
+                    request,
+                    _systemPrompt,
+                    thinkingEnabled: _thinkingEnabled,
+                    modelId: _modelId,
+                    tools: AgentToolSchemas.All(),
+                    cancellationToken: limit.Token,
+                    maxTokensOverride: CheckpointMaxTokens,
+                    allowModelFallback: false).ConfigureAwait(false);
+                if (response.Usage != null)
+                    OnTokenUsageRecorded?.Invoke(response.Usage.PromptTokens, response.Usage.CompletionTokens);
+                if (response.ToolCalls?.Count > 0 || string.IsNullOrWhiteSpace(response.Text))
+                    return null;
+                return response.Text;
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                return null;
+            }
+        }
+
+        internal const int CheckpointMaxTokens = 4096;
+
+        private async Task<AgentModelReply> NextAfterSyncAsync(CancellationToken token)
+        {
             OpenRouterChatResponse? response;
             // A turn is stopped only when the model goes quiet for Limits.Idle, or runs past
             // Limits.Total. A fixed 3-minute deadline killed healthy turns: at Ultra a Hybrid
@@ -459,6 +574,15 @@ namespace Malx_AI.Agent
             _pendingToolCall = null;
             string? reasoning = _pendingReasoning;
             _pendingReasoning = null;
+            if (_nativeCalls.TryGetValue(exchange.Call, out var sent))
+            {
+                call = sent.Call;
+                reasoning = sent.Reasoning;
+            }
+            else
+            {
+                _nativeCalls[exchange.Call] = (call, reasoning);
+            }
 
             bool preserveToolText = string.Equals(exchange.Call.Tool, AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase);
             _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call], ReasoningContent: reasoning));

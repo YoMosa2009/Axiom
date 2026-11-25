@@ -107,6 +107,8 @@ namespace Malx_AI.Agent
 
             UseSkillDefinition,
 
+            UpdatePlanDefinition,
+
             Define(
                 AgentToolNames.TakeScreenshot,
                 "Capture a screenshot and attach the image to the next step for visual inspection. Set window to capture one specific app (for example the browser showing your page): it is captured even when other windows are in front, so never refocus it with AppActivate or SendKeys first. The result says which window the image shows. One or two screenshots are enough to verify a page.",
@@ -115,6 +117,44 @@ namespace Malx_AI.Agent
                 ("delay_ms", "integer", "Optional delay in milliseconds before capturing (0-5000, default 600).", false),
                 ("save_path", "string", "Optional file path where the PNG screenshot should be saved.", false)),
         ];
+
+        /// <summary>
+        /// The live checklist (Codex update_plan shape: the whole list each call, at most one
+        /// step in progress). Description kept short, as OpenCode and DeepSeek Harness do.
+        /// </summary>
+        internal static OpenRouterToolDefinition UpdatePlanDefinition { get; } = new(
+            AgentToolNames.UpdatePlan,
+            "Keep a short checklist for work of 3 or more steps; skip it for small tasks. Send the WHOLE list each call (it replaces the old one). "
+            + "Mark a step in_progress when you start it (at most one at a time) and completed as soon as it is done. "
+            + "Only call it when a status changes. The user sees this plan live.",
+            new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject
+                {
+                    ["plan"] = new JsonObject
+                    {
+                        ["type"] = "array",
+                        ["description"] = "Every step of the plan, in order.",
+                        ["items"] = new JsonObject
+                        {
+                            ["type"] = "object",
+                            ["properties"] = new JsonObject
+                            {
+                                ["step"] = new JsonObject { ["type"] = "string", ["description"] = "A short description of the step." },
+                                ["status"] = new JsonObject
+                                {
+                                    ["type"] = "string",
+                                    ["enum"] = new JsonArray("pending", "in_progress", "completed")
+                                }
+                            },
+                            ["required"] = new JsonArray("step", "status")
+                        }
+                    },
+                    ["explanation"] = new JsonObject { ["type"] = "string", ["description"] = "Optional one-line reason when the plan changes." }
+                },
+                ["required"] = new JsonArray("plan")
+            });
 
         internal static OpenRouterToolDefinition UseSkillDefinition { get; } = Define(
             AgentToolNames.UseSkill,

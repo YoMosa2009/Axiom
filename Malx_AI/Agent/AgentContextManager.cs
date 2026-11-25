@@ -97,6 +97,10 @@ namespace Malx_AI.Agent
             return compacted;
         }
 
+        /// <summary>The short record an older step is reduced to when a history is compacted.</summary>
+        internal static string CompactObservationForHistory(AgentToolCall call, string observation, int maxChars)
+            => CompactObservation(call, observation, maxChars);
+
         private static string CompactObservation(AgentToolCall call, string observation, int maxChars)
         {
             if (string.IsNullOrWhiteSpace(observation))
@@ -311,6 +315,9 @@ namespace Malx_AI.Agent
 
         /// <summary>Each finished turn of this task: what was asked and how it ended.</summary>
         public List<AgentTurnRecord> Turns { get; } = new();
+
+        /// <summary>The agent's checklist (update_plan) as the last run left it.</summary>
+        public AgentPlan Plan { get; set; } = AgentPlan.Empty;
 
         /// <summary>Copies of pre-existing files the agent changed during this task.</summary>
         public AgentFileBackup? FileBackup { get; set; }

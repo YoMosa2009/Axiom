@@ -399,6 +399,9 @@ namespace Malx_AI
                 : "General reasoning cloud profile tuned for tool outputs, structured context blocks, and direct execution-focused answers.";
         }
 
+        /// <summary>The user's model_settings.json (set by the app at start-up; null in tests).</summary>
+        public static string? ModelSettingsUserFilePath { get; set; }
+
         public int GetApproximateContextWindowTokens(string modelId)
         {
             OpenRouterModelProfile profile = FindModelProfile(modelId) ?? SupportedModelProfiles[0];
@@ -408,6 +411,14 @@ namespace Malx_AI
                 ? profile.ApproximateContextWindowTokens
                 : Math.Max(32768, profile.ApproximateContextWindowTokens);
         }
+
+        /// <summary>
+        /// How many history messages a request to this model keeps before the oldest are dropped.
+        /// The agent compacts its own history below this, so the request trimmer never silently
+        /// drops the start of a run (which also changed the cached prefix on every turn).
+        /// </summary>
+        public int GetConversationHistoryMessageLimit(string modelId) =>
+            GetConversationHistoryMessageLimit(FindModelProfile(modelId) ?? SupportedModelProfiles[0]);
 
         public OpenRouterInferenceSettingsSnapshot GetInferenceSettingsSnapshot(string modelId, bool isCodingRequest = false, bool isPythonRequest = false)
         {
@@ -1390,7 +1401,8 @@ namespace Malx_AI
                     maxCompletionTokens,
                     tools,
                     isCustomEndpoint: requestedModelProfile.IsCustomEndpoint,
-                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint);
+                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint,
+                    isCodingRequest: isCodingRequest);
 
                 using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 finalStatusCode = response.StatusCode;
@@ -1624,7 +1636,8 @@ namespace Malx_AI
                     stopSequences,
                     isCustomEndpoint: requestedModelProfile.IsCustomEndpoint,
                     isManagedEndpoint: requestedModelProfile.IsManagedEndpoint,
-                    disableToolCalls: disableToolCalls);
+                    disableToolCalls: disableToolCalls,
+                    isCodingRequest: isCodingRequest);
 
                 response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
@@ -2159,7 +2172,8 @@ namespace Malx_AI
             IReadOnlyList<string>? stopSequences = null,
             bool isCustomEndpoint = false,
             bool isManagedEndpoint = false,
-            bool disableToolCalls = false)
+            bool disableToolCalls = false,
+            bool isCodingRequest = false)
         {
             JsonArray messagePayload = BuildMessages(messages, systemPrompt);
             JsonObject payload = new()
@@ -2180,6 +2194,12 @@ namespace Malx_AI
 
             if (SupportsParameter(modelId, "top_p"))
                 payload["top_p"] = topP;
+
+            // Reviewed per-model settings (ModelSettingsRegistry): a Hybrid Local server gets its
+            // model family's recommended sampling; DeepSeek thinking turns drop sampling the API
+            // ignores. Unknown models are left exactly as above.
+            ModelSettingsRegistry.ApplyToRequest(payload, modelId, thinkingEnabled, isCodingRequest, isCustomEndpoint,
+                ModelSettingsRegistry.UserEntries(ModelSettingsUserFilePath));
 
             JsonArray stopPayload = BuildStopPayload(stopSequences);
             if (stopPayload.Count > 0)

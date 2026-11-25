@@ -54,6 +54,27 @@ namespace Malx_AI.Agent
         /// <summary>How often one exact call may run in a single task before it is blocked.</summary>
         private const int MaxIdenticalCallsPerRun = 2;
 
+        /// <summary>
+        /// The live checklist the model keeps with update_plan. Set before a run to carry an
+        /// earlier turn's plan forward; read afterwards to keep it.
+        /// </summary>
+        public AgentPlan Plan { get; set; } = AgentPlan.Empty;
+
+        /// <summary>Called on the run's thread whenever update_plan changes the plan.</summary>
+        public Action<AgentPlan>? PlanChanged { get; set; }
+
+        /// <summary>Called after the run's history is compacted, with a one-line description for logs.</summary>
+        public Action<string>? Compacted { get; set; }
+
+        /// <summary>update_plan calls in a row before the next one is refused.</summary>
+        private const int MaxPlanUpdatesInARow = 2;
+
+        /// <summary>update_plan calls per run that do not use up a step of the budget.</summary>
+        private const int FreePlanUpdatesPerRun = 4;
+
+        /// <summary>Steps without a plan update, while steps are still open, before the plan is shown again.</summary>
+        internal const int PlanReminderInterval = 8;
+
         public AgentSession(AgentScope scope, int maxSteps, AgentToolExecutor? executor = null)
         {
             _scope = scope ?? AgentScope.WholeComputer();
@@ -136,6 +157,12 @@ namespace Malx_AI.Agent
             int reviewPasses = 0;
             var changedFiles = new List<string>();
             int currentStep = 0;
+            int planUpdatesInARow = 0;
+            int freePlanUpdatesUsed = 0;
+            int stepsSincePlanUpdate = 0;
+            bool planUpdatedThisRun = false;
+            bool planGateUsed = false;
+            var compactor = policy.Compaction == null ? null : new AgentRunCompactor(policy.Compaction);
 
             void SendBack(string activity, string message)
             {
@@ -162,6 +189,17 @@ namespace Malx_AI.Agent
                             + "\nFix these with the tools (create the missing files or correct the references), then give your final summary.");
                         return true;
                     }
+                }
+
+                // A plan this run wrote that still has open steps: sent back once, like the
+                // check gate below. Soft on purpose (the research found no harness that hard-
+                // blocks on it): the model may close steps it dropped and say why.
+                if (planUpdatedThisRun && !planGateUsed && !policy.AnswerOnly && Plan.HasOpenItems
+                    && currentStep < _maxSteps - 2)
+                {
+                    planGateUsed = true;
+                    SendBack("Checking the plan", Plan.OpenItemsAtFinishMessage());
+                    return true;
                 }
 
                 if (policy.RequireCheckedFinish && changedSomething && !checkedSinceLastChange && !checkGateUsed
@@ -251,6 +289,17 @@ namespace Malx_AI.Agent
                         break;
                     DeliverUserMessages();
                     DeliverBackgroundWakeups();
+
+                    if (compactor != null)
+                    {
+                        string? compacted = await compactor.CompactIfNeededAsync(
+                            goal, history, model, changedFiles, Plan, reportActivity, token).ConfigureAwait(false);
+                        if (compacted != null)
+                        {
+                            try { Compacted?.Invoke(compacted); }
+                            catch { /* logging only */ }
+                        }
+                    }
 
                     reportActivity?.Invoke("Thinking");
                     AgentModelReply reply;
@@ -352,6 +401,55 @@ namespace Malx_AI.Agent
                             false,
                             history);
                     }
+
+                    // update_plan is bookkeeping, handled here: it changes nothing on the machine,
+                    // needs no approval and shows the user the plan. A few per run are free so a
+                    // small step budget is not spent on it.
+                    if (string.Equals(call.Tool, AgentToolNames.UpdatePlan, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (++planUpdatesInARow > MaxPlanUpdatesInARow)
+                        {
+                            NoteBlocked(call, AgentPermission.Allow,
+                                "Blocked: the plan was just updated. Work on the current step now; update the plan again only after a step is done.",
+                                "plan updated too often");
+                            continue;
+                        }
+
+                        string planText = call.Arg("plan");
+                        AgentToolResult planResult;
+                        if (string.IsNullOrWhiteSpace(planText))
+                        {
+                            planResult = AgentToolResult.Ok("Current plan:\n" + Plan.Render());
+                        }
+                        else
+                        {
+                            AgentPlan? parsed = AgentPlan.TryParse(planText, call.Arg("explanation"), policy.MaxPlanItems, out string? planError);
+                            if (parsed == null)
+                            {
+                                planResult = AgentToolResult.Fail(planError ?? "The plan could not be read.");
+                            }
+                            else
+                            {
+                                Plan = parsed;
+                                planUpdatedThisRun = true;
+                                stepsSincePlanUpdate = 0;
+                                try { PlanChanged?.Invoke(parsed); }
+                                catch { /* a UI callback failure must never stop the run */ }
+                                planResult = AgentToolResult.Ok(parsed.DescribeUpdate());
+                            }
+                        }
+
+                        AddStep(new AgentStep(call, AgentPermission.Allow, planResult, "plan"));
+                        history.Add(new AgentExchange(call, planResult.ToObservation()));
+                        if (freePlanUpdatesUsed < FreePlanUpdatesPerRun)
+                        {
+                            freePlanUpdatesUsed++;
+                            step--;
+                        }
+                        continue;
+                    }
+
+                    planUpdatesInARow = 0;
 
                     if (AreCallsIdentical(call, lastToolCall))
                     {
@@ -640,6 +738,10 @@ namespace Malx_AI.Agent
                         explorationNudged = true;
                         observation += AgentQualityGates.ExplorationNudge(steps.Count);
                     }
+
+                    // Claude Code re-shows a stale todo list; models forget the plan they wrote.
+                    if (Plan.HasOpenItems && ++stepsSincePlanUpdate % PlanReminderInterval == 0)
+                        observation += Plan.StaleReminder(stepsSincePlanUpdate);
                     history.Add(new AgentExchange(call, observation, result.ImageDataUrl));
                 }
             }

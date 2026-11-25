@@ -12,6 +12,20 @@
   `.csproj` and `.xaml`), Axiom checks it right away and tells the agent the line of any error.
 - **Prompt cache in the speed readout.** When the provider reports it, hovering the reply speed
   shows how much of the prompt was served from its cache.
+- **A live plan for longer agent work.** For tasks of three or more steps the agent keeps a short
+  checklist that you see at the top of its run card, with the current step in bold and finished
+  steps crossed off. It is also saved in the task tracker and carried into your next message. If
+  the agent tries to finish with steps still open, it is asked once to do them or say why not.
+- **Long runs keep their thread.** When a run's history gets close to the model's limit, Axiom
+  shortens old steps first. If that is not enough, cloud, Hybrid Local and 10B+ local models write
+  a short checkpoint of the goal, decisions, progress and errors; smaller models get a summary that
+  Axiom writes itself. The list of changed files always comes from Axiom's own record, not the
+  model's memory. Before, the oldest steps were simply cut off, sometimes including the task.
+- **Model-specific settings.** Axiom now knows the recommended sampling for several model
+  families (Qwen3, Qwen3.6, Qwen3-Coder, Gemma 4, GLM-4.7, Devstral, Mistral Small 3.2 and
+  DeepSeek R1 distills), taken from each model's own card. Agent Access on a local model and
+  Hybrid Local servers use them; models not on the list behave exactly as before. You can add your
+  own entries in `model_settings.json` in your Axiom data folder.
 
 ### Changed
 

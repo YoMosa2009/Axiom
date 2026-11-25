@@ -110,6 +110,9 @@
     <Compile Include="..\Malx_AI\Agent\AgentOutputClip.cs" Link="Production\Agent\AgentOutputClip.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentSyntaxCheck.cs" Link="Production\Agent\AgentSyntaxCheck.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentProjectInstructions.cs" Link="Production\Agent\AgentProjectInstructions.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentPlan.cs" Link="Production\Agent\AgentPlan.cs" />
+    <Compile Include="..\Malx_AI\Agent\AgentCompaction.cs" Link="Production\Agent\AgentCompaction.cs" />
+    <Compile Include="..\Malx_AI\ModelSettingsRegistry.cs" Link="Production\ModelSettingsRegistry.cs" />
     <Compile Include="..\Malx_AI\ConversationEvidence.cs" Link="Production\ConversationEvidence.cs" />
     <Compile Include="..\Malx_AI\Agent\WorkplaceTaskTrackerFileService.cs" Link="Production\Agent\WorkplaceTaskTrackerFileService.cs" />
     <Compile Include="..\Malx_AI\Agent\CommandSafetyReviewer.cs" Link="Production\Agent\CommandSafetyReviewer.cs" />

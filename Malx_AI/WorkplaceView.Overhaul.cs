@@ -250,7 +250,8 @@ namespace Malx_AI
                     _backgroundTaskManager.ListTasks(),
                     latestSummary,
                     _activeAgentTaskState?.OriginalGoal,
-                    _activeAgentTaskState?.Turns);
+                    _activeAgentTaskState?.Turns,
+                    _activeAgentTaskState?.Plan);
 
                 RefreshRightSidebarContextAndTasks();
             }

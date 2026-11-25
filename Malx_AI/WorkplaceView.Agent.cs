@@ -356,10 +356,15 @@ namespace Malx_AI
             /// <summary>What is happening right now, shown in italics under the steps.</summary>
             public string? Status { get; set; }
 
+            /// <summary>The agent's live checklist (update_plan), shown above the steps.</summary>
+            public AgentPlan? Plan { get; set; }
+
             public string Render()
             {
                 var builder = new StringBuilder();
                 builder.Append("**").Append(Title).Append("**\n\n");
+                if (Plan is { IsEmpty: false })
+                    builder.Append(RenderPlan(Plan)).Append("\n\n");
                 if (StepLines.Count > 0)
                     builder.Append(string.Join("\n", StepLines.Select(l => "- " + l)));
                 if (!string.IsNullOrWhiteSpace(Status))
@@ -370,6 +375,36 @@ namespace Malx_AI
                 }
                 return builder.ToString().TrimEnd();
             }
+
+            /// <summary>Done steps struck through, the current one in bold (the Codex plan view).</summary>
+            public static string RenderPlan(AgentPlan plan)
+            {
+                var builder = new StringBuilder();
+                builder.Append($"**Plan** ({plan.CompletedCount}/{plan.Items.Count})\n");
+                foreach (AgentPlanItem item in plan.Items)
+                {
+                    builder.Append(item.Status switch
+                    {
+                        AgentPlanStatus.Completed => $"- ✓ ~~{item.Step}~~\n",
+                        AgentPlanStatus.InProgress => $"- ▸ **{item.Step}**\n",
+                        _ => $"- ○ {item.Step}\n"
+                    });
+                }
+                return builder.ToString().TrimEnd();
+            }
+        }
+
+        /// <summary>Shows a plan update on the live run card and in the task tracker.</summary>
+        private void ShowAgentPlan(AgentRunCard run, AgentPlan plan, string userQuery)
+        {
+            if (_activeAgentTaskState != null)
+                _activeAgentTaskState.Plan = plan;
+            Dispatcher.Invoke(() =>
+            {
+                run.Plan = plan;
+                run.Card.Content = run.Render();
+            });
+            EnsureSessionTrackerUpdated(userQuery, "Plan updated");
         }
 
         private AgentRunCard? _activeAgentRunCard;
@@ -526,6 +561,8 @@ namespace Malx_AI
                 string steps = run.StepLines.Count == 0
                     ? string.Empty
                     : $"\n\n### Steps Executed ({run.StepLines.Count})\n" + string.Join("\n", run.StepLines.Select(l => "- " + l));
+                if (run.Plan is { IsEmpty: false })
+                    steps = "\n\n" + AgentRunCard.RenderPlan(run.Plan) + steps;
                 run.Status = null;
                 run.Card.ViewedImagePaths = Array.Empty<string>();
                 run.Card.Content = trimmed + steps;
@@ -756,6 +793,11 @@ namespace Malx_AI
                     _activeAgentTaskState.FileBackup.Saved.Count > 0 ? _activeAgentTaskState.FileBackup.Root : null,
                     followUpKind,
                     previousRunDigest);
+                if (_activeAgentTaskState.Plan.HasOpenItems)
+                {
+                    effectiveGoal += "\n\n[YOUR PLAN FROM THE LAST TURN]\n" + _activeAgentTaskState.Plan.Render()
+                        + "\nKeep it, change it or clear it with update_plan so it fits the current request.";
+                }
                 initialHistory = null;
                 _activeAgentTaskState.LastTurnGoal = userQuery;
             }
@@ -830,6 +872,8 @@ namespace Malx_AI
                 turnPolicy = turnPolicy with { Reviewer = (request, ct) => ReviewAgentWorkAsync(request, scope.WorkingDirectory, ct) };
             if (turnPolicy.AnswerOnly)
                 maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);
+            AgentCompactionPolicy compaction = BuildAgentCompactionPolicy(capability, systemPrompt);
+            turnPolicy = turnPolicy with { Compaction = compaction };
             LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, {followUpKind} turn, scope {scope.Describe()}.");
             RelayStatusBlock.Text = "Agent working…";
 
@@ -849,6 +893,17 @@ namespace Malx_AI
                     readBudgetChars: ObservationBudgetFor(tier) - 256,
                     screenshotDirectory: Path.Combine(AppDataPaths.Root, "WorkplaceCaptures"),
                     workplaceToolAsync: ExecuteAgentWorkplaceToolAsync));
+            // A follow-up continues the plan the last run left; a new task starts without one.
+            session.Plan = isContinuation ? _activeAgentTaskState!.Plan : AgentPlan.Empty;
+            if (session.Plan.HasOpenItems)
+                ShowAgentPlan(runCard, session.Plan, userQuery);
+            session.PlanChanged = plan => ShowAgentPlan(runCard, plan, userQuery);
+            session.Compacted = description =>
+            {
+                LogActivity("Agent Access: context compacted (" + description + ").");
+                _ = BackendLogService.LogEventAsync("ComputerAgent.Compaction",
+                    $"mode:{compaction.Mode} window:{compaction.ContextTokens} {description}");
+            };
             var trackedSteps = new List<string>();
             AgentRunResult result;
             _agentSessionRunning = true;
@@ -906,6 +961,7 @@ namespace Malx_AI
 
             if (_activeAgentTaskState != null)
             {
+                _activeAgentTaskState.Plan = session.Plan;
                 _activeAgentTaskState.StoppedOnStepLimit = result.StoppedOnStepLimit;
                 _activeAgentTaskState.LastStatusMessage = result.FinalMessage;
                 if (result.Exchanges != null && result.Exchanges.Count > 0)
@@ -1020,6 +1076,14 @@ namespace Malx_AI
             // A local GGUF has no tool-calling channel, so it is asked for the flat text protocol
             // and parsed back. internalInferenceStep keeps the council's own prompt scaffolding
             // out of the way.
+            string builderModelPath = GetEffectiveRoleConfig(CouncilRole.Builder).ModelPath ?? string.Empty;
+            // The family's own recommended sampling (its "precise coding" profile where the card
+            // has one). Unknown models get null and keep the temperature below, as before.
+            ModelSampling? agentSampling = ModelSettingsRegistry
+                .Resolve(builderModelPath, ModelSettingsRegistry.UserEntries(OpenRouterChatService.ModelSettingsUserFilePath))
+                .SamplingFor(LocalModelCapabilityProfile.IsLikelyReasoningModel(builderModelPath), ModelUse.Coding);
+            if (agentSampling != null)
+                LogActivity($"Agent Access: model settings for {Path.GetFileName(builderModelPath)}: temperature {agentSampling.Temperature}, top_p {agentSampling.TopP?.ToString() ?? "default"}, top_k {agentSampling.TopK?.ToString() ?? "default"}.");
             return new TextProtocolAgentModel(
                 async (prompt, transcript, cancellation) =>
                 {
@@ -1040,12 +1104,44 @@ namespace Malx_AI
                         useBuilderToolDecision: false,
                         outputGrammar: null,
                         allowAgenticPauses: false,
-                        internalInferenceStep: true);
+                        internalInferenceStep: true,
+                        samplingOverride: agentSampling);
                     return response.Answer ?? string.Empty;
                 },
                 systemPrompt,
                 ObservationBudgetFor(tier),
                 chatHistory);
+        }
+
+        /// <summary>
+        /// When the running agent compacts its history: the model's window, the output reserve,
+        /// and the fixed prompt. Cloud and Hybrid Local also stay under the message count the
+        /// request trimmer keeps; they and 10B+ local models get a model-written checkpoint.
+        /// </summary>
+        private AgentCompactionPolicy BuildAgentCompactionPolicy(LocalModelCapabilityProfile? capability, string systemPrompt)
+        {
+            // System prompt plus the tool definitions (about 3K tokens for the agent's tools).
+            int fixedTokens = AgentRunCompactor.EstimateTokens(systemPrompt) + 3000;
+            if (_isCloudModeEnabled)
+            {
+                string modelId = _isHybridLocalCouncilSelected
+                    ? (_openRouterChatService.CustomEndpointConfiguredModelId ?? GetEffectiveCouncilModelId())
+                    : GetEffectiveCouncilModelId();
+                return AgentCompactionPolicy.For(
+                    _openRouterChatService.GetApproximateContextWindowTokens(modelId),
+                    cloudOrHybrid: true,
+                    LocalModelSizeClass.Unknown,
+                    reserveTokens: _isHybridLocalCouncilSelected ? CloudAgentModel.HybridLocalTurnMaxTokens : CloudAgentModel.AgentTurnMaxTokens,
+                    fixedPromptTokens: fixedTokens,
+                    maxHistoryMessages: _openRouterChatService.GetConversationHistoryMessageLimit(modelId));
+            }
+
+            return AgentCompactionPolicy.For(
+                (int)GetRoleContextSize(CouncilRole.Builder),
+                cloudOrHybrid: false,
+                capability?.SizeClass ?? LocalModelSizeClass.Unknown,
+                reserveTokens: 2048,
+                fixedPromptTokens: AgentRunCompactor.EstimateTokens(systemPrompt));
         }
 
         /// <summary>
