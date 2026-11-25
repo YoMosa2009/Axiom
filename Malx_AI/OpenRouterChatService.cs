@@ -48,7 +48,10 @@ namespace Malx_AI
         int PromptTokens,
         int CompletionTokens,
         int TotalTokens,
-        bool IsEstimated = false);
+        bool IsEstimated = false,
+        // Input tokens the provider served from its prompt cache (OpenAI-style
+        // prompt_tokens_details.cached_tokens, or DeepSeek's prompt_cache_hit_tokens).
+        int CachedPromptTokens = 0);
 
     public sealed record AxiomSubscriptionBalance(long AllowanceMicros, long SpentMicros, long ReservedMicros, long AvailableMicros);
 
@@ -1179,7 +1182,9 @@ namespace Malx_AI
             }
             finally
             {
-                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0);
+                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0,
+                    response?.Usage is { IsEstimated: false } usage ? usage.PromptTokens : 0,
+                    response?.Usage?.CachedPromptTokens ?? 0);
             }
         }
 
@@ -1233,7 +1238,9 @@ namespace Malx_AI
             }
             finally
             {
-                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0);
+                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0,
+                    response?.Usage is { IsEstimated: false } usage ? usage.PromptTokens : 0,
+                    response?.Usage?.CachedPromptTokens ?? 0);
             }
         }
 

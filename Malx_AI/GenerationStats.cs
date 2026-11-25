@@ -6,7 +6,9 @@ namespace Malx_AI
         bool TokensAreEstimated,
         double TokensPerSecond,
         double ElapsedSeconds,
-        double? FirstTokenSeconds);
+        double? FirstTokenSeconds,
+        int PromptTokens = 0,
+        int CachedPromptTokens = 0);
 
     /// <summary>Tracks one reply as it streams. Times are passed in so it can be tested.</summary>
     internal sealed class GenerationSpeedTracker
@@ -119,6 +121,17 @@ namespace Malx_AI
             return speed == "" ? count : speed + " \u00B7 " + count;
         }
 
+        /// <summary>"Prompt cache: 12,000 of 15,000 input tokens reused (80%)", or "" when nothing was cached.</summary>
+        public static string FormatPromptCache(GenerationStatsSnapshot stats)
+        {
+            if (stats.CachedPromptTokens <= 0 || stats.PromptTokens <= 0)
+                return "";
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            int cached = Math.Min(stats.CachedPromptTokens, stats.PromptTokens);
+            int percent = (int)Math.Round(100.0 * cached / stats.PromptTokens);
+            return $"Prompt cache: {cached.ToString("N0", invariant)} of {stats.PromptTokens.ToString("N0", invariant)} input tokens reused ({percent}%)";
+        }
+
         public static string FormatTooltip(GenerationStatsSnapshot stats, string modeLabel)
         {
             if (stats.OutputTokens <= 0)
@@ -135,6 +148,10 @@ namespace Malx_AI
 
             if (stats.FirstTokenSeconds.HasValue)
                 lines.Add("First text after " + stats.FirstTokenSeconds.Value.ToString("0.0", invariant) + " s");
+
+            string cache = FormatPromptCache(stats);
+            if (cache != "")
+                lines.Add(cache);
 
             if (stats.TokensAreEstimated)
                 lines.Add(modeLabel + " doesn't report exact token counts, so this is estimated from the text length.");

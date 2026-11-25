@@ -25,7 +25,14 @@ namespace Malx_AI
             if (promptTokens == 0 && completionTokens == 0 && totalTokens == 0)
                 return null;
 
-            return new OpenRouterTokenUsage(promptTokens, completionTokens, totalTokens);
+            int cached = 0;
+            if (TryGetPropertyIgnoreCase(usage, "prompt_tokens_details", out JsonElement details)
+                && details.ValueKind == JsonValueKind.Object)
+                TryReadTokenCount(details, "cached_tokens", out cached);
+            if (cached == 0)
+                TryReadTokenCount(usage, "prompt_cache_hit_tokens", out cached);
+
+            return new OpenRouterTokenUsage(promptTokens, completionTokens, totalTokens, CachedPromptTokens: cached);
         }
 
         /// <summary>
