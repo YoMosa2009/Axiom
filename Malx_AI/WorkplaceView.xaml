@@ -583,6 +583,14 @@
                                      WordWrap="True" ShowLineNumbers="False"
                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
                                      Margin="6,4,6,3" MinHeight="30" MaxHeight="140"/>
+                            <TextBlock x:Name="WorkplaceQueryPlaceholder"
+                                       Text="Describe a task, or ask anything"
+                                       IsHitTestVisible="False"
+                                       Margin="9,8,6,0"
+                                       VerticalAlignment="Top"
+                                       FontFamily="Segoe UI" FontSize="12.5"
+                                       Foreground="{DynamicResource DarkSecondaryBrush}"
+                                       AutomationProperties.Name="Workplace input placeholder"/>
                             <Popup x:Name="WorkplaceMentionPopup"
                                    Placement="Top"
                                    PlacementTarget="{Binding ElementName=QueryInput}"

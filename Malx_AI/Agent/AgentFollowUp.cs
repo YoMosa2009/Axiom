@@ -63,6 +63,12 @@ namespace Malx_AI.Agent
         /// </summary>
         public Func<AgentReviewRequest, CancellationToken, Task<IReadOnlyList<string>>>? Reviewer { get; init; }
 
+        /// <summary>Longest plan update_plan accepts. Small models get a short one.</summary>
+        public int MaxPlanItems { get; init; } = AgentPlan.MaxItemsFull;
+
+        /// <summary>When and how the run's history is compacted while it works. Null: never during the run.</summary>
+        public AgentCompactionPolicy? Compaction { get; init; }
+
         /// <summary>Adds the effort-level quality steps to a turn's policy.</summary>
         public AgentTurnPolicy WithEffort(EffortLevel effort, AgentTier tier)
         {
@@ -100,7 +106,10 @@ namespace Malx_AI.Agent
             },
             // The small flat-protocol tiers do not expose search_text. Their reads are already
             // smaller; do not block them with advice to use an unavailable tool.
-            LimitFileInspection: tier == AgentTier.Full);
+            LimitFileInspection: tier == AgentTier.Full)
+        {
+            MaxPlanItems = tier == AgentTier.Full ? AgentPlan.MaxItemsFull : AgentPlan.MaxItemsCompact,
+        };
     }
 
     /// <summary>

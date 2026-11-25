@@ -52,7 +52,7 @@ namespace Malx_AI
         /// Ends the reply. A reply that produced nothing (cancelled before any text) keeps the
         /// previous reply's numbers on screen rather than replacing them with zeros.
         /// </summary>
-        public void EndReply(int reportedCompletionTokens = 0)
+        public void EndReply(int reportedCompletionTokens = 0, int promptTokens = 0, int cachedPromptTokens = 0)
         {
             bool wasLive;
             int committedTokens = 0;
@@ -63,7 +63,8 @@ namespace Malx_AI
                     return;
 
                 _live = false;
-                GenerationStatsSnapshot snapshot = _tracker.Snapshot(DateTime.UtcNow, reportedCompletionTokens);
+                GenerationStatsSnapshot snapshot = _tracker.Snapshot(DateTime.UtcNow, reportedCompletionTokens)
+                    with { PromptTokens = Math.Max(0, promptTokens), CachedPromptTokens = Math.Max(0, cachedPromptTokens) };
                 if (snapshot.OutputTokens > 0)
                 {
                     _last = snapshot;
@@ -129,7 +130,8 @@ namespace Malx_AI
 
         public static void ReportTokens(int totalSoFar) => Current?.ReportTokens(totalSoFar);
 
-        public static void EndReply(int reportedCompletionTokens = 0) => Current?.EndReply(reportedCompletionTokens);
+        public static void EndReply(int reportedCompletionTokens = 0, int promptTokens = 0, int cachedPromptTokens = 0)
+            => Current?.EndReply(reportedCompletionTokens, promptTokens, cachedPromptTokens);
 
         private sealed class Scope(GenerationMonitor? previous) : IDisposable
         {

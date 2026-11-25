@@ -28,6 +28,7 @@ namespace Malx_AI.Agent
         public const string TakeScreenshot = "take_screenshot";
         public const string Finish = "finish";
         public const string RecallContext = "recall_context";
+        public const string UpdatePlan = "update_plan";
 
         public static readonly IReadOnlyList<string> All =
         [
@@ -45,14 +46,15 @@ namespace Malx_AI.Agent
             BrowserControl,
             UseSkill,
             TakeScreenshot,
-            Finish, RecallContext
+            Finish, RecallContext,
+            UpdatePlan
         ];
 
         /// <summary>Tools that only observe. Everything else can change the machine.</summary>
         public static readonly IReadOnlySet<string> ReadOnly =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                ReadFile, ListDirectory, FindFiles, SearchText, CheckBackgroundTask, TakeScreenshot, Finish, RecallContext, UseSkill
+                ReadFile, ListDirectory, FindFiles, SearchText, CheckBackgroundTask, TakeScreenshot, Finish, RecallContext, UseSkill, UpdatePlan
             };
 
         public static bool IsReadOnly(string? tool) => tool != null && ReadOnly.Contains(tool);
@@ -82,6 +84,7 @@ namespace Malx_AI.Agent
                 "line_count" => ["linecount", "lines", "count"],
                 "file_pattern" => ["filepattern", "glob", "filter"],
                 "summary" => ["result", "message", "final_text"],
+                "plan" => ["todos", "steps", "items", "checklist", "content"],
                 "wake_seconds" => ["wakeseconds", "wake_after_seconds", "wait_seconds", "duration", "sleep_seconds"],
                 "wait" => ["sleep", "pause", "wait_for_wake"],
                 "task_id" => ["taskid", "id"],
@@ -153,6 +156,8 @@ namespace Malx_AI.Agent
                     return "Took a screenshot";
                 case AgentToolNames.Finish:
                     return "Finished";
+                case AgentToolNames.UpdatePlan:
+                    return "Updated the plan";
                 default:
                     return Summarize(Tool, 28);
             }

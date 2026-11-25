@@ -2826,8 +2826,33 @@ namespace Malx_AI
             float temperature,
             float minP,
             Grammar? grammar = null,
-            bool useSubOneBProfile = false)
+            bool useSubOneBProfile = false,
+            ModelSampling? samplingOverride = null)
         {
+            // A reviewed per-model setting (ModelSettingsRegistry) wins over the family and size
+            // defaults below; null keeps them exactly as they were.
+            if (samplingOverride != null)
+            {
+                return new InferenceParams
+                {
+                    MaxTokens = maxTokens,
+                    AntiPrompts = antiPrompts?.ToList() ?? new List<string>(),
+                    SamplingPipeline = new DefaultSamplingPipeline
+                    {
+                        Temperature = (float)samplingOverride.Temperature,
+                        TopP = (float)(samplingOverride.TopP ?? 0.95),
+                        TopK = samplingOverride.TopK ?? 40,
+                        MinP = (float)(samplingOverride.MinP ?? minP),
+                        RepeatPenalty = (float)(samplingOverride.RepeatPenalty ?? 1.05),
+                        PresencePenalty = (float)(samplingOverride.PresencePenalty ?? 0.0),
+                        Grammar = grammar,
+                        GrammarOptimization = grammar == null
+                            ? DefaultSamplingPipeline.GrammarOptimizationMode.None
+                            : DefaultSamplingPipeline.GrammarOptimizationMode.Extended
+                    }
+                };
+            }
+
             return IsQwen3Model(modelPath)
                 // Thinking-only Qwen3 variants (…-Thinking-…) ignore /no_think and always reason;
                 // they need Qwen's recommended thinking sampling (0.6/0.95) — the non-thinking
@@ -3084,6 +3109,17 @@ namespace Malx_AI
         private readonly GenerationMonitor _generationMonitor = new();
         private GenerationReadout? _generationReadout;
 
+        /// <summary>
+        /// The empty composer shows a hint, and Send is dimmed (not disabled: Send also posts
+        /// mid-run messages and is enabled by the run state) until there is text, matching Chat.
+        /// </summary>
+        private void UpdateWorkplaceComposerEmptyState()
+        {
+            bool empty = string.IsNullOrWhiteSpace(QueryInput.Text);
+            WorkplaceQueryPlaceholder.Visibility = string.IsNullOrEmpty(QueryInput.Text) ? Visibility.Visible : Visibility.Collapsed;
+            SendButton.Opacity = empty && !_isProcessing ? 0.45 : 1.0;
+        }
+
         public WorkplaceView()
         {
             InitializeComponent();
@@ -3093,7 +3129,9 @@ namespace Malx_AI
             {
                 UpdateWorkplaceTokenUsageIndicator();
                 UpdateWorkplaceMentionPopup();
+                UpdateWorkplaceComposerEmptyState();
             };
+            UpdateWorkplaceComposerEmptyState();
             QueryInput.TextArea.PreviewKeyDown += WorkplaceQueryInput_PreviewKeyDown;
             QueryInput.LostKeyboardFocus += (_, _) =>
             {
@@ -16591,7 +16629,8 @@ namespace Malx_AI
             bool useBuilderToolDecision = true,
             Grammar? outputGrammar = null,
             bool allowAgenticPauses = true,
-            bool internalInferenceStep = false)
+            bool internalInferenceStep = false,
+            ModelSampling? samplingOverride = null)
         {
             if (!internalInferenceStep)
                 systemPrompt = systemPrompt.TrimEnd() + "\n\n" + EffortPolicy.BuildSystemInstruction();
@@ -16680,6 +16719,8 @@ namespace Malx_AI
                 {
                     gemmaRoleTemp = temperatureOverride.Value;
                 }
+                if (samplingOverride != null)
+                    gemmaRoleTemp = (float)samplingOverride.Temperature;
                 string raw = await LocalGemmaCliRunner.InferAsync(
                     config.ModelPath!,
                     prompt,
@@ -17158,7 +17199,7 @@ namespace Malx_AI
                 }
             }
 
-            var inferenceParams = CreateRoleInferenceParams(config.ModelPath ?? string.Empty, maxGenTokens, antiPrompts, roleTemp, roleMinP, outputGrammar, useSubOneBMode);
+            var inferenceParams = CreateRoleInferenceParams(config.ModelPath ?? string.Empty, maxGenTokens, antiPrompts, roleTemp, roleMinP, outputGrammar, useSubOneBMode, samplingOverride);
 
             bool strictChatMl = IsStrictChatMlModel(config.DisplayName);
             int tokenCount = 0;

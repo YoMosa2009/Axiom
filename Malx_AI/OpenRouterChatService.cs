@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -30,7 +30,11 @@ namespace Malx_AI
         bool PreserveFullText = false,
         // data: URLs for attached images; emitted as multipart image_url content parts so
         // vision-capable cloud models can actually see image attachments.
-        IReadOnlyList<string>? ImageDataUrls = null);
+        IReadOnlyList<string>? ImageDataUrls = null,
+        // The model's own reasoning for an assistant tool-call turn, sent back on the next
+        // request. DeepSeek's thinking mode expects reasoning_content to round-trip within one
+        // tool loop; dropping it degrades the next step or is rejected outright.
+        string? ReasoningContent = null);
 
     public sealed record OpenRouterChatResponse(
         string Text,
@@ -44,7 +48,10 @@ namespace Malx_AI
         int PromptTokens,
         int CompletionTokens,
         int TotalTokens,
-        bool IsEstimated = false);
+        bool IsEstimated = false,
+        // Input tokens the provider served from its prompt cache (OpenAI-style
+        // prompt_tokens_details.cached_tokens, or DeepSeek's prompt_cache_hit_tokens).
+        int CachedPromptTokens = 0);
 
     public sealed record AxiomSubscriptionBalance(long AllowanceMicros, long SpentMicros, long ReservedMicros, long AvailableMicros);
 
@@ -215,7 +222,8 @@ namespace Malx_AI
         private string ManagedEndpointChatCompletionsUrl => _managedEndpointBaseUrl.TrimEnd('/') + "/chat/completions";
         private static readonly Regex TokenWordRegex = new(@"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", RegexOptions.Compiled);
         private static readonly Regex RetryAfterSecondsRegex = new("\"retry_after_seconds\"\\s*:\\s*(?<value>\\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private const int TransientOpenRouterRetryLimit = 1;
+        // Two short same-model retries for 502/503/504 (jittered, capped at a few seconds).
+        private const int TransientOpenRouterRetryLimit = 2;
         // Some routed free-tier providers — notably Gemma-family fallbacks, whose tokenizer pad token
         // is the literal "<pad>" — can degenerate into emitting an endless run of padding/sentinel
         // tokens instead of real content. That is the "<pad><pad><pad>…" council Builder failure: the
@@ -391,6 +399,9 @@ namespace Malx_AI
                 : "General reasoning cloud profile tuned for tool outputs, structured context blocks, and direct execution-focused answers.";
         }
 
+        /// <summary>The user's model_settings.json (set by the app at start-up; null in tests).</summary>
+        public static string? ModelSettingsUserFilePath { get; set; }
+
         public int GetApproximateContextWindowTokens(string modelId)
         {
             OpenRouterModelProfile profile = FindModelProfile(modelId) ?? SupportedModelProfiles[0];
@@ -400,6 +411,14 @@ namespace Malx_AI
                 ? profile.ApproximateContextWindowTokens
                 : Math.Max(32768, profile.ApproximateContextWindowTokens);
         }
+
+        /// <summary>
+        /// How many history messages a request to this model keeps before the oldest are dropped.
+        /// The agent compacts its own history below this, so the request trimmer never silently
+        /// drops the start of a run (which also changed the cached prefix on every turn).
+        /// </summary>
+        public int GetConversationHistoryMessageLimit(string modelId) =>
+            GetConversationHistoryMessageLimit(FindModelProfile(modelId) ?? SupportedModelProfiles[0]);
 
         public OpenRouterInferenceSettingsSnapshot GetInferenceSettingsSnapshot(string modelId, bool isCodingRequest = false, bool isPythonRequest = false)
         {
@@ -1174,7 +1193,9 @@ namespace Malx_AI
             }
             finally
             {
-                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0);
+                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0,
+                    response?.Usage is { IsEstimated: false } usage ? usage.PromptTokens : 0,
+                    response?.Usage?.CachedPromptTokens ?? 0);
             }
         }
 
@@ -1228,7 +1249,9 @@ namespace Malx_AI
             }
             finally
             {
-                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0);
+                GenerationTelemetry.EndReply(response?.Usage is { IsEstimated: false } reported ? reported.CompletionTokens : 0,
+                    response?.Usage is { IsEstimated: false } usage ? usage.PromptTokens : 0,
+                    response?.Usage?.CachedPromptTokens ?? 0);
             }
         }
 
@@ -1378,7 +1401,8 @@ namespace Malx_AI
                     maxCompletionTokens,
                     tools,
                     isCustomEndpoint: requestedModelProfile.IsCustomEndpoint,
-                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint);
+                    isManagedEndpoint: requestedModelProfile.IsManagedEndpoint,
+                    isCodingRequest: isCodingRequest);
 
                 using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 finalStatusCode = response.StatusCode;
@@ -1612,7 +1636,8 @@ namespace Malx_AI
                     stopSequences,
                     isCustomEndpoint: requestedModelProfile.IsCustomEndpoint,
                     isManagedEndpoint: requestedModelProfile.IsManagedEndpoint,
-                    disableToolCalls: disableToolCalls);
+                    disableToolCalls: disableToolCalls,
+                    isCodingRequest: isCodingRequest);
 
                 response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.OK)
@@ -2147,7 +2172,8 @@ namespace Malx_AI
             IReadOnlyList<string>? stopSequences = null,
             bool isCustomEndpoint = false,
             bool isManagedEndpoint = false,
-            bool disableToolCalls = false)
+            bool disableToolCalls = false,
+            bool isCodingRequest = false)
         {
             JsonArray messagePayload = BuildMessages(messages, systemPrompt);
             JsonObject payload = new()
@@ -2168,6 +2194,12 @@ namespace Malx_AI
 
             if (SupportsParameter(modelId, "top_p"))
                 payload["top_p"] = topP;
+
+            // Reviewed per-model settings (ModelSettingsRegistry): a Hybrid Local server gets its
+            // model family's recommended sampling; DeepSeek thinking turns drop sampling the API
+            // ignores. Unknown models are left exactly as above.
+            ModelSettingsRegistry.ApplyToRequest(payload, modelId, thinkingEnabled, isCodingRequest, isCustomEndpoint,
+                ModelSettingsRegistry.UserEntries(ModelSettingsUserFilePath));
 
             JsonArray stopPayload = BuildStopPayload(stopSequences);
             if (stopPayload.Count > 0)
@@ -2286,6 +2318,15 @@ namespace Malx_AI
 
                 if (!string.IsNullOrWhiteSpace(message.ToolCallId))
                     messageObject["tool_call_id"] = message.ToolCallId;
+
+                if (!string.IsNullOrWhiteSpace(message.ReasoningContent)
+                    && string.Equals(normalizedRole, "assistant", StringComparison.OrdinalIgnoreCase))
+                {
+                    // "reasoning_content" is DeepSeek's (and vLLM/llama.cpp's) field; OpenRouter
+                    // reads "reasoning" on assistant messages and forwards it to the provider.
+                    messageObject["reasoning_content"] = message.ReasoningContent;
+                    messageObject["reasoning"] = message.ReasoningContent;
+                }
 
                 if (string.Equals(normalizedRole, "assistant", StringComparison.OrdinalIgnoreCase)
                     && message.ToolCalls?.Count > 0
@@ -3209,7 +3250,10 @@ namespace Malx_AI
                     delay = TimeSpan.FromSeconds(retryAfterSeconds);
             }
 
-            return delay > MaxInPlaceRetryDelay ? MaxInPlaceRetryDelay : delay;
+            if (delay > MaxInPlaceRetryDelay)
+                delay = MaxInPlaceRetryDelay;
+            // Jitter keeps parallel retries (chat + workplace) from landing on the provider together.
+            return TimeSpan.FromMilliseconds(delay.TotalMilliseconds * (0.8 + Random.Shared.NextDouble() * 0.2));
         }
 
         // Uncapped retry-delay extraction (seconds) for the rate-limit exception. The caller decides

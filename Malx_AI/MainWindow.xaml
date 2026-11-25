@@ -2023,7 +2023,7 @@
                                                 <Button Width="34" Height="34" Margin="0,0,4,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}" AutomationProperties.Name="Attach files" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
                                                     <Path Width="14" Height="14" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
                                                 </Button>
-                                                <Button x:Name="SkillsButton" MinWidth="90" Margin="6,0,6,0" Click="OpenSkills_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach reusable Skills to every Axiom model and mode">
+                                                <Button x:Name="SkillsButton" AutomationProperties.Name="Skills" MinWidth="90" Margin="6,0,6,0" Click="OpenSkills_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach reusable Skills to every Axiom model and mode">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <Path x:Name="SkillsButtonIcon" Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -2035,7 +2035,7 @@
                                                         </Border>
                                                     </StackPanel>
                                                 </Button>
-                                                <Button x:Name="PluginsButton" MinWidth="96" Click="OpenPlugins_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach Axiom-native capability Plugins">
+                                                <Button x:Name="PluginsButton" AutomationProperties.Name="Plugins" MinWidth="96" Click="OpenPlugins_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach Axiom-native capability Plugins">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <Path x:Name="PluginsButtonIcon" Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -2214,7 +2214,7 @@
                                                     <Border Width="10" Height="10" CornerRadius="2.5"
                                                             Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
                                                 </Button>
-                                                <Button x:Name="SendButton" Width="36" Height="36" Click="Send_Click" Style="{StaticResource ChatInputSendButtonStyle}"
+                                                <Button x:Name="SendButton" Width="36" Height="36" Click="Send_Click" Style="{StaticResource ChatInputSendButtonStyle}" AutomationProperties.Name="Send message"
                                                         ToolTip="Press Enter to send and Shift+Enter for new line">
                                                     <!-- Thin stroked arrow: lighter than the old solid block glyph and legible
                                                          against the gold fill at 36px. -->
@@ -2335,7 +2335,7 @@
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="1" Margin="0,0,24,0">
-                                        <TextBlock Text="Min-P" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock x:Name="TopPLabelText" Text="Min-P" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
                                         <Slider x:Name="TopPSlider" Minimum="0" Maximum="1" Value="0.05" TickFrequency="0.05" Height="24"/>
                                         <TextBlock x:Name="TopPValueText" Text="{Binding ElementName=TopPSlider, Path=Value, StringFormat={}{0:F2}}" FontSize="12" Foreground="{DynamicResource PrimaryAccentBrush}" FontFamily="Segoe UI" Margin="0,6,0,0" FontWeight="SemiBold"/>
                                     </StackPanel>
@@ -2365,7 +2365,7 @@
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,16">
                                     <StackPanel>
                                         <TextBlock Text="Processing Mode" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
-                                        <ComboBox x:Name="ProcessingModeCombo" SelectionChanged="ProcessingModeCombo_SelectionChanged" Height="30" Width="220" Style="{StaticResource DarkComboBoxStyle}">
+                                        <ComboBox x:Name="ProcessingModeCombo" SelectionChanged="ProcessingModeCombo_SelectionChanged" Height="30" Width="220" HorizontalAlignment="Left" Style="{StaticResource DarkComboBoxStyle}">
                                             <ComboBoxItem Content="CPU Only"/>
                                             <ComboBoxItem Content="GPU Accelerated"/>
                                         </ComboBox>
@@ -2977,12 +2977,7 @@
                                                    Foreground="{DynamicResource DarkSecondaryBrush}"
                                                    TextWrapping="Wrap"
                                                    Margin="0,0,0,10"/>
-                                        <TextBlock Text="Chats, Workplace sessions, settings, API keys, and connectors live only in this machine profile folder — never inside the published app package. Other PCs start fully empty. Debug (VS) uses Axiom-Dev; Release/published builds use Axiom (or AXIOM_DATA_DIR)."
-                                                   FontSize="10"
-                                                   Foreground="{DynamicResource DarkSecondaryBrush}"
-                                                   TextWrapping="Wrap"
-                                                   Margin="0,0,0,10"/>
-                                        <TextBlock Text="Before shipping a build, run scripts\Publish-CleanRelease.ps1 (or Publish with FolderProfile). To preview the package as a new user on this PC, use RUN-CLEAN-SMOKE-TEST.cmd next to the published exe."
+                                        <TextBlock Text="Your chats, Workplace sessions, settings, API keys and connectors are stored only in this folder on this PC. They are never part of the app itself, and nothing is shared with other PCs."
                                                    FontSize="10"
                                                    Foreground="{DynamicResource DarkSecondaryBrush}"
                                                    TextWrapping="Wrap"

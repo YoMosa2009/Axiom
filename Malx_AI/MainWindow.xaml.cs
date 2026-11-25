@@ -180,6 +180,9 @@ namespace Malx_AI
 
                     TemperatureSlider.Value = Math.Clamp(snapshot.Temperature, TemperatureSlider.Minimum, TemperatureSlider.Maximum);
                     TopPSlider.Value = Math.Clamp(snapshot.TopP, TopPSlider.Minimum, TopPSlider.Maximum);
+                    // Cloud profiles carry Top-P; the local slider is Min-P. Say which one is shown.
+                    if (TopPLabelText != null)
+                        TopPLabelText.Text = "Top-P";
                     CtxSlider.Value = Math.Clamp(snapshot.ContextWindowTokens, CtxSlider.Minimum, CtxSlider.Maximum);
 
                     TemperatureSlider.IsEnabled = false;
@@ -193,12 +196,14 @@ namespace Malx_AI
                     if (ContextLengthValueText != null)
                         ContextLengthValueText.Text = snapshot.ContextWindowTokens.ToString("F0", CultureInfo.InvariantCulture) + " tokens";
                     if (InferenceSettingsSourceText != null)
-                        InferenceSettingsSourceText.Text = $"Cloud mode active. Showing {snapshot.ModelLabel} inference profile values for Temperature, Min-P, and Context Length.";
+                        InferenceSettingsSourceText.Text = $"Cloud mode active. Showing {snapshot.ModelLabel} inference profile values for Temperature, Top-P, and Context Length.";
                 }
                 else
                 {
                     TemperatureSlider.Value = Math.Clamp(_savedLocalTemperature, TemperatureSlider.Minimum, TemperatureSlider.Maximum);
                     TopPSlider.Value = Math.Clamp(_savedLocalMinP, TopPSlider.Minimum, TopPSlider.Maximum);
+                    if (TopPLabelText != null)
+                        TopPLabelText.Text = "Min-P";
                     CtxSlider.Value = Math.Clamp(_savedLocalContextLength, CtxSlider.Minimum, CtxSlider.Maximum);
 
                     TemperatureSlider.IsEnabled = true;
@@ -2246,6 +2251,22 @@ namespace Malx_AI
             if (_cancellationTokenSource != null && !_cancellationTokenSource.IsCancellationRequested)
             {
                 try { _cancellationTokenSource.Cancel(); } catch { }
+            }
+
+            // Pressing New chat while already on an empty new chat used to add another empty
+            // "New chat" row each time (UI test 2026-11-25); the rows could not be told apart.
+            // Stay on the empty chat instead.
+            if (ReferenceEquals(sender, NewChatButton)
+                && _currentChatId > 0
+                && _chatMessages.Count == 0
+                && _chatDocuments.Count == 0
+                && _chatNames.TryGetValue(_currentChatId, out string? currentName)
+                && string.Equals(currentName, "New chat", StringComparison.Ordinal))
+            {
+                if (!string.IsNullOrEmpty(ChatHistorySearchBox.Text))
+                    ChatHistorySearchBox.Text = string.Empty;
+                InputBox.Focus();
+                return;
             }
 
             _chatCounter++;

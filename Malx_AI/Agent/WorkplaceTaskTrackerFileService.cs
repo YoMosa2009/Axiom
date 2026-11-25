@@ -43,7 +43,8 @@ namespace Malx_AI.Agent
             IReadOnlyList<AgentBackgroundTaskSnapshot>? backgroundTasks = null,
             string? latestTurnSummary = null,
             string? originalTask = null,
-            IReadOnlyList<AgentTurnRecord>? earlierTurns = null)
+            IReadOnlyList<AgentTurnRecord>? earlierTurns = null,
+            AgentPlan? plan = null)
         {
             if (string.IsNullOrWhiteSpace(trackerPath))
                 return;
@@ -92,6 +93,14 @@ namespace Malx_AI.Agent
                     sb.AppendLine(summary.Length == 0 ? "_No summary recorded._" : summary);
                     sb.AppendLine();
                 }
+            }
+
+            // The agent's own checklist (update_plan), as it stands now.
+            if (plan is { IsEmpty: false })
+            {
+                sb.AppendLine($"## Plan ({plan.CompletedCount}/{plan.Items.Count} done)");
+                sb.AppendLine(plan.RenderMarkdown());
+                sb.AppendLine();
             }
 
             sb.AppendLine("## Progress & Steps");

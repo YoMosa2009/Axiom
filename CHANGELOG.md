@@ -2,7 +2,61 @@
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Project instructions for Agent Access.** If the folder you give the agent has an `AGENTS.md`
+  (or `CLAUDE.md`), the agent reads it and follows its build, test and style rules. It is treated
+  as project notes: it can never override what you asked for. Small local models get only its
+  headings and bullet points; the smallest models skip it.
+- **Syntax check after edits.** When the agent writes or edits a JSON or XML file (including
+  `.csproj` and `.xaml`), Axiom checks it right away and tells the agent the line of any error.
+- **Prompt cache in the speed readout.** When the provider reports it, hovering the reply speed
+  shows how much of the prompt was served from its cache.
+- **A live plan for longer agent work.** For tasks of three or more steps the agent keeps a short
+  checklist that you see at the top of its run card, with the current step in bold and finished
+  steps crossed off. It is also saved in the task tracker and carried into your next message. If
+  the agent tries to finish with steps still open, it is asked once to do them or say why not.
+- **Long runs keep their thread.** When a run's history gets close to the model's limit, Axiom
+  shortens old steps first. If that is not enough, cloud, Hybrid Local and 10B+ local models write
+  a short checkpoint of the goal, decisions, progress and errors; smaller models get a summary that
+  Axiom writes itself. The list of changed files always comes from Axiom's own record, not the
+  model's memory. Before, the oldest steps were simply cut off, sometimes including the task.
+- **Model-specific settings.** Axiom now knows the recommended sampling for several model
+  families (Qwen3, Qwen3.6, Qwen3-Coder, Gemma 4, GLM-4.7, Devstral, Mistral Small 3.2 and
+  DeepSeek R1 distills), taken from each model's own card. Agent Access on a local model and
+  Hybrid Local servers use them; models not on the list behave exactly as before. You can add your
+  own entries in `model_settings.json` in your Axiom data folder.
+
+### Changed
+
+- **Edits land more often.** When the agent's `edit_file` text differs from the file only in
+  spaces, indentation or curly quotes and dashes, Axiom still finds the one matching place and
+  keeps the file's indentation. Text that matches several places is still refused, and a miss now
+  shows the closest lines so the next try can copy them exactly.
+- **Long command output keeps its end.** Build and test logs are shortened from the middle, so
+  the error and the summary at the bottom reach the model.
+- **DeepSeek thinking with tools.** On Extra High and Ultra, Axiom Cloud and Threnody get their own
+  reasoning back with each tool result, as DeepSeek expects.
+- Retries after a failed or rate-limited request wait a little longer each time, with some
+  randomness, and stay on the same model.
+- Workplace's message box shows a hint when empty, and its Send button is dimmed until you type.
+- Settings > Connectors lists only the services you have connected under "Active services".
+- Settings > General no longer shows developer build instructions.
+
+### Fixed
+
+- @ComputerUse no longer stops on its first step with "The work window could not be captured
+  behind Axiom". It now asks to bring the app to the front instead.
+- Agent Access no longer spends its first steps calling `recall_context` again and again; after
+  three in a row it is told to get on with the work.
+- A page screenshot of a local server that was still starting is retried once, and a failure says
+  to check the server.
+- Pressing **New chat** while already on an empty new chat no longer adds another empty chat.
+- The Processing Mode list in Settings lines up with the rest of the page.
+- In Cloud mode, Settings > Inference labels the second slider Top-P (the value it shows), not Min-P.
+- Workplace setup no longer says "Every folder on this computer is reachable" while the computer
+  agent is off.
+- Screen readers now get names for Chat's Send, Skills and Plugins buttons.
 
 ## [V1.13.0] - 2026-11-24
 

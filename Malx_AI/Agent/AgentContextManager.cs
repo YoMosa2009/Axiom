@@ -97,6 +97,10 @@ namespace Malx_AI.Agent
             return compacted;
         }
 
+        /// <summary>The short record an older step is reduced to when a history is compacted.</summary>
+        internal static string CompactObservationForHistory(AgentToolCall call, string observation, int maxChars)
+            => CompactObservation(call, observation, maxChars);
+
         private static string CompactObservation(AgentToolCall call, string observation, int maxChars)
         {
             if (string.IsNullOrWhiteSpace(observation))
@@ -104,6 +108,12 @@ namespace Malx_AI.Agent
 
             string tool = call.Tool.ToLowerInvariant();
             string path = call.Arg("path");
+
+            // A command that ran and failed: its first line is only "[Exit code: 1 | Duration …]";
+            // the error the model needs is at the end of the output.
+            if (tool == AgentToolNames.RunCommand && observation.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase)
+                && ExitCodeRegex.IsMatch(observation))
+                return observation.Length <= maxChars ? observation : "ERROR: " + CompactCommand(call.Arg("command"), observation, maxChars);
 
             if (DidNotRun(observation))
             {
@@ -120,9 +130,33 @@ namespace Malx_AI.Agent
                 AgentToolNames.ListDirectory => $"[Listed {path}]",
                 AgentToolNames.FindFiles => $"[Found files matching '{call.Arg("pattern")}']",
                 AgentToolNames.SearchText => $"[Searched '{call.Arg("pattern")}']",
-                AgentToolNames.RunCommand => observation.Length <= maxChars ? observation : $"[Ran {call.Arg("command")}: ok]",
+                AgentToolNames.RunCommand => observation.Length <= maxChars ? observation : CompactCommand(call.Arg("command"), observation, maxChars),
                 _ => observation.Length <= maxChars ? observation : observation[..maxChars] + "…"
             };
+        }
+
+        private static readonly Regex ExitCodeRegex = new(@"\[Exit code:\s*(-?\d+)", RegexOptions.Compiled);
+
+        /// <summary>
+        /// A long command result becomes one line. A failed command keeps its exit code and the
+        /// end of its output, where the error is: it used to become "[Ran …: ok]", and a live run
+        /// (Hybrid Local, 2026-11-25) lost a failing unit test that way after compaction.
+        /// </summary>
+        private static string CompactCommand(string command, string observation, int maxChars)
+        {
+            string shortCommand = command.Length <= 80 ? command : command[..80] + "…";
+            Match exit = ExitCodeRegex.Match(observation);
+            if (!exit.Success || exit.Groups[1].Value == "0")
+                return $"[Ran {shortCommand}: ok]";
+
+            string tail = string.Join(" | ", observation
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Where(line => line.Length > 0 && !line.StartsWith("[Exit code:", StringComparison.Ordinal))
+                .TakeLast(3));
+            if (tail.Length > maxChars)
+                tail = "…" + tail[^maxChars..];
+            return $"[Ran {shortCommand}: FAILED, exit code {exit.Groups[1].Value}] {tail}";
         }
 
         /// <summary>
@@ -311,6 +345,9 @@ namespace Malx_AI.Agent
 
         /// <summary>Each finished turn of this task: what was asked and how it ended.</summary>
         public List<AgentTurnRecord> Turns { get; } = new();
+
+        /// <summary>The agent's checklist (update_plan) as the last run left it.</summary>
+        public AgentPlan Plan { get; set; } = AgentPlan.Empty;
 
         /// <summary>Copies of pre-existing files the agent changed during this task.</summary>
         public AgentFileBackup? FileBackup { get; set; }

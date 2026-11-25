@@ -45,13 +45,19 @@ namespace Malx_AI.Agent
 
         /// <summary>Invoked when token usage is recorded during a turn (promptTokens, completionTokens).</summary>
         Action<int, int>? OnTokenUsageRecorded { get => null; set { } }
+
+        /// <summary>
+        /// The session replaced part of the history (context compaction). A model that keeps its
+        /// own copy of the conversation must rebuild it from the next history it is given.
+        /// </summary>
+        void HistoryRewritten() { }
     }
 
     /// <summary>
     /// Drives a model that has no native tool calling by asking for a tool call in text and
     /// parsing it back. Used for local GGUF models.
     /// </summary>
-    public sealed class TextProtocolAgentModel : IAgentModel
+    public sealed class TextProtocolAgentModel : IAgentModel, IAgentSummarizer
     {
         private readonly Func<string, string, CancellationToken, Task<string>> _complete;
         private readonly string _systemPrompt;
@@ -84,7 +90,22 @@ namespace Malx_AI.Agent
                 : AgentModelReply.Answer((reply ?? string.Empty).Trim());
         }
 
-        private string RenderTranscript(string goal, IReadOnlyList<AgentExchange> history)
+        /// <summary>
+        /// A compaction checkpoint from the same local model: its own transcript, then the
+        /// checkpoint instruction in place of the "your reply" line. Only used for 10B+ models.
+        /// </summary>
+        public async Task<string?> SummarizeAsync(string goal, IReadOnlyList<AgentExchange> history, string instruction, CancellationToken token)
+        {
+            string transcript = RenderTranscript(goal, history, closing: instruction);
+            string reply = await _complete(SummarySystemPrompt, transcript, token).ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(reply) ? null : reply;
+        }
+
+        internal const string SummarySystemPrompt =
+            "You write a factual handoff checkpoint of an agent run from its transcript. You never call tools. "
+            + "Keep paths, commands and error messages exact, and do not claim anything the transcript does not show.";
+
+        private string RenderTranscript(string goal, IReadOnlyList<AgentExchange> history, string? closing = null)
         {
             var builder = new StringBuilder();
 
@@ -107,7 +128,8 @@ namespace Malx_AI.Agent
             foreach (AgentExchange exchange in history)
             {
                 builder.AppendLine();
-                if (string.Equals(exchange.Call.Tool, AgentSession.UserMessageTool, StringComparison.Ordinal))
+                if (string.Equals(exchange.Call.Tool, AgentSession.UserMessageTool, StringComparison.Ordinal)
+                    || string.Equals(exchange.Call.Tool, AgentRunCompactor.SummaryTool, StringComparison.Ordinal))
                 {
                     builder.AppendLine(exchange.Observation);
                     continue;
@@ -116,11 +138,18 @@ namespace Malx_AI.Agent
                 builder.Append("You ran: ").AppendLine(exchange.Call.DescribeForModel());
                 string observation = exchange.Observation;
                 if (observation.Length > _observationBudget)
-                    observation = observation[.._observationBudget] + "\n[Observation shortened for the prompt. Use recall_context to recover the full tool result.]";
+                    observation = AgentOutputClip.HeadTail(observation, _observationBudget,
+                        "Observation shortened for the prompt. Use recall_context to recover the full tool result.");
                 builder.Append("Result: ").AppendLine(observation);
             }
 
             builder.AppendLine();
+            if (closing != null)
+            {
+                builder.AppendLine(closing);
+                return builder.ToString();
+            }
+
             // Both ways to reply are named. "What is your next step?" alone read as a request for
             // a tool call, even on a turn whose task says "answer it directly, in words".
             builder.AppendLine("Your reply: one tool call in the format above (finish when the work is done), or, if the task is a question, the answer in plain words.");

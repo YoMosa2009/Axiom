@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -558,7 +558,7 @@ namespace Malx_AI.Agent
             File.WriteAllText(path, content, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
             int lineCount = CountLines(content);
-            return AgentToolResult.Ok($"Successfully wrote {fileInfo.Length:N0} bytes ({lineCount} lines) to {path}. Verified on disk.{backupNote}");
+            return AgentToolResult.Ok($"Successfully wrote {fileInfo.Length:N0} bytes ({lineCount} lines) to {path}. Verified on disk.{backupNote}{AgentSyntaxCheck.Note(path, content)}");
         }
 
         /// <summary>
@@ -579,8 +579,9 @@ namespace Malx_AI.Agent
             string backupNote = BackupNote(path);
             File.AppendAllText(path, content, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
-            int lineCount = CountLines(File.ReadAllText(path));
-            return AgentToolResult.Ok($"Appended {content.Length:N0} characters. {path} is now {fileInfo.Length:N0} bytes ({lineCount} lines).{backupNote}");
+            string full = File.ReadAllText(path);
+            int lineCount = CountLines(full);
+            return AgentToolResult.Ok($"Appended {content.Length:N0} characters. {path} is now {fileInfo.Length:N0} bytes ({lineCount} lines).{backupNote}{AgentSyntaxCheck.Note(path, full)}");
         }
 
         private AgentToolResult EditFile(AgentToolCall call)
@@ -596,42 +597,17 @@ namespace Malx_AI.Agent
                 return AgentToolResult.Fail("old_string was empty. Use write_file to replace a whole file.");
 
             string original = File.ReadAllText(path);
-            int occurrences = CountOccurrences(original, oldString);
-            if (occurrences == 0)
-            {
-                // Try normalizing line endings to match the file's conventions
-                string normalizedOldCrlf = oldString.Replace("\r\n", "\n").Replace("\n", "\r\n");
-                if (CountOccurrences(original, normalizedOldCrlf) == 1)
-                {
-                    oldString = normalizedOldCrlf;
-                    if (original.Contains("\r\n"))
-                        newString = newString.Replace("\r\n", "\n").Replace("\n", "\r\n");
-                    occurrences = 1;
-                }
-                else
-                {
-                    string normalizedOldLf = oldString.Replace("\r\n", "\n");
-                    if (CountOccurrences(original, normalizedOldLf) == 1)
-                    {
-                        oldString = normalizedOldLf;
-                        if (!original.Contains("\r\n"))
-                            newString = newString.Replace("\r\n", "\n");
-                        occurrences = 1;
-                    }
-                }
-            }
+            AgentEditMatcher.Result match = AgentEditMatcher.Find(original, oldString, newString);
+            if (!match.Found)
+                return AgentToolResult.Fail(match.Error ?? "old_string was not found in the file. Read the file and copy the exact text.");
 
-            if (occurrences == 0)
-                return AgentToolResult.Fail("old_string was not found in the file. Read the file and copy the exact text.");
-            if (occurrences > 1)
-                return AgentToolResult.Fail($"old_string appears {occurrences} times. Include more surrounding lines so it is unique.");
-
-            string replaced = original.Replace(oldString, newString, StringComparison.Ordinal);
+            string replaced = original[..match.Start] + match.Replacement + original[(match.Start + match.Length)..];
+            string matchNote = match.Tier is "exact" or "line endings" ? "" : $" Matched {match.Tier}; check the result.";
             string backupNote = BackupNote(path);
             File.WriteAllText(path, replaced, new UTF8Encoding(false));
             var fileInfo = new FileInfo(path);
             int lineCount = CountLines(replaced);
-            return AgentToolResult.Ok($"Successfully edited {path} ({fileInfo.Length:N0} bytes, {lineCount} lines). Verified on disk.{backupNote}");
+            return AgentToolResult.Ok($"Successfully edited {path} ({fileInfo.Length:N0} bytes, {lineCount} lines). Verified on disk.{matchNote}{backupNote}{AgentSyntaxCheck.Note(path, replaced)}");
         }
 
         private AgentToolResult ListDirectory(AgentToolCall call)
@@ -797,17 +773,6 @@ namespace Malx_AI.Agent
             return text[^1] == '\n' ? newlines : newlines + 1;
         }
 
-        private static int CountOccurrences(string haystack, string needle)
-        {
-            int count = 0;
-            for (int i = haystack.IndexOf(needle, StringComparison.Ordinal); i >= 0;
-                 i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
-            {
-                count++;
-            }
-            return count;
-        }
-
         private static void CollectOutput(string? line, StringBuilder output, TaskCompletionSource closed)
         {
             if (line == null)
@@ -839,9 +804,7 @@ namespace Malx_AI.Agent
             if (stderr.Length > 0)
                 builder.AppendLine().Append("[stderr]").AppendLine().Append(stderr);
             string text = builder.ToString().TrimEnd();
-            return text.Length <= MaxOutputChars
-                ? text
-                : text[..MaxOutputChars] + $"\n… output truncated at {MaxOutputChars} characters.";
+            return AgentOutputClip.HeadTail(text, MaxOutputChars);
         }
 
         private static readonly Regex UnixShellSyntaxRegex = new(

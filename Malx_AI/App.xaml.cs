@@ -156,6 +156,8 @@ namespace Malx_AI
             }
 
             WindowsToastNotificationService.Initialize();
+            // Optional per-model sampling overrides (see ModelSettingsRegistry); absent by default.
+            OpenRouterChatService.ModelSettingsUserFilePath = Path.Combine(AppDataPaths.Root, "model_settings.json");
             if (!IsUpdateHelperProcess)
                 DiagnosticsService.Start("start");
             base.OnStartup(e);
