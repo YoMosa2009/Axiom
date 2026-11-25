@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [V1.14.0] - 2026-11-25
+
+Agent Access keeps a live plan you can follow, stays on track through long runs, lands more of its
+edits, and uses each model's recommended settings.
+
 ### Added
 
 - **Project instructions for Agent Access.** If the folder you give the agent has an `AGENTS.md`
