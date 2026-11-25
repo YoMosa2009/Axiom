@@ -4,7 +4,7 @@
 
 **A native Windows AI workspace: run models on your own PC, on your own server, or in the cloud.**
 
-![Release](https://img.shields.io/badge/release-V1.13.0-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.14.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)
 ![.NET](https://img.shields.io/badge/.NET-10%20WPF-purple)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
