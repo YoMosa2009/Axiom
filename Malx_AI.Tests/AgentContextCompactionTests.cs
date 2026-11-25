@@ -102,7 +102,8 @@ public sealed class AgentContextCompactionTests
     [Fact]
     public void FailedRunCommandIsSummarisedAsError()
     {
-        // A failed command starts with "ERROR:" and should be summarised as the first line.
+        // A failed command starts with "ERROR:" and keeps its error text: the first line alone is
+        // only the exit code, and the error itself is what the model needs.
         var call = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string>
         {
             ["command"] = "dotnet build"
@@ -114,7 +115,8 @@ public sealed class AgentContextCompactionTests
         var result = AgentContextManager.CompactExchanges(history, recentKeepCount: 0);
 
         Assert.Single(result);
-        Assert.Equal("ERROR: [Exit code: 1 | Duration: 2100ms]", result[0].Observation);
+        Assert.StartsWith("ERROR: [Exit code: 1 | Duration: 2100ms]", result[0].Observation);
+        Assert.Contains("error CS0103", result[0].Observation);
     }
 
     [Fact]

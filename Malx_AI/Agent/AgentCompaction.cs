@@ -230,6 +230,18 @@ namespace Malx_AI.Agent
                         how = "pruned old steps (a summary would not have been shorter)";
                 }
 
+                // Rewriting the history costs the provider's prompt cache. When pruning saves
+                // almost nothing (everything old was already short; a live run did this three
+                // times), the history is left as it is and the attempt counts as ineffective.
+                if (pruned.Count == history.Count && EstimateTokens(goal, pruned) > before * 0.95)
+                {
+                    _exchangesAtLastCompaction = history.Count;
+                    if (++_ineffectiveInARow >= MaxIneffectiveCompactions)
+                        Disabled = true;
+                    return $"nothing worth compacting at ~{before:N0} tokens; history left unchanged"
+                        + (Disabled ? " (compaction off for this run)" : string.Empty);
+                }
+
                 history.Clear();
                 history.AddRange(pruned);
             }

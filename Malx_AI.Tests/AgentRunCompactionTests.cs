@@ -146,6 +146,40 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public void AFailedCommandIsNeverCompactedToOk()
+        {
+            var call = new AgentToolCall(AgentToolNames.RunCommand, new Dictionary<string, string> { ["command"] = "python -m unittest -v" });
+            string output = "ERROR: [Exit code: 1 | Duration: 5147ms]\n" + new string('.', 400)
+                + "\nFAIL: test_top_three (test_textstats.TestTopWords)\nAssertionError: Lists differ\nFAILED (failures=1)";
+
+            string compacted = AgentContextManager.CompactObservationForHistory(call, output, 200);
+
+            Assert.StartsWith("ERROR: [Ran python -m unittest -v: FAILED, exit code 1]", compacted);
+            Assert.Contains("FAILED (failures=1)", compacted);
+            Assert.DoesNotContain(": ok]", compacted);
+
+            string passed = AgentContextManager.CompactObservationForHistory(call, new string('.', 400) + "\nOK\n[Exit code: 0 | Duration: 900ms]", 200);
+            Assert.Equal("[Ran python -m unittest -v: ok]", passed);
+        }
+
+        [Fact]
+        public async Task ACompactionThatSavesNothingLeavesTheHistoryAlone()
+        {
+            var history = new List<AgentExchange>();
+            for (int i = 0; i < 10; i++)
+                history.Add(Run($"echo {i}", 150));
+            var model = new SummarizingModel();
+            var compactor = new AgentRunCompactor(new AgentCompactionPolicy(3_000, AgentCompactionMode.Deterministic, FixedPromptTokens: 2_100));
+            List<AgentExchange> before = history.ToList();
+
+            string? description = await compactor.CompactIfNeededAsync("goal", history, model, [], null, null, CancellationToken.None);
+
+            Assert.StartsWith("nothing worth compacting", description);
+            Assert.Equal(before, history);
+            Assert.Equal(0, model.Rewrites);
+        }
+
+        [Fact]
         public void ADigestOfADigestDoesNotRepeatTheFileListOrPlan()
         {
             AgentPlan plan = AgentPlan.TryParse("[>] a\n[ ] b", null, 12, out _)!;
