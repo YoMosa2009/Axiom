@@ -108,6 +108,7 @@
     <Compile Include="..\Malx_AI\Agent\AgentPageCapture.cs" Link="Production\Agent\AgentPageCapture.cs" />
     <Compile Include="..\Malx_AI\Agent\HeadlessBrowserSession.cs" Link="Production\Agent\HeadlessBrowserSession.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentNarration.cs" Link="Production\Agent\AgentNarration.cs" />
+    <Compile Include="..\Malx_AI\CouncilUserUpdates.cs" Link="Production\CouncilUserUpdates.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentEditMatcher.cs" Link="Production\Agent\AgentEditMatcher.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentOutputClip.cs" Link="Production\Agent\AgentOutputClip.cs" />
     <Compile Include="..\Malx_AI\Agent\AgentSyntaxCheck.cs" Link="Production\Agent\AgentSyntaxCheck.cs" />

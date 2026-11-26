@@ -11690,6 +11690,72 @@ namespace Malx_AI
                     if (ownsRun && _isProcessing) FinishAgentRunUi();
                 }
             }
+
+            if (ownsRun)
+                ScheduleCouncilFollowUp();
+        }
+
+        private readonly CouncilUserUpdates _councilUpdates = new();
+        private bool _councilFollowUpAlreadyShown;
+
+        /// <summary>
+        /// A message sent while a council or Single Model run works (Agent Access has its own
+        /// inbox). It is shown where the user wrote it and joins the run's next model call.
+        /// </summary>
+        private bool TryQueueCouncilUpdate()
+        {
+            if (!_isProcessing || _agentInbox != null)
+                return false;
+            string text = (QueryInput.Text ?? string.Empty).Trim();
+            if (text.Length == 0)
+                return true;
+            if (ComputerUseMention.IsInvoked(text))
+            {
+                AppendVisibleNotice("Axiom is still working. @ComputerUse can run once it finishes, or after you press Stop.");
+                return true;
+            }
+            if (_replyContextText != null)
+            {
+                text = ReplyContextAttachment.Compose(_replyContextText, text);
+                ClearReplyContext();
+            }
+
+            QueryInput.Text = string.Empty;
+            AppendChat("user", text);
+            _chatHistory.Add(("user", text));
+            _councilUpdates.Post(text);
+            AppendVisibleNotice("Got it. Your message joins the next step of this run.");
+            LogActivity("Workplace: message queued for the running council.");
+            ChatScrollViewer?.ScrollToEnd();
+            return true;
+        }
+
+        /// <summary>
+        /// A message that arrived after the run's last model call has not been seen by any model:
+        /// it runs next, as a follow-up of the finished work. After a Stop it waits in the box.
+        /// </summary>
+        private void ScheduleCouncilFollowUp()
+        {
+            if (_isProcessing || !_councilUpdates.HasWaiting)
+                return;
+            string text = CouncilUserUpdates.FollowUpText(_councilUpdates.TakeWaiting());
+            bool stopped = !string.IsNullOrWhiteSpace(_lastCancelledRunPrompt);
+            if (stopped || !string.IsNullOrWhiteSpace(QueryInput.Text))
+            {
+                if (string.IsNullOrWhiteSpace(QueryInput.Text))
+                    QueryInput.Text = text;
+                AppendVisibleNotice("Your message arrived as the run ended and was not worked on yet. It is in the message box; press Send to run it.");
+                return;
+            }
+
+            _ = Dispatcher.BeginInvoke(async () =>
+            {
+                if (_isProcessing || !string.IsNullOrWhiteSpace(QueryInput.Text))
+                    return;
+                QueryInput.Text = text;
+                _councilFollowUpAlreadyShown = true;
+                await SendQueryAsync();
+            }, DispatcherPriority.Background);
         }
 
         private async Task SendQueryCoreAsync()
@@ -11698,7 +11764,7 @@ namespace Malx_AI
             {
                 // A running agent takes the message at its next step; anything else says plainly
                 // why nothing happened (a "system" line only reaches the notification bell).
-                if (!TryPostMessageToRunningAgent())
+                if (!TryPostMessageToRunningAgent() && !TryQueueCouncilUpdate())
                     AppendVisibleNotice("Axiom is still working on the last request. Wait for it to finish, or press Stop.");
                 return;
             }
@@ -11811,8 +11877,17 @@ namespace Malx_AI
                 _isRefinementMode = false;
                 RefinementModeBanner.Visibility = Visibility.Collapsed;
             }
-            AppendChat("user", userQuery, pendingImagePaths);
-            _chatHistory.Add(("user", userQuery));
+            if (_councilFollowUpAlreadyShown)
+            {
+                // A message sent mid-run is already in the chat where the user wrote it.
+                _councilFollowUpAlreadyShown = false;
+            }
+            else
+            {
+                AppendChat("user", userQuery, pendingImagePaths);
+                _chatHistory.Add(("user", userQuery));
+            }
+            _councilUpdates.Reset();
             UpdateWorkplaceTokenUsageIndicator();
 
             if (ComputerUseMention.ShouldRoute(userQuery, _computerUseGoal))
@@ -16633,6 +16708,16 @@ namespace Malx_AI
         {
             if (!internalInferenceStep)
                 systemPrompt = systemPrompt.TrimEnd() + "\n\n" + EffortPolicy.BuildSystemInstruction();
+
+            // Messages the user sent during this run join the next model call (and every later
+            // one), so a council or Single Model run takes them at its next step.
+            if (!internalInferenceStep)
+            {
+                bool hadWaiting = _councilUpdates.HasWaiting;
+                userPayload = _councilUpdates.ApplyTo(userPayload, _submittedRunPrompt);
+                if (hadWaiting)
+                    AppendVisibleNotice("Read your message. The next step works it in alongside your original request.");
+            }
 
             if (!internalInferenceStep)
                 RecordCouncilRolePromptUsage(role, systemPrompt, userPayload);
