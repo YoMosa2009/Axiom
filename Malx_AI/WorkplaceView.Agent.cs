@@ -356,6 +356,12 @@ namespace Malx_AI
             /// <summary>What is happening right now, shown in italics under the steps.</summary>
             public string? Status { get; set; }
 
+            /// <summary>
+            /// What the model says it is doing now (a sentence and a half), shown under the title
+            /// so the card reads as the model's own account, not just a list of commands.
+            /// </summary>
+            public string? Narration { get; set; }
+
             /// <summary>The agent's live checklist (update_plan), shown above the steps.</summary>
             public AgentPlan? Plan { get; set; }
 
@@ -363,6 +369,8 @@ namespace Malx_AI
             {
                 var builder = new StringBuilder();
                 builder.Append("**").Append(Title).Append("**\n\n");
+                if (!string.IsNullOrWhiteSpace(Narration))
+                    builder.Append("› ").Append(Narration).Append("\n\n");
                 if (Plan is { IsEmpty: false })
                     builder.Append(RenderPlan(Plan)).Append("\n\n");
                 if (StepLines.Count > 0)
@@ -392,6 +400,22 @@ namespace Malx_AI
                 }
                 return builder.ToString().TrimEnd();
             }
+        }
+
+        /// <summary>Shows the model's own "doing now" sentence on the live run card.</summary>
+        private void ShowAgentNarration(AgentRunCard run, string narration)
+        {
+            if (string.IsNullOrWhiteSpace(narration))
+                return;
+            Dispatcher.BeginInvoke(() =>
+            {
+                // A message the user sent mid-run moves the run to a new card; follow it.
+                AgentRunCard live = _activeAgentRunCard ?? run;
+                if (string.Equals(live.Narration, narration, StringComparison.Ordinal))
+                    return;
+                live.Narration = narration;
+                live.Card.Content = live.Render();
+            });
         }
 
         /// <summary>Shows a plan update on the live run card and in the task tracker.</summary>
@@ -514,7 +538,7 @@ namespace Malx_AI
                 run.Card.ViewedImagePaths = Array.Empty<string>();
                 run.Card = new WorkplaceChatMessage { Role = "agent" };
                 run.StepLines.Clear();
-                run.Status = "Got it. Passing your message to the agent at its next step";
+                run.Status = "Got it. Pausing at the next safe point to read your message";
                 run.Card.Content = run.Render();
                 _chatCards.Add(run.Card);
             }
@@ -898,6 +922,10 @@ namespace Malx_AI
             if (session.Plan.HasOpenItems)
                 ShowAgentPlan(runCard, session.Plan, userQuery);
             session.PlanChanged = plan => ShowAgentPlan(runCard, plan, userQuery);
+            session.Narrated = narration => ShowAgentNarration(runCard, narration);
+            session.MessagesDelivered = count => ShowAgentNarration(runCard, count == 1
+                ? "Read your message; adjusting the work to it while keeping the original task."
+                : $"Read your {count} messages; adjusting the work to them while keeping the original task.");
             session.Compacted = description =>
             {
                 LogActivity("Agent Access: context compacted (" + description + ").");

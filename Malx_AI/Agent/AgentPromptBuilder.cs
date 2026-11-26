@@ -208,12 +208,13 @@ namespace Malx_AI.Agent
             builder.AppendLine("- read_file, write_file, append_file, edit_file, list_directory, find_files and search_text work on the user's real files (including reading images for visual inspection).");
             builder.AppendLine("- update_plan keeps a short checklist the user sees live. Use it for work of 3 or more steps: send the whole list, one step in_progress at a time, and mark steps completed as soon as they are done.");
             builder.AppendLine();
+            builder.AppendLine("Before each tool call, write one short sentence for the user (under 25 words) saying what you are doing now and why, for example \"Reading the Wikipedia article to confirm the best known bound.\" The user sees it live. Then call the tool.");
             builder.AppendLine("Call one tool at a time and wait for its result before the next. When the task is done, reply with a complete, well-structured Markdown summary covering everything you did, changed files, verification results, and next steps.");
         }
 
         private static void AppendFullProtocol(StringBuilder builder)
         {
-            builder.AppendLine("To act, reply with exactly one JSON object in a ```json block and nothing else:");
+            builder.AppendLine("To act, write one short sentence saying what you are doing now (the user sees it live), then exactly one JSON object in a ```json block, and nothing else:");
             builder.AppendLine("```json");
             builder.AppendLine("{\"tool\": \"run_command\", \"arguments\": {\"command\": \"dotnet build\"}}");
             builder.AppendLine("```");
