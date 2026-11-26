@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [V1.15.0] - 2026-11-26
+
 You can now see what the model is doing as it works, talk to it mid-task, and it browses without
 taking over your screen. Updates download only what changed.
 
@@ -47,6 +49,12 @@ taking over your screen. Updates download only what changed.
   clicking on it. Looking again after something changed no longer counts as a repeat.
 - "Read the page" without an address now reads the page the agent has open, instead of failing.
 - Browser steps showed as "Browser (inspect): a command"; they now say what happened.
+- In Auto mode, clicks in the background browser no longer wait for your approval. It has no
+  logins or data of yours. Buttons that look like they buy, delete or submit something still ask,
+  and Manual mode asks for every button.
+- A screenshot of the page the agent has open now shows it as it is after its clicks, not freshly
+  reloaded.
+- If you install a font for your account from another drive, Axiom now finds it.
 
 ## [V1.14.0] - 2026-11-25
 
