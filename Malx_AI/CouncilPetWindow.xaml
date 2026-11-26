@@ -1,7 +1,7 @@
 ﻿<Window x:Class="Malx_AI.CouncilPetWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Axiom Bit"
+        Title="Axiom Bit" FontFamily="{DynamicResource AppUiFont}"
         Width="260"
         Height="174"
         WindowStyle="None"

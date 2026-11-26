@@ -1,7 +1,7 @@
 <Window x:Class="Malx_AI.ComputerUse.ComputerUseSessionWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Computer Use"
+        Title="Computer Use" FontFamily="{DynamicResource AppUiFont}"
         Icon="pack://application:,,,/Malx_AI;component/Assets/AxiomLogo.ico"
         Width="336"
         Height="432"
@@ -28,7 +28,7 @@
         <SolidColorBrush x:Key="HudStopBorder" Color="#C2564A"/>
 
         <Style TargetType="Button">
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -62,7 +62,7 @@
 
         <Style TargetType="RadioButton">
             <Setter Property="Foreground" Value="{StaticResource HudText}"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">

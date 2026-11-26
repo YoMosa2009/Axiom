@@ -155,6 +155,7 @@ namespace Malx_AI
                 Debug.WriteLine($"Single-instance guard error: {ex.Message}");
             }
 
+            AppFonts.Apply(Resources);
             WindowsToastNotificationService.Initialize();
             // Optional per-model sampling overrides (see ModelSettingsRegistry); absent by default.
             OpenRouterChatService.ModelSettingsUserFilePath = Path.Combine(AppDataPaths.Root, "model_settings.json");

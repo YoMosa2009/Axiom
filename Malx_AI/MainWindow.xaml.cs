@@ -3423,7 +3423,7 @@ namespace Malx_AI
                 BorderBrush = border,
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(10),
-                FontFamily = new FontFamily("Segoe UI"),
+                FontFamily = AppFonts.Ui,
                 FontSize = 12
             };
 
@@ -3537,7 +3537,8 @@ namespace Malx_AI
                 {
                     Role = card.Role,
                     Content = card.Content,
-                    Timestamp = card.Timestamp
+                    Timestamp = card.Timestamp,
+                    ModelLabel = card.ModelLabel
                 }).ToList(),
                 SystemNotifications = (snapshot.SystemNotifications ?? []).Select(notification => new WorkplaceChatMessageDto
                 {
