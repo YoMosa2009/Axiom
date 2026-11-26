@@ -56,7 +56,14 @@ namespace Malx_AI
     /// </remarks>
     public static class NativeReasoning
     {
-        private static readonly string[] EffortOrder = ["none", "minimal", "low", "medium", "high", "xhigh"];
+        private static readonly string[] EffortOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+        /// <summary>
+        /// The Axiom Cloud subscription model (DeepSeek V4.1 Flash 1017), as OpenRouter's model
+        /// list described it on 2026-11-26. Used when the managed endpoint is in use and the
+        /// public model list has not been read.
+        /// </summary>
+        public static NativeReasoningInfo SubscriptionModel { get; } = new(true, false, ["max", "high", "low", "none"], true);
 
         /// <summary>Reads one entry of OpenRouter's /api/v1/models list.</summary>
         public static NativeReasoningInfo FromOpenRouterModel(JsonElement model)
@@ -109,7 +116,7 @@ namespace Malx_AI
 
         /// <summary>
         /// The effort Axiom asks for at each level, before it is fitted to what the model accepts.
-        /// Ultra asks for the model's top setting (xhigh where offered).
+        /// Ultra asks for the model's top setting (max or xhigh, whichever it offers).
         /// </summary>
         public static string RequestedEffort(EffortLevel level) => level switch
         {
@@ -117,7 +124,7 @@ namespace Malx_AI
             EffortLevel.Medium => "medium",
             EffortLevel.High => "high",
             EffortLevel.ExtraHigh => "high",
-            EffortLevel.Ultra => "xhigh",
+            EffortLevel.Ultra => "max",
             _ => "medium"
         };
 
@@ -150,7 +157,7 @@ namespace Malx_AI
         {
             int wantedRank = Array.IndexOf(EffortOrder, wanted);
             if (accepted == null || accepted.Count == 0)
-                return wanted == "xhigh" ? "high" : wanted == "minimal" ? "low" : wanted;
+                return wanted is "xhigh" or "max" ? "high" : wanted == "minimal" ? "low" : wanted;
 
             var ranked = accepted.Select(e => (Effort: e, Rank: Array.IndexOf(EffortOrder, e)))
                 .Where(e => e.Rank > 0) // "none" is not a thinking effort

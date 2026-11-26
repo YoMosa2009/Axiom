@@ -2253,8 +2253,15 @@ namespace Malx_AI
             // Only send the reasoning parameter when the user actually enables thinking mode.
             // Sending reasoning:{effort:"low"} on every request causes providers that don't
             // support the field to reject the request with an immediate "Provider returned error".
-            if (!isCustomEndpoint && !isManagedEndpoint
-                && _modelReasoning.TryGetValue(modelId ?? string.Empty, out NativeReasoningInfo? nativeReasoning))
+            NativeReasoningInfo? nativeReasoning = null;
+            if (!isCustomEndpoint && !isManagedEndpoint)
+                _modelReasoning.TryGetValue(modelId ?? string.Empty, out nativeReasoning);
+            else if (isManagedEndpoint && (IsManagedEndpointModel(modelId ?? string.Empty)
+                || string.Equals(modelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase)))
+                nativeReasoning = _modelReasoning.TryGetValue(AxiomSubscriptionModel, out NativeReasoningInfo? listed)
+                    ? listed
+                    : NativeReasoning.SubscriptionModel;
+            if (nativeReasoning != null)
             {
                 // The model list says how this model thinks: never tell an always-thinking model
                 // to stop, and fit the effort to the levels it accepts (NativeReasoning).

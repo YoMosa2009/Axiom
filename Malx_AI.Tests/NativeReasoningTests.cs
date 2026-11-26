@@ -58,6 +58,14 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public void TheSubscriptionModelGetsItsMaxThinkingAtUltraAndNoneBelowHigh()
+        {
+            Assert.Equal("max", NativeReasoning.Decide(NativeReasoning.SubscriptionModel, true, EffortLevel.Ultra).Effort);
+            Assert.Equal("high", NativeReasoning.Decide(NativeReasoning.SubscriptionModel, true, EffortLevel.High).Effort);
+            Assert.Equal(NativeReasoningMode.Disable, NativeReasoning.Decide(NativeReasoning.SubscriptionModel, false, EffortLevel.Medium).Mode);
+        }
+
+        [Fact]
         public void AnUnsupportedModelGetsNoReasoningField()
         {
             Assert.Equal(NativeReasoningMode.Omit, NativeReasoning.Decide(NativeReasoningInfo.None, true, EffortLevel.High).Mode);
