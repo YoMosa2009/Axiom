@@ -37,7 +37,10 @@ namespace Malx_AI
                 string userFonts = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "Microsoft", "Windows", "Fonts");
-                string? folder = AppFontPolicy.FindPreferredFontFolder(new[] { userFonts });
+                // A per-user font can also be registered from any folder (the owner keeps theirs on
+                // F:); its registry entry holds the full path.
+                string? folder = AppFontPolicy.FindPreferredFontFolder(new[] { userFonts })
+                    ?? AppFontPolicy.FolderFromRegisteredFontPaths(ReadRegisteredUserFontPaths());
                 if (folder != null)
                 {
                     var baseUri = new Uri(folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar);
@@ -52,6 +55,26 @@ namespace Malx_AI
             catch (Exception)
             {
                 return new FontFamily(AppFontPolicy.SystemFallback);
+            }
+        }
+
+        private static string[] ReadRegisteredUserFontPaths()
+        {
+            try
+            {
+                using Microsoft.Win32.RegistryKey? key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows NT\CurrentVersion\Fonts");
+                if (key == null)
+                    return [];
+                var paths = new System.Collections.Generic.List<string>();
+                foreach (string name in key.GetValueNames())
+                    if (key.GetValue(name) is string path)
+                        paths.Add(path);
+                return paths.ToArray();
+            }
+            catch (Exception)
+            {
+                return [];
             }
         }
     }

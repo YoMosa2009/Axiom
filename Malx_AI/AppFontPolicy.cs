@@ -27,6 +27,27 @@ internal static class AppFontPolicy
             && (name.EndsWith(".otf", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// The folder of a registered Anthropic Sans Text file, from the full paths in the user's
+    /// font registry (fonts registered from another drive, e.g. F:\Fonts). Null when none exists.
+    /// </summary>
+    public static string? FolderFromRegisteredFontPaths(IEnumerable<string> registeredPaths)
+    {
+        foreach (string path in registeredPaths ?? [])
+        {
+            try
+            {
+                if (IsPreferredFontFile(path) && Path.IsPathFullyQualified(path) && File.Exists(path))
+                    return Path.GetDirectoryName(path);
+            }
+            catch (Exception)
+            {
+                // Skip unreadable entries.
+            }
+        }
+        return null;
+    }
+
     /// <summary>The installed folder that holds Anthropic Sans Text, or null.</summary>
     public static string? FindPreferredFontFolder(IEnumerable<string> candidateFolders)
     {

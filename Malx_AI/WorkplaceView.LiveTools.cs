@@ -159,9 +159,12 @@ namespace Malx_AI
             if (risk == BrowserActionRisk.Level.Blocked)
                 return AgentToolResult.Fail(BrowserActionRisk.BlockedMessage);
 
-            // Following a link or filling a search box changes nothing outside the page, so it
-            // needs no approval; a button may submit something, so it asks as before.
-            bool needsApproval = target.Kind == "click" || risk == BrowserActionRisk.Level.Irreversible;
+            // The background browser has its own empty profile: no logins, cookies or accounts of
+            // the user's, so a click there cannot act as them. In Auto mode only an irreversible-
+            // looking control (submit, buy, delete...) asks; Manual mode asks for every button.
+            // The first live run (2026-11-26) sat 13 minutes on an approval for a counter button.
+            bool needsApproval = risk == BrowserActionRisk.Level.Irreversible
+                || (_agentApprovalMode != AgentApprovalMode.Auto && target.Kind == "click");
             if (needsApproval)
             {
                 string detail = $"{action} “{target.Name}” on “{_headlessSnapshot?.Title}” (background browser)"
@@ -183,7 +186,10 @@ namespace Malx_AI
                 }
 
                 string outcome = await _headlessBrowser.ClickAsync(target.Id, token);
-                _headlessSnapshot = null;
+                // The control ids stay on the page until it navigates, so the same button can be
+                // clicked again without another inspect (the live run had to inspect between clicks).
+                if (outcome != "ok")
+                    _headlessSnapshot = null;
                 return outcome switch
                 {
                     "missing" => AgentToolResult.Fail("That control is no longer on the page. Inspect the page again."),
@@ -207,7 +213,13 @@ namespace Malx_AI
         /// </summary>
         private async Task<AgentToolResult?> TryHeadlessScreenshotAsync(AgentToolCall call, CancellationToken token)
         {
-            if (_liveBrowserIsVisible || !_headlessBrowser.HasPage || !string.IsNullOrWhiteSpace(call.Arg("url")))
+            if (_liveBrowserIsVisible || !_headlessBrowser.HasPage)
+                return null;
+            // A url that is the page already open means "show me that page now". The second
+            // live run (2026-11-26) passed it, got a fresh render showing 0, and had to explain
+            // that its two clicks were not in the picture.
+            string requestedUrl = call.Arg("url").Trim();
+            if (requestedUrl.Length > 0 && !IsOpenHeadlessPage(requestedUrl))
                 return null;
             string window = call.Arg("window").Trim().ToLowerInvariant();
             bool meansBrowser = window.Length == 0
@@ -237,6 +249,19 @@ namespace Malx_AI
             {
                 return AgentToolResult.Fail("The background browser screenshot failed: " + ex.Message);
             }
+        }
+
+        private bool IsOpenHeadlessPage(string requested)
+        {
+            string? current = _headlessBrowser.CurrentUrl;
+            if (string.IsNullOrWhiteSpace(current))
+                return false;
+            string normalized = BrowserControlService.NormalizeHttpUrl(requested);
+            if (normalized.Length == 0)
+                normalized = BrowserControlService.LocalPageUrl(requested) ?? requested;
+            return Uri.TryCreate(normalized, UriKind.Absolute, out Uri? a)
+                && Uri.TryCreate(current, UriKind.Absolute, out Uri? b)
+                && Uri.Compare(a, b, UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0;
         }
 
         /// <summary>Closes the background browser after ten quiet minutes.</summary>
