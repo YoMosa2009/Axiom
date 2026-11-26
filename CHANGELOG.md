@@ -2,6 +2,52 @@
 
 ## [Unreleased]
 
+You can now see what the model is doing as it works, talk to it mid-task, and it browses without
+taking over your screen. Updates download only what changed.
+
+### Added
+
+- **"Doing now" line.** While the agent works, its run card shows a sentence and a half in the
+  model's own words about what it is doing and why ("Reading the Wikipedia article to confirm the
+  bound."), under a compact list of its steps. Normal chat shows the same line while a model uses
+  tools. Small local models get a plain description of each step instead.
+- **Talk to it while it works.** In Workplace, a message you send during a run is read at the next
+  safe point. If the agent is still thinking, it pauses that thought and reads your message right
+  away; if it is in the middle of writing a file, it finishes that first. Your original task is
+  kept: the message adds to it or changes it, and a question is answered without stopping the
+  work. This now also works in council and Single Model runs, where your message joins the next
+  step, and a message that arrives as a run ends runs straight after it.
+- **Browsing in the background.** When the agent opens a web page to read it, click through it or
+  take a screenshot, it uses a hidden browser inside Axiom. Your screen stays on Axiom and your own
+  browser, tabs and logins are never touched. The agent only opens your browser when you ask it to
+  show you a page.
+- **Smaller updates.** Updates now download only the files that changed since your version
+  (usually a few MB instead of about 380 MB). Every file is checked against the release before it
+  is used; if anything does not match, Axiom downloads the full update as before. New installs
+  still use the full installer.
+
+### Changed
+
+- **Thinking that fits each model.** Axiom now reads from OpenRouter which models always think and
+  which thinking levels each accepts, and matches your effort level to them: Ultra uses a model's
+  top setting (for example `max` or `xhigh`), lower levels are fitted to the nearest level the
+  model accepts, and a model that cannot stop thinking is given a short think instead of an error.
+  Hybrid Local servers whose chat template has a thinking switch are told to skip thinking at
+  Light and Medium. Agent Access now uses the model's thinking from High effort, like Normal chat.
+- **Axiom Cloud.** DeepSeek 4.1F-1017 uses its maximum thinking at Ultra. The Usage page shows
+  "Not active" or "Unknown" instead of a misleading "0% used" when you are signed out, not
+  subscribed, or usage could not be loaded.
+- **New app font and clearer agent cards.** The app uses the Geist font throughout. Agent cards
+  show your theme colour and the model's name instead of a green "Agent" label, and Hybrid Local
+  shows the name of the model you imported.
+
+### Fixed
+
+- The agent was stopped as "repeating the same action" when it looked at a web page again after
+  clicking on it. Looking again after something changed no longer counts as a repeat.
+- "Read the page" without an address now reads the page the agent has open, instead of failing.
+- Browser steps showed as "Browser (inspect): a command"; they now say what happened.
+
 ## [V1.14.0] - 2026-11-25
 
 Agent Access keeps a live plan you can follow, stays on track through long runs, lands more of its
