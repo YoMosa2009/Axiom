@@ -160,6 +160,27 @@ namespace Malx_AI
             }
         }
 
+        /// <summary>Downloads a delta package with the same checks as the full ZIP (size, GitHub digest).</summary>
+        public static Task<string> DownloadDeltaAsync(
+            UpdateCheckResult update,
+            UpdateDeltaAsset delta,
+            IProgress<double>? progress,
+            CancellationToken token)
+        {
+            var package = new UpdateCheckResult
+            {
+                LatestVersion = update.LatestVersion,
+                LatestVersionTag = update.LatestVersionTag,
+                CurrentVersion = update.CurrentVersion,
+                PackageDownloadUrl = delta.DownloadUrl,
+                PackageFileName = delta.Name,
+                PackageSha256 = delta.Sha256,
+                PackageSizeBytes = delta.SizeBytes,
+                PackageKind = UpdatePackageKind.Zip
+            };
+            return DownloadPackageAsync(package, progress, token);
+        }
+
         public static Task<string> DownloadInstallerAsync(
             string downloadUrl,
             string fileName,

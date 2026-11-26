@@ -29,6 +29,9 @@ namespace Malx_AI
         public UpdatePackageKind PackageKind { get; init; }
         public bool IsNewerVersionAvailable { get; init; }
 
+        /// <summary>Delta packages on this release (UpdateDeltaPackage), one per base version.</summary>
+        public IReadOnlyList<UpdateDeltaAsset> DeltaPackages { get; init; } = [];
+
         public bool HasPackageAsset => PackageKind != UpdatePackageKind.None
             && !string.IsNullOrWhiteSpace(PackageDownloadUrl);
 
@@ -84,7 +87,8 @@ namespace Malx_AI
                 PackageSha256 = package?.Sha256 ?? string.Empty,
                 PackageSizeBytes = package?.SizeBytes ?? 0,
                 PackageKind = package?.Kind ?? UpdatePackageKind.None,
-                IsNewerVersionAvailable = latestVersion > normalizedCurrent
+                IsNewerVersionAvailable = latestVersion > normalizedCurrent,
+                DeltaPackages = FindDeltaAssets(root, latestVersion)
             };
         }
 
@@ -189,6 +193,31 @@ namespace Malx_AI
                 .OrderByDescending(candidate => candidate.Score)
                 .ThenBy(candidate => candidate.Name, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
+        }
+
+        private static IReadOnlyList<UpdateDeltaAsset> FindDeltaAssets(JsonElement root, Version latestVersion)
+        {
+            if (!root.TryGetProperty("assets", out JsonElement assets) || assets.ValueKind != JsonValueKind.Array)
+                return [];
+            var deltas = new List<UpdateDeltaAsset>();
+            foreach (JsonElement asset in assets.EnumerateArray())
+            {
+                string name = ReadString(asset, "name");
+                string url = ReadString(asset, "browser_download_url");
+                if (!UpdateDeltaPackage.TryParseAssetName(name, out Version target, out Version baseVersion)
+                    || target != NormalizeVersion(latestVersion)
+                    || !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                // Only a delta with GitHub's own digest is trusted; without one, use the full ZIP.
+                string digest = ReadString(asset, "digest");
+                if (!digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                long size = asset.TryGetProperty("size", out JsonElement sizeElement) && sizeElement.TryGetInt64(out long parsedSize)
+                    ? parsedSize
+                    : 0;
+                deltas.Add(new UpdateDeltaAsset(baseVersion, name, url, digest[7..].Trim(), size));
+            }
+            return deltas;
         }
 
         private static string ReadString(JsonElement element, string propertyName)
