@@ -42,7 +42,7 @@ namespace Malx_AI
                     : GetEffectiveCouncilModelId())
                 : acting.ModelPath ?? string.Empty;
             if (_isCloudModeEnabled && _isHybridLocalCouncilSelected && string.IsNullOrWhiteSpace(label))
-                label = OpenRouterChatService.CustomEndpointModelLabel;
+                label = AgentCardLabels.HybridModelDisplayName(_openRouterChatService.CustomEndpointConfiguredModelId);
             bool catalogVision = _isCloudModeEnabled && _openRouterChatService.SupportsImageInput(GetEffectiveCouncilModelId());
             bool catalogKnown = !_isCloudModeEnabled || _openRouterChatService.HasImageInputCatalog;
             bool projector = !_isCloudModeEnabled && ComputerUseCapability.HasLocalProjector(acting.ModelPath);

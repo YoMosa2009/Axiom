@@ -58,6 +58,8 @@ namespace Malx_AI
         public DateTime Timestamp { get; set; }
         public List<string> AttachedImagePaths { get; set; } = new();
         public List<WorkplaceFileChange> FileChanges { get; set; } = new();
+        /// <summary>Model name shown in an agent card's header; null for other roles and older sessions.</summary>
+        public string? ModelLabel { get; set; }
     }
 
     public sealed class WorkplaceDocumentDto

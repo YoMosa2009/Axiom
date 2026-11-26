@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Markdig;
@@ -12,6 +13,7 @@ namespace Malx_AI
     internal static class MessageHtmlRenderer
     {
         private const string KatexResourceBaseUrl = "http://katex.local";
+        private static readonly Lazy<string> AppFontCss = new(LoadAppFontCss);
         private static readonly Regex RichContentRegex = new(@"(\$\$|\\\(|\\\[|`{1,3}|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\*\*[^*\r\n]+\*\*|__[^_\r\n]+__|^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s)|\|.+\|)", RegexOptions.Compiled | RegexOptions.Multiline);
         private static readonly Regex DoubleDollarLatexRegex = new(@"(?<!\\)\$\$(?<content>[\s\S]+?)(?<!\\)\$\$", RegexOptions.Compiled);
         private static readonly Regex SingleDollarLatexRegex = new(@"(?<!\$)(?<!\\)\$(?!\$)(?<content>(?:\\.|[^\r\n$])+?)(?<!\\)\$(?!\$)", RegexOptions.Compiled);
@@ -112,6 +114,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 <style>
 __KATEX_INLINE_CSS__
+__APP_FONT_CSS__
 html, body {
     overflow: hidden;
 }
@@ -123,7 +126,7 @@ body {
     margin: 0;
     color: #EDE8E3;
     background: #171615;
-    font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
+    font-family: 'Anthropic Sans Text', 'Geist', 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
     font-size: 14.5px;
     font-weight: 400;
     line-height: 1.62;
@@ -362,7 +365,43 @@ window.__malxFinalizeRender = finalizeRender;
             return template
                 .Replace("__KATEX_BASE_URL__", KatexResourceBaseUrl)
                 .Replace("__KATEX_INLINE_CSS__", KatexInlineCss.Value)
+                .Replace("__APP_FONT_CSS__", AppFontCss.Value)
                 .Replace("__BODY__", body);
+        }
+
+        /// <summary>
+        /// The bundled Geist faces as data: URIs. The offline policy blocks every other origin, and
+        /// a data: font needs no CORS, so this works in any message view. Missing files fall back
+        /// to the next family in the stack (Anthropic Sans when installed, then Segoe UI).
+        /// </summary>
+        private static string LoadAppFontCss()
+        {
+            try
+            {
+                string folder = Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts");
+                var css = new StringBuilder();
+                foreach ((string file, int weight, string style) in new[]
+                {
+                    ("Geist-Regular.woff2", 400, "normal"),
+                    ("Geist-Italic.woff2", 400, "italic"),
+                    ("Geist-SemiBold.woff2", 600, "normal"),
+                    ("Geist-Bold.woff2", 700, "normal"),
+                })
+                {
+                    string path = Path.Combine(folder, file);
+                    if (!File.Exists(path))
+                        continue;
+                    string data = Convert.ToBase64String(File.ReadAllBytes(path));
+                    css.Append("@font-face{font-family:'Geist';src:url(data:font/woff2;base64,").Append(data)
+                       .Append(") format('woff2');font-weight:").Append(weight)
+                       .Append(";font-style:").Append(style).Append(";font-display:swap;}\n");
+                }
+                return css.ToString();
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
         }
 
         private static string LoadKatexInlineCss()

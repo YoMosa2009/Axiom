@@ -403,7 +403,7 @@
                                                         <DockPanel>
                                                             <TextBlock Text="{Binding TimestampLabel}" FontSize="9" Foreground="{DynamicResource DarkSecondaryBrush}" DockPanel.Dock="Left" VerticalAlignment="Top" Width="52" Margin="0,0,6,0" LineHeight="12"/>
                                                             <TextBlock Text="{Binding RoleLabel}" FontSize="9" FontWeight="SemiBold" Foreground="{Binding AccentBrush}" DockPanel.Dock="Left" VerticalAlignment="Top" Width="46" Margin="0,0,6,0" LineHeight="12"/>
-                                                            <TextBlock Text="{Binding FormattedContent}" TextWrapping="Wrap" FontSize="10" FontFamily="Segoe UI" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="14"/>
+                                                            <TextBlock Text="{Binding FormattedContent}" TextWrapping="Wrap" FontSize="10" FontFamily="{DynamicResource AppUiFont}" Foreground="{DynamicResource DarkSecondaryBrush}" LineHeight="14"/>
                                                         </DockPanel>
                                                     </Border>
                                                 </DataTemplate>
@@ -493,7 +493,7 @@
             </Border>
 
             <Border x:Name="WorkplaceErrorNotificationBar" DockPanel.Dock="Top" Visibility="Collapsed" Padding="24,8" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="0,0,0,1">
-                <TextBlock x:Name="WorkplaceErrorNotificationText" Foreground="{DynamicResource PrimaryAccentBrush}" FontSize="11" FontFamily="Segoe UI"/>
+                <TextBlock x:Name="WorkplaceErrorNotificationText" Foreground="{DynamicResource PrimaryAccentBrush}" FontSize="11" FontFamily="{DynamicResource AppUiFont}"/>
             </Border>
 
             <!-- Run confidence banner. Previously lived at the bottom of the left sidebar where
@@ -579,7 +579,7 @@
                         <Grid>
                             <avalonedit:TextEditor x:Name="QueryInput"
                                      Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}"
-                                     FontFamily="Segoe UI" FontSize="12.5" KeyDown="QueryInput_KeyDown" PreviewKeyDown="QueryInput_PreviewKeyDown"
+                                     FontFamily="{DynamicResource AppUiFont}" FontSize="12.5" KeyDown="QueryInput_KeyDown" PreviewKeyDown="QueryInput_PreviewKeyDown"
                                      WordWrap="True" ShowLineNumbers="False"
                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
                                      Margin="6,4,6,3" MinHeight="30" MaxHeight="140"/>
@@ -588,7 +588,7 @@
                                        IsHitTestVisible="False"
                                        Margin="9,8,6,0"
                                        VerticalAlignment="Top"
-                                       FontFamily="Segoe UI" FontSize="12.5"
+                                       FontFamily="{DynamicResource AppUiFont}" FontSize="12.5"
                                        Foreground="{DynamicResource DarkSecondaryBrush}"
                                        AutomationProperties.Name="Workplace input placeholder"/>
                             <Popup x:Name="WorkplaceMentionPopup"
@@ -609,7 +609,7 @@
                                     <ListBox x:Name="WorkplaceMentionList"
                                              Background="Transparent"
                                              BorderThickness="0"
-                                             FontFamily="Segoe UI"
+                                             FontFamily="{DynamicResource AppUiFont}"
                                              FontSize="12"
                                              Focusable="False"
                                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -948,8 +948,31 @@
                                 <StackPanel>
                                     <DockPanel x:Name="CardMetaRow" Margin="0,0,0,8">
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Ellipse Width="6" Height="6" Fill="{Binding AccentBrush}" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                                            <TextBlock Text="{Binding RoleLabel}" FontSize="11" FontWeight="SemiBold" Foreground="{Binding AccentBrush}" VerticalAlignment="Center" LineHeight="14"/>
+                                            <Ellipse Width="6" Height="6" VerticalAlignment="Center" Margin="0,0,7,0">
+                                                <Ellipse.Style>
+                                                    <Style TargetType="Ellipse">
+                                                        <Setter Property="Fill" Value="{Binding AccentBrush}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding UsesThemeAccent}" Value="True">
+                                                                <Setter Property="Fill" Value="{DynamicResource PrimaryAccentBrush}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Ellipse.Style>
+                                            </Ellipse>
+                                            <TextBlock Text="{Binding RoleLabel}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" LineHeight="14"
+                                                       TextTrimming="CharacterEllipsis" MaxWidth="420" ToolTip="{Binding RoleLabel}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{Binding AccentBrush}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding UsesThemeAccent}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                         </StackPanel>
                                         <Button x:Name="CopyWorkplaceMessageButton" Content="Copy" Click="CopyWorkplaceMessage_Click" Tag="{Binding}" FontSize="9.5" Padding="8,2" DockPanel.Dock="Right" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center" Opacity="0.8"/>
                                         <TextBlock Text="{Binding TimestampLabel}" FontSize="9.5" Foreground="{DynamicResource MutedTextBrush}" HorizontalAlignment="Right" DockPanel.Dock="Right" Margin="0,0,8,0" VerticalAlignment="Center" LineHeight="12"/>
@@ -1023,7 +1046,7 @@
                                                               Padding="0"
                                                               Margin="0,2,0,0"
                                                               FontSize="12.5"
-                                                              FontFamily="Segoe UI"
+                                                              FontFamily="{DynamicResource AppUiFont}"
                                                               Foreground="{DynamicResource NotebookTextBrush}"
                                                               IsToolBarVisible="False"
                                                               VerticalScrollBarVisibility="Disabled"
@@ -1113,12 +1136,12 @@
                                             </ControlTemplate>
                                         </Expander.Template>
                                         <Expander.Header>
-                                            <TextBlock Text="{Binding ExecutionStepsLabel}" FontFamily="Segoe UI" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource DarkSecondaryBrush}"/>
+                                            <TextBlock Text="{Binding ExecutionStepsLabel}" FontFamily="{DynamicResource AppUiFont}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource DarkSecondaryBrush}"/>
                                         </Expander.Header>
                                         <Border Margin="0,8,0,0" Padding="10" CornerRadius="8" Background="{DynamicResource NotebookBackgroundBrush}"
                                                 BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1">
                                             <FlowDocumentScrollViewer Document="{Binding ExecutionStepsDocument}" MaxHeight="260" Background="Transparent" BorderThickness="0" Padding="0"
-                                                                      FontFamily="Segoe UI" Foreground="{DynamicResource NotebookTextBrush}"
+                                                                      FontFamily="{DynamicResource AppUiFont}" Foreground="{DynamicResource NotebookTextBrush}"
                                                                       IsToolBarVisible="False" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
                                         </Border>
                                     </Expander>
@@ -1253,7 +1276,7 @@
                     <!-- VIEW A: Context & Environment + Background Tasks (Images 3 & 4) -->
                     <ScrollViewer x:Name="ContextEnvironmentPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">                        <ScrollViewer.Resources>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                                <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
                                 <Setter Property="FontSize" Value="13"/>
                                 <Setter Property="LineHeight" Value="19"/>
                             </Style>

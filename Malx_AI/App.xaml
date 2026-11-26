@@ -5,6 +5,10 @@
              StartupUri="MainWindow.xaml">
     <Application.Resources>
         <!-- Global Color Palette -->
+        <!-- App-wide UI font. App.OnStartup replaces this with AppFonts.Ui (Anthropic Sans when
+             installed, else the bundled Geist); Segoe UI is only the design-time default. -->
+        <FontFamily x:Key="AppUiFont">Segoe UI</FontFamily>
+
         <Color x:Key="DarkBackground">#171615</Color>
         <Color x:Key="DarkText">#EDE8E3</Color>
         <Color x:Key="DarkSecondary">#B0A89F</Color>
@@ -37,14 +41,14 @@
         <SolidColorBrush x:Key="DangerBrush" Color="#C96A5B"/>
 
         <Style TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11.5"/>
             <Setter Property="LineHeight" Value="18"/>
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
         </Style>
 
         <Style TargetType="TextBox">
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
@@ -78,7 +82,7 @@
             <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
             <Setter Property="Template">
@@ -174,7 +178,7 @@
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
             <Setter Property="Padding" Value="8,4"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -225,7 +229,7 @@
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="Padding" Value="10,2"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
@@ -276,6 +280,7 @@
         <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}"/>
 
         <Style TargetType="ToolTip">
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="Background" Value="{DynamicResource NotebookSurfaceBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
@@ -498,6 +503,7 @@
         <Style TargetType="ScrollBar" BasedOn="{StaticResource DarkVerticalScrollBar}"/>
 
         <Style TargetType="ContextMenu">
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -528,7 +534,7 @@
             <Setter Property="Margin" Value="0,1"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11.5"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">

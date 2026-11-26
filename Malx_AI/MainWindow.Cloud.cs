@@ -611,7 +611,11 @@ namespace Malx_AI
             if (_threnody10ModelButton != null)
                 _threnody10ModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
             if (_customEndpointModelButton != null)
+            {
                 _customEndpointModelButton.Visibility = isHybridLocalActive ? Visibility.Visible : Visibility.Collapsed;
+                // The pill names the model the user configured, not a fixed product name.
+                _customEndpointModelButton.Content = AgentCardLabels.HybridModelDisplayName(_openRouterChatService.CustomEndpointConfiguredModelId);
+            }
 
             if (_localModeButton != null)
             {

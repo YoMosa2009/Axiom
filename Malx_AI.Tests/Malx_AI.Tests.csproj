@@ -134,5 +134,7 @@
     <Compile Include="..\Malx_AI\WorkplaceRunSteps.cs" Link="Production\WorkplaceRunSteps.cs" />
     <Compile Include="..\Malx_AI\OpenRouterChatService.cs" Link="Production\OpenRouterChatService.cs" />
     <Compile Include="..\Malx_AI\CloudUpgradeSuggestionPolicy.cs" Link="Production\CloudUpgradeSuggestionPolicy.cs" />
+    <Compile Include="..\Malx_AI\AgentCardLabels.cs" Link="Production\AgentCardLabels.cs" />
+    <Compile Include="..\Malx_AI\AppFontPolicy.cs" Link="Production\AppFontPolicy.cs" />
   </ItemGroup>
 </Project>

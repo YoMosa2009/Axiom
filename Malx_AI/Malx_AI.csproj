@@ -96,6 +96,17 @@
     <Resource Include="Assets\Logo.cs" />
   </ItemGroup>
 
+  <!-- App UI font: Geist (SIL OFL 1.1, Assets\Fonts\OFL.txt). The .ttf files are embedded for WPF;
+       the .woff2 files ship beside the exe for chat messages rendered in WebView2. -->
+  <ItemGroup>
+    <Resource Include="Assets\Fonts\*.ttf" />
+    <None Remove="Assets\Fonts\*.woff2;Assets\Fonts\OFL.txt" />
+    <Content Include="Assets\Fonts\*.woff2;Assets\Fonts\OFL.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
   <!-- Never ship developer/user runtime data with published packages. -->
   <PropertyGroup>
     <DefaultItemExcludes>$(DefaultItemExcludes);ChatHistory\**;**/axiom_data.db*;**/mcp_connector_state*;**/*_client_secret.txt;**/*_client_id.txt;**/google_oauth*;**/todoist_client*;**/github_oauth*;**/workplace_session.json;**/chat_*.json;**/chats_index.json*;**/*_advanced_state.json*;**/chat_workspace_state.json*;**/smart_compaction_settings.json*;**/WebView2\**</DefaultItemExcludes>

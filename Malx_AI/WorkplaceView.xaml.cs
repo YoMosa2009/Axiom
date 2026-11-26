@@ -292,9 +292,7 @@ namespace Malx_AI
                     string windowLabel = cloudWindow >= 1024 ? $"{cloudWindow / 1024}K" : $"{cloudWindow}";
                     string builderLabel = builderCtx >= 1024 ? $"{builderCtx / 1024}K" : $"{builderCtx}";
                     string otherLabel = otherCtx >= 1024 ? $"{otherCtx / 1024}K" : $"{otherCtx}";
-                    string hybridModel = string.IsNullOrWhiteSpace(_openRouterChatService.CustomEndpointConfiguredModelId)
-                        ? "Kestral 1"
-                        : $"Kestral 1 / {_openRouterChatService.CustomEndpointConfiguredModelId}";
+                    string hybridModel = AgentCardLabels.HybridModelDisplayName(_openRouterChatService.CustomEndpointConfiguredModelId);
                     CloudContextInfoBlock.Text = _isSingleModelMode
                         ? (_isHybridLocalCouncilSelected
                             ? $"Self-hosted single agent ({hybridModel}): {windowLabel} window"
@@ -410,7 +408,7 @@ namespace Malx_AI
             // If a previous card exists for this role (retry scenario), remove it first.
             // Internal pipeline steps (summarizer and python auto-retry) pass
             // showLiveCard=false so they never surface a visible card for hidden work.
-            var streamingCard = new WorkplaceChatMessage { Role = roleKey };
+            var streamingCard = new WorkplaceChatMessage { Role = roleKey, ModelLabel = roleKey == "agent" ? GetAgentCardModelName() : null };
             if (showLiveCard)
             {
                 await Dispatcher.InvokeAsync(() =>
@@ -2226,7 +2224,8 @@ namespace Malx_AI
                     Content = msg.Content,
                     Timestamp = msg.Timestamp == default ? DateTime.Now : msg.Timestamp,
                     AttachedImagePaths = msg.AttachedImagePaths?.ToList() ?? new List<string>(),
-                    FileChanges = msg.FileChanges?.ToList() ?? new List<WorkplaceFileChange>()
+                    FileChanges = msg.FileChanges?.ToList() ?? new List<WorkplaceFileChange>(),
+                    ModelLabel = msg.ModelLabel
                 };
 
                 if (NotificationRoles.Contains(message.Role))
@@ -16785,7 +16784,7 @@ namespace Malx_AI
                         _chatCards.Remove(stale);
                         _streamingCouncilCards.Remove(liveRoleKey);
                     }
-                    liveCard = new WorkplaceChatMessage { Role = liveRoleKey, Content = "⏳ Generating..." };
+                    liveCard = new WorkplaceChatMessage { Role = liveRoleKey, Content = "⏳ Generating...", ModelLabel = liveRoleKey == "agent" ? GetAgentCardModelName() : null };
                     _chatCards.Add(liveCard);
                     _streamingCouncilCards[liveRoleKey] = liveCard;
                     _toolStepCard = liveCard;
@@ -18740,7 +18739,8 @@ namespace Malx_AI
             {
                 Role = role,
                 Content = content.Trim(),
-                AttachedImagePaths = attachedImagePaths?.ToList() ?? new List<string>()
+                AttachedImagePaths = attachedImagePaths?.ToList() ?? new List<string>(),
+                ModelLabel = role == "agent" ? GetAgentCardModelName() : null
             };
 
             if (NotificationRoles.Contains(role))
@@ -18982,7 +18982,8 @@ namespace Malx_AI
                     Content = c.Content,
                     Timestamp = c.Timestamp,
                     AttachedImagePaths = c.AttachedImagePaths?.ToList() ?? new List<string>(),
-                    FileChanges = c.FileChanges.ToList()
+                    FileChanges = c.FileChanges.ToList(),
+                    ModelLabel = c.ModelLabel
                 }).ToList(),
                 SystemNotifications = new List<WorkplaceChatMessageDto>(),
                 ProjectKnowledgeBaseId = _projectKnowledgeBaseId,

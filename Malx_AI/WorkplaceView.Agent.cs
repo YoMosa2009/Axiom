@@ -362,11 +362,11 @@ namespace Malx_AI
             public string Render()
             {
                 var builder = new StringBuilder();
-                builder.Append("**").Append(Title).Append("**\n\n");
+                // The run kind and model are in the card header (AgentCardLabels.AgentCardHeader).
                 if (Plan is { IsEmpty: false })
                     builder.Append(RenderPlan(Plan)).Append("\n\n");
                 if (StepLines.Count > 0)
-                    builder.Append(string.Join("\n", StepLines.Select(l => "- " + l)));
+                    builder.Append(string.Join("\n", AgentCardLabels.CompactLiveSteps(StepLines).Select(l => "- " + l)));
                 if (!string.IsNullOrWhiteSpace(Status))
                 {
                     if (StepLines.Count > 0)
@@ -420,7 +420,7 @@ namespace Malx_AI
             _isProcessing = true;
             var run = new AgentRunCard
             {
-                Card = new WorkplaceChatMessage { Role = "agent" },
+                Card = new WorkplaceChatMessage { Role = "agent", ModelLabel = AgentCardLabels.AgentCardHeader(GetAgentCardModelName(), title) },
                 Goal = goal,
                 Title = title,
                 Status = StartingStatus
@@ -512,7 +512,7 @@ namespace Malx_AI
                 run.Card.Content = run.Render();
 
                 run.Card.ViewedImagePaths = Array.Empty<string>();
-                run.Card = new WorkplaceChatMessage { Role = "agent" };
+                run.Card = new WorkplaceChatMessage { Role = "agent", ModelLabel = run.Card.ModelLabel };
                 run.StepLines.Clear();
                 run.Status = "Got it. Passing your message to the agent at its next step";
                 run.Card.Content = run.Render();

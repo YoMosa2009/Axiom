@@ -3369,9 +3369,7 @@ namespace Malx_AI
                 // aliases below.
                 return new OpenRouterModelProfile(
                     AliasId: CustomEndpointModelId,
-                    AliasLabel: string.IsNullOrWhiteSpace(_customEndpointModelId)
-                        ? CustomEndpointModelLabel
-                        : $"{CustomEndpointModelLabel} ({_customEndpointModelId})",
+                    AliasLabel: AgentCardLabels.HybridModelDisplayName(_customEndpointModelId),
                     PrimaryApiModelId: _customEndpointModelId,
                     AlternativeApiModelIds: [],
                     IsCodeSpecialized: true,
