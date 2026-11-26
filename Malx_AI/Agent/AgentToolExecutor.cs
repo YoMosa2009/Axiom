@@ -112,7 +112,7 @@ namespace Malx_AI.Agent
                 return AgentToolResult.Fail(AgentSession.DesktopIsolationMessage);
             try
             {
-                if (_workplaceToolAsync != null && call.Tool.ToLowerInvariant() is AgentToolNames.BrowserControl or AgentToolNames.UseSkill)
+                if (_workplaceToolAsync != null && call.Tool.ToLowerInvariant() is AgentToolNames.BrowserControl or AgentToolNames.UseSkill or AgentToolNames.TakeScreenshot)
                 {
                     AgentToolResult? result = await _workplaceToolAsync(call, token);
                     if (result != null)
