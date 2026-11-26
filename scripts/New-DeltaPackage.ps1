@@ -30,6 +30,15 @@ function Find-PayloadRoot([string]$root) {
     return $exe[0].DirectoryName
 }
 
+# .NET directly, not Get-FileHash: when powershell.exe is started from a pwsh/dotnet process
+# (CI), PSModulePath can point at PowerShell 7 modules and Get-FileHash fails to load.
+function Get-Sha256([string]$path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($path)
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
+
 function Get-RelativePath([string]$root, [string]$path) {
     return $path.Substring($root.TrimEnd('\').Length + 1).Replace('\', '/')
 }
@@ -45,12 +54,12 @@ try {
     $changedBytes = 0L
     foreach ($file in Get-ChildItem -LiteralPath $newRoot -Recurse -File | Sort-Object FullName) {
         $relative = Get-RelativePath $newRoot $file.FullName
-        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+        $hash = Get-Sha256 $file.FullName
         $files[$relative] = $hash
 
         $basePath = Join-Path $baseRoot ($relative.Replace('/', '\'))
         $same = (Test-Path -LiteralPath $basePath -PathType Leaf) -and `
-            ((Get-FileHash -LiteralPath $basePath -Algorithm SHA256).Hash.ToUpperInvariant() -eq $hash)
+            ((Get-Sha256 $basePath) -eq $hash)
         if (-not $same) {
             $destination = Join-Path $work ($relative.Replace('/', '\'))
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null

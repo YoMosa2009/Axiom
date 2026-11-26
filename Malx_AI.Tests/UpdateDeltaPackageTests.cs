@@ -158,6 +158,9 @@ namespace Malx_AI.Tests
             {
                 UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
             };
+            // A test host started from pwsh (CI) passes PowerShell 7's module path on, and
+            // Windows PowerShell then cannot load its own Microsoft.PowerShell.Utility cmdlets.
+            start.Environment.Remove("PSModulePath");
             foreach (string arg in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script,
                 "-NewPayload", Path.GetDirectoryName(next)!, "-BasePayload", Path.GetDirectoryName(installed)!,
                 "-BaseVersion", "1.14.0", "-TargetVersion", "1.15.0", "-OutputDirectory", output })
