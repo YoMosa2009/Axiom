@@ -1090,7 +1090,10 @@ namespace Malx_AI
                     systemPrompt,
                     chatHistory,
                     imageDataUrls,
-                    thinkingEnabled: EffortPolicy.Current >= EffortLevel.ExtraHigh)
+                    // Same threshold as Normal chat (High and up). The model's own thinking is
+                    // then fitted to what it supports (NativeReasoning): an always-thinking model
+                    // keeps a short think below High instead of being told to stop.
+                    thinkingEnabled: EffortPolicy.RequestsReasoning(userEnabled: false))
                 {
                     Limits = AgentTurnLimits.For(EffortPolicy.Current, selfHosted: _isHybridLocalCouncilSelected),
                 };

@@ -122,6 +122,7 @@
     <Compile Include="..\Malx_AI\CanvasFileArtifact.cs" Link="Production\CanvasFileArtifact.cs" />
     <Compile Include="..\Malx_AI\CanvasFileRequest.cs" Link="Production\CanvasFileRequest.cs" />
     <Compile Include="..\Malx_AI\EffortPolicy.cs" Link="Production\EffortPolicy.cs" />
+    <Compile Include="..\Malx_AI\NativeReasoning.cs" Link="Production\NativeReasoning.cs" />
     <Compile Include="..\Malx_AI\StreamActivity.cs" Link="Production\StreamActivity.cs" />
     <Compile Include="..\Malx_AI\EffortQualityChecks.cs" Link="Production\EffortQualityChecks.cs" />
     <Compile Include="..\Malx_AI\ReplyContextAttachment.cs" Link="Production\ReplyContextAttachment.cs" />
