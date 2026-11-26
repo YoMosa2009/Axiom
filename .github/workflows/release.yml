@@ -225,6 +225,31 @@ jobs:
           .\scripts\Publish-GitHubRelease.ps1 @params
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # Best effort: installed copies on the previous version download only the changed files.
+      # If anything here fails the release is unaffected; clients use the full ZIP.
+      - name: Add delta update package from the previous release
+        if: steps.decide.outputs.publish == 'true' && steps.decide.outputs.package_only != 'true'
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $version = '${{ steps.decide.outputs.version }}'
+          $repo = '${{ github.repository }}'
+          $root = "$env:RUNNER_TEMP\Axiom-Updates"
+          $previousTag = (gh release list --repo $repo --exclude-drafts --exclude-pre-releases --limit 10 --json tagName --jq '.[].tagName') |
+            Where-Object { $_ -ne "v$version" } | Select-Object -First 1
+          if (-not $previousTag) { Write-Host "No previous release; no delta."; exit 0 }
+          $previousVersion = $previousTag.TrimStart('v')
+          $baseDir = "$env:RUNNER_TEMP\delta-base"
+          $newDir = "$env:RUNNER_TEMP\delta-new"
+          New-Item -ItemType Directory -Force -Path $baseDir, $newDir | Out-Null
+          gh release download $previousTag --repo $repo --pattern "Axiom-v$previousVersion-win-x64-clean.zip" --dir $baseDir
+          if ($LASTEXITCODE -ne 0) { throw "Could not download the $previousTag ZIP." }
+          Expand-Archive -LiteralPath "$baseDir\Axiom-v$previousVersion-win-x64-clean.zip" -DestinationPath "$baseDir\x" -Force
+          Expand-Archive -LiteralPath "$root\Axiom-v$version-win-x64-clean.zip" -DestinationPath "$newDir\x" -Force
+          $delta = .\scripts\New-DeltaPackage.ps1 -NewPayload "$newDir\x" -BasePayload "$baseDir\x" -BaseVersion $previousVersion -TargetVersion $version -OutputDirectory $root | Select-Object -Last 1
+          gh release upload "v$version" $delta --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw "Uploading the delta failed." }
+
       - name: Keep package for inspection
         if: steps.decide.outputs.publish == 'true' && always()
         uses: actions/upload-artifact@v4

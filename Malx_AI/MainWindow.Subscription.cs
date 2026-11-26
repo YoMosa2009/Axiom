@@ -432,9 +432,9 @@ namespace Malx_AI
                     AxiomUsageNoticeBorder.Visibility = Visibility.Visible;
                 }
                 AxiomSessionUsageResetText.Text = "Starts with your first message";
-                AxiomSessionUsagePercentText.Text = "0% used";
+                AxiomSessionUsagePercentText.Text = "Not active";
                 AxiomWeeklyUsageResetText.Text = "Resets every 7 days";
-                AxiomWeeklyUsagePercentText.Text = "0% used";
+                AxiomWeeklyUsagePercentText.Text = "Not active";
                 if (AxiomUsageFooterText != null)
                     AxiomUsageFooterText.Text = "3-hour session and weekly limits help stretch your monthly DeepSeek 4.1F-1017 subscription.";
                 UpdateAxiomUsageBarWidths(null);
@@ -448,6 +448,9 @@ namespace Malx_AI
                     AxiomUsageNoticeText.Text = "Could not load subscription usage right now. Try refreshing shortly.";
                     AxiomUsageNoticeBorder.Visibility = Visibility.Visible;
                 }
+                // Unknown is not 0%: showing "0% used" here read as a fresh allowance.
+                AxiomSessionUsagePercentText.Text = "Unknown";
+                AxiomWeeklyUsagePercentText.Text = "Unknown";
                 UpdateAxiomUsageBarWidths(null);
                 return;
             }
@@ -466,9 +469,9 @@ namespace Malx_AI
                     AxiomUsageNoticeBorder.Visibility = Visibility.Visible;
                 }
                 AxiomSessionUsageResetText.Text = "Starts with your first message";
-                AxiomSessionUsagePercentText.Text = "0% used";
+                AxiomSessionUsagePercentText.Text = "Not active";
                 AxiomWeeklyUsageResetText.Text = "Resets every 7 days";
-                AxiomWeeklyUsagePercentText.Text = "0% used";
+                AxiomWeeklyUsagePercentText.Text = "Not active";
                 if (AxiomUsageFooterText != null)
                     AxiomUsageFooterText.Text = "3-hour session and weekly limits help stretch your monthly DeepSeek 4.1F-1017 subscription.";
                 UpdateAxiomUsageBarWidths(null);

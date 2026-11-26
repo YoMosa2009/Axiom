@@ -63,6 +63,24 @@ namespace Malx_AI.Agent
         /// <summary>Called on the run's thread whenever update_plan changes the plan.</summary>
         public Action<AgentPlan>? PlanChanged { get; set; }
 
+        /// <summary>
+        /// Called on the run's thread with a sentence and a half saying what the model is doing
+        /// now: its own words before a tool call when it wrote any, otherwise a description.
+        /// </summary>
+        public Action<string>? Narrated { get; set; }
+
+        /// <summary>
+        /// When true (the default), a user message pauses a model turn that has not started a
+        /// tool call, and the turn is asked again with the message.
+        /// </summary>
+        public bool InterruptTurnsForMessages { get; set; } = true;
+
+        /// <summary>Called when the user's mid-run messages are handed to the model (the count).</summary>
+        public Action<int>? MessagesDelivered { get; set; }
+
+        /// <summary>Paused turns that do not use up a step; later pauses do.</summary>
+        private const int MaxPausesForMessagesPerRun = 6;
+
         /// <summary>Called after the run's history is compacted, with a one-line description for logs.</summary>
         public Action<string>? Compacted { get; set; }
 
@@ -150,6 +168,8 @@ namespace Malx_AI.Agent
             int stepsSinceLastChange = 0;
             int blockedInARow = 0;
             int recallsInARow = 0;
+            int worldChanges = 0;
+            int pausesForMessages = 0;
             string? wrapUpReason = null;
             bool checkedSinceLastChange = true;
             bool checkGateUsed = false;
@@ -258,10 +278,12 @@ namespace Malx_AI.Agent
                 if (messages.Count == 0)
                     return false;
 
-                string text = AgentUserMessageInbox.FormatForModel(messages);
+                string text = AgentUserMessageInbox.FormatForModel(messages, goal);
                 if (!string.IsNullOrWhiteSpace(draftAnswer))
                     text = $"(You were about to finish with: \"{Clip(draftAnswer.Trim(), 400)}\")\n" + text;
                 history.Add(new AgentExchange(new AgentToolCall(UserMessageTool, new Dictionary<string, string>()), text));
+                try { MessagesDelivered?.Invoke(messages.Count); }
+                catch { /* a UI callback failure must never stop the run */ }
                 return true;
             }
 
@@ -303,9 +325,36 @@ namespace Malx_AI.Agent
 
                     reportActivity?.Invoke("Thinking");
                     AgentModelReply reply;
+                    // A message sent while the model is still thinking pauses that turn: it is
+                    // asked again straight away with the message in front of it, instead of the
+                    // user waiting minutes for a step that may no longer be wanted. A turn that is
+                    // already writing a tool call finishes first, so no work is thrown away.
+                    using var turn = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    bool pausedForMessage = false;
+                    void PauseForMessage()
+                    {
+                        if (!InterruptTurnsForMessages || model.IsComposingToolCall)
+                            return;
+                        pausedForMessage = true;
+                        try { turn.Cancel(); } catch (ObjectDisposedException) { }
+                    }
+                    if (inbox != null)
+                    {
+                        inbox.MessagePosted += PauseForMessage;
+                        // One that arrived between the delivery above and subscribing.
+                        DeliverUserMessages();
+                    }
                     try
                     {
-                        reply = await model.NextAsync(goal, history, token).ConfigureAwait(false);
+                        reply = await model.NextAsync(goal, history, turn.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (pausedForMessage && !token.IsCancellationRequested)
+                    {
+                        // The abandoned turn ran no tool. The next pass delivers the message.
+                        reportActivity?.Invoke("Reading your message");
+                        if (pausesForMessages++ < MaxPausesForMessagesPerRun)
+                            step--;
+                        continue;
                     }
                     catch (AgentFatalException fatal)
                     {
@@ -334,6 +383,8 @@ namespace Malx_AI.Agent
                     }
                     finally
                     {
+                        if (inbox != null)
+                            inbox.MessagePosted -= PauseForMessage;
                         reportActivity?.Invoke(null);
                     }
 
@@ -383,6 +434,11 @@ namespace Malx_AI.Agent
                     }
 
                     AgentToolCall call = reply.Call;
+                    if (Narrated != null && !string.Equals(call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { Narrated(reply.Narration ?? AgentNarration.FromCall(call)); }
+                        catch { /* a UI callback failure must never stop the run */ }
+                    }
                     if (string.Equals(call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))
                     {
                         string summary = call.Arg("summary");
@@ -603,12 +659,17 @@ namespace Malx_AI.Agent
                         recallsInARow = 0;
                     }
 
+                    // A look at something that changes (the open browser page, a folder) is a new
+                    // look once anything has run since. A live run (2026-11-26) inspected a page,
+                    // clicked, and inspected again, and was stopped as "repeating" while working.
                     string signature = CallSignature(call);
+                    if (IsStateObservation(call))
+                        signature += "|after:" + worldChanges;
                     int seen = callCounts.TryGetValue(signature, out int previous) ? previous + 1 : 1;
                     callCounts[signature] = seen;
                     // Looking again (listing a folder, re-reading a file) is legitimate after
                     // changes, so read-only calls get more room than commands and writes.
-                    int allowed = AgentToolNames.IsReadOnly(call.Tool) ? MaxIdenticalCallsPerRun + 2 : MaxIdenticalCallsPerRun;
+                    int allowed = AgentToolNames.IsReadOnly(call.Tool) || IsStateObservation(call) ? MaxIdenticalCallsPerRun + 2 : MaxIdenticalCallsPerRun;
                     if (seen >= allowed + 2)
                     {
                         return new AgentRunResult(
@@ -676,6 +737,8 @@ namespace Malx_AI.Agent
                     }
 
                     AddStep(new AgentStep(call, decision.Permission, result, decision.Reason, toolTimer.ElapsedMilliseconds));
+                    if (!AgentToolNames.IsReadOnly(call.Tool) && !IsStateObservation(call))
+                        worldChanges++;
                     if (result.Succeeded && call.Tool.Equals(AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase))
                     {
                         string path = InspectionPath(call.Arg("path"));
@@ -923,6 +986,22 @@ namespace Malx_AI.Agent
             return call.Tool.ToLowerInvariant() + "|" + string.Join("|", call.Arguments
                 .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(pair => pair.Key.ToLowerInvariant() + "=" + pair.Value));
+        }
+
+        /// <summary>
+        /// Calls that only look at something that can change between steps: the open browser
+        /// page, a folder listing, background task status.
+        /// </summary>
+        internal static bool IsStateObservation(AgentToolCall call)
+        {
+            if (string.Equals(call.Tool, AgentToolNames.ListDirectory, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(call.Tool, AgentToolNames.CheckBackgroundTask, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (!string.Equals(call.Tool, AgentToolNames.BrowserControl, StringComparison.OrdinalIgnoreCase))
+                return false;
+            string action = call.Arg("action").Trim().ToLowerInvariant();
+            return action is "inspect" or "status" or "detect"
+                || (action is "read" or "read_page" or "fetch" && string.IsNullOrWhiteSpace(call.Arg("url")));
         }
 
         internal static bool AreCallsIdentical(AgentToolCall? a, AgentToolCall? b)

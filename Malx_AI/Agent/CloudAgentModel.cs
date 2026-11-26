@@ -80,8 +80,13 @@ namespace Malx_AI.Agent
 
         public Action<int, int>? OnTokenUsageRecorded { get; set; }
 
+        private volatile bool _composingToolCall;
+
+        public bool IsComposingToolCall => _composingToolCall;
+
         public async Task<AgentModelReply> NextAsync(string goal, IReadOnlyList<AgentExchange> history, CancellationToken token)
         {
+            _composingToolCall = false;
             SyncMessages(goal, history);
             return await NextAfterSyncAsync(token).ConfigureAwait(false);
         }
@@ -305,7 +310,10 @@ namespace Malx_AI.Agent
 
             _pendingToolCall = toolCall;
             _pendingReasoning = ShouldReturnReasoning(_modelId, _thinkingEnabled) ? ClipReasoning(response.Reasoning) : null;
-            return AgentModelReply.Tool(new AgentToolCall(toolCall.Name.ToLowerInvariant(), arguments));
+            return AgentModelReply.Tool(new AgentToolCall(toolCall.Name.ToLowerInvariant(), arguments)) with
+            {
+                Narration = AgentNarration.FromModelText(response.Text) ?? AgentNarration.FromReasoning(response.Reasoning)
+            };
         }
 
         /// <summary>Attempts per turn before the turn is reported as failed.</summary>
@@ -375,7 +383,11 @@ namespace Malx_AI.Agent
                         cancellationToken: token,
                         maxTokensOverride: _service.IsCustomEndpointModel(_modelId) ? HybridLocalTurnMaxTokens : AgentTurnMaxTokens,
                         allowModelFallback: false,
-                        onToolCallProgress: OnToolCallProgress).ConfigureAwait(false);
+                        onToolCallProgress: (name, chars) =>
+                        {
+                            _composingToolCall = true;
+                            OnToolCallProgress?.Invoke(name, chars);
+                        }).ConfigureAwait(false);
 
                     _lastTurnWasRateLimited = false;
                     bool hasToolCall = response.ToolCalls?.Count > 0;

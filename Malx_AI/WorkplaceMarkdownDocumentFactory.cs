@@ -38,7 +38,7 @@ namespace Malx_AI
         private static readonly Brush TableRowDividerBrush = FrozenBrush(0x28, 0x25, 0x22);
         private static readonly Brush QuoteBackgroundBrush = FrozenBrush(0x1E, 0x1C, 0x1A);
         private static readonly Brush QuoteBorderBrush = FrozenBrush(0xB8, 0x92, 0x4A);
-        private static readonly FontFamily BodyFont = new("Segoe UI");
+        private static FontFamily BodyFont => AppFonts.Ui;
         private static readonly FontFamily CodeFont = new("Cascadia Mono, Consolas");
 
         public static FlowDocument Create(string? markdown)

@@ -240,10 +240,30 @@ namespace Malx_AI
         private void OnPropertyChanged([CallerMemberName] string? name = null)
             => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
+        private string? _modelLabel;
+
+        /// <summary>
+        /// The model that wrote an agent card (Agent Access, @ComputerUse, Single Model). Shown
+        /// in the card header in the theme accent instead of a generic green "Agent" label.
+        /// </summary>
+        public string? ModelLabel
+        {
+            get => _modelLabel;
+            set
+            {
+                _modelLabel = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(RoleLabel));
+            }
+        }
+
+        /// <summary>Agent cards take the user's theme accent (a DynamicResource in XAML).</summary>
+        public bool UsesThemeAccent => string.Equals(Role, "agent", StringComparison.Ordinal);
+
         public string RoleLabel => Role switch
         {
             "user" => "You",
-            "agent" => "Agent",
+            "agent" => ModelLabel ?? "Agent",
             "architect" => "Architect",
             "builder" => "Builder",
             "critic" => "Critic",

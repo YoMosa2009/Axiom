@@ -1307,6 +1307,40 @@ namespace Malx_AI
             UpdateBannerActionButton.IsEnabled = false;
             try
             {
+                if (update.PackageKind == UpdatePackageKind.Zip
+                    && UpdateDeltaPackage.FindFor(update) is { } delta)
+                {
+                    // Only the files that changed since this version (a few MB instead of the
+                    // full package). Any problem falls through to the full ZIP below.
+                    try
+                    {
+                        UpdateBannerTitleText.Text = $"Downloading Axiom {update.LatestVersionTag}…";
+                        UpdateBannerDetailText.Text = $"Downloading only what changed ({FormatFileSize(delta.SizeBytes)})…";
+                        var deltaProgress = new Progress<double>(percent =>
+                            UpdateBannerDetailText.Text = $"{percent:F0}% downloaded · {FormatFileSize(delta.SizeBytes)} (changes only)");
+                        string deltaPath = await UpdateCheckService.DownloadDeltaAsync(update, delta, deltaProgress, _updateDownloadCts.Token);
+                        UpdateBannerTitleText.Text = "Preparing update…";
+                        UpdateBannerDetailText.Text = "Verifying every file and staging the new Axiom version.";
+                        PreparedUpdate preparedDelta = await UpdateApplyService.PrepareDeltaUpdateAsync(
+                            update, delta, deltaPath, _updateDownloadCts.Token);
+                        _ = BackendLogService.LogEventAsync("UpdateDelta",
+                            $"Staged {update.LatestVersionTag} from {delta.Name} ({delta.SizeBytes:N0} bytes) instead of the full package ({update.PackageSizeBytes:N0} bytes).");
+
+                        UpdateBannerTitleText.Text = "Restarting to update";
+                        UpdateBannerDetailText.Text = "Saving your work. Axiom will close and reopen automatically—do not relaunch it manually.";
+                        await PrepareForUpdateShutdownAsync();
+                        UpdateApplyService.LaunchPreparedUpdate(preparedDelta, Environment.ProcessId);
+                        await Task.Delay(500);
+                        ShutdownAxiomForUpdate();
+                        return;
+                    }
+                    catch (Exception deltaError) when (deltaError is not OperationCanceledException)
+                    {
+                        await BackendLogService.LogEventAsync("UpdateDelta",
+                            $"Delta update not used ({deltaError.Message}); downloading the full package.");
+                    }
+                }
+
                 if (update.PackageKind == UpdatePackageKind.Zip)
                 {
                     UpdateBannerTitleText.Text = $"Downloading Axiom {update.LatestVersionTag}…";
@@ -3423,7 +3457,7 @@ namespace Malx_AI
                 BorderBrush = border,
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(10),
-                FontFamily = new FontFamily("Segoe UI"),
+                FontFamily = AppFonts.Ui,
                 FontSize = 12
             };
 
@@ -3537,7 +3571,8 @@ namespace Malx_AI
                 {
                     Role = card.Role,
                     Content = card.Content,
-                    Timestamp = card.Timestamp
+                    Timestamp = card.Timestamp,
+                    ModelLabel = card.ModelLabel
                 }).ToList(),
                 SystemNotifications = (snapshot.SystemNotifications ?? []).Select(notification => new WorkplaceChatMessageDto
                 {

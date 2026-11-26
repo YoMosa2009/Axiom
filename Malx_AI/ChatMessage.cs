@@ -83,6 +83,8 @@ namespace Malx_AI
                 if (_isStreaming != value)
                 {
                     _isStreaming = value;
+                    if (!value)
+                        _liveStatus = string.Empty;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(ShouldShowGenerationStatus));
                     OnPropertyChanged(nameof(GenerationStatusText));
@@ -220,7 +222,33 @@ namespace Malx_AI
         public bool HasThinkingContent => !string.IsNullOrWhiteSpace(_thinkingContent);
         public bool ShouldShowThinkingHeader => HasThinkingContent;
         public bool ShouldShowGenerationStatus => string.Equals(Role, "assistant", StringComparison.OrdinalIgnoreCase) && IsStreaming;
-        public string GenerationStatusText => IsThinkingInProgress || !HasDisplayContent ? "Thinking" : "Generating";
+        public string GenerationStatusText => !string.IsNullOrWhiteSpace(_liveStatus)
+            ? _liveStatus
+            : IsThinkingInProgress || !HasDisplayContent ? "Thinking" : "Generating";
+
+        private string _liveStatus = string.Empty;
+
+        /// <summary>
+        /// The model's own "doing now" sentence while it works through tools (AgentNarration);
+        /// shown in place of the plain Thinking/Generating line until the answer arrives.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string LiveStatus
+        {
+            get => _liveStatus;
+            set
+            {
+                if (InvokeOnUiThreadIfRequired(() => LiveStatus = value))
+                    return;
+
+                string normalized = value ?? string.Empty;
+                if (_liveStatus == normalized)
+                    return;
+                _liveStatus = normalized;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(GenerationStatusText));
+            }
+        }
 
         public string ThinkingHeaderText
         {

@@ -9,7 +9,8 @@ namespace Malx_AI
         int? ContextWindowTokens,
         bool? SupportsImageInput,
         string? MatchedModelId,
-        bool SupportsReasoningEffort = false);
+        bool SupportsReasoningEffort = false,
+        bool ThinkingSwitchable = false);
 
     internal static class CustomEndpointMetadataParser
     {
@@ -69,7 +70,25 @@ namespace Malx_AI
             if (vision != true && LooksLikeVisionModel(matchedId ?? requestedModelId))
                 vision = true;
 
-            return new CustomEndpointMetadata(context, vision, matchedId, reasoningEffort);
+            // llama.cpp's /props carries the loaded chat template: one with an enable_thinking
+            // switch can be told not to think when the effort level does not ask for it.
+            bool switchable = NativeReasoning.FromChatTemplate(ReadChatTemplate(root)).Switchable
+                || (matchedModel is JsonElement m && NativeReasoning.FromChatTemplate(ReadChatTemplate(m)).Switchable);
+
+            return new CustomEndpointMetadata(context, vision, matchedId, reasoningEffort, switchable);
+        }
+
+        private static string? ReadChatTemplate(JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Object)
+                return null;
+            if (element.TryGetProperty("chat_template", out JsonElement template) && template.ValueKind == JsonValueKind.String)
+                return template.GetString();
+            return element.TryGetProperty("default_generation_settings", out JsonElement settings)
+                && settings.ValueKind == JsonValueKind.Object
+                && settings.TryGetProperty("chat_template", out JsonElement nested) && nested.ValueKind == JsonValueKind.String
+                ? nested.GetString()
+                : null;
         }
 
         /// <summary>

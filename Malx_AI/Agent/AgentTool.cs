@@ -151,7 +151,21 @@ namespace Malx_AI.Agent
                 case AgentToolNames.StopBackgroundTask:
                     return "Stopping background task " + Summarize(Arg("task_id"), 18);
                 case AgentToolNames.BrowserControl:
-                    return "Browser (" + Arg("action", "open") + "): " + Summarize(Arg("url"), 26);
+                {
+                    // Inspect, click and fill carry no URL; "Browser (inspect): a command" said nothing.
+                    string action = Arg("action", "open").Trim().ToLowerInvariant();
+                    string url = Arg("url");
+                    string target = Arg("target_id");
+                    return action switch
+                    {
+                        "inspect" => "Browser: listed the page's controls",
+                        "click" => "Browser: clicked " + (target.Length > 0 ? target : "a control"),
+                        "fill" => "Browser: filled " + (target.Length > 0 ? target : "a field"),
+                        "search" => "Searched the web: " + Summarize(url, 30),
+                        "read" or "read_page" or "fetch" when string.IsNullOrWhiteSpace(url) => "Browser: read the open page",
+                        _ => "Browser (" + action + "): " + Summarize(url, 26)
+                    };
+                }
                 case AgentToolNames.TakeScreenshot:
                     return "Took a screenshot";
                 case AgentToolNames.Finish:

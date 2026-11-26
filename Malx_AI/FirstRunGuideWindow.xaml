@@ -1,7 +1,7 @@
 <Window x:Class="Malx_AI.FirstRunGuideWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Welcome to Axiom"
+        Title="Welcome to Axiom" FontFamily="{DynamicResource AppUiFont}"
         Width="720" Height="650" MinHeight="590"
         ResizeMode="NoResize"
         WindowStyle="None" AllowsTransparency="True"

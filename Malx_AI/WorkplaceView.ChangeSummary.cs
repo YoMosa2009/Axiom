@@ -120,7 +120,7 @@ public partial class WorkplaceView
         if (changes.Count == 0) return;
         var window = new Window { Title = "Recorded changes", Width = 980, Height = 650, MinWidth = 620, MinHeight = 380,
             Owner = Window.GetWindow(this), WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            FontFamily = new FontFamily("Segoe UI") };
+            FontFamily = AppFonts.Ui };
         window.SetResourceReference(BackgroundProperty, "NotebookBackgroundBrush");
         window.SetResourceReference(ForegroundProperty, "NotebookTextBrush");
         var grid = new Grid { Margin = new Thickness(16) };

@@ -269,10 +269,45 @@ namespace Malx_AI
         private bool _customEndpointContextWindowAdvertised;
         // Set only when the server's model list names reasoning_effort in supported_parameters.
         private bool _customEndpointSupportsReasoningEffort;
+
+        // Set when the server's loaded chat template has an enable_thinking switch (llama.cpp /props).
+        private bool _customEndpointThinkingSwitchable;
         private string _managedEndpointBaseUrl = string.Empty;
         private string _managedEndpointToken = string.Empty;
         private List<(string Id, string Label, bool IsFree)> _availableModels = new();
         private readonly Dictionary<string, HashSet<string>> _modelSupportedParameters = new(StringComparer.OrdinalIgnoreCase);
+
+        // Per-model native thinking from the model list's "reasoning" object (NativeReasoning).
+        private readonly Dictionary<string, NativeReasoningInfo> _modelReasoning = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _loggedReasoningDecisions = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>What the model list says about a model's own thinking, when it says anything.</summary>
+        public NativeReasoningInfo? GetNativeReasoning(string modelId)
+        {
+            string resolved = ResolveApiModelIdForReasoning(modelId);
+            return _modelReasoning.TryGetValue(resolved, out NativeReasoningInfo? info) ? info : null;
+        }
+
+        private string ResolveApiModelIdForReasoning(string modelId)
+        {
+            if (_modelReasoning.ContainsKey(modelId ?? string.Empty))
+                return modelId!;
+            OpenRouterModelProfile? profile = FindModelProfile(modelId ?? string.Empty);
+            return profile?.AllApiModelIds.FirstOrDefault(_modelReasoning.ContainsKey) ?? modelId ?? string.Empty;
+        }
+
+        /// <summary>Logs each model's thinking decision once per change, so a run's log shows it.</summary>
+        private void NoteReasoningDecision(string modelId, NativeReasoningInfo info, NativeReasoningDecision decision)
+        {
+            string text = info.Describe() + " -> " + decision.Describe() + " at " + EffortPolicy.DisplayName(EffortPolicy.Current);
+            lock (_loggedReasoningDecisions)
+            {
+                if (_loggedReasoningDecisions.TryGetValue(modelId, out string? last) && last == text)
+                    return;
+                _loggedReasoningDecisions[modelId] = text;
+            }
+            _ = BackendLogService.LogEventAsync("NativeReasoning", $"model:{modelId} {text}");
+        }
         private readonly HashSet<string> _imageInputModelIds = new(StringComparer.OrdinalIgnoreCase);
         private readonly object _tokenUsageGate = new();
         private OpenRouterTokenUsage? _lastTokenUsage;
@@ -568,6 +603,7 @@ namespace Malx_AI
                 _customEndpointMetadataProbed = false;
                 _customEndpointContextWindowAdvertised = false;
                 _customEndpointSupportsReasoningEffort = false;
+                _customEndpointThinkingSwitchable = false;
                 _customEndpointContextWindowTokens = CustomEndpointContextWindowTokens;
                 _customEndpointSupportsImageInput = CustomEndpointMetadataParser.LooksLikeVisionModel(nextModelId);
             }
@@ -928,6 +964,8 @@ namespace Malx_AI
                         catalogRead |= probe.Server == "OpenAI-compatible catalog";
                         if (metadata.SupportsReasoningEffort)
                             _customEndpointSupportsReasoningEffort = true;
+                        if (metadata.ThinkingSwitchable)
+                            _customEndpointThinkingSwitchable = true;
                         if (metadata.ContextWindowTokens == null
                             && probe.ScalarContextResponse
                             && CustomEndpointMetadataParser.TryParseScalarContextWindow(body, out int scalarWindow))
@@ -1003,7 +1041,8 @@ namespace Malx_AI
                 $"Model:{_customEndpointModelId}; resolved window:{CustomEndpointResolvedContextWindowTokens}"
                 + $" ({(CustomEndpointContextWindowIsAdvertised ? "advertised by server" : "NOT advertised - conservative fallback in use")});"
                 + $" vision:{CustomEndpointResolvedSupportsImageInput};"
-                + $" reasoning_effort:{(_customEndpointSupportsReasoningEffort ? "listed" : "not listed")}"
+                + $" reasoning_effort:{(_customEndpointSupportsReasoningEffort ? "listed" : "not listed")};"
+                + $" thinking switch:{(_customEndpointThinkingSwitchable ? "in chat template" : "not found")}"
                 + Environment.NewLine
                 + string.Join(Environment.NewLine, attempts)).ConfigureAwait(false);
         }
@@ -2125,6 +2164,12 @@ namespace Malx_AI
                         _modelSupportedParameters[id] = supportedParameters;
                     }
 
+                    NativeReasoningInfo reasoningInfo = NativeReasoning.FromOpenRouterModel(item);
+                    if (reasoningInfo.Supported)
+                        _modelReasoning[id] = reasoningInfo;
+                    else
+                        _modelReasoning.Remove(id);
+
                     if (item.TryGetProperty("architecture", out JsonElement architectureElement)
                         && architectureElement.ValueKind == JsonValueKind.Object
                         && architectureElement.TryGetProperty("input_modalities", out JsonElement inputModalitiesElement)
@@ -2208,7 +2253,32 @@ namespace Malx_AI
             // Only send the reasoning parameter when the user actually enables thinking mode.
             // Sending reasoning:{effort:"low"} on every request causes providers that don't
             // support the field to reject the request with an immediate "Provider returned error".
-            if (thinkingEnabled && SupportsParameter(modelId, "reasoning"))
+            NativeReasoningInfo? nativeReasoning = null;
+            if (!isCustomEndpoint && !isManagedEndpoint)
+                _modelReasoning.TryGetValue(modelId ?? string.Empty, out nativeReasoning);
+            else if (isManagedEndpoint && (IsManagedEndpointModel(modelId ?? string.Empty)
+                || string.Equals(modelId, AxiomSubscriptionModel, StringComparison.OrdinalIgnoreCase)))
+                nativeReasoning = _modelReasoning.TryGetValue(AxiomSubscriptionModel, out NativeReasoningInfo? listed)
+                    ? listed
+                    : NativeReasoning.SubscriptionModel;
+            if (nativeReasoning != null)
+            {
+                // The model list says how this model thinks: never tell an always-thinking model
+                // to stop, and fit the effort to the levels it accepts (NativeReasoning).
+                NativeReasoningDecision decision = NativeReasoning.Decide(nativeReasoning, thinkingEnabled, EffortPolicy.Current);
+                if (decision.Mode == NativeReasoningMode.Enable)
+                {
+                    payload["reasoning"] = decision.Effort != null
+                        ? new JsonObject { ["effort"] = decision.Effort }
+                        : new JsonObject { ["enabled"] = true };
+                }
+                else if (decision.Mode == NativeReasoningMode.Disable)
+                {
+                    payload["reasoning"] = new JsonObject { ["enabled"] = false, ["exclude"] = true };
+                }
+                NoteReasoningDecision(modelId!, nativeReasoning, decision);
+            }
+            else if (thinkingEnabled && SupportsParameter(modelId, "reasoning"))
             {
                 // Provider effort is a hint, not a universal capability. Only attach it after
                 // capability metadata confirms the reasoning parameter is accepted.
@@ -2239,7 +2309,7 @@ namespace Malx_AI
                 if (_customEndpointSupportsReasoningEffort)
                     payload["reasoning_effort"] = EffortPolicy.CustomEndpointReasoningEffort(EffortPolicy.Current);
             }
-            else if (!thinkingEnabled && isCustomEndpoint && _customEndpointSupportsReasoningEffort)
+            else if (!thinkingEnabled && isCustomEndpoint && (_customEndpointSupportsReasoningEffort || _customEndpointThinkingSwitchable))
             {
                 // A server that lists reasoning_effort controls thinking, so say "off" plainly
                 // instead of leaving it to the server's own default for the loaded model.
@@ -3369,9 +3439,7 @@ namespace Malx_AI
                 // aliases below.
                 return new OpenRouterModelProfile(
                     AliasId: CustomEndpointModelId,
-                    AliasLabel: string.IsNullOrWhiteSpace(_customEndpointModelId)
-                        ? CustomEndpointModelLabel
-                        : $"{CustomEndpointModelLabel} ({_customEndpointModelId})",
+                    AliasLabel: AgentCardLabels.HybridModelDisplayName(_customEndpointModelId),
                     PrimaryApiModelId: _customEndpointModelId,
                     AlternativeApiModelIds: [],
                     IsCodeSpecialized: true,

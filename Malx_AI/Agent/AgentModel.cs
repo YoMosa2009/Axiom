@@ -24,6 +24,12 @@ namespace Malx_AI.Agent
         public static AgentModelReply Tool(AgentToolCall call) => new(call, null);
         public static AgentModelReply Answer(string text) => new(null, text);
         public static AgentModelReply Malformed(string error) => new(null, null, error);
+
+        /// <summary>
+        /// What the model said it is doing with this call (its text before the call, or the end
+        /// of its reasoning), for the live "doing now" line. Null when it said nothing.
+        /// </summary>
+        public string? Narration { get; init; }
     }
 
     /// <summary>
@@ -51,6 +57,13 @@ namespace Malx_AI.Agent
         /// own copy of the conversation must rebuild it from the next history it is given.
         /// </summary>
         void HistoryRewritten() { }
+
+        /// <summary>
+        /// True once the current turn has started streaming a tool call. A turn still thinking
+        /// can be paused for a user message without losing anything; one writing a call is
+        /// left to finish so its work is not thrown away.
+        /// </summary>
+        bool IsComposingToolCall => false;
     }
 
     /// <summary>
@@ -83,7 +96,7 @@ namespace Malx_AI.Agent
             string reply = await _complete(_systemPrompt, RenderTranscript(goal, history), token).ConfigureAwait(false);
 
             if (AgentToolCallParser.TryParse(reply, out AgentToolCall? call, out string? error) && call != null)
-                return AgentModelReply.Tool(call);
+                return AgentModelReply.Tool(call) with { Narration = AgentNarration.FromProtocolReply(reply) };
 
             return error != null
                 ? AgentModelReply.Malformed(error)

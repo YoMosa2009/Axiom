@@ -91,6 +91,56 @@ namespace Malx_AI
             }
         }
 
+        /// <summary>
+        /// Stages an update from a delta package (UpdateDeltaPackage): the changed files plus the
+        /// unchanged ones copied from this installed copy, every hash checked, then the same
+        /// payload validation as a full ZIP. Throws on any mismatch so the caller can fall back.
+        /// </summary>
+        internal static async Task<PreparedUpdate> PrepareDeltaUpdateAsync(
+            UpdateCheckResult update,
+            UpdateDeltaAsset delta,
+            string deltaPath,
+            CancellationToken token,
+            string? installRootOverride = null)
+        {
+            ArgumentNullException.ThrowIfNull(update);
+            ArgumentNullException.ThrowIfNull(delta);
+            if (!File.Exists(deltaPath))
+                throw new FileNotFoundException("The downloaded delta package was not found.", deltaPath);
+
+            string version = UpdateReleaseParser.FormatVersion(update.LatestVersion);
+            string stagingRoot = Path.Combine(
+                UpdateStoragePaths.RootForDownloadedPackage(deltaPath),
+                "staging",
+                $"{version}-delta-{Guid.NewGuid():N}");
+            string deltaRoot = Path.Combine(stagingRoot, "delta");
+            string payloadRoot = Path.Combine(stagingRoot, "package");
+            Directory.CreateDirectory(deltaRoot);
+            string installRoot = Path.GetFullPath(installRootOverride ?? AppContext.BaseDirectory);
+
+            try
+            {
+                await Task.Run(() =>
+                {
+                    ExtractArchiveSafely(deltaPath, deltaRoot, token);
+                    UpdateDeltaPackage.BuildPayload(deltaRoot, installRoot, payloadRoot, delta.BaseVersion, update.LatestVersion, token);
+                }, token).ConfigureAwait(false);
+                TryDeleteDirectory(deltaRoot);
+                string payloadDirectory = LocateAndValidatePayload(payloadRoot, update.LatestVersion);
+                return new PreparedUpdate(
+                    payloadDirectory,
+                    Path.Combine(payloadDirectory, MainExecutableFileName),
+                    installRoot,
+                    update.LatestVersion,
+                    update.LatestVersionTag);
+            }
+            catch
+            {
+                TryDeleteDirectory(stagingRoot);
+                throw;
+            }
+        }
+
         internal static Process LaunchPreparedUpdate(PreparedUpdate update, int currentProcessId)
         {
             ArgumentNullException.ThrowIfNull(update);

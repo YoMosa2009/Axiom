@@ -25,6 +25,7 @@ using LLama;
 using LLama.Common;
 using LLama.Sampling;
 using LLama.Transformers;
+using Malx_AI.Agent;
 using Malx_AI.Mcp;
 
 namespace Malx_AI
@@ -611,7 +612,11 @@ namespace Malx_AI
             if (_threnody10ModelButton != null)
                 _threnody10ModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
             if (_customEndpointModelButton != null)
+            {
                 _customEndpointModelButton.Visibility = isHybridLocalActive ? Visibility.Visible : Visibility.Collapsed;
+                // The pill names the model the user configured, not a fixed product name.
+                _customEndpointModelButton.Content = AgentCardLabels.HybridModelDisplayName(_openRouterChatService.CustomEndpointConfiguredModelId);
+            }
 
             if (_localModeButton != null)
             {
@@ -1118,6 +1123,9 @@ namespace Malx_AI
 
                     toolCallCount += response.ToolCalls.Count;
                     messages.Add(new OpenRouterMessage("assistant", response.Text ?? string.Empty, null, response.ToolCalls));
+                    ShowChatNarration(AgentNarration.FromModelText(response.Text)
+                        ?? AgentNarration.FromReasoning(response.Reasoning)
+                        ?? AgentNarration.FromChatTool(response.ToolCalls[0]?.Name, response.ToolCalls[0]?.ArgumentsJson));
 
                     foreach (OpenRouterToolCall toolCall in response.ToolCalls)
                     {
@@ -1255,6 +1263,14 @@ namespace Malx_AI
             string displayName = string.IsNullOrWhiteSpace(toolName) ? "tool" : toolName.Trim();
             string truncated = normalized[..CloudToolResultCharacterLimit].TrimEnd();
             return truncated + $"\n\n[TOOL RESULT TRUNCATED] The {displayName} output exceeded {CloudToolResultCharacterLimit} characters. Use the retained portion above as the primary evidence and synthesize from it instead of asking the tool to repeat the same large output unless a narrower follow-up query is required.";
+        }
+
+        /// <summary>Shows the model's "doing now" sentence on the reply that is being generated.</summary>
+        private void ShowChatNarration(string? narration)
+        {
+            ChatMessage? message = _currentStreamingMessage;
+            if (message != null && !string.IsNullOrWhiteSpace(narration))
+                message.LiveStatus = narration;
         }
 
         private async Task<CloudToolExecutionResult> ExecuteCloudToolCallAsync(OpenRouterToolCall toolCall, string originalUserMessage, IReadOnlyList<OpenRouterMessage> conversationMessages, CancellationToken token)

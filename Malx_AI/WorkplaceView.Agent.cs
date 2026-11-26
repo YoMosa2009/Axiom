@@ -356,20 +356,34 @@ namespace Malx_AI
             /// <summary>What is happening right now, shown in italics under the steps.</summary>
             public string? Status { get; set; }
 
+            /// <summary>
+            /// What the model says it is doing now (a sentence and a half), shown under the title
+            /// so the card reads as the model's own account, not just a list of commands.
+            /// </summary>
+            public string? Narration { get; set; }
+
             /// <summary>The agent's live checklist (update_plan), shown above the steps.</summary>
             public AgentPlan? Plan { get; set; }
 
             public string Render()
             {
                 var builder = new StringBuilder();
-                builder.Append("**").Append(Title).Append("**\n\n");
+                // The run kind and model are in the card header (AgentCardLabels.AgentCardHeader).
                 if (Plan is { IsEmpty: false })
                     builder.Append(RenderPlan(Plan)).Append("\n\n");
                 if (StepLines.Count > 0)
-                    builder.Append(string.Join("\n", StepLines.Select(l => "- " + l)));
+                    builder.Append(string.Join("\n", AgentCardLabels.CompactLiveSteps(StepLines).Select(l => "- " + l)));
+                // The model's own "doing now" sentence sits under the compacted steps, where the
+                // eye lands while the run is working.
+                if (!string.IsNullOrWhiteSpace(Narration))
+                {
+                    if (StepLines.Count > 0 || Plan is { IsEmpty: false })
+                        builder.Append("\n\n");
+                    builder.Append("› ").Append(Narration);
+                }
                 if (!string.IsNullOrWhiteSpace(Status))
                 {
-                    if (StepLines.Count > 0)
+                    if (builder.Length > 0)
                         builder.Append("\n\n");
                     builder.Append('_').Append(Status).Append('_');
                 }
@@ -392,6 +406,22 @@ namespace Malx_AI
                 }
                 return builder.ToString().TrimEnd();
             }
+        }
+
+        /// <summary>Shows the model's own "doing now" sentence on the live run card.</summary>
+        private void ShowAgentNarration(AgentRunCard run, string narration)
+        {
+            if (string.IsNullOrWhiteSpace(narration))
+                return;
+            Dispatcher.BeginInvoke(() =>
+            {
+                // A message the user sent mid-run moves the run to a new card; follow it.
+                AgentRunCard live = _activeAgentRunCard ?? run;
+                if (string.Equals(live.Narration, narration, StringComparison.Ordinal))
+                    return;
+                live.Narration = narration;
+                live.Card.Content = live.Render();
+            });
         }
 
         /// <summary>Shows a plan update on the live run card and in the task tracker.</summary>
@@ -420,7 +450,7 @@ namespace Malx_AI
             _isProcessing = true;
             var run = new AgentRunCard
             {
-                Card = new WorkplaceChatMessage { Role = "agent" },
+                Card = new WorkplaceChatMessage { Role = "agent", ModelLabel = AgentCardLabels.AgentCardHeader(GetAgentCardModelName(), title) },
                 Goal = goal,
                 Title = title,
                 Status = StartingStatus
@@ -512,9 +542,9 @@ namespace Malx_AI
                 run.Card.Content = run.Render();
 
                 run.Card.ViewedImagePaths = Array.Empty<string>();
-                run.Card = new WorkplaceChatMessage { Role = "agent" };
+                run.Card = new WorkplaceChatMessage { Role = "agent", ModelLabel = run.Card.ModelLabel };
                 run.StepLines.Clear();
-                run.Status = "Got it. Passing your message to the agent at its next step";
+                run.Status = "Got it. Pausing at the next safe point to read your message";
                 run.Card.Content = run.Render();
                 _chatCards.Add(run.Card);
             }
@@ -898,6 +928,10 @@ namespace Malx_AI
             if (session.Plan.HasOpenItems)
                 ShowAgentPlan(runCard, session.Plan, userQuery);
             session.PlanChanged = plan => ShowAgentPlan(runCard, plan, userQuery);
+            session.Narrated = narration => ShowAgentNarration(runCard, narration);
+            session.MessagesDelivered = count => ShowAgentNarration(runCard, count == 1
+                ? "Read your message; adjusting the work to it while keeping the original task."
+                : $"Read your {count} messages; adjusting the work to them while keeping the original task.");
             session.Compacted = description =>
             {
                 LogActivity("Agent Access: context compacted (" + description + ").");
@@ -1056,7 +1090,10 @@ namespace Malx_AI
                     systemPrompt,
                     chatHistory,
                     imageDataUrls,
-                    thinkingEnabled: EffortPolicy.Current >= EffortLevel.ExtraHigh)
+                    // Same threshold as Normal chat (High and up). The model's own thinking is
+                    // then fitted to what it supports (NativeReasoning): an always-thinking model
+                    // keeps a short think below High instead of being told to stop.
+                    thinkingEnabled: EffortPolicy.RequestsReasoning(userEnabled: false))
                 {
                     Limits = AgentTurnLimits.For(EffortPolicy.Current, selfHosted: _isHybridLocalCouncilSelected),
                 };

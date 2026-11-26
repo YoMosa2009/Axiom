@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Malx_AI"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="Axiom - Chat" Height="900" Width="1600" MinWidth="1040" MinHeight="640" WindowStartupLocation="CenterScreen"
+        Title="Axiom - Chat" FontFamily="{DynamicResource AppUiFont}" Height="900" Width="1600" MinWidth="1040" MinHeight="640" WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/AxiomLogo.ico"
         AllowsTransparency="False" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
@@ -27,7 +27,7 @@
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="6,2"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="10"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Template">
@@ -93,7 +93,7 @@
         <!-- Text inside a sidebar button. Content set in XAML or code takes its implicit style from
              the logical tree, not the button template, so the colour binding has to be explicit. -->
         <Style x:Key="SidebarRowLabelStyle" TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="LineHeight" Value="Auto"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
@@ -106,7 +106,7 @@
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Height" Value="36"/>
             <Setter Property="Padding" Value="10,0"/>
@@ -169,7 +169,7 @@
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="MinHeight" Value="36"/>
             <Setter Property="Padding" Value="12,0,4,0"/>
@@ -246,7 +246,7 @@
         </Style>
 
         <Style x:Key="SidebarGroupHeaderStyle" TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="LineHeight" Value="Auto"/>
@@ -260,7 +260,7 @@
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="CaretBrush" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="SelectionBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Template">
@@ -373,7 +373,7 @@
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Template">
@@ -486,7 +486,7 @@
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -620,7 +620,7 @@
         <Style x:Key="DarkComboBoxItemStyle" TargetType="{x:Type ComboBoxItem}">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Padding" Value="10,6"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -660,7 +660,7 @@
             <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
@@ -765,7 +765,7 @@
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0,0,0,1"/>
             <Setter Property="Padding" Value="6,4,6,3"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Template">
@@ -1254,7 +1254,7 @@
                 <Border x:Name="ChatHeaderBorder" DockPanel.Dock="Top" BorderThickness="0" Padding="28,14,28,4" Background="Transparent">
                     <StackPanel>
                         <TextBlock x:Name="HeaderModelName" Text="No Model Loaded" FontSize="12" Foreground="{DynamicResource MutedTextBrush}" 
-                                   FontFamily="Segoe UI" Margin="0,0,0,0"/>
+                                   FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,0"/>
                         <Border x:Name="CloudContextNoticeBorder"
                                 Visibility="Collapsed"
                                  Margin="0,8,0,0"
@@ -1268,7 +1268,7 @@
                                        Text=""
                                        FontSize="10"
                                        Foreground="{DynamicResource MutedTextBrush}"
-                                       FontFamily="Segoe UI"/>
+                                       FontFamily="{DynamicResource AppUiFont}"/>
                         </Border>
                         <Border x:Name="TokenUsagePanel"
                                 Margin="0,8,0,0"
@@ -1294,13 +1294,13 @@
                                                FontSize="10"
                                                FontWeight="SemiBold"
                                                Foreground="{DynamicResource DarkSecondaryBrush}"
-                                               FontFamily="Segoe UI"/>
+                                               FontFamily="{DynamicResource AppUiFont}"/>
                                     <TextBlock x:Name="TokenUsageLabel"
                                                Text="0 / 0 tok"
                                                DockPanel.Dock="Right"
                                                FontSize="10"
                                                Foreground="{DynamicResource MutedTextBrush}"
-                                               FontFamily="Segoe UI"
+                                               FontFamily="{DynamicResource AppUiFont}"
                                                TextTrimming="CharacterEllipsis"/>
                                 </DockPanel>
 
@@ -1318,13 +1318,13 @@
                                                    FontSize="10"
                                                    FontWeight="SemiBold"
                                                    Foreground="{DynamicResource DarkSecondaryBrush}"
-                                                   FontFamily="Segoe UI"/>
+                                                   FontFamily="{DynamicResource AppUiFont}"/>
                                         <TextBlock x:Name="CompactionHealthLabel"
                                                    Text=""
                                                    DockPanel.Dock="Right"
                                                    FontSize="10"
                                                    Foreground="{DynamicResource MutedTextBrush}"
-                                                   FontFamily="Segoe UI"
+                                                   FontFamily="{DynamicResource AppUiFont}"
                                                    TextTrimming="CharacterEllipsis"/>
                                     </DockPanel>
                                     <ProgressBar x:Name="CompactionThresholdBar"
@@ -1349,9 +1349,9 @@
                                 <DockPanel x:Name="GenerationStatsRow" Grid.Row="4" LastChildFill="False" Margin="0,7,0,0"
                                            Visibility="Collapsed" Background="Transparent" ToolTipService.InitialShowDelay="250">
                                     <TextBlock x:Name="GenerationStatsTitle" Text="Last reply" DockPanel.Dock="Left" FontSize="10" FontWeight="SemiBold"
-                                               Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI"/>
+                                               Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="{DynamicResource AppUiFont}"/>
                                     <TextBlock x:Name="GenerationStatsLabel" Text="" DockPanel.Dock="Right" FontSize="10"
-                                               Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI" TextTrimming="CharacterEllipsis"/>
+                                               Foreground="{DynamicResource MutedTextBrush}" FontFamily="{DynamicResource AppUiFont}" TextTrimming="CharacterEllipsis"/>
                                 </DockPanel>
                             </Grid>
                         </Border>
@@ -1359,7 +1359,7 @@
                 </Border>
 
                 <Border x:Name="ErrorNotificationBar" DockPanel.Dock="Top" Visibility="Collapsed" Padding="32,8" Background="{DynamicResource NotebookSurfaceBrush}" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource NotebookBorderBrush}">
-                    <TextBlock x:Name="ErrorNotificationText" Foreground="{DynamicResource PrimaryAccentBrush}" FontSize="12" FontFamily="Segoe UI"/>
+                    <TextBlock x:Name="ErrorNotificationText" Foreground="{DynamicResource PrimaryAccentBrush}" FontSize="12" FontFamily="{DynamicResource AppUiFont}"/>
                 </Border>
 
                 <!-- Settings panel is now rendered as a global overlay in ContentContainer -->
@@ -1541,7 +1541,7 @@
                                                             <Border x:Name="ThinkingContentBorder" Margin="0,8,0,0" Padding="10,8" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Visibility="Collapsed">
                                                                 <Grid>
                                                                     <TextBox x:Name="ThinkingText"
-                                                                             Text="{Binding FormattedThinkingContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="13" FontFamily="Segoe UI"
+                                                                             Text="{Binding FormattedThinkingContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="13" FontFamily="{DynamicResource AppUiFont}"
                                                                              Foreground="{DynamicResource NotebookTextBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                                                              IsReadOnly="True" IsReadOnlyCaretVisible="False" Cursor="Arrow"
                                                                              SelectionBrush="{DynamicResource PrimaryAccentBrush}" SelectionOpacity="0.3">
@@ -1594,7 +1594,7 @@
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
-                                                <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="14.5" FontFamily="Segoe UI"
+                                                <TextBox x:Name="BubbleText" Text="{Binding DisplayFormattedContent, Mode=OneWay}" TextWrapping="Wrap" FontSize="14.5" FontFamily="{DynamicResource AppUiFont}"
                                                          ContextMenuOpening="ReplyText_ContextMenuOpening"
                                                          Foreground="{DynamicResource NotebookTextBrush}" Background="Transparent" BorderThickness="0" Padding="0"
                                                          IsReadOnly="True" IsReadOnlyCaretVisible="False" Cursor="Arrow"
@@ -1865,7 +1865,7 @@
                                                Text=""
                                                FontSize="11"
                                                Foreground="{DynamicResource MutedTextBrush}"
-                                               FontFamily="Segoe UI"
+                                               FontFamily="{DynamicResource AppUiFont}"
                                                Margin="0,0,4,0"
                                                VerticalAlignment="Center">
                                         <TextBlock.RenderTransform>
@@ -1876,7 +1876,7 @@
                                                Text=""
                                                FontSize="11.5"
                                                Foreground="{DynamicResource DarkSecondaryBrush}"
-                                               FontFamily="Segoe UI"
+                                               FontFamily="{DynamicResource AppUiFont}"
                                                LineHeight="16"
                                                VerticalAlignment="Center"/>
                                 </StackPanel>
@@ -1910,7 +1910,7 @@
                                                    Padding="16,12,16,8"
                                                    Margin="0"
                                                    Background="Transparent"
-                                                   FontFamily="Segoe UI"
+                                                   FontFamily="{DynamicResource AppUiFont}"
                                                    FontSize="14"
                                                    LineHeight="20"
                                                    TextWrapping="Wrap"
@@ -1918,11 +1918,11 @@
                                                    Visibility="Collapsed"/>
                                         <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="16,12,16,8"
                                               Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}" BorderThickness="0" CaretBrush="{DynamicResource NotebookTextBrush}"
-                                              FontFamily="Segoe UI" FontSize="14" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
+                                              FontFamily="{DynamicResource AppUiFont}" FontSize="14" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
                                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="160"
                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                               SelectionBrush="#66B8924A" SelectionOpacity="1"/>
-                                        <TextBlock Text="Ask anything" Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI" FontSize="14"
+                                        <TextBlock Text="Ask anything" Foreground="{DynamicResource MutedTextBrush}" FontFamily="{DynamicResource AppUiFont}" FontSize="14"
                                                    Margin="16,12,16,8" IsHitTestVisible="False" VerticalAlignment="Top">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
@@ -1957,7 +1957,7 @@
                                                          Background="Transparent"
                                                          BorderThickness="0"
                                                          Padding="0"
-                                                         FontFamily="Segoe UI"
+                                                         FontFamily="{DynamicResource AppUiFont}"
                                                          FontSize="13"
                                                          Foreground="{DynamicResource NotebookTextBrush}"
                                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -2174,7 +2174,7 @@
                                                          <Button x:Name="Edios15ModelButton" Content="Edios 1.5" Click="Edios15ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use Google Gemma 4 31B (free)" Margin="0,0,2,0"/>
                                                          <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)" Margin="0,0,2,0"/>
                                                          <Button x:Name="Threnody10ModelButton" Content="Threnody 1.0" Click="Threnody10ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use DeepSeek: DeepSeek V4.1 Flash"/>
-                                                         <Button x:Name="CustomEndpointModelButton" Content="Kestral 1" Click="CustomEndpointModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
+                                                         <Button x:Name="CustomEndpointModelButton" Content="Hybrid Local" Click="CustomEndpointModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
                                                      </StackPanel>
                                                  </Border>
                                                 <StackPanel x:Name="ComposerRunActions" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
@@ -2261,9 +2261,9 @@
 
                     <Grid Grid.Row="0">
                         <TextBox Text="{Binding PersonaText, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" VerticalContentAlignment="Top"
-                                 VerticalScrollBarVisibility="Auto" FontFamily="Segoe UI" FontSize="13" Padding="12"
+                                 VerticalScrollBarVisibility="Auto" FontFamily="{DynamicResource AppUiFont}" FontSize="13" Padding="12"
                                  Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
-                        <TextBlock IsHitTestVisible="False" TextWrapping="Wrap" FontFamily="Segoe UI" FontSize="13" Padding="14,14,14,0"
+                        <TextBlock IsHitTestVisible="False" TextWrapping="Wrap" FontFamily="{DynamicResource AppUiFont}" FontSize="13" Padding="14,14,14,0"
                                    Foreground="{DynamicResource DarkSecondaryBrush}" VerticalAlignment="Top"
                                    Visibility="{Binding IsPersonaEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <Run Text="Example: I prefer plain headings, hyphen bullets, and no emojis in replies."/>
@@ -2319,7 +2319,7 @@
                             <StackPanel>
                                 <!-- ═══ INFERENCE ═══ -->
                                 <StackPanel x:Name="SettingsPageInference">
-                                <TextBlock Text="Inference Settings" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,16"/>
+                                <TextBlock Text="Inference Settings" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,16"/>
 
                                 <Grid Margin="0,0,0,20">
                                     <Grid.ColumnDefinitions>
@@ -2329,21 +2329,21 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel Grid.Column="0" Margin="0,0,24,0">
-                                        <TextBlock Text="Temperature" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Temperature" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <Slider x:Name="TemperatureSlider" Minimum="0" Maximum="2" Value="0.7" TickFrequency="0.1" Height="24"/>
-                                        <TextBlock x:Name="TemperatureValueText" Text="{Binding ElementName=TemperatureSlider, Path=Value, StringFormat={}{0:F1}}" FontSize="12" Foreground="{DynamicResource PrimaryAccentBrush}" FontFamily="Segoe UI" Margin="0,6,0,0" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="TemperatureValueText" Text="{Binding ElementName=TemperatureSlider, Path=Value, StringFormat={}{0:F1}}" FontSize="12" Foreground="{DynamicResource PrimaryAccentBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,6,0,0" FontWeight="SemiBold"/>
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="1" Margin="0,0,24,0">
-                                        <TextBlock x:Name="TopPLabelText" Text="Min-P" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock x:Name="TopPLabelText" Text="Min-P" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <Slider x:Name="TopPSlider" Minimum="0" Maximum="1" Value="0.05" TickFrequency="0.05" Height="24"/>
-                                        <TextBlock x:Name="TopPValueText" Text="{Binding ElementName=TopPSlider, Path=Value, StringFormat={}{0:F2}}" FontSize="12" Foreground="{DynamicResource PrimaryAccentBrush}" FontFamily="Segoe UI" Margin="0,6,0,0" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="TopPValueText" Text="{Binding ElementName=TopPSlider, Path=Value, StringFormat={}{0:F2}}" FontSize="12" Foreground="{DynamicResource PrimaryAccentBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,6,0,0" FontWeight="SemiBold"/>
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="2">
-                                        <TextBlock Text="Context Length" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Context Length" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <Slider x:Name="CtxSlider" Minimum="512" Maximum="32768" Value="8192" TickFrequency="512" Height="24"/>
-                                        <TextBlock x:Name="ContextLengthValueText" Text="{Binding ElementName=CtxSlider, Path=Value, StringFormat={}{0:F0} tokens}" FontSize="12" Foreground="{DynamicResource PrimaryAccentBrush}" FontFamily="Segoe UI" Margin="0,6,0,0" FontWeight="SemiBold"/>
+                                        <TextBlock x:Name="ContextLengthValueText" Text="{Binding ElementName=CtxSlider, Path=Value, StringFormat={}{0:F0} tokens}" FontSize="12" Foreground="{DynamicResource PrimaryAccentBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,6,0,0" FontWeight="SemiBold"/>
                                     </StackPanel>
                                 </Grid>
 
@@ -2351,20 +2351,20 @@
                                            Text="Local mode active. These controls affect the loaded on-device model."
                                            FontSize="10"
                                            Foreground="{DynamicResource DarkSecondaryBrush}"
-                                           FontFamily="Segoe UI"
+                                           FontFamily="{DynamicResource AppUiFont}"
                                            TextWrapping="Wrap"
                                            Margin="0,-10,0,18"/>
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="System Prompt" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
-                                        <TextBox x:Name="SystemPromptBox" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Padding="8" FontFamily="Segoe UI" FontSize="11" AcceptsReturn="True" Height="80" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Text="You are a helpful AI assistant and expert software engineer. Provide clear, concise, and accurate responses. Execute tasks directly and provide final output unless explicitly asked for step-by-step guidance."/>
+                                        <TextBlock Text="System Prompt" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
+                                        <TextBox x:Name="SystemPromptBox" Background="{DynamicResource NotebookBackgroundBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Padding="8" FontFamily="{DynamicResource AppUiFont}" FontSize="11" AcceptsReturn="True" Height="80" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Text="You are a helpful AI assistant and expert software engineer. Provide clear, concise, and accurate responses. Execute tasks directly and provide final output unless explicitly asked for step-by-step guidance."/>
                                     </StackPanel>
                                 </Border>
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Processing Mode" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Processing Mode" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <ComboBox x:Name="ProcessingModeCombo" SelectionChanged="ProcessingModeCombo_SelectionChanged" Height="30" Width="220" HorizontalAlignment="Left" Style="{StaticResource DarkComboBoxStyle}">
                                             <ComboBoxItem Content="CPU Only"/>
                                             <ComboBoxItem Content="GPU Accelerated"/>
@@ -2375,7 +2375,7 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,16">
                                     <StackPanel>
-                                         <TextBlock Text="Inference Source" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
+                                         <TextBlock Text="Inference Source" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,10"/>
                                          <Border Height="34" Padding="2" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" HorizontalAlignment="Left">
                                              <Border.Resources>
                                                  <Style x:Key="ModeSelectorPillButtonStyle" TargetType="Button">
@@ -2429,7 +2429,7 @@
                                 <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="12" Padding="16,14" Margin="0,0,0,16">
                                     <StackPanel>
                                         <DockPanel LastChildFill="False" Margin="0,0,0,6">
-                                            <TextBlock Text="Axiom Cloud" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                                            <TextBlock Text="Axiom Cloud" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" DockPanel.Dock="Left" VerticalAlignment="Center"/>
                                             <Border Background="{DynamicResource AccentSoftBrush}" BorderBrush="{DynamicResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="10" Padding="8,2" Margin="10,0,0,0" DockPanel.Dock="Left" VerticalAlignment="Center">
                                                 <TextBlock Text="DeepSeek 4.1F-1017 · $9/mo" FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrightBrush}"/>
                                             </Border>
@@ -2532,8 +2532,8 @@
                                 <!-- Bring Your Own Key (OpenRouter) -->
                                 <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16,14" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="OpenRouter (Bring Your Own Key)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
-                                        <TextBlock Text="OpenRouter API Key" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                        <TextBlock Text="OpenRouter (Bring Your Own Key)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,10"/>
+                                        <TextBlock Text="OpenRouter API Key" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,6"/>
                                         <PasswordBox x:Name="OpenRouterApiKeyPasswordBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" PasswordChanged="OpenRouterApiKeyPasswordBox_PasswordChanged"/>
                                         <TextBlock Text="Your key is stored locally. Cloud conversations are subject to the selected model/provider via OpenRouter." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,12,0,0" VerticalAlignment="Center">
@@ -2548,7 +2548,7 @@
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Text="Daily free-model requests" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Daily free-model requests" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" VerticalAlignment="Center"/>
                                                 <Button x:Name="RefreshOpenRouterUsageButton"
                                                         Grid.Column="1"
                                                         Width="22"
@@ -2569,7 +2569,7 @@
                                                                FontSize="11"
                                                                FontWeight="SemiBold"
                                                                Foreground="{DynamicResource NotebookTextBrush}"
-                                                               FontFamily="Segoe UI"
+                                                               FontFamily="{DynamicResource AppUiFont}"
                                                                HorizontalAlignment="Center"
                                                                VerticalAlignment="Center"
                                                                TextTrimming="CharacterEllipsis"/>
@@ -2579,12 +2579,12 @@
                                                        Text=""
                                                        FontSize="10"
                                                        Foreground="{DynamicResource DarkSecondaryBrush}"
-                                                       FontFamily="Segoe UI"
+                                                       FontFamily="{DynamicResource AppUiFont}"
                                                        Margin="0,5,0,0"
                                                        TextWrapping="Wrap"
                                                        Visibility="Collapsed"/>
                                         </StackPanel>
-                                        <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,14,0,6"/>
+                                        <TextBlock Text="Active cloud model" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,14,0,6"/>
                                         <TextBlock x:Name="OpenRouterDetectedModelText" Text="Edios 1.5" FontSize="11" Foreground="{DynamicResource NotebookTextBrush}" TextWrapping="Wrap"/>
                                         <TextBlock x:Name="OpenRouterDetectedModelIdText" Text="General reasoning profile tuned for Axiom's tool pipeline." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     </StackPanel>
@@ -2593,12 +2593,12 @@
                                 <!-- Custom Endpoint (Self-Hosted / Hybrid Local) -->
                                 <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16,14">
                                     <StackPanel>
-                                        <TextBlock Text="Custom Endpoint (Hybrid Local)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,10"/>
-                                        <TextBlock Text="Base URL" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                        <TextBlock Text="Custom Endpoint (Hybrid Local)" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,10"/>
+                                        <TextBlock Text="Base URL" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,6"/>
                                         <TextBox x:Name="CustomEndpointBaseUrlBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" Text="https://your-server.example.com/v1"/>
-                                        <TextBlock Text="Model Name" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,12,0,6"/>
+                                        <TextBlock Text="Model Name" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,12,0,6"/>
                                         <TextBox x:Name="CustomEndpointModelIdBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
-                                        <TextBlock Text="API Key" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,12,0,6"/>
+                                        <TextBlock Text="API Key" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,12,0,6"/>
                                         <PasswordBox x:Name="CustomEndpointApiKeyPasswordBox" Height="32" Padding="8,6" Background="{DynamicResource NotebookSurfaceBrush}" Foreground="{DynamicResource NotebookTextBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"/>
                                         <TextBlock Text="Points at your own OpenAI-compatible server (e.g. Ollama, LM Studio, or self-hosted vLLM). Stored locally." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,12,0,0" VerticalAlignment="Center">
@@ -2613,7 +2613,7 @@
 
                                 <!-- ═══ CONNECTORS ═══ -->
                                 <StackPanel x:Name="SettingsPageConnectors" Visibility="Collapsed">
-                                    <TextBlock Text="Connectors" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                    <TextBlock Text="Connectors" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,6"/>
                                     <TextBlock x:Name="McpConnectorsCloudHintText"
                                                Text="Connect third-party accounts for Cloud Mode. Click Connect, sign in with your browser, then return here. In chat, type @ to mention a connector (e.g. @Gmail, @GitHub, @Todoist)."
                                                FontSize="10"
@@ -2812,7 +2812,7 @@
 
                                 <!-- ═══ GENERAL ═══ -->
                                 <StackPanel x:Name="SettingsPageGeneral" Visibility="Collapsed">
-                                <TextBlock Text="General" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,12"/>
+                                <TextBlock Text="General" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,12"/>
 
                                 <!-- Your Profile card (Requirement #15) -->
                                 <Border Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1"
@@ -2847,7 +2847,7 @@
                                         <TextBlock Text="&#xED15;" FontFamily="{StaticResource AxiomIconFont}" FontSize="18" LineHeight="Auto"
                                                    Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,12,0"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                            <TextBlock Text="Send feedback or report a problem" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
+                                            <TextBlock Text="Send feedback or report a problem" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}"/>
                                             <TextBlock Text="Found a bug or have an idea? Tell the developer directly. Chats, files and keys are never included."
                                                        FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,12,0"/>
                                         </StackPanel>
@@ -2858,7 +2858,7 @@
 
                                 <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,0,0,16" Margin="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Theme" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Theme" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <TextBlock Text="Recolours every screen. The choice is remembered and applies immediately — no restart."
                                                    FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                         <Grid HorizontalAlignment="Left">
@@ -2890,7 +2890,7 @@
                                 </Border>
                                 <Border BorderThickness="0,0,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,0,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Background &amp; system tray" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Background &amp; system tray" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <CheckBox x:Name="BackgroundExecutionToggle"
                                                   Content="Allow Axiom to continue running after its window is closed"
                                                   IsChecked="False"
@@ -2917,7 +2917,7 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,16">
                                     <StackPanel>
-                                        <TextBlock Text="Workplace notifications" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Workplace notifications" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <CheckBox x:Name="CouncilCompletionToastToggle"
                                                   Content="Notify me when a Workplace run finishes in the background"
                                                   IsChecked="True"
@@ -2932,7 +2932,7 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0">
                                     <StackPanel>
-                                        <TextBlock Text="Smart Context Compaction" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Smart Context Compaction" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <CheckBox x:Name="SmartCompactionToggle" Content="Enable automatic context optimization" IsChecked="True" Checked="SmartCompactionToggle_Changed" Unchecked="SmartCompactionToggle_Changed" Foreground="{DynamicResource NotebookTextBrush}" FontSize="11"/>
                                         <TextBlock Text="Automatically compresses low-priority messages when context usage reaches 80% of the model's reliability ceiling." FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                     </StackPanel>
@@ -2940,7 +2940,7 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
                                     <StackPanel>
-                                        <TextBlock Text="Diagnostics" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Diagnostics" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,8"/>
                                         <CheckBox x:Name="DiagnosticsToggle" Content="Send anonymous error reports and usage counts" IsChecked="True"
                                                   Checked="DiagnosticsToggle_Changed" Unchecked="DiagnosticsToggle_Changed"
                                                   Foreground="{DynamicResource NotebookTextBrush}" FontSize="11"
@@ -2952,7 +2952,7 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
                                     <StackPanel>
-                                        <TextBlock Text="Application updates" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                        <TextBlock Text="Application updates" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,6"/>
                                         <TextBlock Text="Axiom checks the official YoMosa2009/Axiom GitHub releases. New ZIP releases can be downloaded, verified, installed, and restarted from inside the app."
                                                    FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                         <TextBlock x:Name="UpdateCheckStatusText"
@@ -2970,7 +2970,7 @@
 
                                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource NotebookBorderBrush}" Padding="0,16,0,0" Margin="0,8,0,0">
                                     <StackPanel>
-                                        <TextBlock Text="Local data" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI" Margin="0,0,0,6"/>
+                                        <TextBlock Text="Local data" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,0,0,6"/>
                                         <TextBlock x:Name="AppDataProfilePathText"
                                                    Text=""
                                                    FontSize="10"
@@ -3116,8 +3116,8 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
-                                            <TextBlock Text="Usage" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
-                                            <TextBlock Text="DeepSeek 4.1F-1017 · Axiom subscription" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" Margin="0,3,0,0"/>
+                                            <TextBlock Text="Usage" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}"/>
+                                            <TextBlock Text="DeepSeek 4.1F-1017 · Axiom subscription" FontSize="11" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,3,0,0"/>
                                         </StackPanel>
                                         <Button x:Name="RefreshAxiomUsageButton"
                                                 Grid.Column="1"
@@ -3178,8 +3178,8 @@
                                                     <ColumnDefinition Width="84"/>
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                                    <TextBlock Text="Current session" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
-                                                    <TextBlock x:Name="AxiomSessionUsageResetText" Text="Starts with your first message" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="Current session" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}"/>
+                                                    <TextBlock x:Name="AxiomSessionUsageResetText" Text="Starts with your first message" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                                 <Border x:Name="AxiomSessionUsageTrack"
                                                         Grid.Column="1"
@@ -3202,7 +3202,7 @@
                                                            Text="0% used"
                                                            FontSize="13"
                                                            Foreground="{DynamicResource DarkSecondaryBrush}"
-                                                           FontFamily="Segoe UI"
+                                                           FontFamily="{DynamicResource AppUiFont}"
                                                            HorizontalAlignment="Right"
                                                            VerticalAlignment="Center"/>
                                             </Grid>
@@ -3215,8 +3215,8 @@
                                                     <ColumnDefinition Width="84"/>
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                                    <TextBlock Text="This week" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
-                                                    <TextBlock x:Name="AxiomWeeklyUsageResetText" Text="Resets every 7 days" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="This week" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}"/>
+                                                    <TextBlock x:Name="AxiomWeeklyUsageResetText" Text="Resets every 7 days" FontSize="12" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="{DynamicResource AppUiFont}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                                 <Border x:Name="AxiomWeeklyUsageTrack"
                                                         Grid.Column="1"
@@ -3239,7 +3239,7 @@
                                                            Text="0% used"
                                                            FontSize="13"
                                                            Foreground="{DynamicResource DarkSecondaryBrush}"
-                                                           FontFamily="Segoe UI"
+                                                           FontFamily="{DynamicResource AppUiFont}"
                                                            HorizontalAlignment="Right"
                                                            VerticalAlignment="Center"/>
                                             </Grid>
@@ -3250,7 +3250,7 @@
                                                Text="3-hour session and weekly limits help stretch your monthly DeepSeek 4.1F-1017 subscription."
                                                FontSize="10.5"
                                                Foreground="{DynamicResource DarkSecondaryBrush}"
-                                               FontFamily="Segoe UI"
+                                               FontFamily="{DynamicResource AppUiFont}"
                                                TextWrapping="Wrap"
                                                Margin="2,10,2,0"/>
                                 </StackPanel>
@@ -3263,7 +3263,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.14.0" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="Segoe UI" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.15.0" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="{DynamicResource AppUiFont}" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Grid.Column="1" Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>
@@ -3288,8 +3288,8 @@
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="⬆" FontSize="15" Foreground="{DynamicResource PrimaryAccentBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <StackPanel VerticalAlignment="Center">
-                    <TextBlock x:Name="UpdateBannerTitleText" Text="Update available" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="Segoe UI"/>
-                    <TextBlock x:Name="UpdateBannerDetailText" Text="" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" FontFamily="Segoe UI"
+                    <TextBlock x:Name="UpdateBannerTitleText" Text="Update available" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource NotebookTextBrush}" FontFamily="{DynamicResource AppUiFont}"/>
+                    <TextBlock x:Name="UpdateBannerDetailText" Text="" FontSize="11" Foreground="{DynamicResource MutedTextBrush}" FontFamily="{DynamicResource AppUiFont}"
                                Margin="0,2,0,0" MaxWidth="560" TextWrapping="Wrap"/>
                 </StackPanel>
                 <Button x:Name="UpdateBannerActionButton" Content="Update now" Click="UpdateBannerActionButton_Click" Height="30" MinWidth="92" Margin="14,0,0,0"

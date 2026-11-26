@@ -19,10 +19,19 @@ namespace Malx_AI.Agent
     {
         private readonly ConcurrentQueue<string> _pending = new();
 
+        /// <summary>
+        /// Raised (on the posting thread) when a message arrives, so a model turn that has not
+        /// started a tool call yet can be paused and asked again with the message included.
+        /// </summary>
+        public event Action? MessagePosted;
+
         public void Post(string message)
         {
-            if (!string.IsNullOrWhiteSpace(message))
-                _pending.Enqueue(message.Trim());
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+            _pending.Enqueue(message.Trim());
+            try { MessagePosted?.Invoke(); }
+            catch { /* a listener failure must not lose the message */ }
         }
 
         public bool HasPending => !_pending.IsEmpty;
@@ -36,17 +45,29 @@ namespace Malx_AI.Agent
             return messages;
         }
 
-        /// <summary>How a user's mid-run message is put to the model.</summary>
-        internal static string FormatForModel(IReadOnlyList<string> messages)
+        /// <summary>
+        /// How a user's mid-run message is put to the model: as the user's own words at a step
+        /// boundary (never inside a tool result, which models rightly treat as untrusted), with
+        /// the original task restated so the message adds to it instead of replacing it. This is
+        /// how Codex (steer input queue) and Claude Code (queued message) deliver it.
+        /// </summary>
+        internal static string FormatForModel(IReadOnlyList<string> messages, string? originalTask = null)
         {
             string quoted = messages.Count == 1
                 ? $"\"{messages[0]}\""
                 : string.Join("\n", messages.Select(message => $"- \"{message}\""));
+            string task = string.IsNullOrWhiteSpace(originalTask)
+                ? string.Empty
+                : "\nYour original task is still: \"" + Clip(originalTask.Trim(), 600) + "\"";
             return "The user sent a new message while you were working:\n"
                 + quoted + "\n"
-                + "It takes priority over earlier instructions where they conflict. Adjust what you are doing to match it "
-                + "(for example, move or redo work in the place they now ask for), then carry on until the whole task is done.";
+                + "It takes priority over earlier instructions where they conflict. If it is a question, answer it briefly in your next "
+                + "message and keep working. Otherwise adjust what you are doing to match it (for example, move or redo work in the place "
+                + "they now ask for), then carry on until the whole task is done. Do not drop the original task unless the user says to stop it."
+                + task;
         }
+
+        private static string Clip(string text, int max) => text.Length <= max ? text : text[..max] + "…";
     }
 
     /// <summary>

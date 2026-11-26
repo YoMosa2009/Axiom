@@ -17,7 +17,7 @@
     <WebView2EnableCsWinRTProjection>false</WebView2EnableCsWinRTProjection>
     <!-- Source of truth for the GitHub release update check: bump this for every release
          so it matches the release tag (e.g. tag v1.4.0 -> Version 1.4.0). -->
-    <Version>1.14.0</Version>
+    <Version>1.15.0</Version>
     <ApplicationIcon>Assets\AxiomLogo.ico</ApplicationIcon>
     <!-- Task Manager and file properties show this name. -->
     <AssemblyTitle>Axiom Harness</AssemblyTitle>
@@ -94,6 +94,17 @@
 
   <ItemGroup>
     <Resource Include="Assets\Logo.cs" />
+  </ItemGroup>
+
+  <!-- App UI font: Geist (SIL OFL 1.1, Assets\Fonts\OFL.txt). The .ttf files are embedded for WPF;
+       the .woff2 files ship beside the exe for chat messages rendered in WebView2. -->
+  <ItemGroup>
+    <Resource Include="Assets\Fonts\*.ttf" />
+    <None Remove="Assets\Fonts\*.woff2;Assets\Fonts\OFL.txt" />
+    <Content Include="Assets\Fonts\*.woff2;Assets\Fonts\OFL.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
   <!-- Never ship developer/user runtime data with published packages. -->
