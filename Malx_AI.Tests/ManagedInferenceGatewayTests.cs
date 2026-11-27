@@ -71,7 +71,11 @@ public sealed class ManagedInferenceGatewayTests : IDisposable
 
         using var payload = JsonDocument.Parse(upstream.Payload!);
         Assert.Equal(LocalGateway.Model, payload.RootElement.GetProperty("model").GetString());
-        Assert.Equal("digitalocean", payload.RootElement.GetProperty("provider").GetProperty("only")[0].GetString());
+        var routing = payload.RootElement.GetProperty("provider");
+        Assert.Equal("price", routing.GetProperty("sort").GetString());
+        Assert.True(routing.GetProperty("allow_fallbacks").GetBoolean());
+        Assert.True(routing.GetProperty("require_parameters").GetBoolean());
+        Assert.False(routing.TryGetProperty("only", out _));
         Assert.Equal(OpenRouterInference.MaxOutputTokens, payload.RootElement.GetProperty("max_tokens").GetInt32());
         Assert.False(payload.RootElement.TryGetProperty("plugins", out _));
         Assert.False(payload.RootElement.TryGetProperty("stop", out _));
