@@ -62,7 +62,8 @@
                 </Border.Effect>
                 <ScrollViewer x:Name="CouncilSidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0" PreviewMouseWheel="SidebarScrollViewer_PreviewMouseWheel">
                     <StackPanel Margin="14,14,14,16">
-                        <Border CornerRadius="7" Padding="2"
+                        <!-- Builder + Critic was removed (single model only); the segment stays hidden for code that still names it. -->
+                        <Border CornerRadius="7" Padding="2" Visibility="Collapsed"
                                 Background="{DynamicResource NotebookBackgroundBrush}"
                                 BorderBrush="{DynamicResource NotebookBorderBrush}"
                                 BorderThickness="1">
@@ -142,9 +143,9 @@
                         <!-- Single Model -->
                         <Border x:Name="SingleModelModelCard" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,10,0,0" Visibility="Collapsed">
                             <StackPanel>
-                                <TextBlock Text="Single Model" FontSize="11" FontWeight="SemiBold"/>
+                                <TextBlock Text="Model" FontSize="11" FontWeight="SemiBold"/>
                                 <TextBlock x:Name="SingleModelModelBlock" Text="No model selected" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" Margin="0,2,0,8"/>
-                                <Button x:Name="LoadSingleModelButton" Content="Load Single Model" Click="LoadSingleModel_Click" Height="28" Style="{StaticResource SubtleButtonStyle}"/>
+                                <Button x:Name="LoadSingleModelButton" Content="Choose a local model…" Click="LoadSingleModel_Click" ToolTip="Pick a .gguf file to run on this computer (the list at the top also switches between Cloud, Hybrid Local and Local)" Height="28" Style="{StaticResource SubtleButtonStyle}"/>
                             </StackPanel>
                         </Border>
 

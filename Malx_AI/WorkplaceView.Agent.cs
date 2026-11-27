@@ -428,7 +428,8 @@ namespace Malx_AI
                 {
                     builder.Append(item.Status switch
                     {
-                        AgentPlanStatus.Completed => $"- ✓ ~~{item.Step}~~\n",
+                        // No strikethrough: struck-out text next to a tick read as clutter.
+                        AgentPlanStatus.Completed => $"- ✓ {item.Step}\n",
                         AgentPlanStatus.InProgress => $"- ▸ **{item.Step}**\n",
                         _ => $"- ○ {item.Step}\n"
                     });

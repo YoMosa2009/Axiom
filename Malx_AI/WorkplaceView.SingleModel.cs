@@ -16,7 +16,7 @@ namespace Malx_AI
             => _isSingleModelMode && role == CouncilRole.Builder ? "Agent" : role.ToString();
 
         private void CouncilModeSegmentButton_Click(object sender, RoutedEventArgs e)
-            => SetSingleModelMode(false);
+            => SetSingleModelMode(true); // Builder + Critic was removed: single model only.
 
         private void SingleModelModeSegmentButton_Click(object sender, RoutedEventArgs e)
             => SetSingleModelMode(true);
@@ -43,43 +43,15 @@ namespace Malx_AI
 
         private void LoadSingleModel_Click(object sender, RoutedEventArgs e)
         {
-            if (_isCloudModeEnabled)
+            if (_isProcessing)
             {
-                AppendChat("system", $"Cloud mode already uses {WorkplaceCloudRoleDisplayName} as the single agent.");
+                AppendChat("system", "Wait for the current run to finish before switching models.");
                 return;
             }
-
-            var dialog = new OpenFileDialog { Filter = "GGUF files (*.gguf)|*.gguf" };
-            if (dialog.ShowDialog() != true)
-                return;
-
-            if (IsMmprojFile(dialog.FileName))
-            {
-                AppendChat("error", "Selected file is an mmproj projector, not a text model. Select the main non-mmproj .gguf model file.");
-                return;
-            }
-
-            string? previousPath = _singleModel.ModelPath;
-            _singleModel.ModelPath = dialog.FileName;
-            _singleModel.DisplayName = IsQwen3Model(dialog.FileName)
-                ? ModelInferenceProfiles.DefaultQwen3DisplayName
-                : Path.GetFileNameWithoutExtension(dialog.FileName);
-            _singleModel.Format = DetectPromptFormatFromModel(dialog.FileName);
-
-            if (!string.IsNullOrWhiteSpace(previousPath)
-                && !string.Equals(previousPath, dialog.FileName, StringComparison.OrdinalIgnoreCase)
-                && !_council.Values.Any(config => string.Equals(config.ModelPath, previousPath, StringComparison.OrdinalIgnoreCase))
-                && _modelCache.TryGetValue(previousPath, out var cached))
-            {
-                cached.Dispose();
-                _modelCache.Remove(previousPath);
-            }
-
-            RefreshSingleModelModeUi();
-            UpdateContextInfo();
-            AppendChat("system", $"Single agent model set: {_singleModel.DisplayName}");
-            LogActivity($"Single agent model configured: {_singleModel.DisplayName}");
-            SavePersistedSession();
+            if (ChooseLocalModelFile())
+                SelectLocalModel();
+            if (WorkplaceCloudModelCombo != null)
+                SyncWorkplaceCloudModelComboSelection(WorkplaceCloudModelCombo);
         }
 
         private void SingleModelContextSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
