@@ -538,7 +538,7 @@ namespace Malx_AI.Agent
         private string? _pendingReasoning;
 
         /// <summary>
-        /// DeepSeek thinking mode (the Axiom Cloud subscription model and Threnody) expects the
+        /// DeepSeek thinking mode (the Axiom Cloud subscription model and DeepSeek V4F 1017) expects the
         /// assistant's reasoning_content back on the following requests of the same tool loop.
         /// Other families either ignore it or use signed formats Axiom does not carry, so the
         /// field is only sent where it is documented to matter.
@@ -548,7 +548,8 @@ namespace Malx_AI.Agent
             && !string.IsNullOrWhiteSpace(modelId)
             && (modelId.Contains("deepseek", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(modelId, OpenRouterChatService.AxiomManagedModelId, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(modelId, OpenRouterChatService.Threnody10ModelId, StringComparison.OrdinalIgnoreCase));
+                || string.Equals(modelId, OpenRouterChatService.DeepSeekV4F1017ModelId, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(modelId, OpenRouterChatService.LegacyThrenody10ModelId, StringComparison.OrdinalIgnoreCase));
 
         /// <summary>Very long reasoning is cut from the front: the conclusion that led to the call is at the end.</summary>
         internal static string? ClipReasoning(string? reasoning)

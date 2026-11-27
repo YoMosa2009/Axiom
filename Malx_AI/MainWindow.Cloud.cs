@@ -255,9 +255,9 @@ namespace Malx_AI
             SelectCloudModel(OpenRouterChatService.Hepha25CoderModelId);
         }
 
-        private void Threnody10ModelButton_Click(object sender, RoutedEventArgs e)
+        private void DeepSeekV4F1017ModelButton_Click(object sender, RoutedEventArgs e)
         {
-            SelectCloudModel(OpenRouterChatService.Threnody10ModelId);
+            SelectCloudModel(OpenRouterChatService.DeepSeekV4F1017ModelId);
         }
 
         private void CustomEndpointModelButton_Click(object sender, RoutedEventArgs e)
@@ -575,7 +575,7 @@ namespace Malx_AI
             _axiomManagedModelButton ??= FindName("AxiomManagedModelButton") as Button;
             _edios15ModelButton ??= FindName("Edios15ModelButton") as Button;
             _hepha25CoderModelButton ??= FindName("Hepha25CoderModelButton") as Button;
-            _threnody10ModelButton ??= FindName("Threnody10ModelButton") as Button;
+            _deepSeekV4F1017ModelButton ??= FindName("DeepSeekV4F1017ModelButton") as Button;
             _customEndpointModelButton ??= FindName("CustomEndpointModelButton") as Button;
 
             bool hasValidKey = _openRouterChatService.HasValidKey;
@@ -609,8 +609,8 @@ namespace Malx_AI
                 _edios15ModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
             if (_hepha25CoderModelButton != null)
                 _hepha25CoderModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
-            if (_threnody10ModelButton != null)
-                _threnody10ModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
+            if (_deepSeekV4F1017ModelButton != null)
+                _deepSeekV4F1017ModelButton.Visibility = isCloudActive && hasValidKey ? Visibility.Visible : Visibility.Collapsed;
             if (_customEndpointModelButton != null)
             {
                 _customEndpointModelButton.Visibility = isHybridLocalActive ? Visibility.Visible : Visibility.Collapsed;
@@ -655,7 +655,7 @@ namespace Malx_AI
                 disabledHint: "Enable your Axiom subscription in Settings > Cloud AI");
             RefreshCloudModelSelectionUi(_edios15ModelButton, OpenRouterChatService.Edios15ModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_hepha25CoderModelButton, OpenRouterChatService.Hepha25CoderModelId, hasValidKey);
-            RefreshCloudModelSelectionUi(_threnody10ModelButton, OpenRouterChatService.Threnody10ModelId, hasValidKey);
+            RefreshCloudModelSelectionUi(_deepSeekV4F1017ModelButton, OpenRouterChatService.DeepSeekV4F1017ModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_customEndpointModelButton, OpenRouterChatService.CustomEndpointModelId, hasValidCustomEndpoint,
                 disabledHint: "Configure a custom endpoint in Settings to enable Hybrid Local");
             RefreshInferenceSettingsUi();
@@ -809,9 +809,9 @@ namespace Malx_AI
                 return "[MODEL PROFILE: DEEPSEEK 4.1F-1017] You are operating in Axiom's managed DeepSeek 4.1F-1017 cloud profile (DeepSeek V4.1 Flash 1017). Leverage the 1M-token context window, fast reasoning, tool calling, and vision understanding to produce accurate, structured, implementation-first answers grounded in supplied documents, tool results, and workspace context.";
             }
 
-            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Threnody10ModelId, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.DeepSeekV4F1017ModelId, StringComparison.OrdinalIgnoreCase))
             {
-                return "[MODEL PROFILE: THRENODY 1.0] You are operating in Axiom's Threnody 1.0 cloud profile on DeepSeek V4.1 Flash. Leverage the 1M-token context window, fast reasoning, and multimodal image understanding to produce accurate, structured, implementation-first answers grounded in supplied documents, tool results, and workspace context. Keep responses direct, verify code and tool arguments carefully, and avoid redundant filler.";
+                return "[MODEL PROFILE: DEEPSEEK V4F 1017] You are DeepSeek V4F 1017 (DeepSeek V4.1 Flash 1017), a model made by DeepSeek, running inside Axiom. If asked what model you are, say you are DeepSeek V4F 1017 (DeepSeek V4.1 Flash 1017); do not claim to be any other vendor's model. Leverage the 1M-token context window, fast reasoning, and multimodal image understanding to produce accurate, structured, implementation-first answers grounded in supplied documents, tool results, and workspace context. Keep responses direct, verify code and tool arguments carefully, and avoid redundant filler.";
             }
 
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Edios15ModelId, StringComparison.OrdinalIgnoreCase))

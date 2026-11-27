@@ -2737,7 +2737,7 @@ namespace Malx_AI
         // self-hosted custom endpoint ("Kestral 1"). Independent of _isCloudModeEnabled itself,
         // which just means "not running the in-process local GGUF path."
         private bool _isHybridLocalCouncilSelected;
-        private string _selectedWorkplaceCloudModelId = OpenRouterChatService.Threnody10ModelId;
+        private string _selectedWorkplaceCloudModelId = OpenRouterChatService.DeepSeekV4F1017ModelId;
         private bool _suppressWorkplaceCloudModelComboChange;
         private bool _isSingleModelMode;
         private uint _singleModelContextSize = 8192;
