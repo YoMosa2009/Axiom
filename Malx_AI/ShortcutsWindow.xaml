@@ -1,0 +1,22 @@
+<Window x:Class="Malx_AI.ShortcutsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Keyboard shortcuts" FontFamily="{DynamicResource AppUiFont}" Width="440" SizeToContent="Height"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        WindowStyle="None" AllowsTransparency="True" ShowInTaskbar="False"
+        Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}"
+        PreviewKeyDown="Window_PreviewKeyDown" Deactivated="Window_Deactivated">
+    <Border Background="{DynamicResource NotebookBackgroundBrush}"
+            BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="12">
+        <StackPanel>
+            <Grid Background="Transparent" Height="34" MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                <TextBlock Text="Keyboard shortcuts" FontSize="11.5" FontWeight="Medium" Foreground="{DynamicResource DarkSecondaryBrush}"
+                           VerticalAlignment="Center" Margin="16,0,40,0"/>
+                <Button Content="×" Click="Close_Click" IsCancel="True" HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Width="30" Height="28" Margin="0,0,6,0" FontSize="14" Style="{StaticResource SubtleButtonStyle}"
+                        Background="Transparent" BorderBrush="Transparent" Foreground="{DynamicResource DarkSecondaryBrush}" ToolTip="Close"/>
+            </Grid>
+            <StackPanel x:Name="ShortcutRows" Margin="22,4,22,20"/>
+        </StackPanel>
+    </Border>
+</Window>

@@ -635,6 +635,12 @@ namespace Malx_AI
                 return;
             }
 
+            if (TryHandleGlobalShortcut(e))
+            {
+                e.Handled = true;
+                return;
+            }
+
             base.OnPreviewKeyDown(e);
         }
 
