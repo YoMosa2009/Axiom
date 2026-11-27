@@ -113,7 +113,8 @@ namespace Malx_AI.Agent
             string? trackerFilePath = null,
             string? browserSummary = null,
             bool visionCapable = false,
-            bool includeProjectInstructions = true)
+            bool includeProjectInstructions = true,
+            string? modelName = null)
         {
             var builder = new StringBuilder();
             builder.AppendLine("[AXIOM COMPUTER AGENT]");
@@ -136,7 +137,7 @@ namespace Malx_AI.Agent
             builder.AppendLine("How to work (like a terminal coding agent):");
             builder.AppendLine("1. Take a quick look first when it matters (list the working folder, read relevant files or your .md task tracker).");
             builder.AppendLine("2. Build the complete result the user asked for - real, working files, not a plan or a stub.");
-            builder.AppendLine("3. For long builds/servers/installs, use start_background_task with an appropriate wake_seconds duration: set wait='false' to keep doing other work while notified later, or wait='true' to pause until completion or wake_seconds expires.");
+            builder.AppendLine("3. For long builds/servers/installs, use start_background_task with an appropriate wake_seconds duration: set wait='false' to keep doing other work while notified later, or wait='true' to pause until completion or wake_seconds expires. Never wait with Start-Sleep in run_command (it is cut off after 60 seconds, and the user cannot reach you while a command runs); wait with check_background_task and wake_seconds instead, which ends early when the user writes. Before a long wait, tell the user in a sentence what you are waiting for and roughly how long it will take.");
             builder.AppendLine("4. Verify it ONCE, with the cheapest check that proves it works: a command's exit code, an HTTP status, a test run, or a single screenshot. Checking is the short part of the job.");
             builder.AppendLine("5. STOP as soon as the check passes. Do not re-verify what already passed, re-read files you just wrote, or keep looking for more to check. If a check fails, fix the cause, check again once, then stop.");
             if (!flat)
@@ -154,7 +155,8 @@ namespace Malx_AI.Agent
             builder.AppendLine("Rules:");
             builder.AppendLine("- New work goes in a new folder: when asked to make or create something new (an app, site, game or project), create a new folder named for it (for example F:\\FishermanAnimation) in the place the user named, or in the working folder. First check the name is not already taken, and pick another name if it is. A single file the user names (for example \"create hello.py\") goes where they said, or straight into the working folder unless a file of that name is already there. Never write into, or overwrite files of, an existing project unless the user asked you to change that project.");
             builder.AppendLine("- The shell is Windows PowerShell 5.1, not bash: use Get-ChildItem -Force, Test-Path, New-Item, Copy-Item, Remove-Item, Select-String; separate commands with ';' (there is no '&&'); use 2>$null (not 2>/dev/null) and Windows paths like F:\\folder (never /mnt/f).");
-            builder.AppendLine("- The user may send a new message while you work. It arrives between steps; follow it from then on, adjusting or redoing earlier work if it changes what they want.");
+            builder.AppendLine("- The user may send a new message while you work. It arrives between steps. Your very next message must answer it in plain sentences written for them (what is done, what is running, real numbers, what comes next); Axiom shows that text to the user in full, alongside your next tool call. Then follow the message from then on, adjusting or redoing earlier work if it changes what they want.");
+            builder.AppendLine("- Keep the user informed on long tasks: when you finish a milestone or learn something important, say so in one or two sentences alongside your next tool call, instead of working silently until the end.");
             if (!flat)
                 builder.AppendLine("- Long files: one reply has an output limit, and a tool call cut off by it writes nothing. Keep each write_file under about 150 lines; put the rest in follow-up append_file calls.");
             builder.AppendLine("- Look before you change: read a file before editing it, and check a directory before assuming what is in it.");
@@ -172,6 +174,8 @@ namespace Malx_AI.Agent
             builder.AppendLine();
             // Dynamic session details come last so the invariant agent instructions above keep an identical prompt-cache prefix across projects.
             builder.AppendLine("[SESSION CONTEXT]");
+            if (!string.IsNullOrWhiteSpace(modelName))
+                builder.AppendLine($"Model: you are {modelName.Trim()}, running in Axiom's agent harness. If the user asks which model you are, say {modelName.Trim()}; never claim to be a different model or made by a different company.");
             builder.AppendLine($"Scope: {scope.Describe()}.");
             if (!scope.EntireComputer && !string.IsNullOrWhiteSpace(scope.RootPath))
             {

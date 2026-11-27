@@ -24,7 +24,8 @@ internal sealed record UpstreamInferenceOptions(
     long CachedInputMicrosPerMillion,
     long OutputMicrosPerMillion,
     string CatalogOwnedBy,
-    string? OpenRouterProviderTag = LocalGateway.Provider)
+    string? OpenRouterProviderTag = LocalGateway.Provider,
+    OpenRouterProviderRouting? Routing = null)
 {
     public static UpstreamInferenceOptions OpenRouter(
         string key,
@@ -159,7 +160,7 @@ internal sealed class OpenRouterInference
 
         UpstreamInferenceOptions defaults = kind switch
         {
-            UpstreamProviderKind.OpenRouter => UpstreamInferenceOptions.OpenRouter(key),
+            UpstreamProviderKind.OpenRouter => UpstreamInferenceOptions.OpenRouter(key) with { Routing = OpenRouterProviderRouting.FromEnvironment() },
             UpstreamProviderKind.DigitalOcean => UpstreamInferenceOptions.DigitalOcean(key),
             UpstreamProviderKind.DeepSeek => UpstreamInferenceOptions.DeepSeek(key),
             _ => UpstreamInferenceOptions.CustomOpenAiCompatible(
@@ -396,19 +397,13 @@ internal sealed class OpenRouterInference
         if (options.ProviderKind == UpstreamProviderKind.OpenRouter)
         {
             payload["reasoning"] = BuildReasoningPayload(request);
-            payload["provider"] = JsonSerializer.SerializeToNode(new
-            {
-                only = new[] { options.OpenRouterProviderTag ?? LocalGateway.Provider },
-                allow_fallbacks = false,
-                require_parameters = true,
-                max_price = new
-                {
-                    prompt = options.InputMicrosPerMillion / 1_000_000m,
-                    completion = options.OutputMicrosPerMillion / 1_000_000m,
-                    request = 0m,
-                    image = 0m
-                }
-            });
+            // Cheapest healthy provider that supports every parameter sent; price ceilings equal the
+            // allowance rates so no fallback can be billed above what the ledger assumes.
+            payload["provider"] = (options.Routing ?? OpenRouterProviderRouting.Default).ToJson(
+                options.InputMicrosPerMillion / 1_000_000m,
+                options.OutputMicrosPerMillion / 1_000_000m);
+            // OpenRouter always reports the billed cost (usage.cost, final stream chunk) which settles the
+            // ledger; stream_options/usage are deliberately not sent so require_parameters can't filter on them.
         }
         else if (stream)
         {

@@ -1,6 +1,46 @@
 # Changelog
 
-## [Unreleased]
+## [V1.16.0] - 2026-11-26
+
+Workplace now has one model list, every chat remembers its model and conversation, and long agent
+runs answer you when you check in. Doubled words and cut-off replies are fixed.
+
+### Added
+
+- **Keyboard shortcuts.** Ctrl+N new chat, Ctrl+K search chats, Ctrl+L message box, Ctrl+B
+  sidebar, and Ctrl+/ shows the full list.
+
+### Changed
+
+- **Cleaner messages.** Replies have calmer spacing, headings, code blocks and tables.
+
+- **One model list in Workplace.** Cloud models, your Hybrid Local server and a local model are now
+  in one list at the top of Workplace; picking one switches to it. The Cloud On/Off button, the
+  "Use Hybrid Local" button and the Builder + Critic mode are gone: Workplace always runs a single
+  model.
+- **Chats remember their model and conversation.** Reopening a Workplace chat (or restarting Axiom)
+  brings back the model it used, and the model sees the earlier conversation again instead of
+  starting from nothing.
+- **DeepSeek V4F 1017.** The "Threnody 1.0" model is now shown and used under its real name,
+  DeepSeek V4F 1017 (DeepSeek V4.1 Flash 1017). Older chats switch over by themselves.
+- **Context panel shows real numbers.** It uses the size the provider reports for the last step,
+  updates while the model works, and keeps its numbers after a restart. It says whether a figure is
+  measured or estimated.
+
+### Fixed
+
+- **Doubled words in the agent's output** ("statsstats", "andand"). Some providers send the
+  model's reasoning twice in alternating pieces; it is now read once.
+- **Answers that were cut off or vanished.** When you ask "any updates?" mid-task, the agent's reply
+  now appears in full in the chat instead of as one shortened line that the next step replaced.
+- **Long silent waits.** The agent no longer waits in 10-minute sleeps where it cannot hear you;
+  waits stop as soon as you send a message, and it is asked to tell you what it is waiting for.
+- **Wrong model name.** The agent is told which model it is, so it stops claiming to be another
+  company's model.
+- **Clearer errors.** A rate limit, used-up quota, too-long context or sign-in problem stops the run
+  with a plain explanation and what to do next.
+- **Subscription routing.** Axiom subscription requests now go to the cheapest healthy provider for
+  the model (with a price cap and automatic fallback) instead of one fixed provider.
 
 ## [V1.15.0] - 2026-11-26
 

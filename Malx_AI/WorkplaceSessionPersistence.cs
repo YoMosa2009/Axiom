@@ -48,6 +48,13 @@ namespace Malx_AI
         public int CanvasDiffAdditionCount { get; set; }
         public int CanvasDiffRemovalCount { get; set; }
         public ConnectedWorkspaceState ConnectedWorkspace { get; set; } = new();
+        /// <summary>Provider-reported prompt size of the last model turn (0/null = never measured).</summary>
+        public int? LastMeasuredPromptTokens { get; set; }
+        public int LastMeasuredCompletionTokens { get; set; }
+        public DateTime? LastMeasuredAt { get; set; }
+        public string? LastMeasuredModelId { get; set; }
+        /// <summary>Estimated conversation size when the measurement was taken; what has been added since is measured against it.</summary>
+        public int LastMeasuredHistoryTokens { get; set; }
         public DateTime SavedAt { get; set; } = DateTime.Now;
     }
 

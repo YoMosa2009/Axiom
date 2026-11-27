@@ -1,0 +1,17 @@
+<UserControl x:Class="Malx_AI.RunFailureCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="{DynamicResource SurfaceRaisedBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}"
+            BorderThickness="1" CornerRadius="10" Padding="14,12">
+        <StackPanel>
+            <StackPanel Orientation="Horizontal">
+                <Ellipse x:Name="StatusDot" Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center"
+                         Fill="{DynamicResource WarningBrush}"/>
+                <TextBlock x:Name="TitleText" FontSize="13" FontWeight="SemiBold"/>
+            </StackPanel>
+            <TextBlock x:Name="HintText" Margin="16,4,0,0" TextWrapping="Wrap" FontSize="12"
+                       Foreground="{DynamicResource MutedTextBrush}"/>
+            <WrapPanel x:Name="ActionPanel" Margin="16,10,0,0"/>
+        </StackPanel>
+    </Border>
+</UserControl>

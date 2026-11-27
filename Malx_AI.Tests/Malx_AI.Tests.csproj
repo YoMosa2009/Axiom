@@ -33,6 +33,7 @@
     <Compile Include="..\Malx_AI\SmartContextCompaction.cs" Link="Production\SmartContextCompaction.cs" />
     <Compile Include="..\Malx_AI\WorkplaceCompactionEngine.cs" Link="Production\WorkplaceCompactionEngine.cs" />
     <Compile Include="..\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />
+    <Compile Include="..\Malx_AI\WorkplaceContextUsage.cs" Link="Production\WorkplaceContextUsage.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpModels.cs" Link="Production\Mcp\McpModels.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
     <Compile Include="..\Malx_AI\LocalVisionSupport.cs" Link="Production\LocalVisionSupport.cs" />
@@ -69,6 +70,7 @@
     <Compile Include="..\Malx_AI\UpdateApplyService.cs" Link="Production\UpdateApplyService.cs" />
     <Compile Include="..\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
     <Compile Include="..\Malx_AI\OpenRouterContentParts.cs" Link="Production\OpenRouterContentParts.cs" />
+    <Compile Include="..\Malx_AI\StreamReasoningAccumulator.cs" Link="Production\StreamReasoningAccumulator.cs" />
     <Compile Include="..\Malx_AI\AxiomAccountClient.cs" Link="Production\AxiomAccountClient.cs" />
     <Compile Include="..\Malx_AI\AxiomAccountBuiltIns.cs" Link="Production\AxiomAccountBuiltIns.cs" />
     <Compile Include="..\Malx_AI\CustomEndpointMetadataParser.cs" Link="Production\CustomEndpointMetadataParser.cs" />
@@ -137,9 +139,13 @@
     <Compile Include="..\Malx_AI\OpenRouterKeyUsage.cs" Link="Production\OpenRouterKeyUsage.cs" />
     <Compile Include="..\Malx_AI\WorkplaceExecutionSummary.cs" Link="Production\WorkplaceExecutionSummary.cs" />
     <Compile Include="..\Malx_AI\WorkplaceRunSteps.cs" Link="Production\WorkplaceRunSteps.cs" />
+    <Compile Include="..\Malx_AI\WorkplaceHistoryRestore.cs" Link="Production\WorkplaceHistoryRestore.cs" />
+    <Compile Include="..\Malx_AI\AgentCardMarkup.cs" Link="Production\AgentCardMarkup.cs" />
     <Compile Include="..\Malx_AI\OpenRouterChatService.cs" Link="Production\OpenRouterChatService.cs" />
     <Compile Include="..\Malx_AI\CloudUpgradeSuggestionPolicy.cs" Link="Production\CloudUpgradeSuggestionPolicy.cs" />
     <Compile Include="..\Malx_AI\AgentCardLabels.cs" Link="Production\AgentCardLabels.cs" />
+    <Compile Include="..\Malx_AI\KeyboardShortcutCatalog.cs" Link="Production\KeyboardShortcutCatalog.cs" />
+    <Compile Include="..\Malx_AI\RunFailureAdvisor.cs" Link="Production\RunFailureAdvisor.cs" />
     <Compile Include="..\Malx_AI\AppFontPolicy.cs" Link="Production\AppFontPolicy.cs" />
   </ItemGroup>
 </Project>

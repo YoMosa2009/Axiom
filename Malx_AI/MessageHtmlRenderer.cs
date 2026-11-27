@@ -155,48 +155,78 @@ a:hover {
 }
 h1, h2, h3, h4, h5, h6 {
     color: #EDE8E3;
-    margin: 0 0 6px 0;
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 16px 0 6px 0;
 }
+h1:first-child, h2:first-child, h3:first-child, h4:first-child { margin-top: 0; }
 h1 { font-size: 1.35em; }
 h2 { font-size: 1.2em; }
 h3 { font-size: 1.08em; }
-p, ul, ol { margin: 0 0 7px 0; }
-ul, ol { padding-left: 18px; }
+h4, h5, h6 { font-size: 1em; color: #8A8279; }
+p { margin: 0 0 10px 0; }
+ul, ol { margin: 0 0 10px 0; padding-left: 22px; }
+li { margin: 3px 0; padding-left: 2px; }
+li > p { margin: 0 0 4px 0; }
+li > ul, li > ol { margin: 4px 0 4px 0; }
+li::marker { color: #8A8279; }
+strong { font-weight: 600; }
+hr {
+    border: none;
+    border-top: 1px solid #302D2A;
+    margin: 14px 0;
+}
+::selection { background: color-mix(in srgb, #B8924A 35%, transparent); }
 pre {
-    background: #211F1D;
+    background: color-mix(in srgb, #171615 55%, #211F1D);
     border: 1px solid #302D2A;
-    border-radius: 7px;
-    padding: 8px 10px;
-    font-size: 13px;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 4px 0 12px 0;
+    font-family: 'Cascadia Code', 'Cascadia Mono', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
     overflow-x: auto;
 }
 code {
     background: #211F1D;
     border: 1px solid #302D2A;
-    border-radius: 4px;
-    padding: 1px 4px;
-    font-size: 13px;
+    border-radius: 5px;
+    padding: 1px 5px;
+    font-family: 'Cascadia Code', 'Cascadia Mono', Consolas, monospace;
+    font-size: 0.88em;
+    overflow-wrap: anywhere;
 }
-pre code { border: none; background: transparent; padding: 0; }
+pre code { border: none; background: transparent; padding: 0; font-size: inherit; }
 blockquote {
-    border-left: 3px solid #302D2A;
-    margin: 0;
-    padding-left: 10px;
+    border-left: 3px solid #B8924A;
+    margin: 4px 0 10px 0;
+    padding: 2px 0 2px 12px;
     color: #8A8279;
 }
+blockquote p:last-child { margin-bottom: 0; }
 table {
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     width: 100%;
-    margin: 0 0 8px 0;
+    margin: 4px 0 12px 0;
     font-size: 13.5px;
+    border: 1px solid #302D2A;
+    border-radius: 8px;
+    overflow: hidden;
 }
 th, td {
-    border: 1px solid #302D2A;
-    padding: 5px 7px;
+    border: none;
+    border-bottom: 1px solid #302D2A;
+    padding: 6px 10px;
     text-align: left;
+    vertical-align: top;
 }
+tr:last-child td { border-bottom: none; }
 th {
     background: #211F1D;
+    font-weight: 600;
+    color: #8A8279;
 }
 .python-result-block {
     margin: 8px 0 0 0;

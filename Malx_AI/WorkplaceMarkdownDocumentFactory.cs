@@ -70,6 +70,8 @@ namespace Malx_AI
             {
                 HeadingBlock heading => RenderHeading(heading),
                 ParagraphBlock paragraph => RenderParagraph(paragraph),
+                FencedCodeBlock { Info: AgentCardMarkup.ActivityFence } activity => RenderActivity(activity),
+                FencedCodeBlock { Info: AgentCardMarkup.PlanFence } plan => RenderPlanBox(plan),
                 FencedCodeBlock code => RenderCodeBlock(code),
                 CodeBlock code => RenderCodeBlock(code),
                 ListBlock list => RenderList(list),
@@ -84,6 +86,97 @@ namespace Malx_AI
                 LeafBlock leaf => new Paragraph(new Run(leaf.Lines.ToString())) { Margin = new Thickness(0, 0, 0, 4) },
                 _ => new Paragraph(new Run(block.ToString() ?? string.Empty)) { Margin = new Thickness(0, 0, 0, 4) }
             };
+        }
+
+        private static readonly Brush MutedBrush = FrozenBrush(0x8A, 0x82, 0x79);
+        private static readonly Brush FailBrush = FrozenBrush(0xC9, 0x6A, 0x5B);
+        private static readonly Brush OkBrush = FrozenBrush(0x5F, 0xAF, 0x7D);
+        private static readonly Brush PlanBorderBrush = FrozenBrush(0x30, 0x2D, 0x2A);
+
+        /// <summary>
+        /// Tool activity as quiet one-liners (the Codex look): small, muted, no bullets, with the
+        /// tick/cross coloured and "+N -M" counts tinted. Written by the run card as an
+        /// "axiom-activity" block (AgentCardMarkup).
+        /// </summary>
+        private static Section RenderActivity(FencedCodeBlock block)
+        {
+            var section = new Section { Margin = new Thickness(0, 2, 0, 6) };
+            foreach (string raw in block.Lines.ToString().Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = raw.TrimEnd();
+                if (line.Length == 0)
+                    continue;
+                var paragraph = new Paragraph
+                {
+                    Margin = new Thickness(0, 0, 0, 1),
+                    FontSize = 11.5,
+                    LineHeight = 17,
+                    Foreground = MutedBrush
+                };
+                char glyph = line[0];
+                if (glyph is '✓' or '✗' or '⊘' or '⋯')
+                {
+                    paragraph.Inlines.Add(new Run(glyph + " ")
+                    {
+                        Foreground = glyph switch { '✓' => OkBrush, '✗' => FailBrush, _ => MutedBrush }
+                    });
+                    line = line[1..].TrimStart();
+                }
+                var counts = System.Text.RegularExpressions.Regex.Match(line, @"\s(\+\d+)\s(-\d+)(?=\s|$)");
+                if (counts.Success)
+                {
+                    paragraph.Inlines.Add(new Run(line[..counts.Index] + " "));
+                    paragraph.Inlines.Add(new Run(counts.Groups[1].Value + " ") { Foreground = OkBrush });
+                    paragraph.Inlines.Add(new Run(counts.Groups[2].Value) { Foreground = FailBrush });
+                    paragraph.Inlines.Add(new Run(line[(counts.Index + counts.Length)..]));
+                }
+                else
+                {
+                    paragraph.Inlines.Add(new Run(line));
+                }
+                section.Blocks.Add(paragraph);
+            }
+            return section;
+        }
+
+        /// <summary>The agent's plan as its own compact checklist box ("axiom-plan" block).</summary>
+        private static Section RenderPlanBox(FencedCodeBlock block)
+        {
+            string[] lines = block.Lines.ToString().Replace("\r\n", "\n").Split('\n')
+                .Select(l => l.TrimEnd()).Where(l => l.Length > 0).ToArray();
+            var section = new Section
+            {
+                Margin = new Thickness(0, 2, 0, 8),
+                Padding = new Thickness(10, 6, 10, 6),
+                BorderBrush = PlanBorderBrush,
+                BorderThickness = new Thickness(1),
+                Background = QuoteBackgroundBrush
+            };
+            foreach (string line in lines)
+            {
+                var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 1), FontSize = 12, LineHeight = 18 };
+                if (line.StartsWith("Plan", StringComparison.Ordinal))
+                {
+                    paragraph.Inlines.Add(new Run(line) { FontWeight = FontWeights.SemiBold, Foreground = SubHeadingBrush, FontSize = 11.5 });
+                }
+                else if (line.StartsWith("✓", StringComparison.Ordinal))
+                {
+                    paragraph.Inlines.Add(new Run("✓ ") { Foreground = OkBrush });
+                    paragraph.Inlines.Add(new Run(line[1..].TrimStart()) { Foreground = MutedBrush });
+                }
+                else if (line.StartsWith("▸", StringComparison.Ordinal))
+                {
+                    paragraph.Inlines.Add(new Run("▸ ") { Foreground = SubHeadingBrush });
+                    paragraph.Inlines.Add(new Run(line[1..].TrimStart()) { FontWeight = FontWeights.SemiBold, Foreground = TextBrush });
+                }
+                else
+                {
+                    paragraph.Inlines.Add(new Run(line.StartsWith("○", StringComparison.Ordinal) ? "○ " : string.Empty) { Foreground = MutedBrush });
+                    paragraph.Inlines.Add(new Run(line.StartsWith("○", StringComparison.Ordinal) ? line[1..].TrimStart() : line) { Foreground = SecondaryBrush });
+                }
+                section.Blocks.Add(paragraph);
+            }
+            return section;
         }
 
         private static Paragraph RenderHeading(HeadingBlock heading)

@@ -2173,7 +2173,7 @@
                                                          <Button x:Name="AxiomManagedModelButton" Content="DeepSeek 4.1F-1017" Click="AxiomManagedModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Axiom subscription · DeepSeek V4.1 Flash 1017" Margin="0,0,2,0" Visibility="Collapsed"/>
                                                          <Button x:Name="Edios15ModelButton" Content="Edios 1.5" Click="Edios15ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use Google Gemma 4 31B (free)" Margin="0,0,2,0"/>
                                                          <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)" Margin="0,0,2,0"/>
-                                                         <Button x:Name="Threnody10ModelButton" Content="Threnody 1.0" Click="Threnody10ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use DeepSeek: DeepSeek V4.1 Flash"/>
+                                                         <Button x:Name="DeepSeekV4F1017ModelButton" Content="DeepSeek V4F 1017" Click="DeepSeekV4F1017ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use DeepSeek: DeepSeek V4.1 Flash 1017"/>
                                                          <Button x:Name="CustomEndpointModelButton" Content="Hybrid Local" Click="CustomEndpointModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
                                                      </StackPanel>
                                                  </Border>
@@ -3263,7 +3263,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.15.0" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="{DynamicResource AppUiFont}" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="AppVersionLabel" Text="Version 1.16.0" FontSize="10" Foreground="{DynamicResource DarkSecondaryBrush}" FontFamily="{DynamicResource AppUiFont}" VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <Button Grid.Column="1" Content="Close Settings" Click="Settings_Click" Height="32" Style="{StaticResource SubtleButtonStyle}" Foreground="{DynamicResource DarkSecondaryBrush}" FontSize="11" HorizontalAlignment="Right" Width="120"/>
                                 </Grid>
                             </Border>

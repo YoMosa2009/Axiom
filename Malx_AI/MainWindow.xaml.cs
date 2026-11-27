@@ -254,7 +254,7 @@ namespace Malx_AI
         private Button? _axiomManagedModelButton;
         private Button? _edios15ModelButton;
         private Button? _hepha25CoderModelButton;
-        private Button? _threnody10ModelButton;
+        private Button? _deepSeekV4F1017ModelButton;
         private Button? _hybridLocalModeButton;
         private Button? _customEndpointModelButton;
         private bool _isFetchingOpenRouterUsage;
@@ -631,6 +631,12 @@ namespace Malx_AI
             if (e.Key == Key.B && Keyboard.Modifiers == ModifierKeys.Control && _isWorkplaceTabActive)
             {
                 ToggleWorkplaceSidebar();
+                e.Handled = true;
+                return;
+            }
+
+            if (TryHandleGlobalShortcut(e))
+            {
                 e.Handled = true;
                 return;
             }
@@ -1754,20 +1760,20 @@ namespace Malx_AI
         {
             if (string.Equals(previousModelLabel, OpenRouterChatService.Edios15ModelLabel, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(previousModelLabel, "Eidos 1", StringComparison.OrdinalIgnoreCase))
-                return OpenRouterChatService.Threnody10ModelId;
+                return OpenRouterChatService.DeepSeekV4F1017ModelId;
 
             if (string.Equals(previousModelLabel, OpenRouterChatService.Hepha25CoderModelLabel, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(previousModelLabel, "Hepha 1", StringComparison.OrdinalIgnoreCase))
-                return OpenRouterChatService.Threnody10ModelId;
+                return OpenRouterChatService.DeepSeekV4F1017ModelId;
 
-            if (string.Equals(previousModelLabel, OpenRouterChatService.Threnody10ModelLabel, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(previousModelLabel, OpenRouterChatService.DeepSeekV4F1017ModelLabel, StringComparison.OrdinalIgnoreCase))
                 return OpenRouterChatService.Hepha25CoderModelId;
 
             if (string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Edios15ModelId, StringComparison.OrdinalIgnoreCase))
                 return OpenRouterChatService.Hepha25CoderModelId;
 
             return string.Equals(_selectedOpenRouterModelId, OpenRouterChatService.Hepha25CoderModelId, StringComparison.OrdinalIgnoreCase)
-                ? OpenRouterChatService.Threnody10ModelId
+                ? OpenRouterChatService.DeepSeekV4F1017ModelId
                 : OpenRouterChatService.Edios15ModelId;
         }
 

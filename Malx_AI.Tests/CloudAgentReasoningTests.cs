@@ -11,6 +11,7 @@ namespace Malx_AI.Tests
     {
         [Theory]
         [InlineData("axiom-deepseek-4.1f-1017", true, true)]
+        [InlineData("deepseek-v4f-1017", true, true)]
         [InlineData("threnody-1.0", true, true)]
         [InlineData("deepseek/deepseek-v4.1-flash", true, true)]
         [InlineData("axiom-deepseek-4.1f-1017", false, false)]

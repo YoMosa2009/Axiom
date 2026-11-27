@@ -236,6 +236,7 @@ namespace Malx_AI
 
         private void RefreshWorkplaceCloudModeUi()
         {
+            ScheduleContextPanelRefresh();
             if (FindName("WorkplaceCloudModeButton") is not Button cloudModeButton)
                 return;
 
@@ -258,9 +259,13 @@ namespace Malx_AI
 
             if (FindName("WorkplaceCloudModelCombo") is ComboBox cloudModelCombo)
             {
-                cloudModelCombo.Visibility = (_isCloudModeEnabled && !_isHybridLocalCouncilSelected)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
+                // One picker for Cloud, Hybrid Local and Local (WorkplaceView.ModelPicker.cs).
+                cloudModelCombo.Visibility = Visibility.Visible;
+                cloudModelCombo.ToolTip = _connectedWorkspace.CodebaseEditAccessEnabled
+                    ? "The model is locked while Codebase Edit Access is on in this chat"
+                    : "Model for this chat: Cloud, Hybrid Local or a local model";
+                // The old Cloud On/Off toggle is folded into the picker.
+                cloudModeButton.Visibility = Visibility.Collapsed;
                 cloudModelCombo.IsEnabled = !_connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
                 SyncWorkplaceCloudModelComboSelection(cloudModelCombo);
             }
@@ -316,8 +321,8 @@ namespace Malx_AI
 
             if (FindName("WorkplaceHybridToggleButton") is Button hybridToggleButton)
             {
-                hybridToggleButton.Visibility = _openRouterChatService.HasValidCustomEndpoint || _isHybridLocalCouncilSelected
-                    ? Visibility.Visible : Visibility.Collapsed;
+                // Hybrid Local is an entry in the model picker now.
+                hybridToggleButton.Visibility = Visibility.Collapsed;
                 hybridToggleButton.IsEnabled = !_connectedWorkspace.CodebaseEditAccessEnabled && !_isProcessing;
                 hybridToggleButton.Content = _isHybridLocalCouncilSelected
                     ? "Turn off Hybrid Local"
@@ -688,6 +693,10 @@ namespace Malx_AI
                     // the cloud council always stays on its selected model.
                     allowModelFallback: false,
                     disableToolCalls: disableToolsForThisPass);
+
+                // The provider-reported prompt size of the main (Builder) turn is the true context.
+                if (role == CouncilRole.Builder && response.Usage != null)
+                    RecordMeasuredContextUsage(response.Usage.PromptTokens, response.Usage.CompletionTokens);
 
                 if (!string.IsNullOrWhiteSpace(response.Reasoning))
                     reasoningParts.Add(response.Reasoning.Trim());
@@ -2124,6 +2133,8 @@ namespace Malx_AI
             StopPipelineProgress();
             _lastRolePromptTokenEstimates.Clear();
             _lastRoleGeneratedTokenCounts.Clear();
+            if (clearSessionCollections)
+                ClearMeasuredContextUsage();
             _pipelineTokenCount = 0;
             _submittedRunPrompt = string.Empty;
             _lastCancelledRunPrompt = string.Empty;
@@ -2318,7 +2329,17 @@ namespace Malx_AI
             ComputerUseContextButton.Visibility = string.IsNullOrWhiteSpace(_computerUseGoal) ? Visibility.Collapsed : Visibility.Visible;
             _isCloudModeEnabled = snapshot.CloudModeEnabled;
             _isHybridLocalCouncilSelected = snapshot.HybridLocalCouncilSelected;
-            _isSingleModelMode = snapshot.SingleModelMode;
+            // Workplace is single-model only (owner, 2026-11-26): Builder + Critic was removed.
+            _isSingleModelMode = true;
+            // Each chat keeps the model it was used with.
+            string? savedCloudModelId = snapshot.SingleModel?.CloudModelId;
+            if (_isCloudModeEnabled && !_isHybridLocalCouncilSelected && !string.IsNullOrWhiteSpace(savedCloudModelId)
+                && !string.Equals(savedCloudModelId, OpenRouterChatService.CustomEndpointModelId, StringComparison.OrdinalIgnoreCase))
+            {
+                string normalizedSaved = _openRouterChatService.NormalizeSelectableModelId(savedCloudModelId);
+                if (_openRouterChatService.HasCredentialForModel(normalizedSaved))
+                    _selectedWorkplaceCloudModelId = normalizedSaved;
+            }
             _singleModelContextSize = snapshot.SingleModelContextSize <= 0
                 ? _contextSize
                 : Math.Clamp(snapshot.SingleModelContextSize, MinRoleContext, MaxRoleContext);
@@ -2352,6 +2373,10 @@ namespace Malx_AI
             SyncContextControls();
 
             RestoreWorkspaceCollections(snapshot);
+            // The model's conversation was never saved, only the cards: rebuild it from them so a
+            // reopened chat continues with its context (WorkplaceHistoryRestore).
+            _chatHistory.Clear();
+            _chatHistory.AddRange(WorkplaceHistoryRestore.FromCards(_chatCards.Select(c => (c.Role, c.Content ?? string.Empty))));
             _knowledgeIndexReadyTask = RebuildProjectKnowledgeIndexAsync();
             _completedCouncilRunCount = Math.Max(0, snapshot.CompletedCouncilRunCount);
 
@@ -2407,8 +2432,10 @@ namespace Malx_AI
                 _ = RefreshHybridLocalMetadataAsync();
             RefreshCodebaseAccessUi();
             UpdatePerformanceAggregate();
+            RestoreMeasuredContextUsage(snapshot);
             UpdateWorkplaceTokenUsageIndicator();
             RestoreOverhaulSnapshotFields(snapshot);
+            ScheduleContextPanelRefresh();
         }
 
         public void ResetWorkspaceSession()
@@ -2436,7 +2463,7 @@ namespace Malx_AI
             _isCloudModeEnabled = _openRouterChatService.HasValidManagedEndpoint;
             if (_openRouterChatService.HasValidManagedEndpoint && !_openRouterChatService.HasValidKey)
                 _selectedWorkplaceCloudModelId = OpenRouterChatService.AxiomManagedModelId;
-            _isSingleModelMode = false;
+            _isSingleModelMode = true;
             _connectedWorkspace = new ConnectedWorkspaceState();
             _hasPendingCodebaseChanges = false;
             _pendingCodebasePatch = null;
@@ -2737,9 +2764,9 @@ namespace Malx_AI
         // self-hosted custom endpoint ("Kestral 1"). Independent of _isCloudModeEnabled itself,
         // which just means "not running the in-process local GGUF path."
         private bool _isHybridLocalCouncilSelected;
-        private string _selectedWorkplaceCloudModelId = OpenRouterChatService.Threnody10ModelId;
+        private string _selectedWorkplaceCloudModelId = OpenRouterChatService.DeepSeekV4F1017ModelId;
         private bool _suppressWorkplaceCloudModelComboChange;
-        private bool _isSingleModelMode;
+        private bool _isSingleModelMode = true;
         private uint _singleModelContextSize = 8192;
 
         private static readonly HashSet<string> NotificationRoles = new(StringComparer.OrdinalIgnoreCase)
@@ -3014,9 +3041,10 @@ namespace Malx_AI
             bool hasManaged = _openRouterChatService.HasValidManagedEndpoint;
             bool hasKey = _openRouterChatService.HasValidKey;
             bool showAllFallback = !hasManaged && !hasKey;
+            EnsureModelPickerExtraItems(combo);
             foreach (object? obj in combo.Items)
             {
-                if (obj is not ComboBoxItem item || item.Tag is not string itemTag)
+                if (obj is not ComboBoxItem item || item.Tag is not string itemTag || IsPickerSpecialTag(itemTag))
                     continue;
                 bool isManagedItem = _openRouterChatService.IsManagedEndpointModel(itemTag);
                 item.Visibility = showAllFallback || (isManagedItem ? hasManaged : hasKey)
@@ -3032,7 +3060,8 @@ namespace Malx_AI
                     _selectedWorkplaceCloudModelId = OpenRouterChatService.DefaultModelId;
             }
 
-            string effectiveId = _openRouterChatService.NormalizeSelectableModelId(_selectedWorkplaceCloudModelId);
+            string effectiveId = CurrentPickerSpecialTag()
+                ?? (_isCloudModeEnabled ? _openRouterChatService.NormalizeSelectableModelId(_selectedWorkplaceCloudModelId) : string.Empty);
             _suppressWorkplaceCloudModelComboChange = true;
             try
             {
@@ -3047,6 +3076,8 @@ namespace Malx_AI
                         return;
                     }
                 }
+                // Local mode with no model chosen yet: nothing is selected, the list offers "Choose".
+                combo.SelectedItem = null;
             }
             finally
             {
@@ -3065,29 +3096,16 @@ namespace Malx_AI
             if (_isProcessing)
             {
                 SyncWorkplaceCloudModelComboSelection(combo);
-                AppendChat("system", "Cannot switch cloud model during an active run.");
+                AppendChat("system", "Wait for the current run to finish before switching models.");
                 return;
             }
+
+            if (TryHandleModelPickerSpecialSelection(combo, modelId))
+                return;
 
             string normalized = _openRouterChatService.NormalizeSelectableModelId(modelId);
-            if (string.Equals(_selectedWorkplaceCloudModelId, normalized, StringComparison.OrdinalIgnoreCase))
-                return;
-
-            _selectedWorkplaceCloudModelId = normalized;
-            try
-            {
-                using var database = new DatabaseService();
-                database.SaveSetting("openrouter_model_id", _selectedWorkplaceCloudModelId);
-            }
-            catch
-            {
-            }
-
-            RefreshWorkplaceCloudModeUi();
-            UpdateCouncilBlocks();
-            UpdateContextInfo();
-            SavePersistedSession();
-            AppendChat("system", $"Workplace cloud model switched to {_openRouterChatService.ResolveModelLabel(_selectedWorkplaceCloudModelId)}.");
+            if (!SelectCloudModelFromPicker(normalized))
+                SyncWorkplaceCloudModelComboSelection(combo);
         }
 
         private string GetEffectiveCouncilModelId()
@@ -3141,6 +3159,8 @@ namespace Malx_AI
             {
                 if (!IsVisible)
                     CloseAllPopups();
+                else
+                    ScheduleContextPanelRefresh();
             };
             CommandManager.AddPreviewExecutedHandler(QueryInput, (s, e) =>
             {
@@ -3549,6 +3569,7 @@ namespace Malx_AI
 
         private void ChatCards_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
+            TrackChatCardContentChanges(e);
             if (!Dispatcher.CheckAccess())
             {
                 _ = Dispatcher.InvokeAsync(RefreshRenderedWorkplaceCards, DispatcherPriority.Background);
@@ -3906,11 +3927,29 @@ namespace Malx_AI
                 : $"Context pressure: {level}";
         }
 
-        private int EstimateWorkplaceContextTokens()
+        /// <summary>Estimated size of the conversation turns alone (no pending input, tool exchanges or canvas).</summary>
+        private int EstimateWorkplaceConversationTokens()
         {
-            int historyTokens = _chatHistory
+            int tokens = _chatHistory
                 .Where(h => h.Role is "user" or "agent" or "assistant" or "architect" or "builder" or "critic" or "builder-patch" or "builder-revision")
                 .Sum(h => EstimateTokenCount(h.Content));
+            if (_chatHistory.Count == 0)
+            {
+                // A restored session shows its cards but has no in-memory turn list yet.
+                tokens = _chatCards
+                    .Where(c => c.Role is "user" or "agent" or "assistant")
+                    .Sum(c => EstimateTokenCount(c.Content ?? string.Empty));
+            }
+            return tokens;
+        }
+
+        private int EstimateWorkplaceContextTokens() =>
+            EstimateWorkplaceMessageTokens() + EstimateTokenCount(QueryInput?.Text ?? string.Empty);
+
+        /// <summary>Messages row of the context panel: conversation, in-flight tool exchanges and canvas (no pending input).</summary>
+        private int EstimateWorkplaceMessageTokens()
+        {
+            int historyTokens = EstimateWorkplaceConversationTokens();
 
             if (_activeAgentTaskState != null && _activeAgentTaskState.AccumulatedExchanges.Count > 0)
             {
@@ -3923,7 +3962,6 @@ namespace Malx_AI
                 }
             }
 
-            int currentInputTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
             int currentCanvasTokens = 0;
             string currentCanvas = ProjectCanvasEditor?.Text ?? string.Empty;
             if (_lastRunContext?.IsArtifactCanvasRequest == true
@@ -3933,7 +3971,7 @@ namespace Malx_AI
                 currentCanvasTokens = EstimateTokenCount(currentCanvas);
             }
 
-            return Math.Max(0, historyTokens + currentInputTokens + currentCanvasTokens);
+            return Math.Max(0, historyTokens + currentCanvasTokens);
         }
 
         private int GetWorkplaceRoleContextCapacity(CouncilRole role)
@@ -4812,6 +4850,7 @@ namespace Malx_AI
 
         private async void SendMessage_Click(object sender, RoutedEventArgs e)
         {
+            HideRunFailureCard();
             await SendQueryAsync();
         }
 
@@ -19102,6 +19141,7 @@ namespace Malx_AI
                 CanvasDiffRemovalCount = _canvasDiffRemovalCount,
                 ConnectedWorkspace = CloneConnectedWorkspaceState()
             };
+            CaptureMeasuredContextUsage(snapshot);
 
             snapshot.CouncilModels["Architect"] = new WorkplaceCouncilModelDto
             {
