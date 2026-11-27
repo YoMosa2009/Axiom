@@ -26,6 +26,25 @@ namespace Malx_AI
             }
         }
 
+        /// <summary>Drops the trigger's outline so it sits flat in a toolbar (the Chat composer).</summary>
+        public bool IsFlat
+        {
+            get => ToggleButton.BorderThickness.Left == 0;
+            set
+            {
+                ToggleButton.BorderThickness = new Thickness(value ? 0 : 1);
+                ToggleButton.Height = value ? 30 : double.NaN;
+                if (value)
+                {
+                    // Match the other toolbar labels: same size, same baseline.
+                    Height = 30;
+                    ButtonLevelText.FontSize = 12;
+                    ButtonLevelText.FontWeight = FontWeights.Medium;
+                    ButtonLevelText.Margin = new Thickness(0, 0, 0, 2);
+                }
+            }
+        }
+
         public EffortSelector()
         {
             InitializeComponent();

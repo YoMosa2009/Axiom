@@ -366,11 +366,11 @@
 
         <Style x:Key="ChatInputUtilityButtonStyle" TargetType="Button">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="Height" Value="34"/>
-            <Setter Property="Padding" Value="10,0"/>
-            <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
@@ -383,7 +383,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="10"
+                                CornerRadius="8"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center"
@@ -392,11 +392,9 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
-                                <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="border" Property="Background" Value="#1D1B19"/>
                                 <Setter TargetName="border" Property="Opacity" Value="0.9"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
@@ -476,14 +474,14 @@
             </Setter>
         </Style>
 
-        <!-- Composer tool toggle (Web). Matches the Skills/Plugins pills when off and takes a
+        <!-- Composer tool toggle (Web). Matches the flat Skills/Plugins buttons when off and takes a
              gold tint when on, instead of dimming the whole control so its label greys out. -->
         <Style x:Key="ChatComposerToggleStyle" TargetType="ToggleButton">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-            <Setter Property="Height" Value="34"/>
-            <Setter Property="Padding" Value="11,0"/>
-            <Setter Property="Background" Value="{DynamicResource SurfaceRaisedBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource NotebookBorderBrush}"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Foreground" Value="{DynamicResource DarkSecondaryBrush}"/>
             <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
@@ -497,28 +495,25 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="10"
+                                CornerRadius="8"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
-                                <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}"/>
-                                <Setter Property="BorderBrush" Value="{DynamicResource PrimaryAccentBrush}"/>
-                                <Setter Property="Foreground" Value="#E8C67C"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
                                     <Condition Property="IsChecked" Value="True"/>
                                     <Condition Property="IsMouseOver" Value="True"/>
                                 </MultiTrigger.Conditions>
-                                <Setter Property="Background" Value="#453A2B"/>
-                                <Setter Property="BorderBrush" Value="{DynamicResource AccentMutedBrush}"/>
+                                <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource AccentBrightBrush}"/>
                             </MultiTrigger>
                             <Trigger Property="IsPressed" Value="True">
@@ -534,8 +529,8 @@
             </Setter>
         </Style>
 
-        <!-- Stop generation. A quiet round button while idle; it gains a ring and lifts to the
-             accent on hover once a response is actually running. -->
+        <!-- Stop generation. Hidden while idle; while a response runs it lifts to the
+             accent on hover. -->
         <Style x:Key="ChatInputStopButtonStyle" TargetType="Button">
             <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
             <Setter Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
@@ -550,7 +545,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="17"
+                                CornerRadius="15"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
@@ -563,13 +558,9 @@
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="border" Property="Opacity" Value="0.85"/>
                             </Trigger>
+                            <!-- Nothing to stop: leave the toolbar to the send button. -->
                             <Trigger Property="IsEnabled" Value="False">
-                                <!-- Still a disc, just a quiet one: a bare glyph on the background
-                                     reads as a stray mark rather than an unavailable button. -->
-                                <Setter Property="Background" Value="#201E1C"/>
-                                <Setter Property="BorderBrush" Value="#2E2B28"/>
-                                <Setter Property="Foreground" Value="{DynamicResource DisabledTextBrush}"/>
-                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter Property="Visibility" Value="Collapsed"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -591,7 +582,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="18">
+                                CornerRadius="15">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -1903,11 +1894,11 @@
                                                    Margin="14,12,14,0" Visibility="Collapsed"/>
                                     </StackPanel>
 
-                                    <Grid Grid.Row="1" MinHeight="56" MaxHeight="160">
+                                    <Grid Grid.Row="1" MinHeight="42" MaxHeight="160">
                                         <!-- Underlay: gold @MCP mentions (PrimaryAccent) while InputBox ink is transparent -->
                                         <TextBlock x:Name="InputBoxMentionOverlay"
                                                    VerticalAlignment="Top"
-                                                   Padding="16,12,16,8"
+                                                   Padding="16,12,16,6"
                                                    Margin="0"
                                                    Background="Transparent"
                                                    FontFamily="{DynamicResource AppUiFont}"
@@ -1916,14 +1907,14 @@
                                                    TextWrapping="Wrap"
                                                    IsHitTestVisible="False"
                                                    Visibility="Collapsed"/>
-                                        <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="16,12,16,8"
+                                        <TextBox x:Name="InputBox" VerticalContentAlignment="Top" Padding="16,12,16,6"
                                               Background="Transparent" Foreground="{DynamicResource NotebookTextBrush}" BorderThickness="0" CaretBrush="{DynamicResource NotebookTextBrush}"
                                               FontFamily="{DynamicResource AppUiFont}" FontSize="14" PreviewKeyDown="InputBox_KeyDown" TextChanged="InputBox_TextChanged" GotFocus="InputBox_GotFocus" LostFocus="InputBox_LostFocus"
-                                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="160"
+                                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="42" MaxHeight="160"
                                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                               SelectionBrush="#66B8924A" SelectionOpacity="1"/>
                                         <TextBlock Text="Ask anything" Foreground="{DynamicResource MutedTextBrush}" FontFamily="{DynamicResource AppUiFont}" FontSize="14"
-                                                   Margin="16,12,16,8" IsHitTestVisible="False" VerticalAlignment="Top">
+                                                   Margin="16,12,16,6" IsHitTestVisible="False" VerticalAlignment="Top">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -2007,23 +1998,23 @@
                                         </Popup>
                                     </Grid>
 
-
-                                    <Grid Grid.Row="2" MinHeight="56" Background="Transparent">
-                                        <Grid x:Name="ComposerToolbarGrid" Margin="0,0,0,0" SizeChanged="ComposerToolbarGrid_SizeChanged">
+                                        <!-- One toolbar row: attach and capabilities on the left, model, effort, web and send on the
+                                             right. UpdateComposerToolbarLayout drops labels, then wraps, when the column is narrow. -->
+                                        <Grid x:Name="ComposerToolbarGrid" Grid.Row="2" Margin="8,2,8,8" SizeChanged="ComposerToolbarGrid_SizeChanged">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto"/>
                                                 <RowDefinition Height="Auto"/>
                                             </Grid.RowDefinitions>
 
-                                            <StackPanel x:Name="ComposerLeftTools" SizeChanged="ComposerToolbarGrid_SizeChanged" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,10,0,10">
-                                                <Button Width="34" Height="34" Margin="0,0,4,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}" AutomationProperties.Name="Attach files" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
-                                                    <Path Width="14" Height="14" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="M6,0 L8,0 L8,6 L14,6 L14,8 L8,8 L8,14 L6,14 L6,8 L0,8 L0,6 L6,6 Z"/>
+                                            <StackPanel x:Name="ComposerLeftTools" SizeChanged="ComposerToolbarGrid_SizeChanged" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
+                                                <Button Width="30" Height="30" Margin="0,0,2,0" Click="ImportChatDocument_Click" Style="{StaticResource ChatInputIconButtonStyle}" AutomationProperties.Name="Attach files" ToolTip="Attach files (documents, spreadsheets, presentations, e-books, code, images)">
+                                                    <Path Width="13" Height="13" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M7,1 V13 M1,7 H13"/>
                                                 </Button>
-                                                <Button x:Name="SkillsButton" AutomationProperties.Name="Skills" MinWidth="90" Margin="6,0,6,0" Click="OpenSkills_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach reusable Skills to every Axiom model and mode">
+                                                <Button x:Name="SkillsButton" AutomationProperties.Name="Skills" Margin="0,0,2,0" Click="OpenSkills_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach reusable Skills to every Axiom model and mode">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <Path x:Name="SkillsButtonIcon" Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -2035,7 +2026,7 @@
                                                         </Border>
                                                     </StackPanel>
                                                 </Button>
-                                                <Button x:Name="PluginsButton" AutomationProperties.Name="Plugins" MinWidth="96" Click="OpenPlugins_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach Axiom-native capability Plugins">
+                                                <Button x:Name="PluginsButton" AutomationProperties.Name="Plugins" Click="OpenPlugins_Click" Style="{StaticResource ChatInputUtilityButtonStyle}" ToolTip="Attach Axiom-native capability Plugins">
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <Path x:Name="PluginsButtonIcon" Width="13" Height="13" Margin="0,0,7,0" Stretch="Uniform"
                                                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -2127,79 +2118,87 @@
                                                 </Border>
                                             </Popup>
 
-                                            <Grid x:Name="ComposerRightTools" SizeChanged="ComposerToolbarGrid_SizeChanged" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,14,0">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="Collapsed">
-                                                     <TextBlock Text="{Binding ElementName=HeaderModelName, Path=Text}" FontSize="13" Foreground="{DynamicResource MutedTextBrush}" VerticalAlignment="Center"/>
+                                        <StackPanel x:Name="ComposerRightTools" SizeChanged="ComposerToolbarGrid_SizeChanged" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                            <!-- Cloud / Hybrid model picker: one compact button; the choices live in the popup. -->
+                                            <Border x:Name="CloudModelSelectorBorder" Margin="0,0,2,0" Visibility="Collapsed">
+                                                <Grid>
+                                                    <Button x:Name="CloudModelPickerButton" Style="{StaticResource ChatInputUtilityButtonStyle}"
+                                                            PreviewMouseLeftButtonDown="CloudModelPickerButton_PreviewMouseLeftButtonDown" Click="CloudModelPickerButton_Click"
+                                                            AutomationProperties.Name="Choose model" ToolTip="Choose model">
+                                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <TextBlock x:Name="CloudModelPickerLabel" Text="Model" MaxWidth="180" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                            <Path Margin="6,1,0,0" Width="7" Height="4.5" Stretch="Uniform" Fill="{DynamicResource MutedTextBrush}" Data="M0,0 L8,0 L4,4.5 Z" VerticalAlignment="Center"/>
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Popup x:Name="CloudModelPopup" Placement="Top" PlacementTarget="{Binding ElementName=CloudModelPickerButton}"
+                                                           StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" VerticalOffset="-8">
+                                                        <Border MinWidth="220" Padding="6" Background="{DynamicResource NotebookSurfaceBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="10" Effect="{StaticResource SoftShadow}"
+                                                                PreviewKeyDown="CloudModelMenu_PreviewKeyDown" KeyboardNavigation.DirectionalNavigation="Cycle">
+                                                            <Border.Resources>
+                                                                <Style x:Key="ChatModelMenuItemStyle" TargetType="Button">
+                                                                    <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
+                                                                    <Setter Property="Height" Value="30"/>
+                                                                    <Setter Property="Margin" Value="0,1"/>
+                                                                    <Setter Property="Padding" Value="10,0"/>
+                                                                    <Setter Property="FontFamily" Value="{DynamicResource AppUiFont}"/>
+                                                                    <Setter Property="FontSize" Value="12"/>
+                                                                    <Setter Property="FontWeight" Value="Medium"/>
+                                                                    <Setter Property="Foreground" Value="{DynamicResource NotebookTextBrush}"/>
+                                                                    <Setter Property="Background" Value="Transparent"/>
+                                                                    <Setter Property="Cursor" Value="Hand"/>
+                                                                    <Setter Property="Template">
+                                                                        <Setter.Value>
+                                                                            <ControlTemplate TargetType="Button">
+                                                                                <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="7">
+                                                                                    <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                                                                                </Border>
+                                                                                <ControlTemplate.Triggers>
+                                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                                        <Setter TargetName="border" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                                                                    </Trigger>
+                                                                                    <Trigger Property="IsEnabled" Value="False">
+                                                                                        <Setter TargetName="border" Property="Opacity" Value="0.55"/>
+                                                                                    </Trigger>
+                                                                                </ControlTemplate.Triggers>
+                                                                            </ControlTemplate>
+                                                                        </Setter.Value>
+                                                                    </Setter>
+                                                                </Style>
+                                                            </Border.Resources>
+                                                            <StackPanel>
+                                                                <Button x:Name="AxiomManagedModelButton" Content="DeepSeek 4.1F-1017" Click="AxiomManagedModelButton_Click" Style="{StaticResource ChatModelMenuItemStyle}" ToolTip="Axiom subscription · DeepSeek V4.1 Flash 1017" Visibility="Collapsed"/>
+                                                                <Button x:Name="Edios15ModelButton" Content="Edios 1.5" Click="Edios15ModelButton_Click" Style="{StaticResource ChatModelMenuItemStyle}" ToolTip="Use Google Gemma 4 31B (free)"/>
+                                                                <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ChatModelMenuItemStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)"/>
+                                                                <Button x:Name="DeepSeekV4F1017ModelButton" Content="DeepSeek V4F 1017" Click="DeepSeekV4F1017ModelButton_Click" Style="{StaticResource ChatModelMenuItemStyle}" ToolTip="Use DeepSeek: DeepSeek V4.1 Flash 1017"/>
+                                                                <Button x:Name="CustomEndpointModelButton" Content="Hybrid Local" Click="CustomEndpointModelButton_Click" Style="{StaticResource ChatModelMenuItemStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </Popup>
+                                                </Grid>
+                                            </Border>
+                                            <local:EffortSelector x:Name="NormalEffortSelector" IsFlat="True" IsCompact="True" Margin="0,0,2,0" VerticalAlignment="Center"/>
+                                            <Button x:Name="NormalThinkingToggleButton" Width="Auto" Height="30" Margin="0,0,2,0" Click="NormalThinkingToggle_Click"
+                                                    Style="{StaticResource ChatInputToggleButtonStyle}" ToolTip="Thinking mode disabled" Visibility="Collapsed">
+                                                <TextBlock Text="Think" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Button>
+                                            <ToggleButton x:Name="NormalWebSearchToggleButton" Margin="0,0,6,0" Click="NormalWebSearchToggle_Click"
+                                                          Style="{StaticResource ChatComposerToggleStyle}" ToolTip="Normal chat web search enabled"
+                                                          AutomationProperties.Name="Web search">
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <!-- Globe: outline, equator and meridian, stroked from the button foreground
+                                                         so it follows the on/off/hover states with the label. -->
+                                                    <Grid x:Name="WebToggleIcon" Width="13" Height="13" Margin="0,0,7,0">
+                                                        <Ellipse Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"/>
+                                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"
+                                                              Data="M0.6,6.5 H12.4"/>
+                                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"
+                                                              Data="M6.5,0.4 C3.7,2.8 3.7,10.2 6.5,12.6 C9.3,10.2 9.3,2.8 6.5,0.4"/>
+                                                    </Grid>
+                                                    <TextBlock x:Name="WebToggleLabel" Text="Web" VerticalAlignment="Center"/>
                                                 </StackPanel>
-                                                 <Border x:Name="CloudModelSelectorBorder" Height="30" Margin="0,0,8,0" Padding="2" Background="{DynamicResource NotebookBackgroundBrush}" BorderBrush="{DynamicResource NotebookBorderBrush}" BorderThickness="1" CornerRadius="8" Visibility="Collapsed">
-                                                     <Border.Resources>
-                                                         <Style x:Key="ModeSelectorPillButtonStyle" TargetType="Button">
-            <Setter Property="FocusVisualStyle" Value="{StaticResource AxiomFocusVisual}"/>
-                                                             <Setter Property="Height" Value="26"/>
-                                                             <Setter Property="Padding" Value="10,0,10,0"/>
-                                                             <Setter Property="FontSize" Value="12"/>
-                                                             <Setter Property="FontWeight" Value="Medium"/>
-                                                               <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}"/>
-                                                             <Setter Property="Background" Value="Transparent"/>
-                                                             <Setter Property="BorderBrush" Value="Transparent"/>
-                                                             <Setter Property="BorderThickness" Value="0"/>
-                                                             <Setter Property="Cursor" Value="Hand"/>
-                                                             <Setter Property="Template">
-                                                                 <Setter.Value>
-                                                                     <ControlTemplate TargetType="Button">
-                                                                         <Border x:Name="border"
-                                                                                 Background="{TemplateBinding Background}"
-                                                                                 BorderBrush="{TemplateBinding BorderBrush}"
-                                                                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                                                                 CornerRadius="6">
-                                                                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
-                                                                         </Border>
-                                                                         <ControlTemplate.Triggers>
-                                                                             <Trigger Property="IsPressed" Value="True">
-                                                                                 <Setter TargetName="border" Property="Opacity" Value="0.9"/>
-                                                                             </Trigger>
-                                                                             <Trigger Property="IsEnabled" Value="False">
-                                                                                 <Setter TargetName="border" Property="Opacity" Value="0.55"/>
-                                                                             </Trigger>
-                                                                         </ControlTemplate.Triggers>
-                                                                     </ControlTemplate>
-                                                                 </Setter.Value>
-                                                             </Setter>
-                                                         </Style>
-                                                     </Border.Resources>
-                                                     <StackPanel Orientation="Horizontal">
-                                                         <Button x:Name="AxiomManagedModelButton" Content="DeepSeek 4.1F-1017" Click="AxiomManagedModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Axiom subscription · DeepSeek V4.1 Flash 1017" Margin="0,0,2,0" Visibility="Collapsed"/>
-                                                         <Button x:Name="Edios15ModelButton" Content="Edios 1.5" Click="Edios15ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use Google Gemma 4 31B (free)" Margin="0,0,2,0"/>
-                                                         <Button x:Name="Hepha25CoderModelButton" Content="Hepha 2.5 Coder" Click="Hepha25CoderModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use NVIDIA Nemotron 3 Ultra (free)" Margin="0,0,2,0"/>
-                                                         <Button x:Name="DeepSeekV4F1017ModelButton" Content="DeepSeek V4F 1017" Click="DeepSeekV4F1017ModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Use DeepSeek: DeepSeek V4.1 Flash 1017"/>
-                                                         <Button x:Name="CustomEndpointModelButton" Content="Hybrid Local" Click="CustomEndpointModelButton_Click" Style="{StaticResource ModeSelectorPillButtonStyle}" ToolTip="Your local inference server" Visibility="Collapsed"/>
-                                                     </StackPanel>
-                                                 </Border>
-                                                <StackPanel x:Name="ComposerRunActions" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                <local:EffortSelector x:Name="NormalEffortSelector" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                                <Button x:Name="NormalThinkingToggleButton" Width="Auto" Height="32" Margin="0,0,8,0" Click="NormalThinkingToggle_Click"
-                                                        Style="{StaticResource ChatInputToggleButtonStyle}" ToolTip="Thinking mode disabled" Visibility="Collapsed">
-                                                    <TextBlock Text="Think" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                </Button>
-                                                <ToggleButton x:Name="NormalWebSearchToggleButton" Margin="0,0,8,0" Click="NormalWebSearchToggle_Click"
-                                                              Style="{StaticResource ChatComposerToggleStyle}" ToolTip="Normal chat web search enabled"
-                                                              AutomationProperties.Name="Web search">
-                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                        <!-- Globe: outline, equator and meridian, stroked from the button foreground
-                                                             so it follows the on/off/hover states with the label. -->
-                                                        <Grid x:Name="WebToggleIcon" Width="13" Height="13" Margin="0,0,7,0">
-                                                            <Ellipse Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"/>
-                                                            <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"
-                                                                  Data="M0.6,6.5 H12.4"/>
-                                                            <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}" StrokeThickness="1.3"
-                                                                  Data="M6.5,0.4 C3.7,2.8 3.7,10.2 6.5,12.6 C9.3,10.2 9.3,2.8 6.5,0.4"/>
-                                                        </Grid>
-                                                        <TextBlock x:Name="WebToggleLabel" Text="Web" VerticalAlignment="Center"/>
-                                                    </StackPanel>
-                                                </ToggleButton>
-                                                <Border x:Name="InlineLoadingIndicator" Visibility="Collapsed" Width="34" Height="34" Margin="0,0,8,0" Background="#00FFFFFF">
+                                            </ToggleButton>
+                                            <Border x:Name="InlineLoadingIndicator" Visibility="Collapsed" Width="22" Height="22" Margin="0,0,6,0" Background="#00FFFFFF">
+                                                <Viewbox Width="18" Height="18">
                                                     <Canvas x:Name="InlineLoadingSpinnerCanvas" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
                                                         <Canvas.RenderTransform>
                                                             <RotateTransform Angle="0"/>
@@ -2207,26 +2206,25 @@
                                                          <Ellipse Canvas.Left="2" Canvas.Top="2" Width="20" Height="20" Stroke="{DynamicResource PrimaryAccentBrush}" StrokeThickness="2.2" Opacity="0.24"/>
                                                          <Path Data="M12,2 A10,10 0 0 1 21.2,8" Stroke="{DynamicResource PrimaryAccentBrush}" StrokeThickness="2.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
                                                     </Canvas>
-                                                </Border>
-                                                <Button x:Name="StopButton" Width="34" Height="34" Margin="0,0,8,0" Click="Stop_Click"
-                                                        Style="{StaticResource ChatInputStopButtonStyle}" IsEnabled="False"
-                                                        ToolTip="Stop generating" AutomationProperties.Name="Stop generating">
-                                                    <Border Width="10" Height="10" CornerRadius="2.5"
-                                                            Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                                                </Button>
-                                                <Button x:Name="SendButton" Width="36" Height="36" Click="Send_Click" Style="{StaticResource ChatInputSendButtonStyle}" AutomationProperties.Name="Send message"
-                                                        ToolTip="Press Enter to send and Shift+Enter for new line">
-                                                    <!-- Thin stroked arrow: lighter than the old solid block glyph and legible
-                                                         against the gold fill at 36px. -->
-                                                    <Path Width="15" Height="15" Stretch="Uniform"
-                                                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                          StrokeThickness="1.9" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
-                                                          Data="M7.5,13.2 V2.6 M2.6,7.5 L7.5,2.4 L12.4,7.5"/>
-                                                </Button>
-                                                </StackPanel>
-                                            </Grid>
+                                            </Viewbox>
+                                            </Border>
+                                            <Button x:Name="StopButton" Width="30" Height="30" Margin="0,0,6,0" Click="Stop_Click"
+                                                    Style="{StaticResource ChatInputStopButtonStyle}" IsEnabled="False"
+                                                    ToolTip="Stop generating" AutomationProperties.Name="Stop generating">
+                                                <Border Width="10" Height="10" CornerRadius="2.5"
+                                                        Background="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                            </Button>
+                                            <Button x:Name="SendButton" Width="30" Height="30" Click="Send_Click" Style="{StaticResource ChatInputSendButtonStyle}" AutomationProperties.Name="Send message"
+                                                    ToolTip="Press Enter to send and Shift+Enter for new line">
+                                                <!-- Thin stroked arrow: lighter than the old solid block glyph and legible
+                                                     against the gold fill at 30px. -->
+                                                <Path Width="13" Height="13" Stretch="Uniform"
+                                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                      StrokeThickness="1.9" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                                      Data="M7.5,13.2 V2.6 M2.6,7.5 L7.5,2.4 L12.4,7.5"/>
+                                            </Button>
+                                            </StackPanel>
                                         </Grid>
-                                    </Grid>
                                 </Grid>
                             </Border>
                         </StackPanel>
