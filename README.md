@@ -4,7 +4,7 @@
 
 **A native Windows AI workspace: run models on your own PC, on your own server, or in the cloud.**
 
-![Release](https://img.shields.io/badge/release-V1.15.0-brightgreen)
+![Release](https://img.shields.io/badge/release-V1.16.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)
 ![.NET](https://img.shields.io/badge/.NET-10%20WPF-purple)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-lightgrey)
@@ -37,7 +37,7 @@ Free with local models or your own key · Code-signed installer · Windows 10/11
 |---|---|---|
 | **Local** | Your GPU or CPU (llama.cpp) | A GGUF model; the first-run guide can download one that fits |
 | **Hybrid Local** | Your own server | Any OpenAI-compatible endpoint |
-| **Cloud** | Axiom Cloud or OpenRouter | An optional Axiom Cloud subscription, or your own OpenRouter key |
+| **Cloud** | Axiom Cloud or OpenRouter | An optional Axiom Cloud subscription ($9/month), or your own OpenRouter key |
 
 ## What's inside
 
@@ -48,14 +48,21 @@ chat.
 
 ![Chat: a reply with a formatted table, and the composer with Skills, Plugins, effort and web search](docs/images/chat.png)
 
-**Workplace.** For work that takes more than one pass.
-- **Single Model:** one agent plans, uses tools and checks its own result.
-- **Council:** a Builder does the work; at Extra High and Ultra Axiom checks the result and has it fixed.
+**Workplace.** For work that takes more than one pass. One model list at the top holds the cloud
+models, your Hybrid Local server and a local model; each chat remembers the model it used and its
+conversation, even after a restart.
+- **One agent, start to finish:** it plans, uses tools and checks its own result. Longer tasks get
+  a live checklist on the run card, and a "doing now" line says in the model's words what it is
+  working on.
+- **Talk to it while it works:** a message you send mid-run is read at the next safe point. It can
+  change the task, and a question is answered without stopping the work.
 - **Agent Access:** a terminal-style agent that runs commands and reads and writes files in a
-  folder you pick. Every run ends with its steps, a file-change summary and one-click **Undo**.
-  You choose Manual (approve each change) or Auto.
-- **Browser actions:** the agent can open pages and click or fill controls, each with your
-  approval. It never presses payment or account-closing buttons.
+  folder you pick, following the folder's `AGENTS.md` (or `CLAUDE.md`) if it has one. Every run
+  ends with its steps, a file-change summary and one-click **Undo**. You choose Manual (approve
+  each change) or Auto.
+- **Background browser:** the agent reads, clicks and screenshots web pages in a hidden browser
+  inside Axiom, so your screen, your own browser and your logins are left alone. Buttons that look
+  like they buy, delete or submit something always ask first.
 - **`@ComputerUse`:** drives the desktop with a vision model, checking each action landed.
 
 **Skills.** Reusable procedures you attach once, everywhere. Some answer in chat; others produce
@@ -65,13 +72,14 @@ Axiom builds the artifact itself from the model's outline.
 <img src="docs/images/skills.png" alt="Skills panel: built-in Skills to attach, and Create custom Skill" width="360">
 
 **Effort.** Pick Light to Ultra per message. Higher levels think longer and allow more tool
-rounds and time per step. Extra High checks the result (runs it, validates files) and fixes what
-the checks find; Ultra adds a fresh review of the finished work.
+rounds and time per step. Axiom matches each level to the thinking settings the model actually
+accepts: Ultra uses a model's top setting, and lower levels use the nearest one it supports.
 
 **Reply as context.** Right-click any AI reply, or select part of it and press Ctrl+Shift+L, to
 attach it to your next message. It shows as a short quote above the input box.
 
-**Themes.** Switch themes in Settings › General without restarting.
+**Themes and shortcuts.** Switch themes in Settings › General without restarting. Ctrl+N starts
+a new chat, Ctrl+K searches chats, and Ctrl+/ lists every shortcut.
 
 ## Cloud models
 
@@ -79,12 +87,14 @@ attach it to your next message. It shows as a short quote above the input box.
 |---|---|---|
 | **Edios 1.5** | Google Gemma 4 31B (free) | General chat, documents, tools |
 | **Hepha 2.5 Coder** | NVIDIA Nemotron 3 Ultra (free) | Coding |
-| **Threnody 1.0** | DeepSeek V4.1 Flash | Long context, vision |
-| **Workplace** | NVIDIA Nemotron 3.5 Super VL (free) | Every Workplace cloud run |
+| **DeepSeek V4F 1017** | DeepSeek V4.1 Flash 1017 (your OpenRouter key) | Long context, vision |
+| **DeepSeek 4.1F-1017** | DeepSeek V4.1 Flash 1017 (Axiom Cloud subscription) | Everything, no key needed |
+| **Nemotron 3.5 Super VL** | NVIDIA Nemotron 3.5 Super VL (free) | Workplace's default cloud model |
 | **Kestral 1** | Your own endpoint | Hybrid Local |
 
-Workplace uses exactly one cloud model with no silent fallback, so every step of a run uses the
-same model.
+A Workplace run uses the one model you picked for every step, with no silent fallback. The Axiom
+Cloud subscription sends each request to the cheapest healthy provider for the model, at fp8
+precision or better, and shows your 3-hour and weekly usage on the Usage page.
 
 ---
 
@@ -101,9 +111,10 @@ same model.
 
 3. Open **Chat**, or head to **Workplace**.
 
-**Updates** install from inside the app (Settings › General › Check for updates). Your chats,
-settings and models are kept. Your data lives in `%LOCALAPPDATA%\Axiom`, never in the install
-folder, so every new install starts empty.
+**Updates** install from inside the app (Settings › General › Check for updates) and download
+only the files that changed, usually a few MB. Your chats, settings and models are kept. Your
+data lives in `%LOCALAPPDATA%\Axiom`, never in the install folder, so every new install starts
+empty.
 
 **Requirements:** Windows 10 or 11 (64-bit), 4 GB RAM (16 GB recommended for local models),
 optional NVIDIA GPU for faster local models.

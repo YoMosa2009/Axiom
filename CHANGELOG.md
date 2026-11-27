@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [V1.16.0] - 2026-11-26
+
+Workplace now has one model list, every chat remembers its model and conversation, and long agent
+runs answer you when you check in. Doubled words and cut-off replies are fixed.
 
 ### Added
 
