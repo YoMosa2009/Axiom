@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace Malx_AI;
 
 /// <summary>What a global keyboard shortcut does. Dependency-free so the tests can link it.</summary>
-internal enum AppShortcutAction
+public enum AppShortcutAction
 {
     None,
     NewChat,

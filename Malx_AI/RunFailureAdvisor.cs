@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace Malx_AI;
 
 /// <summary>What went wrong with a model request, in terms the user can act on.</summary>
-internal enum RunFailureKind
+public enum RunFailureKind
 {
     Unknown,
     RateLimit,
@@ -18,7 +18,7 @@ internal enum RunFailureKind
 }
 
 /// <summary>A button on the failure card.</summary>
-internal enum RunFailureAction
+public enum RunFailureAction
 {
     Retry,
     SwitchModel,
