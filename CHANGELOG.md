@@ -1,5 +1,15 @@
 # Changelog
 
+## [V1.16.1] - 2026-11-26
+
+A tidier, much smaller message box in Chat.
+
+### Changed
+
+- **A compact Chat composer.** The message box is one line tall and grows as you type, with one
+  toolbar row under it: attach, Skills and Plugins on the left; model, effort, Web and send on the
+  right. Cloud models moved into a small drop-down, and Stop only appears while a reply is running.
+
 ## [V1.16.0] - 2026-11-26
 
 Workplace now has one model list, every chat remembers its model and conversation, and long agent

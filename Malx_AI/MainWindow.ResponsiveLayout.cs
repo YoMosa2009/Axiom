@@ -70,8 +70,6 @@ namespace Malx_AI
             WorkplaceViewControl.ApplyDesktopLayout(workplaceWidth);
         }
 
-        private enum ComposerToolbarMode { Full, IconOnly, Stacked }
-
         private void ChatDisplay_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             if (e.WidthChanged) UpdateChatLaneLayout();
@@ -115,43 +113,35 @@ namespace Malx_AI
             _isUpdatingComposerToolbar = true;
             try
             {
-                ComposerRightTools.MaxWidth = double.PositiveInfinity;
-                Grid.SetRow(ComposerRunActions, 0);
-                Grid.SetColumn(ComposerRunActions, 1);
-                Grid.SetColumnSpan(ComposerRunActions, 1);
-                Grid.SetColumnSpan(CloudModelSelectorBorder, 1);
-                ComposerRunActions.Margin = new Thickness(0);
-                ComposerToolbarMode mode = ComposerToolbarMode.Full;
+                Grid.SetRow(ComposerRightTools, 0);
+                Grid.SetColumn(ComposerRightTools, 1);
+                Grid.SetColumnSpan(ComposerRightTools, 1);
+                ComposerRightTools.Margin = new Thickness(0);
                 ApplyComposerLabels(compact: false);
-                if (MeasureComposerRowWidth() > available)
-                {
-                    mode = ComposerToolbarMode.IconOnly;
-                    ApplyComposerLabels(compact: true);
-                    if (MeasureComposerRowWidth() > available)
-                    {
-                        // On two rows each group has the full width to itself, so the labels
-                        // come back whenever both groups still fit with them.
-                        mode = ComposerToolbarMode.Stacked;
-                        ApplyComposerLabels(compact: false);
-                        MeasureComposerRowWidth();
-                        if (Math.Max(ComposerLeftTools.DesiredSize.Width, ComposerRightTools.DesiredSize.Width) > available)
-                            ApplyComposerLabels(compact: true);
-                    }
-                }
+                if (MeasureComposerRowWidth() <= available)
+                    return;
 
-                bool stacked = mode == ComposerToolbarMode.Stacked;
-                bool modelRow = stacked && CloudModelSelectorBorder.Visibility == Visibility.Visible;
-                Grid.SetRow(ComposerRunActions, modelRow ? 1 : 0);
-                Grid.SetColumn(ComposerRunActions, modelRow ? 0 : 1);
-                Grid.SetColumnSpan(ComposerRunActions, modelRow ? 2 : 1);
-                Grid.SetColumnSpan(CloudModelSelectorBorder, modelRow ? 2 : 1);
-                ComposerRunActions.Margin = modelRow ? new Thickness(0, 6, 0, 0) : new Thickness(0);
-                ComposerRightTools.MaxWidth = stacked ? Math.Max(0, available - 30) : double.PositiveInfinity;
-                Grid.SetRow(ComposerRightTools, stacked ? 1 : 0);
-                Grid.SetColumn(ComposerRightTools, stacked ? 0 : 1);
-                Grid.SetColumnSpan(ComposerRightTools, stacked ? 2 : 1);
-                ComposerRightTools.Margin = stacked ? new Thickness(16, 0, 14, 10) : new Thickness(0, 0, 14, 0);
-                ComposerLeftTools.Margin = stacked ? new Thickness(16, 10, 0, 6) : new Thickness(16, 10, 0, 10);
+                ApplyComposerLabels(compact: true);
+                if (MeasureComposerRowWidth() <= available)
+                    return;
+
+                // On two rows each group has the full width to itself, so the labels come back
+                // whenever both groups still fit with them.
+                ApplyComposerLabels(compact: false);
+                MeasureComposerRowWidth();
+                if (Math.Max(ComposerLeftTools.DesiredSize.Width, ComposerRightTools.DesiredSize.Width) > available)
+                    ApplyComposerLabels(compact: true);
+
+                Grid.SetRow(ComposerRightTools, 1);
+                Grid.SetColumn(ComposerRightTools, 0);
+                Grid.SetColumnSpan(ComposerRightTools, 2);
+                ComposerRightTools.Margin = new Thickness(0, 4, 0, 0);
+
+                // Still too wide on its own row: shorten the model name rather than clip it.
+                MeasureComposerRowWidth();
+                double overflow = ComposerRightTools.DesiredSize.Width - available;
+                if (overflow > 0)
+                    CloudModelPickerLabel.MaxWidth = Math.Max(24, CloudModelPickerLabel.DesiredSize.Width - overflow);
             }
             finally
             {
@@ -177,10 +167,21 @@ namespace Malx_AI
         private double MeasureComposerRowWidth()
         {
             var unbounded = new Size(double.PositiveInfinity, double.PositiveInfinity);
+            // A label change only dirties the label. Without this the panels hand back the size
+            // they cached for the previous mode, and the row wraps when icons alone would fit.
+            InvalidateMeasureTree(ComposerLeftTools);
+            InvalidateMeasureTree(ComposerRightTools);
             ComposerLeftTools.Measure(unbounded);
             ComposerRightTools.Measure(unbounded);
             // Desired sizes include each panel's own margins; keep a small gap between groups.
             return ComposerLeftTools.DesiredSize.Width + ComposerRightTools.DesiredSize.Width + 12;
+        }
+
+        private static void InvalidateMeasureTree(DependencyObject node)
+        {
+            (node as UIElement)?.InvalidateMeasure();
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+                InvalidateMeasureTree(VisualTreeHelper.GetChild(node, i));
         }
 
         private void ApplyComposerLabels(bool compact)
@@ -194,10 +195,9 @@ namespace Malx_AI
             SkillsButtonIcon.Margin = iconMargin;
             PluginsButtonIcon.Margin = iconMargin;
             WebToggleIcon.Margin = iconMargin;
-            SkillsButton.MinWidth = compact ? 34 : 90;
-            PluginsButton.MinWidth = compact ? 34 : 96;
-            SkillsButton.Margin = compact ? new Thickness(4, 0, 4, 0) : new Thickness(6, 0, 6, 0);
-            NormalEffortSelector.IsCompact = compact;
+            SkillsButton.MinWidth = compact ? 30 : 0;
+            PluginsButton.MinWidth = compact ? 30 : 0;
+            CloudModelPickerLabel.MaxWidth = compact ? 112 : 180;
         }
 
         private double GetResponsiveSidebarWidth()

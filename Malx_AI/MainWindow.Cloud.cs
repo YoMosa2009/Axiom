@@ -265,8 +265,54 @@ namespace Malx_AI
             SelectCloudModel(OpenRouterChatService.CustomEndpointModelId);
         }
 
+        // StaysOpen=False closes the menu on the same mouse-down that clicks the trigger, so the
+        // click has to know whether the menu was open before it.
+        private bool _cloudModelMenuWasOpen;
+
+        private void CloudModelPickerButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _cloudModelMenuWasOpen = CloudModelPopup.IsOpen;
+        }
+
+        private void CloudModelPickerButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloudModelPopup.IsOpen = !_cloudModelMenuWasOpen;
+            _cloudModelMenuWasOpen = false;
+        }
+
+        private void CloudModelMenu_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Escape)
+                return;
+
+            CloudModelPopup.IsOpen = false;
+            CloudModelPickerButton.Focus();
+            e.Handled = true;
+        }
+
+        /// <summary>Shows the selected model's menu name on the composer's picker button.</summary>
+        private void UpdateCloudModelPickerLabel()
+        {
+            (Button? Button, string ModelId)[] choices =
+            {
+                (_axiomManagedModelButton, OpenRouterChatService.AxiomManagedModelId),
+                (_edios15ModelButton, OpenRouterChatService.Edios15ModelId),
+                (_hepha25CoderModelButton, OpenRouterChatService.Hepha25CoderModelId),
+                (_deepSeekV4F1017ModelButton, OpenRouterChatService.DeepSeekV4F1017ModelId),
+                (_customEndpointModelButton, OpenRouterChatService.CustomEndpointModelId)
+            };
+
+            Button? selected = choices.FirstOrDefault(c =>
+                string.Equals(_selectedOpenRouterModelId, c.ModelId, StringComparison.OrdinalIgnoreCase)).Button;
+            string label = selected?.Content as string
+                ?? _openRouterChatService.ResolveModelLabel(_selectedOpenRouterModelId);
+            CloudModelPickerLabel.Text = label;
+            CloudModelPickerButton.ToolTip = selected?.ToolTip ?? label;
+        }
+
         private void SelectCloudModel(string modelId)
         {
+            CloudModelPopup.IsOpen = false;
             _selectedOpenRouterModelId = _openRouterChatService.NormalizeSelectableModelId(modelId);
             _database?.SaveSetting(OpenRouterModelSettingKey, _selectedOpenRouterModelId);
             WorkplaceViewControl?.SetSelectedWorkplaceCloudModel(_selectedOpenRouterModelId);
@@ -658,6 +704,7 @@ namespace Malx_AI
             RefreshCloudModelSelectionUi(_deepSeekV4F1017ModelButton, OpenRouterChatService.DeepSeekV4F1017ModelId, hasValidKey);
             RefreshCloudModelSelectionUi(_customEndpointModelButton, OpenRouterChatService.CustomEndpointModelId, hasValidCustomEndpoint,
                 disabledHint: "Configure a custom endpoint in Settings to enable Hybrid Local");
+            UpdateCloudModelPickerLabel();
             RefreshInferenceSettingsUi();
 
             UpdateHeaderDisplay();
