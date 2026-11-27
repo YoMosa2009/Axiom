@@ -1015,6 +1015,7 @@ namespace Malx_AI
 
             if (ContextUsedPercentText != null)
                 ContextUsedPercentText.Text = $"{usage.Percent:0}% used";
+            UpdateComposerContextLine(usage.Percent, usedTotal, totalCap, usage.IsMeasured);
             if (ContextUsedFractionText != null)
             {
                 ContextUsedFractionText.Text = $"{FormatCompactTokenCount(usedTotal)} / {FormatCompactTokenCount(totalCap)} · {(usage.IsMeasured ? "measured" : "estimated")}";

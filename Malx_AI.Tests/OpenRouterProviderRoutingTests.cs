@@ -19,6 +19,7 @@ public class OpenRouterProviderRoutingTests
         Assert.True(json["require_parameters"]!.GetValue<bool>());
         Assert.Null(json["only"]);
         Assert.Null(json["data_collection"]);
+        Assert.Equal(new[] { "fp8", "fp16", "bf16", "fp32" }, Strings(json["quantizations"]));
         Assert.Equal(0.18m, json["max_price"]!["prompt"]!.GetValue<decimal>());
         Assert.Equal(0.72m, json["max_price"]!["completion"]!.GetValue<decimal>());
     }
@@ -72,5 +73,14 @@ public class OpenRouterProviderRoutingTests
         Assert.Equal(0.18m, provider["max_price"]!["prompt"]!.GetValue<decimal>());
         Assert.NotNull(payload["tools"]);
         Assert.Null(payload["stop"]);
+    }
+
+    [Fact]
+    public void AnyQuantizationLiftsTheFp8Floor()
+    {
+        JsonObject json = OpenRouterProviderRouting.FromEnvironment(
+            name => name == OpenRouterProviderRouting.QuantizationsEnv ? "any" : null).ToJson(0.18m, 0.72m);
+
+        Assert.Null(json["quantizations"]);
     }
 }

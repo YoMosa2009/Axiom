@@ -576,6 +576,7 @@
                         </Border>
                         <TextBlock x:Name="RevisionNoticeBlock" Margin="8,2,8,2" Text="Issues were found and the output was revised." FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource DarkSecondaryBrush}" Visibility="Collapsed"/>
 
+                        <local:RunFailureCard x:Name="WorkplaceRunFailureCard" Margin="6,6,6,2" Visibility="Collapsed"/>
                         <Border x:Name="WorkplaceReplyContextHost" Margin="6,6,6,0" Visibility="Collapsed"/>
                         <Grid>
                             <avalonedit:TextEditor x:Name="QueryInput"
@@ -585,7 +586,7 @@
                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
                                      Margin="6,4,6,3" MinHeight="30" MaxHeight="140"/>
                             <TextBlock x:Name="WorkplaceQueryPlaceholder"
-                                       Text="Describe a task, or ask anything"
+                                       Text="Describe a task, or ask anything · @ to mention a tool or app"
                                        IsHitTestVisible="False"
                                        Margin="9,8,6,0"
                                        VerticalAlignment="Top"
@@ -655,6 +656,10 @@
 
                         <DockPanel Margin="2,2,2,0">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,2,0,2">
+                                <TextBlock x:Name="ComposerContextText" Text="" FontSize="10.5" VerticalAlignment="Center" Margin="0,0,10,0"
+                                           Foreground="{DynamicResource DarkSecondaryBrush}" Cursor="Hand"
+                                           MouseLeftButtonUp="ComposerContextText_MouseLeftButtonUp"
+                                           AutomationProperties.Name="Context used"/>
                                 <local:EffortSelector x:Name="WorkplaceEffortSelector" IsCompact="True" Height="28" Margin="0,0,6,0" VerticalAlignment="Center"/>
                                 <Button x:Name="StopButton" Content="■" Click="StopMessage_Click" Width="28" Height="26" Padding="0"
                                         Foreground="{DynamicResource PrimaryAccentBrush}" IsEnabled="False" Margin="0,0,5,0" ToolTip="Stop current run">

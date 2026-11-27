@@ -26,6 +26,7 @@ namespace Malx_AI
 
         private static readonly Regex StepsBlock = new(@"(?ms)^###[ \t]+Steps Executed[ \t]+\(\d+\)[ \t]*\r?\n.*?(?=^#{1,3}[ \t]|\z)", RegexOptions.Compiled);
         private static readonly Regex PlanBlock = new(@"(?m)^\*\*Plan\*\*[ \t]*\(\d+/\d+\)[ \t]*\r?\n(?:^[ \t]*-[ \t].*(?:\r?\n|$))*", RegexOptions.Compiled);
+        private static readonly Regex CardBlocks = new(@"(?ms)^```axiom-(?:activity|plan)[ \t]*\n.*?^```[ \t]*$", RegexOptions.Compiled);
         private static readonly Regex StatusLine = new(@"(?m)^_[^_\n]+_[ \t]*$", RegexOptions.Compiled);
         private static readonly Regex NarrationLine = new(@"(?m)^›[ \t].*$", RegexOptions.Compiled);
         private static readonly Regex BlankRuns = new(@"\n{3,}", RegexOptions.Compiled);
@@ -70,6 +71,7 @@ namespace Malx_AI
             if (string.IsNullOrWhiteSpace(content))
                 return string.Empty;
             string text = content.Replace("\r\n", "\n");
+            text = CardBlocks.Replace(text, string.Empty);
             text = StepsBlock.Replace(text, string.Empty);
             text = PlanBlock.Replace(text, string.Empty);
             text = StatusLine.Replace(text, string.Empty);

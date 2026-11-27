@@ -369,15 +369,12 @@ namespace Malx_AI
             {
                 var builder = new StringBuilder();
                 // The run kind and model are in the card header (AgentCardLabels.AgentCardHeader).
+                // The plan is its own compact checklist and the steps are muted one-liners
+                // (AgentCardMarkup), so the two no longer run together as one bold list.
                 if (Plan is { IsEmpty: false })
-                {
                     builder.Append(RenderPlan(Plan)).Append("\n\n");
-                    // Without a label the step rows ran on as more plan items (owner screenshot).
-                    if (StepLines.Count > 0)
-                        builder.Append("**Activity**\n");
-                }
                 if (StepLines.Count > 0)
-                    builder.Append(string.Join("\n", AgentCardLabels.CompactLiveSteps(StepLines).Select(l => "- " + l)));
+                    builder.Append(AgentCardMarkup.Activity(AgentCardLabels.CompactLiveSteps(StepLines)));
                 // The model's own "doing now" sentence sits under the compacted steps, where the
                 // eye lands while the run is working.
                 if (!string.IsNullOrWhiteSpace(Narration))
@@ -403,7 +400,7 @@ namespace Malx_AI
             public string RenderFrozen()
                 => StepLines.Count == 0
                     ? string.Empty
-                    : string.Join("\n", AgentCardLabels.CompactLiveSteps(StepLines).Select(l => "- " + l));
+                    : AgentCardMarkup.Activity(AgentCardLabels.CompactLiveSteps(StepLines));
 
             /// <summary>
             /// Ends the current card with <paramref name="tail"/> under its steps and starts a
@@ -425,22 +422,7 @@ namespace Malx_AI
             }
 
             /// <summary>Done steps struck through, the current one in bold (the Codex plan view).</summary>
-            public static string RenderPlan(AgentPlan plan)
-            {
-                var builder = new StringBuilder();
-                builder.Append($"**Plan** ({plan.CompletedCount}/{plan.Items.Count})\n");
-                foreach (AgentPlanItem item in plan.Items)
-                {
-                    builder.Append(item.Status switch
-                    {
-                        // No strikethrough: struck-out text next to a tick read as clutter.
-                        AgentPlanStatus.Completed => $"- ✓ {item.Step}\n",
-                        AgentPlanStatus.InProgress => $"- ▸ **{item.Step}**\n",
-                        _ => $"- ○ {item.Step}\n"
-                    });
-                }
-                return builder.ToString().TrimEnd();
-            }
+            public static string RenderPlan(AgentPlan plan) => AgentCardMarkup.Plan(plan);
         }
 
         /// <summary>Shows the model's own "doing now" sentence on the live run card.</summary>
@@ -612,7 +594,10 @@ namespace Malx_AI
             if (step.Result == null)
                 return $"⊘ {action} — {step.Note}";
             if (step.Result.Succeeded)
-                return $"✓ {action}";
+            {
+                string counts = AgentCardMarkup.LineCounts(step.Call);
+                return counts.Length == 0 ? $"✓ {action}" : $"✓ {action} {counts}";
+            }
 
             string reason = (step.Result.Error ?? "failed").Split('\n')[0].Trim();
             if (reason.Length > 90)
@@ -1041,7 +1026,7 @@ namespace Malx_AI
                     RunFailureAdvice advice = RunFailureAdvisor.Classify(
                         ex is System.Net.Http.HttpRequestException http && http.StatusCode is { } status ? (int)status : null,
                         ex.Message);
-                    if (advice.Kind is not (RunFailureKind.Unknown or RunFailureKind.Cancelled))
+                    if (ShowRunFailureCard(advice))
                     {
                         stopText = $"**{advice.Title}.** {advice.Hint}"
                             + (advice.RetryAfterSeconds is int wait ? $" You can try again in about {wait} s." : string.Empty)

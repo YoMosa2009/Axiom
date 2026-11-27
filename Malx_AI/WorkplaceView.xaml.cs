@@ -4850,6 +4850,7 @@ namespace Malx_AI
 
         private async void SendMessage_Click(object sender, RoutedEventArgs e)
         {
+            HideRunFailureCard();
             await SendQueryAsync();
         }
 

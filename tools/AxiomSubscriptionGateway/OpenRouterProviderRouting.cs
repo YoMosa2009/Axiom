@@ -19,6 +19,12 @@ internal sealed record OpenRouterProviderRouting(
     bool? Zdr = null,
     string[]? Quantizations = null)
 {
+    /// <summary>
+    /// Owner decision (2026-11-27): fp8 or better. The cheapest providers serve fp4/mxfp4 builds,
+    /// which cost coding-agent quality. AXIOM_OPENROUTER_QUANTIZATIONS=any lifts the filter.
+    /// </summary>
+    public static readonly string[] DefaultQuantizations = ["fp8", "fp16", "bf16", "fp32"];
+
     public const string SortEnv = "AXIOM_OPENROUTER_PROVIDER_SORT";
     public const string OnlyEnv = "AXIOM_OPENROUTER_PROVIDER_ONLY";
     public const string OrderEnv = "AXIOM_OPENROUTER_PROVIDER_ORDER";
@@ -28,7 +34,7 @@ internal sealed record OpenRouterProviderRouting(
     public const string ZdrEnv = "AXIOM_OPENROUTER_ZDR";
     public const string QuantizationsEnv = "AXIOM_OPENROUTER_QUANTIZATIONS";
 
-    public static OpenRouterProviderRouting Default { get; } = new();
+    public static OpenRouterProviderRouting Default { get; } = new() { Quantizations = DefaultQuantizations };
 
     /// <summary>
     /// Reads the routing policy from environment variables; unset or invalid values keep the default.
@@ -58,7 +64,10 @@ internal sealed record OpenRouterProviderRouting(
             routing = routing with { DataCollection = dataCollection };
         if (ParseBool(read(ZdrEnv)) is bool zdr)
             routing = routing with { Zdr = zdr };
-        if (ParseList(read(QuantizationsEnv)) is { Length: > 0 } quantizations)
+        string? quantizationSetting = read(QuantizationsEnv)?.Trim().ToLowerInvariant();
+        if (quantizationSetting is "any" or "all" or "none")
+            routing = routing with { Quantizations = null };
+        else if (ParseList(quantizationSetting) is { Length: > 0 } quantizations)
             routing = routing with { Quantizations = quantizations };
         return routing;
     }

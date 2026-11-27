@@ -203,8 +203,11 @@ namespace Malx_AI
         private WorkplaceExecutionSummary ExecutionSummary => _executionSummary ??=
             WorkplaceExecutionSummary.Parse(Content, !string.Equals(Role, "user", StringComparison.OrdinalIgnoreCase));
         public bool HasExecutionSteps => ExecutionSummary.Count > 0;
-        public string ExecutionStepsLabel => $"{ExecutionSummary.Count} steps · View activity";
-        public FlowDocument ExecutionStepsDocument => WorkplaceMarkdownDocumentFactory.Create(ExecutionSummary.Steps);
+        public string ExecutionStepsLabel => AgentCardMarkup.WorkedForLabel(ExecutionSummary.Count);
+        public FlowDocument ExecutionStepsDocument => WorkplaceMarkdownDocumentFactory.Create(
+            // The steps in the expander read as muted one-liners, like the live card.
+            AgentCardMarkup.Activity(ExecutionSummary.Steps.Split('\n')
+                .Select(line => line.TrimStart().StartsWith("- ", StringComparison.Ordinal) ? line.TrimStart()[2..] : line)));
         public FlowDocument FormattedDocument => WorkplaceMarkdownDocumentFactory.Create(
             Role is "assistant" or "agent" or "builder"
                 ? PersonaMemoryService.Shared.Presentation.Apply(ExecutionSummary.Body)
