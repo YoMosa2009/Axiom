@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [V1.16.1] - 2026-11-26
+
+A tidier, much smaller message box in Chat.
 
 ### Changed
 
