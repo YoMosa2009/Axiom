@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Update notices no longer get missed.** If the update check at launch fails or times out, Axiom
+  now tries again shortly afterwards, and it keeps checking every two hours while it stays open.
+
 ## [V1.16.1] - 2026-11-26
 
 A tidier, much smaller message box in Chat.
