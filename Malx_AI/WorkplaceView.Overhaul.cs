@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -798,11 +800,186 @@ namespace Malx_AI
             if (EnvGitBranchText != null)
                 EnvGitBranchText.Text = ReadGitBranchFast(folder) ?? "No git branch";
 
+            RefreshContextPanel();
+            RefreshRightSidebarOutputsSection();
+        }
+
+        // Measured usage of the last model turn (provider-reported) so the Context panel shows the
+        // true size instead of a guess. Persisted with the session; see WorkplaceContextUsage.
+        private int? _measuredPromptTokens;
+        private int _measuredCompletionTokens;
+        private DateTime? _measuredAt;
+        private string? _measuredModelId;
+        private int _measuredHistoryTokens;
+        private DispatcherTimer? _contextPanelRefreshTimer;
+        private const int ContextPanelRefreshIntervalMs = 500;
+
+        private string GetMeasurementModelId() => _isCloudModeEnabled ? GetEffectiveCouncilModelId() : "local";
+
+        /// <summary>Records the provider-reported prompt/completion size of a model turn (any thread).</summary>
+        private void RecordMeasuredContextUsage(int promptTokens, int completionTokens)
+        {
+            if (promptTokens <= 0)
+                return;
+
+            void Apply()
+            {
+                _measuredPromptTokens = promptTokens;
+                _measuredCompletionTokens = Math.Max(0, completionTokens);
+                _measuredAt = DateTime.Now;
+                _measuredModelId = GetMeasurementModelId();
+                _measuredHistoryTokens = EstimateWorkplaceConversationTokens();
+                ScheduleContextPanelRefresh();
+            }
+
+            if (Dispatcher.CheckAccess())
+                Apply();
+            else
+                _ = Dispatcher.InvokeAsync(Apply, DispatcherPriority.Background);
+        }
+
+        private void ClearMeasuredContextUsage()
+        {
+            _measuredPromptTokens = null;
+            _measuredCompletionTokens = 0;
+            _measuredAt = null;
+            _measuredModelId = null;
+            _measuredHistoryTokens = 0;
+        }
+
+        private void CaptureMeasuredContextUsage(WorkplaceSessionSnapshot snapshot)
+        {
+            snapshot.LastMeasuredPromptTokens = _measuredPromptTokens;
+            snapshot.LastMeasuredCompletionTokens = _measuredCompletionTokens;
+            snapshot.LastMeasuredAt = _measuredAt;
+            snapshot.LastMeasuredModelId = _measuredModelId;
+            snapshot.LastMeasuredHistoryTokens = _measuredHistoryTokens;
+        }
+
+        private void RestoreMeasuredContextUsage(WorkplaceSessionSnapshot snapshot)
+        {
+            ClearMeasuredContextUsage();
+            if (snapshot.LastMeasuredPromptTokens is not > 0
+                || string.IsNullOrWhiteSpace(snapshot.LastMeasuredModelId)
+                || !string.Equals(snapshot.LastMeasuredModelId, GetMeasurementModelId(), StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _measuredPromptTokens = snapshot.LastMeasuredPromptTokens;
+            _measuredCompletionTokens = Math.Max(0, snapshot.LastMeasuredCompletionTokens);
+            _measuredAt = snapshot.LastMeasuredAt;
+            _measuredModelId = snapshot.LastMeasuredModelId;
+            _measuredHistoryTokens = Math.Max(0, snapshot.LastMeasuredHistoryTokens);
+        }
+
+        /// <summary>
+        /// The measurement if it still describes this conversation (same model, not compacted since),
+        /// plus how many estimated tokens were added after it.
+        /// </summary>
+        private int? GetCurrentMeasurement(out int addedSinceTokens)
+        {
+            addedSinceTokens = 0;
+            if (_measuredPromptTokens is not > 0)
+                return null;
+
+            int historyNow = EstimateWorkplaceConversationTokens();
+            bool modelChanged = !string.Equals(_measuredModelId, GetMeasurementModelId(), StringComparison.Ordinal);
+            bool shrunk = historyNow < _measuredHistoryTokens - Math.Max(256, _measuredHistoryTokens / 10);
+            if (modelChanged || shrunk)
+            {
+                // A different model has a different window; a much smaller history means it was compacted.
+                ClearMeasuredContextUsage();
+                return null;
+            }
+
+            // The measured completion is appended to the conversation right after the call and is
+            // already counted by the measurement, so only growth beyond it is "since".
+            addedSinceTokens = Math.Max(0, historyNow - (_measuredHistoryTokens + _measuredCompletionTokens));
+            return _measuredPromptTokens;
+        }
+
+        /// <summary>Coalesces refresh requests (card changes, streaming, model/mode changes) to one per interval.</summary>
+        private void ScheduleContextPanelRefresh()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(ScheduleContextPanelRefresh, DispatcherPriority.Background);
+                return;
+            }
+
+            if (_contextPanelRefreshTimer == null)
+            {
+                _contextPanelRefreshTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(ContextPanelRefreshIntervalMs)
+                };
+                _contextPanelRefreshTimer.Tick += (_, _) =>
+                {
+                    _contextPanelRefreshTimer!.Stop();
+                    if (IsVisible)
+                        RefreshContextPanel();
+                };
+            }
+
+            if (!_contextPanelRefreshTimer.IsEnabled)
+                _contextPanelRefreshTimer.Start();
+        }
+
+        private readonly HashSet<WorkplaceChatMessage> _trackedChatCards = new();
+
+        private void TrackChatCardContentChanges(NotifyCollectionChangedEventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                _ = Dispatcher.InvokeAsync(ScheduleContextPanelRefresh, DispatcherPriority.Background);
+                return;
+            }
+
+            if (e.Action == NotifyCollectionChangedAction.Reset)
+            {
+                foreach (WorkplaceChatMessage old in _trackedChatCards)
+                    old.PropertyChanged -= ChatCard_PropertyChanged;
+                _trackedChatCards.Clear();
+            }
+
+            if (e.OldItems != null)
+            {
+                foreach (WorkplaceChatMessage removed in e.OldItems.OfType<WorkplaceChatMessage>())
+                {
+                    removed.PropertyChanged -= ChatCard_PropertyChanged;
+                    _trackedChatCards.Remove(removed);
+                }
+            }
+
+            if (e.NewItems != null)
+            {
+                foreach (WorkplaceChatMessage added in e.NewItems.OfType<WorkplaceChatMessage>())
+                {
+                    if (_trackedChatCards.Add(added))
+                        added.PropertyChanged += ChatCard_PropertyChanged;
+                }
+            }
+
+            ScheduleContextPanelRefresh();
+        }
+
+        private void ChatCard_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(WorkplaceChatMessage.Content))
+                ScheduleContextPanelRefresh();
+        }
+
+        private void RefreshContextPanel()
+        {
+            if (ContextBreakdownRowsPanel == null)
+                return;
+
             int totalCap = Math.Max(4096, _isCloudModeEnabled
                 ? _openRouterChatService.GetApproximateContextWindowTokens(GetEffectiveCouncilModelId())
                 : (_isSingleModelMode ? (int)_singleModelContextSize : (int)_builderContextSize));
 
-            int messagesTokens = Math.Max(0, EstimateWorkplaceContextTokens());
+            int messagesTokens = Math.Max(0, EstimateWorkplaceMessageTokens());
             int systemToolsTokens = _agentEnabled ? AgentToolSchemas.All().Count * 165 : 0;
             int mcpCount = _mcpConnectorService?.IsAnyConnected() == true ? _mcpConnectorService.GetActiveTools(null).Count : 0;
             int mcpToolsTokens = mcpCount * 220;
@@ -813,17 +990,38 @@ namespace Malx_AI
             string trackerText = GetTrackerContextAfterCompaction();
             int memoryFilesTokens = string.IsNullOrWhiteSpace(trackerText) ? 0 : Math.Max(80, EstimateTokenCount(trackerText));
             int sinceLastUpdateTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
-            int autocompactBuffer = Math.Max(512, (int)Math.Round(totalCap * 0.08));
 
-            int usedTotal = messagesTokens + systemToolsTokens + mcpToolsTokens + skillsTokens
-                + systemPromptTokens + mcpInstructionsTokens + memoryFilesTokens + sinceLastUpdateTokens;
-            int freeTokens = Math.Max(0, totalCap - usedTotal - autocompactBuffer);
-            double usedPercent = Math.Clamp((usedTotal / (double)totalCap) * 100.0, 0, 100);
+            // The provider-reported prompt size of the last turn, when there is one, is the true
+            // context; the guesses above are then only used to split it into rows.
+            int? measuredPrompt = GetCurrentMeasurement(out int addedSinceMeasurement);
+            WorkplaceContextUsageResult usage = WorkplaceContextUsage.Calculate(
+                totalCap,
+                measuredPrompt,
+                _measuredCompletionTokens,
+                new WorkplaceContextEstimate(messagesTokens, systemToolsTokens, mcpToolsTokens, skillsTokens,
+                    systemPromptTokens, mcpInstructionsTokens, memoryFilesTokens, sinceLastUpdateTokens),
+                addedSinceMeasurement);
+            messagesTokens = usage.Messages;
+            systemToolsTokens = usage.SystemTools;
+            mcpToolsTokens = usage.McpTools;
+            skillsTokens = usage.Skills;
+            systemPromptTokens = usage.SystemPrompt;
+            mcpInstructionsTokens = usage.McpInstructions;
+            memoryFilesTokens = usage.MemoryFiles;
+            sinceLastUpdateTokens = usage.PendingInput;
+            int autocompactBuffer = usage.AutocompactBuffer;
+            int usedTotal = usage.Used;
+            int freeTokens = usage.Free;
 
             if (ContextUsedPercentText != null)
-                ContextUsedPercentText.Text = $"{usedPercent:0}% used";
+                ContextUsedPercentText.Text = $"{usage.Percent:0}% used";
             if (ContextUsedFractionText != null)
-                ContextUsedFractionText.Text = $"{FormatCompactTokenCount(usedTotal)} / {FormatCompactTokenCount(totalCap)}";
+            {
+                ContextUsedFractionText.Text = $"{FormatCompactTokenCount(usedTotal)} / {FormatCompactTokenCount(totalCap)} · {(usage.IsMeasured ? "measured" : "estimated")}";
+                ContextUsedFractionText.ToolTip = usage.IsMeasured
+                    ? $"Prompt size reported by the model provider{(_measuredAt is DateTime at ? $" at {at:t}" : string.Empty)}, plus what was added since."
+                    : "Estimated from message length until the model reports its real prompt size.";
+            }
 
             if (CtxBarMessagesCol != null)
             {
@@ -896,10 +1094,12 @@ namespace Malx_AI
                 CtxExpandMemoryText.Text = $"> Memory files   {(string.IsNullOrWhiteSpace(_activeTrackerFilePath) ? 0 : 1)} (.md)";
             if (CtxUntilCompactText != null)
             {
-                int until = Math.Max(0, (int)(totalCap * 0.80) - usedTotal);
-                CtxUntilCompactText.Text = $"{FormatCompactTokenCount(until)} until auto-compact";
+                CtxUntilCompactText.Text = $"{FormatCompactTokenCount(usage.UntilCompact)} until auto-compact";
             }
+        }
 
+        private void RefreshRightSidebarOutputsSection()
+        {
             if (RightSidebarOutputsPanel != null)
             {
                 RightSidebarOutputsPanel.Children.Clear();

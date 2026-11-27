@@ -96,6 +96,7 @@ namespace Malx_AI
 
         private void RefreshSingleModelModeUi()
         {
+            ScheduleContextPanelRefresh();
             if (CouncilModeSegmentButton == null || SingleModelModeSegmentButton == null)
                 return;
 
