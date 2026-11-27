@@ -312,7 +312,8 @@ namespace Malx_AI.Agent
             _pendingReasoning = ShouldReturnReasoning(_modelId, _thinkingEnabled) ? ClipReasoning(response.Reasoning) : null;
             return AgentModelReply.Tool(new AgentToolCall(toolCall.Name.ToLowerInvariant(), arguments)) with
             {
-                Narration = AgentNarration.FromModelText(response.Text) ?? AgentNarration.FromReasoning(response.Reasoning)
+                Narration = AgentNarration.FromModelText(response.Text) ?? AgentNarration.FromReasoning(response.Reasoning),
+                Said = AgentNarration.ForUser(response.Text)
             };
         }
 

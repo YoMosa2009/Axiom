@@ -1750,6 +1750,7 @@ namespace Malx_AI
 
             var textBuilder = new StringBuilder();
             var reasoningBuilder = new StringBuilder();
+            var reasoningSources = new StreamReasoningAccumulator();
             var toolCallAccumulators = new Dictionary<int, StreamingToolCallAccumulator>();
             int consecutivePadDeltas = 0;
             bool padDegenerationDetected = false;
@@ -1922,6 +1923,7 @@ namespace Malx_AI
                         }
                     }
 
+                    string reasoningFromContent = string.Empty;
                     if (delta.TryGetProperty("content", out JsonElement contentElement))
                     {
                         string contentDelta = OpenRouterContentParts.ExtractText(contentElement, includeReasoningParts: false);
@@ -1952,9 +1954,7 @@ namespace Malx_AI
                             }
                         }
 
-                        string reasoningFromContent = OpenRouterContentParts.ExtractReasoningFromContent(contentElement);
-                        if (!string.IsNullOrEmpty(reasoningFromContent))
-                            reasoningBuilder.Append(reasoningFromContent);
+                        reasoningFromContent = OpenRouterContentParts.ExtractReasoningFromContent(contentElement);
                     }
 
                     // OpenRouter delivers the same chain-of-thought in both "reasoning" (plain string)
@@ -1976,11 +1976,9 @@ namespace Malx_AI
                         ? OpenRouterContentParts.ExtractText(reasoningDetailsElement, includeReasoningParts: true)
                         : string.Empty;
 
-                    if (!string.IsNullOrEmpty(reasoningDelta))
-                        reasoningBuilder.Append(reasoningDelta);
-                    if (!string.IsNullOrEmpty(reasoningDetailsDelta)
-                        && !string.Equals(reasoningDetailsDelta, reasoningDelta, StringComparison.Ordinal))
-                        reasoningBuilder.Append(reasoningDetailsDelta);
+                    // One source per stream (StreamReasoningAccumulator): providers that send
+                    // "reasoning" and "reasoning_details" in alternating chunks doubled every word.
+                    reasoningBuilder.Append(reasoningSources.Add(reasoningDelta, reasoningDetailsDelta, reasoningFromContent));
 
                     AppendStreamingToolCalls(delta, toolCallAccumulators);
                     if (onToolCallProgress != null && toolCallAccumulators.Count > 0)

@@ -390,6 +390,35 @@ namespace Malx_AI
                 return builder.ToString().TrimEnd();
             }
 
+            /// <summary>
+            /// What a card keeps once the run moves on to a new card below it: the steps it
+            /// showed, without the live plan, "doing now" line or status (those move to the new
+            /// card, so they are not repeated on every earlier card).
+            /// </summary>
+            public string RenderFrozen()
+                => StepLines.Count == 0
+                    ? string.Empty
+                    : string.Join("\n", AgentCardLabels.CompactLiveSteps(StepLines).Select(l => "- " + l));
+
+            /// <summary>
+            /// Ends the current card with <paramref name="tail"/> under its steps and starts a
+            /// fresh card for the rest of the run. Returns the new card for the caller to add.
+            /// </summary>
+            public WorkplaceChatMessage SplitAfter(string? tail, string? newStatus)
+            {
+                string frozen = RenderFrozen();
+                if (!string.IsNullOrWhiteSpace(tail))
+                    frozen = frozen.Length == 0 ? tail.Trim() : frozen + "\n\n" + tail.Trim();
+                Card.Content = frozen;
+                Card.ViewedImagePaths = Array.Empty<string>();
+                Card = new WorkplaceChatMessage { Role = "agent", ModelLabel = Card.ModelLabel };
+                StepLines.Clear();
+                Narration = null;
+                Status = newStatus;
+                Card.Content = Render();
+                return Card;
+            }
+
             /// <summary>Done steps struck through, the current one in bold (the Codex plan view).</summary>
             public static string RenderPlan(AgentPlan plan)
             {
@@ -422,6 +451,25 @@ namespace Malx_AI
                 live.Narration = narration;
                 live.Card.Content = live.Render();
             });
+        }
+
+        /// <summary>
+        /// The model wrote the user a real message mid-run (an answer to their question, or a
+        /// status update too long for the one-line narration). It goes into the chat in full,
+        /// where it was said, and the run continues on a new card below it.
+        /// </summary>
+        private void ShowAgentSaid(AgentRunCard run, string said)
+        {
+            if (string.IsNullOrWhiteSpace(said))
+                return;
+            Dispatcher.Invoke(() =>
+            {
+                AgentRunCard live = _activeAgentRunCard ?? run;
+                WorkplaceChatMessage next = live.SplitAfter(said, null);
+                _chatCards.Add(next);
+                ChatScrollViewer?.ScrollToEnd();
+            });
+            RequestWorkspaceStateSave();
         }
 
         /// <summary>Shows a plan update on the live run card and in the task tracker.</summary>
@@ -538,15 +586,12 @@ namespace Malx_AI
             AgentRunCard? run = _activeAgentRunCard;
             if (run != null && _agentSessionRunning)
             {
-                run.Status = "Continuing below with your message";
-                run.Card.Content = run.Render();
-
-                run.Card.ViewedImagePaths = Array.Empty<string>();
-                run.Card = new WorkplaceChatMessage { Role = "agent", ModelLabel = run.Card.ModelLabel };
-                run.StepLines.Clear();
-                run.Status = "Got it. Pausing at the next safe point to read your message";
-                run.Card.Content = run.Render();
-                _chatCards.Add(run.Card);
+                WorkplaceChatMessage previous = run.Card;
+                WorkplaceChatMessage next = run.SplitAfter(null, "Got it. Pausing at the next safe point to read your message");
+                // A card that had nothing but the live plan/status left would be an empty box.
+                if (string.IsNullOrWhiteSpace(previous.Content))
+                    _chatCards.Remove(previous);
+                _chatCards.Add(next);
             }
 
             ChatScrollViewer?.ScrollToEnd();
@@ -777,7 +822,8 @@ namespace Malx_AI
                 _isCloudModeEnabled,
                 trackerFilePath: GetOrResolveTrackerFilePath(),
                 browserSummary: GetDetectedBrowserSummaryForPrompt(),
-                visionCapable: visionCapable);
+                visionCapable: visionCapable,
+                modelName: GetAgentCardModelName() is { } agentModelName && agentModelName != "Agent" ? agentModelName : null);
             string capabilities = _capabilityRegistry.BuildSystemInstruction(userQuery, "Workplace Agent", includeMatchedSkills: false);
             if (capabilities.Length > 0)
                 systemPrompt += "\n\n" + capabilities;
@@ -929,6 +975,7 @@ namespace Malx_AI
                 ShowAgentPlan(runCard, session.Plan, userQuery);
             session.PlanChanged = plan => ShowAgentPlan(runCard, plan, userQuery);
             session.Narrated = narration => ShowAgentNarration(runCard, narration);
+            session.Said = said => ShowAgentSaid(runCard, said);
             session.MessagesDelivered = count => ShowAgentNarration(runCard, count == 1
                 ? "Read your message; adjusting the work to it while keeping the original task."
                 : $"Read your {count} messages; adjusting the work to them while keeping the original task.");

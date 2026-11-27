@@ -70,6 +70,13 @@ namespace Malx_AI.Agent
         public Action<string>? Narrated { get; set; }
 
         /// <summary>
+        /// Called with the model's words, in full, when they are a message to the user rather
+        /// than a one-line "doing now": its first reply after a mid-run message, or anything the
+        /// narration would have cut short. The step's narration is then the call's description.
+        /// </summary>
+        public Action<string>? Said { get; set; }
+
+        /// <summary>
         /// When true (the default), a user message pauses a model turn that has not started a
         /// tool call, and the turn is asked again with the message.
         /// </summary>
@@ -131,6 +138,8 @@ namespace Malx_AI.Agent
                 return new AgentRunResult(model.Unavailable!, [], false, false, []);
 
             var steps = new List<AgentStep>();
+            // Waits inside tools end early when the user writes (AgentToolExecutor.MessageInbox).
+            _executor.MessageInbox = inbox;
 
             // Each completed step is reported as it happens, so the UI can show the work live
             // (like a terminal agent) instead of one summary at the very end.
@@ -170,6 +179,7 @@ namespace Malx_AI.Agent
             int recallsInARow = 0;
             int worldChanges = 0;
             int pausesForMessages = 0;
+            bool answeringUser = false;
             string? wrapUpReason = null;
             bool checkedSinceLastChange = true;
             bool checkGateUsed = false;
@@ -282,6 +292,7 @@ namespace Malx_AI.Agent
                 if (!string.IsNullOrWhiteSpace(draftAnswer))
                     text = $"(You were about to finish with: \"{Clip(draftAnswer.Trim(), 400)}\")\n" + text;
                 history.Add(new AgentExchange(new AgentToolCall(UserMessageTool, new Dictionary<string, string>()), text));
+                answeringUser = true;
                 try { MessagesDelivered?.Invoke(messages.Count); }
                 catch { /* a UI callback failure must never stop the run */ }
                 return true;
@@ -434,9 +445,17 @@ namespace Malx_AI.Agent
                     }
 
                     AgentToolCall call = reply.Call;
-                    if (Narrated != null && !string.Equals(call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))
+                    bool notFinish = !string.Equals(call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase);
+                    bool saidInFull = false;
+                    if (Said != null && notFinish && AgentNarration.ShouldShowInFull(reply.Said, answeringUser))
                     {
-                        try { Narrated(reply.Narration ?? AgentNarration.FromCall(call)); }
+                        try { Said(reply.Said!); saidInFull = true; }
+                        catch { /* a UI callback failure must never stop the run */ }
+                    }
+                    answeringUser = false;
+                    if (Narrated != null && notFinish)
+                    {
+                        try { Narrated(saidInFull ? AgentNarration.FromCall(call) : reply.Narration ?? AgentNarration.FromCall(call)); }
                         catch { /* a UI callback failure must never stop the run */ }
                     }
                     if (string.Equals(call.Tool, AgentToolNames.Finish, StringComparison.OrdinalIgnoreCase))

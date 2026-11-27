@@ -219,6 +219,43 @@ namespace Malx_AI.Agent
             };
         }
 
+        /// <summary>
+        /// The model's text written alongside a tool call, cleaned for the user but NOT shortened:
+        /// think blocks, tool-call JSON and protocol lines removed, paragraphs kept. Null when
+        /// nothing readable is left.
+        /// </summary>
+        public static string? ForUser(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+            string cleaned = StripThinkBlocks(text);
+            cleaned = string.Join("\n", cleaned.Replace("\r\n", "\n").Split('\n')
+                .Where(line =>
+                {
+                    string t = line.Trim();
+                    return !t.StartsWith("{\"", StringComparison.Ordinal)
+                        && !t.StartsWith("TOOL ", StringComparison.Ordinal)
+                        && !t.Equals("END", StringComparison.Ordinal);
+                }));
+            cleaned = Regex.Replace(cleaned, @"\n{3,}", "\n\n").Trim();
+            return cleaned.Count(char.IsLetter) < 4 ? null : cleaned;
+        }
+
+        /// <summary>
+        /// True when the model's words should be shown to the user in full rather than folded
+        /// into the one-line narration: always right after the user wrote mid-run (it is the
+        /// answer to them), otherwise when the narration would have had to cut it short.
+        /// </summary>
+        public static bool ShouldShowInFull(string? said, bool answeringUser)
+        {
+            if (string.IsNullOrWhiteSpace(said))
+                return false;
+            if (answeringUser)
+                return said.Count(char.IsLetter) >= 4;
+            string flat = Whitespace.Replace(said, " ").Trim();
+            return flat.Length > MaxChars || (said.Contains('\n') && flat.Length > 120);
+        }
+
         /// <summary>Picks the best narration for a step: the model's text, its reasoning, then the call.</summary>
         public static string Pick(string? modelText, string? reasoning, AgentToolCall call)
             => FromModelText(modelText) ?? FromReasoning(reasoning) ?? FromCall(call);

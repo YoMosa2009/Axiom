@@ -93,6 +93,64 @@ namespace Malx_AI.Agent
 
         public AgentBackgroundTaskManager BackgroundTasks => _backgroundTasks;
 
+        /// <summary>
+        /// The running session's mid-run message box. A wait (a Start-Sleep command, or waiting
+        /// on a background task) ends early when the user writes, so the model can answer.
+        /// </summary>
+        /// <remarks>
+        /// Owner logs 2026-11-26: the model polled a long job with 9-10 minute sleeps, and two
+        /// "any updates?" messages sat unanswered until the user pressed Stop.
+        /// </remarks>
+        public AgentUserMessageInbox? MessageInbox { get; set; }
+
+        /// <summary>Waits longer than this inside run_command are cut short and the model is told to use a background task.</summary>
+        internal const int MaxForegroundSleepSeconds = 60;
+
+        private static readonly System.Text.RegularExpressions.Regex WaitCommand = new(
+            @"(?i)(\bStart-Sleep\b|(^|[;\s|(])sleep\s+-?\d|\btimeout(\.exe)?\s+/t\b|\bWait-Process\b|\bWait-Job\b|\bThread\]::Sleep)",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static readonly System.Text.RegularExpressions.Regex SleepCommand = new(
+            @"(?i)(\bStart-Sleep\b|(^|[;\s|(])sleep\s+-?\d|\btimeout(\.exe)?\s+/t\b|\bThread\]::Sleep)",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>True for a command that sleeps for a fixed time (capped at <see cref="MaxForegroundSleepSeconds"/>).</summary>
+        internal static bool IsSleepCommand(string? command)
+            => !string.IsNullOrWhiteSpace(command) && SleepCommand.IsMatch(command);
+
+        /// <summary>True for a command whose point is to wait (sleep / timeout / Wait-Process).</summary>
+        internal static bool IsWaitCommand(string? command)
+            => !string.IsNullOrWhiteSpace(command) && WaitCommand.IsMatch(command);
+
+        /// <summary>
+        /// A token cancelled when the user posts a mid-run message (or already has one waiting),
+        /// linked to <paramref name="token"/>. Dispose the returned registration.
+        /// </summary>
+        private (CancellationTokenSource Source, IDisposable Subscription) LinkToUserMessages(CancellationToken token)
+        {
+            var source = CancellationTokenSource.CreateLinkedTokenSource(token);
+            AgentUserMessageInbox? inbox = MessageInbox;
+            if (inbox == null)
+                return (source, new Unsubscriber(null));
+            void OnPosted()
+            {
+                try { source.Cancel(); } catch (ObjectDisposedException) { }
+            }
+            inbox.MessagePosted += OnPosted;
+            if (inbox.HasPending)
+                OnPosted();
+            return (source, new Unsubscriber(() => inbox.MessagePosted -= OnPosted));
+        }
+
+        private sealed class Unsubscriber(Action? undo) : IDisposable
+        {
+            public void Dispose() => undo?.Invoke();
+        }
+
+        internal const string InterruptedWaitNote =
+            "Stopped waiting early because the user sent you a message. Answer them first (what is done, what is still running, "
+            + "what is next), then carry on. Background tasks keep running.";
+
         public BrowserControlService BrowserControl => _browserControl;
 
         /// <summary>Copies a file that already existed before its first change; says where, if it did.</summary>
@@ -180,6 +238,18 @@ namespace Malx_AI.Agent
                 ? Math.Min(parsed, 600)
                 : DefaultTimeoutSeconds;
 
+            // A command that only waits is cut to MaxForegroundSleepSeconds and ends as soon as
+            // the user writes: while it runs, the model cannot hear them.
+            bool isWait = IsWaitCommand(command);
+            bool isSleep = isWait && IsSleepCommand(command);
+            if (isSleep)
+                timeoutSeconds = Math.Min(timeoutSeconds, MaxForegroundSleepSeconds);
+            (CancellationTokenSource waitSource, IDisposable waitSubscription) = isWait
+                ? LinkToUserMessages(token)
+                : (CancellationTokenSource.CreateLinkedTokenSource(token), new Unsubscriber(null));
+            using CancellationTokenSource commandToken = waitSource;
+            using IDisposable waitSubscriptionScope = waitSubscription;
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
@@ -218,15 +288,39 @@ namespace Malx_AI.Agent
             {
                 // WaitForExitAsync also waits for redirected output to close. A child launched
                 // by PowerShell can retain those handles after PowerShell itself exits.
-                await exited.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), token);
+                await exited.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), commandToken.Token);
                 try
                 {
-                    await Task.WhenAll(stdoutClosed.Task, stderrClosed.Task).WaitAsync(TimeSpan.FromSeconds(1), token);
+                    await Task.WhenAll(stdoutClosed.Task, stderrClosed.Task).WaitAsync(TimeSpan.FromSeconds(1), commandToken.Token);
                 }
                 catch (TimeoutException)
                 {
                     outputStillOpen = true;
                 }
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                // Only a wait command listens for user messages: one arrived.
+                TryKill(process);
+                stopwatch.Stop();
+                string partialOutput = SnapshotOutput(stdout);
+                RecordCommandOutput(partialOutput, SnapshotOutput(stderr));
+                return AgentToolResult.Ok(
+                    $"[Wait interrupted after {stopwatch.ElapsedMilliseconds / 1000}s] {InterruptedWaitNote}"
+                    + (string.IsNullOrWhiteSpace(partialOutput) ? string.Empty : "\nOutput so far:\n" + partialOutput));
+            }
+            catch (TimeoutException) when (isSleep)
+            {
+                TryKill(process);
+                stopwatch.Stop();
+                string partialOutput = SnapshotOutput(stdout);
+                RecordCommandOutput(partialOutput, SnapshotOutput(stderr));
+                return AgentToolResult.Ok(
+                    $"[Stopped after {timeoutSeconds}s] run_command waits are limited to {MaxForegroundSleepSeconds}s, because the user cannot "
+                    + "reach you while a command runs. To wait for a long job, start it with start_background_task and use "
+                    + "check_background_task with wake_seconds (a message from the user ends that wait early). "
+                    + "Tell the user what you are waiting for and roughly how long it will take."
+                    + (string.IsNullOrWhiteSpace(partialOutput) ? string.Empty : "\nOutput so far:\n" + partialOutput));
             }
             catch (TimeoutException)
             {
@@ -322,17 +416,37 @@ namespace Malx_AI.Agent
             AgentBackgroundTaskSnapshot snap = _backgroundTasks.StartBackgroundTask(command, workingDirectory, wakeSeconds, title);
             if (waitForWake)
             {
-                (AgentBackgroundTaskSnapshot? waitedSnap, _, string report) =
-                    await _backgroundTasks.WaitForTaskOrWakeTimerAsync(snap.Id, snap.WakeAfterSeconds, token).ConfigureAwait(false);
-                return waitedSnap != null
-                    ? AgentToolResult.Ok(report)
-                    : AgentToolResult.Fail(report);
+                return await WaitOnTaskAsync(snap.Id, snap.WakeAfterSeconds, token).ConfigureAwait(false);
             }
 
             return AgentToolResult.Ok(
                 $"Started background task '{snap.Id}' ({snap.Title}) with wake timer {snap.WakeAfterSeconds}s.\n"
                 + $"Continue with other work (you will be notified when it completes or after {snap.WakeAfterSeconds}s), "
                 + $"or call check_background_task(task_id='{snap.Id}', wake_seconds={snap.WakeAfterSeconds}) to pause and wait.");
+        }
+
+        /// <summary>Waits on a background task; a message from the user ends the wait early.</summary>
+        private async Task<AgentToolResult> WaitOnTaskAsync(string taskId, int waitSeconds, CancellationToken token)
+        {
+            (CancellationTokenSource source, IDisposable subscription) = LinkToUserMessages(token);
+            using (source)
+            using (subscription)
+            {
+                try
+                {
+                    (AgentBackgroundTaskSnapshot? snap, _, string report) =
+                        await _backgroundTasks.WaitForTaskOrWakeTimerAsync(taskId, waitSeconds, source.Token).ConfigureAwait(false);
+                    return snap != null ? AgentToolResult.Ok(report) : AgentToolResult.Fail(report);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    AgentBackgroundTaskSnapshot? current = _backgroundTasks.GetTask(taskId);
+                    string status = current == null
+                        ? string.Empty
+                        : "\n" + AgentBackgroundTaskManager.FormatTaskReport(current, wokeByTimer: false);
+                    return AgentToolResult.Ok($"[Wait interrupted] {InterruptedWaitNote}{status}");
+                }
+            }
         }
 
         private async Task<AgentToolResult> CheckBackgroundTaskAsync(AgentToolCall call, CancellationToken token)
@@ -362,9 +476,7 @@ namespace Malx_AI.Agent
 
             if (int.TryParse(call.Arg("wake_seconds"), out int waitSec) && waitSec > 0)
             {
-                (AgentBackgroundTaskSnapshot? snap, _, string report) =
-                    await _backgroundTasks.WaitForTaskOrWakeTimerAsync(taskId, waitSec, token).ConfigureAwait(false);
-                return snap != null ? AgentToolResult.Ok(report) : AgentToolResult.Fail(report);
+                return await WaitOnTaskAsync(taskId, waitSec, token).ConfigureAwait(false);
             }
 
             AgentBackgroundTaskSnapshot? existing = _backgroundTasks.GetTask(taskId);

@@ -30,6 +30,14 @@ namespace Malx_AI.Agent
         /// of its reasoning), for the live "doing now" line. Null when it said nothing.
         /// </summary>
         public string? Narration { get; init; }
+
+        /// <summary>
+        /// Everything the model wrote to the user alongside this call, untrimmed (null when it
+        /// wrote nothing). A status update or an answer to a mid-run question can be longer than
+        /// the one-line narration, and cutting it to a sentence and a half lost it
+        /// (<see cref="AgentNarration.ForUser"/>).
+        /// </summary>
+        public string? Said { get; init; }
     }
 
     /// <summary>

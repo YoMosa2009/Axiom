@@ -69,6 +69,7 @@
     <Compile Include="..\Malx_AI\UpdateApplyService.cs" Link="Production\UpdateApplyService.cs" />
     <Compile Include="..\Malx_AI\AxiomCapabilityRegistry.cs" Link="Production\AxiomCapabilityRegistry.cs" />
     <Compile Include="..\Malx_AI\OpenRouterContentParts.cs" Link="Production\OpenRouterContentParts.cs" />
+    <Compile Include="..\Malx_AI\StreamReasoningAccumulator.cs" Link="Production\StreamReasoningAccumulator.cs" />
     <Compile Include="..\Malx_AI\AxiomAccountClient.cs" Link="Production\AxiomAccountClient.cs" />
     <Compile Include="..\Malx_AI\AxiomAccountBuiltIns.cs" Link="Production\AxiomAccountBuiltIns.cs" />
     <Compile Include="..\Malx_AI\CustomEndpointMetadataParser.cs" Link="Production\CustomEndpointMetadataParser.cs" />
