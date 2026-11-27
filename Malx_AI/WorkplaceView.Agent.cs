@@ -1028,7 +1028,22 @@ namespace Malx_AI
             catch (Exception ex)
             {
                 await BackendLogService.LogErrorAsync("ComputerAgent", ex);
-                CompleteAgentRunCard(runCard, $"The agent stopped: {ex.Message}");
+                // A provider failure gets a plain title and what to do (RunFailureAdvisor),
+                // instead of a raw exception message.
+                string stopText = $"The agent stopped: {ex.Message}";
+                if (ex is not AgentFatalException && !token.IsCancellationRequested)
+                {
+                    RunFailureAdvice advice = RunFailureAdvisor.Classify(
+                        ex is System.Net.Http.HttpRequestException http && http.StatusCode is { } status ? (int)status : null,
+                        ex.Message);
+                    if (advice.Kind is not (RunFailureKind.Unknown or RunFailureKind.Cancelled))
+                    {
+                        stopText = $"**{advice.Title}.** {advice.Hint}"
+                            + (advice.RetryAfterSeconds is int wait ? $" You can try again in about {wait} s." : string.Empty)
+                            + " Completed steps are kept; send \"continue\" to pick up from here.";
+                    }
+                }
+                CompleteAgentRunCard(runCard, stopText);
                 await OfferAgentUndoAsync(runJournal, runCard.Card);
                 FinishAgentRunUi();
                 if (!token.IsCancellationRequested)
