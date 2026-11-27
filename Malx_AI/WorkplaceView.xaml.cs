@@ -236,6 +236,7 @@ namespace Malx_AI
 
         private void RefreshWorkplaceCloudModeUi()
         {
+            ScheduleContextPanelRefresh();
             if (FindName("WorkplaceCloudModeButton") is not Button cloudModeButton)
                 return;
 
@@ -688,6 +689,10 @@ namespace Malx_AI
                     // the cloud council always stays on its selected model.
                     allowModelFallback: false,
                     disableToolCalls: disableToolsForThisPass);
+
+                // The provider-reported prompt size of the main (Builder) turn is the true context.
+                if (role == CouncilRole.Builder && response.Usage != null)
+                    RecordMeasuredContextUsage(response.Usage.PromptTokens, response.Usage.CompletionTokens);
 
                 if (!string.IsNullOrWhiteSpace(response.Reasoning))
                     reasoningParts.Add(response.Reasoning.Trim());
@@ -2124,6 +2129,8 @@ namespace Malx_AI
             StopPipelineProgress();
             _lastRolePromptTokenEstimates.Clear();
             _lastRoleGeneratedTokenCounts.Clear();
+            if (clearSessionCollections)
+                ClearMeasuredContextUsage();
             _pipelineTokenCount = 0;
             _submittedRunPrompt = string.Empty;
             _lastCancelledRunPrompt = string.Empty;
@@ -2407,8 +2414,10 @@ namespace Malx_AI
                 _ = RefreshHybridLocalMetadataAsync();
             RefreshCodebaseAccessUi();
             UpdatePerformanceAggregate();
+            RestoreMeasuredContextUsage(snapshot);
             UpdateWorkplaceTokenUsageIndicator();
             RestoreOverhaulSnapshotFields(snapshot);
+            ScheduleContextPanelRefresh();
         }
 
         public void ResetWorkspaceSession()
@@ -3141,6 +3150,8 @@ namespace Malx_AI
             {
                 if (!IsVisible)
                     CloseAllPopups();
+                else
+                    ScheduleContextPanelRefresh();
             };
             CommandManager.AddPreviewExecutedHandler(QueryInput, (s, e) =>
             {
@@ -3549,6 +3560,7 @@ namespace Malx_AI
 
         private void ChatCards_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
+            TrackChatCardContentChanges(e);
             if (!Dispatcher.CheckAccess())
             {
                 _ = Dispatcher.InvokeAsync(RefreshRenderedWorkplaceCards, DispatcherPriority.Background);
@@ -3906,11 +3918,29 @@ namespace Malx_AI
                 : $"Context pressure: {level}";
         }
 
-        private int EstimateWorkplaceContextTokens()
+        /// <summary>Estimated size of the conversation turns alone (no pending input, tool exchanges or canvas).</summary>
+        private int EstimateWorkplaceConversationTokens()
         {
-            int historyTokens = _chatHistory
+            int tokens = _chatHistory
                 .Where(h => h.Role is "user" or "agent" or "assistant" or "architect" or "builder" or "critic" or "builder-patch" or "builder-revision")
                 .Sum(h => EstimateTokenCount(h.Content));
+            if (_chatHistory.Count == 0)
+            {
+                // A restored session shows its cards but has no in-memory turn list yet.
+                tokens = _chatCards
+                    .Where(c => c.Role is "user" or "agent" or "assistant")
+                    .Sum(c => EstimateTokenCount(c.Content ?? string.Empty));
+            }
+            return tokens;
+        }
+
+        private int EstimateWorkplaceContextTokens() =>
+            EstimateWorkplaceMessageTokens() + EstimateTokenCount(QueryInput?.Text ?? string.Empty);
+
+        /// <summary>Messages row of the context panel: conversation, in-flight tool exchanges and canvas (no pending input).</summary>
+        private int EstimateWorkplaceMessageTokens()
+        {
+            int historyTokens = EstimateWorkplaceConversationTokens();
 
             if (_activeAgentTaskState != null && _activeAgentTaskState.AccumulatedExchanges.Count > 0)
             {
@@ -3923,7 +3953,6 @@ namespace Malx_AI
                 }
             }
 
-            int currentInputTokens = EstimateTokenCount(QueryInput?.Text ?? string.Empty);
             int currentCanvasTokens = 0;
             string currentCanvas = ProjectCanvasEditor?.Text ?? string.Empty;
             if (_lastRunContext?.IsArtifactCanvasRequest == true
@@ -3933,7 +3962,7 @@ namespace Malx_AI
                 currentCanvasTokens = EstimateTokenCount(currentCanvas);
             }
 
-            return Math.Max(0, historyTokens + currentInputTokens + currentCanvasTokens);
+            return Math.Max(0, historyTokens + currentCanvasTokens);
         }
 
         private int GetWorkplaceRoleContextCapacity(CouncilRole role)
@@ -19102,6 +19131,7 @@ namespace Malx_AI
                 CanvasDiffRemovalCount = _canvasDiffRemovalCount,
                 ConnectedWorkspace = CloneConnectedWorkspaceState()
             };
+            CaptureMeasuredContextUsage(snapshot);
 
             snapshot.CouncilModels["Architect"] = new WorkplaceCouncilModelDto
             {

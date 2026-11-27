@@ -33,6 +33,7 @@
     <Compile Include="..\Malx_AI\SmartContextCompaction.cs" Link="Production\SmartContextCompaction.cs" />
     <Compile Include="..\Malx_AI\WorkplaceCompactionEngine.cs" Link="Production\WorkplaceCompactionEngine.cs" />
     <Compile Include="..\Malx_AI\CriticContract.cs" Link="Production\CriticContract.cs" />
+    <Compile Include="..\Malx_AI\WorkplaceContextUsage.cs" Link="Production\WorkplaceContextUsage.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpModels.cs" Link="Production\Mcp\McpModels.cs" />
     <Compile Include="..\Malx_AI\Mcp\McpMentionHelper.cs" Link="Production\Mcp\McpMentionHelper.cs" />
     <Compile Include="..\Malx_AI\LocalVisionSupport.cs" Link="Production\LocalVisionSupport.cs" />

@@ -1105,6 +1105,7 @@ namespace Malx_AI
                 {
                     _lastRolePromptTokenEstimates[CouncilRole.Builder] = promptTokens;
                     _lastRoleGeneratedTokenCounts[CouncilRole.Builder] = completionTokens;
+                    RecordMeasuredContextUsage(promptTokens, completionTokens);
                     UpdateWorkplaceTokenUsageIndicator();
                 };
                 return cloudModel;
