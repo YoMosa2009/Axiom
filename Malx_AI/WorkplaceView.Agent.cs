@@ -370,7 +370,12 @@ namespace Malx_AI
                 var builder = new StringBuilder();
                 // The run kind and model are in the card header (AgentCardLabels.AgentCardHeader).
                 if (Plan is { IsEmpty: false })
+                {
                     builder.Append(RenderPlan(Plan)).Append("\n\n");
+                    // Without a label the step rows ran on as more plan items (owner screenshot).
+                    if (StepLines.Count > 0)
+                        builder.Append("**Activity**\n");
+                }
                 if (StepLines.Count > 0)
                     builder.Append(string.Join("\n", AgentCardLabels.CompactLiveSteps(StepLines).Select(l => "- " + l)));
                 // The model's own "doing now" sentence sits under the compacted steps, where the
