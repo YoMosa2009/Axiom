@@ -51,7 +51,7 @@ namespace Malx_AI
             try
             {
                 using var checkCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                checkCts.CancelAfter(TimeSpan.FromSeconds(15));
+                checkCts.CancelAfter(TimeSpan.FromSeconds(30));
                 using HttpResponseMessage response = await Http.GetAsync(LatestReleaseApiUrl, checkCts.Token).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
@@ -66,7 +66,7 @@ namespace Malx_AI
             }
             catch (OperationCanceledException) when (!token.IsCancellationRequested)
             {
-                await BackendLogService.LogEventAsync("UpdateCheck", "GitHub release check timed out after 15 seconds.").ConfigureAwait(false);
+                await BackendLogService.LogEventAsync("UpdateCheck", "GitHub release check timed out after 30 seconds.").ConfigureAwait(false);
                 return null;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

@@ -606,7 +606,7 @@ namespace Malx_AI
                 {
                     _ = Task.Run(UpdateApplyService.CleanupOldStagingDirectories);
                 }
-                _ = CheckForAppUpdateOnStartupAsync();
+                _ = RunAutomaticUpdateChecksAsync();
                 _toolActivityTimer.Interval = TimeSpan.FromMilliseconds(500);
                 _toolActivityTimer.Tick += ToolActivityTimer_Tick;
                 _chatMessages.CollectionChanged += ChatMessages_CollectionChanged;
@@ -1147,29 +1147,38 @@ namespace Malx_AI
         private bool _updateDownloadInProgress;
         private CancellationTokenSource? _updateDownloadCts;
 
-        private async Task CheckForAppUpdateOnStartupAsync()
-        {
-            try
-            {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    AppVersionLabel.Text = $"Version {UpdateCheckService.GetCurrentVersionText()}";
-                    UpdateCheckStatusText.Text = "Checking GitHub for updates…";
-                    CheckForUpdatesButton.IsEnabled = false;
-                });
+        private string? _announcedUpdateTag;
 
-                UpdateCheckResult? result = await UpdateCheckService.CheckForUpdateAsync().ConfigureAwait(false);
-                await Dispatcher.InvokeAsync(() => ApplyUpdateCheckResult(result, notifyIfAvailable: true));
-            }
-            catch (Exception ex)
+        /// <summary>
+        /// Checks at launch, retries soon after a failure, and keeps re-checking while Axiom runs
+        /// (see UpdateCheckSchedule).
+        /// </summary>
+        private async Task RunAutomaticUpdateChecksAsync()
+        {
+            int consecutiveFailures = 0;
+            while (!Dispatcher.HasShutdownStarted)
             {
-                // Offline or rate-limited startup must never surface an error for an optional check.
-                Debug.WriteLine($"Update check failed: {ex.Message}");
-                await Dispatcher.InvokeAsync(() =>
+                try
                 {
-                    UpdateCheckStatusText.Text = "Could not check GitHub. Axiom will try again later.";
-                    CheckForUpdatesButton.IsEnabled = true;
-                });
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        AppVersionLabel.Text = $"Version {UpdateCheckService.GetCurrentVersionText()}";
+                        if (_availableUpdate == null)
+                            UpdateCheckStatusText.Text = "Checking GitHub for updates…";
+                    });
+
+                    UpdateCheckResult? result = await UpdateCheckService.CheckForUpdateAsync().ConfigureAwait(false);
+                    consecutiveFailures = result == null ? consecutiveFailures + 1 : 0;
+                    await Dispatcher.InvokeAsync(() => ApplyUpdateCheckResult(result, automatic: true));
+                }
+                catch (Exception ex)
+                {
+                    // Offline or rate-limited checks must never surface an error for an optional check.
+                    consecutiveFailures++;
+                    await BackendLogService.LogErrorAsync("UpdateCheck", ex).ConfigureAwait(false);
+                }
+
+                await Task.Delay(UpdateCheckSchedule.NextDelay(consecutiveFailures)).ConfigureAwait(false);
             }
         }
 
@@ -1183,7 +1192,7 @@ namespace Malx_AI
             try
             {
                 UpdateCheckResult? result = await UpdateCheckService.CheckForUpdateAsync();
-                ApplyUpdateCheckResult(result, notifyIfAvailable: false);
+                ApplyUpdateCheckResult(result, automatic: false);
             }
             catch (Exception ex)
             {
@@ -1196,12 +1205,18 @@ namespace Malx_AI
             }
         }
 
-        private void ApplyUpdateCheckResult(UpdateCheckResult? result, bool notifyIfAvailable)
+        private void ApplyUpdateCheckResult(UpdateCheckResult? result, bool automatic)
         {
+            // A background re-check must not overwrite the banner of a download in progress.
+            if (_updateDownloadInProgress)
+                return;
+
             CheckForUpdatesButton.IsEnabled = true;
             if (result == null)
             {
-                UpdateCheckStatusText.Text = "Could not reach GitHub. Axiom will check again next launch.";
+                // An update already found stays on screen when a later background check fails.
+                if (!automatic || _availableUpdate == null)
+                    UpdateCheckStatusText.Text = "Could not reach GitHub. Axiom will try again shortly.";
                 return;
             }
 
@@ -1217,9 +1232,15 @@ namespace Malx_AI
             UpdateCheckStatusText.Text = result.HasPackageAsset
                 ? $"{result.LatestVersionTag} is available{size}."
                 : $"{result.LatestVersionTag} is available, but the release has no supported Windows package.";
+
+            // Background re-checks announce each release once, so a dismissed banner stays dismissed.
+            if (automatic && string.Equals(_announcedUpdateTag, result.LatestVersionTag, StringComparison.Ordinal))
+                return;
+
+            _announcedUpdateTag = result.LatestVersionTag;
             ShowUpdateBanner(result);
 
-            if (notifyIfAvailable)
+            if (automatic)
                 WindowsToastNotificationService.ShowUpdateAvailableIfInactive(result.LatestVersionTag);
         }
 

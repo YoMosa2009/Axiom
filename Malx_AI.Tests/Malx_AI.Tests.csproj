@@ -63,6 +63,7 @@
     <Compile Include="..\Malx_AI\ComputerUse\ComputerUseSafety.cs" Link="Production\ComputerUse\ComputerUseSafety.cs" />
     <Compile Include="..\Malx_AI\UpdateReleaseParser.cs" Link="Production\UpdateReleaseParser.cs" />
     <Compile Include="..\Malx_AI\UpdateDeltaPackage.cs" Link="Production\UpdateDeltaPackage.cs" />
+    <Compile Include="..\Malx_AI\UpdateCheckSchedule.cs" Link="Production\UpdateCheckSchedule.cs" />
     <Compile Include="..\Malx_AI\UpdateStoragePaths.cs" Link="Production\UpdateStoragePaths.cs" />
     <Compile Include="..\Malx_AI\UpdateDownloadFile.cs" Link="Production\UpdateDownloadFile.cs" />
     <Compile Include="..\Malx_AI\UpdatePackageSafety.cs" Link="Production\UpdatePackageSafety.cs" />
