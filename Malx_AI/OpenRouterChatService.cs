@@ -34,7 +34,10 @@ namespace Malx_AI
         // The model's own reasoning for an assistant tool-call turn, sent back on the next
         // request. DeepSeek's thinking mode expects reasoning_content to round-trip within one
         // tool loop; dropping it degrades the next step or is rejected outright.
-        string? ReasoningContent = null);
+        string? ReasoningContent = null,
+        // A step of a running agent: not cut per message and not dropped for the message count.
+        // The agent compacts its own history by size; the size budgets here still apply.
+        bool AgentStep = false);
 
     public sealed record OpenRouterChatResponse(
         string Text,
@@ -2648,7 +2651,7 @@ namespace Malx_AI
 
             int startIndex = Math.Max(0, allMessages.Count - Math.Max(1, maxMessages));
             var candidates = allMessages
-                .Where((message, index) => index >= startIndex || message.PreserveFullText)
+                .Where((message, index) => index >= startIndex || message.PreserveFullText || message.AgentStep)
                 .ToList();
 
             var selectedReversed = new List<OpenRouterMessage>();
@@ -2662,7 +2665,7 @@ namespace Malx_AI
                 bool preserveWhole = isFinalMessage || message.PreserveFullText;
 
                 string text = (message.Text ?? string.Empty).Trim();
-                if (!preserveWhole && text.Length > PerHistoryMessageCharacterLimit)
+                if (!preserveWhole && !message.AgentStep && text.Length > PerHistoryMessageCharacterLimit)
                     text = text[..PerHistoryMessageCharacterLimit];
 
                 OpenRouterMessage normalizedMessage = message with { Text = text };

@@ -39,11 +39,20 @@ namespace Malx_AI.Agent
         /// <summary>The latest exchanges kept word for word.</summary>
         public int KeepRecentExchanges { get; init; } = 4;
 
+        /// <summary>Most tokens a run may reach before compacting, however large the window: every step resends them.</summary>
+        public int MaxTriggerTokens { get; init; } = int.MaxValue;
+
+        /// <summary>The newest steps up to this many tokens are also kept word for word.</summary>
+        public int RecentTailTokens { get; init; }
+
         /// <summary>A recent observation longer than this is clipped head and tail (DeepSeek Harness prunes at about 8K).</summary>
         public int RecentObservationMaxChars { get; init; } = 8000;
 
         /// <summary>The token count compaction starts at.</summary>
-        public int TriggerTokens => Math.Max(1024, Math.Min((int)(ContextTokens * TriggerRatio), ContextTokens - ReserveTokens));
+        public int TriggerTokens => Math.Max(1024, Math.Min(MaxTriggerTokens,
+            Math.Min((int)(ContextTokens * TriggerRatio), ContextTokens - ReserveTokens)));
+
+        internal const int CloudMaxTriggerTokens = 160_000;
 
         /// <summary>
         /// The policy for a model, from its window and size. Under 10B (and unknown local sizes)
@@ -66,6 +75,10 @@ namespace Malx_AI.Agent
                 MaxExchanges = maxExchanges,
                 KeepRecentExchanges = sizeClass is LocalModelSizeClass.SubOneB or LocalModelSizeClass.OneToFourB && !cloudOrHybrid ? 3 : 4,
                 RecentObservationMaxChars = cloudOrHybrid ? 8000 : 4000,
+                MaxTriggerTokens = cloudOrHybrid ? CloudMaxTriggerTokens : int.MaxValue,
+                // A share of the window, so a large model keeps its last stretch of work and a
+                // small one stays at the fixed few steps.
+                RecentTailTokens = summarise && contextTokens >= 32768 ? Math.Min(contextTokens / 8, 24_000) : 0,
             };
         }
     }
@@ -182,7 +195,7 @@ namespace Malx_AI.Agent
             {
                 List<AgentExchange> pruned = Prune(history, _policy);
                 how = "pruned old steps";
-                int keep = Math.Min(_policy.KeepRecentExchanges, pruned.Count);
+                int keep = Math.Min(RecentCount(history, _policy), pruned.Count);
                 int splitAt = pruned.Count - keep;
                 // Pruned older steps that are already shorter than a checkpoint would be cannot be
                 // shrunk by one: asking the model then only costs requests (a live run on Hybrid
@@ -270,6 +283,24 @@ namespace Malx_AI.Agent
                 + (Disabled ? " (still over the limit; compaction off for this run)" : string.Empty);
         }
 
+        /// <summary>How many of the newest steps stay word for word.</summary>
+        internal static int RecentCount(IReadOnlyList<AgentExchange> history, AgentCompactionPolicy policy)
+        {
+            // Never so much that what is left cannot get under the target.
+            int tail = Math.Min(policy.RecentTailTokens, (int)(policy.TriggerTokens * policy.TargetRatio * 0.6));
+            int count = 0;
+            int tokens = 0;
+            for (int i = history.Count - 1; i >= 0; i--)
+            {
+                tokens += EstimateTokens(history[i]);
+                if (tokens > tail)
+                    break;
+                count++;
+            }
+
+            return Math.Max(policy.KeepRecentExchanges, count);
+        }
+
         /// <summary>
         /// Stage 1, no model call: older steps become their short record (errors and refusals keep
         /// their first line), file bodies in older calls are replaced by their size, and long
@@ -278,7 +309,7 @@ namespace Malx_AI.Agent
         internal static List<AgentExchange> Prune(IReadOnlyList<AgentExchange> history, AgentCompactionPolicy policy)
         {
             var result = new List<AgentExchange>(history.Count);
-            int splitAt = Math.Max(0, history.Count - policy.KeepRecentExchanges);
+            int splitAt = Math.Max(0, history.Count - RecentCount(history, policy));
             for (int i = 0; i < history.Count; i++)
             {
                 AgentExchange exchange = history[i];

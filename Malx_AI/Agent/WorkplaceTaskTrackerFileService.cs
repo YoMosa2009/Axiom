@@ -34,6 +34,36 @@ namespace Malx_AI.Agent
             return Path.Combine(baseDir, $"workplace_{Math.Max(1, workplaceSessionId)}_tracker.md");
         }
 
+        private const string FailedMark = "[FAILED]";
+        private const string BlockedMark = "[BLOCKED]";
+
+        private static bool IsMarked(string line) =>
+            line.StartsWith("[x]", StringComparison.Ordinal)
+            || line.StartsWith(FailedMark, StringComparison.Ordinal)
+            || line.StartsWith(BlockedMark, StringComparison.Ordinal);
+
+        /// <summary>
+        /// One step's tracker line with what really happened. Every step used to be written as
+        /// done, and a model read "[x] Ran ssh root@..." for a command that had timed out.
+        /// </summary>
+        public static string StepLine(AgentStep step)
+        {
+            string label = step.Call.DescribeShort();
+            if (step.Result is { Succeeded: true })
+                return "[x] " + label;
+            string error = step.Result?.Error ?? step.Note ?? string.Empty;
+            bool blocked = step.Result == null
+                || error.StartsWith("Blocked", StringComparison.Ordinal)
+                || error.StartsWith("Repetitive action blocked", StringComparison.Ordinal);
+            // A command's error starts with its exit-code line; the line after it says more.
+            string why = error.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(line => !line.StartsWith("[Exit code:", StringComparison.Ordinal) && line != "[stderr]")
+                ?? error;
+            if (why.Length > 140)
+                why = why[..140] + "…";
+            return $"{(blocked ? BlockedMark : FailedMark)} {label}" + (why.Length > 0 ? $" - {why.Trim()}" : string.Empty);
+        }
+
         public static void InitializeOrUpdateTracker(
             string trackerPath,
             string sessionTitle,
@@ -106,11 +136,12 @@ namespace Malx_AI.Agent
             sb.AppendLine("## Progress & Steps");
             if (completedSteps != null && completedSteps.Count > 0)
             {
+                sb.AppendLine("`[x]` ran and succeeded. `[FAILED]` and `[BLOCKED]` did NOT happen.");
                 foreach (string step in completedSteps.TakeLast(40))
                 {
                     string clean = (step ?? string.Empty).Replace("\r", " ").Replace("\n", " ").Trim();
                     if (clean.Length > 0)
-                        sb.AppendLine($"- [x] {clean}");
+                        sb.AppendLine(IsMarked(clean) ? $"- {clean}" : $"- [x] {clean}");
                 }
             }
             else

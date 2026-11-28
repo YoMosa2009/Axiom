@@ -599,8 +599,8 @@ namespace Malx_AI.Agent
             }
 
             bool preserveToolText = string.Equals(exchange.Call.Tool, AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase);
-            _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call], ReasoningContent: reasoning));
-            _messages.Add(new OpenRouterMessage("tool", exchange.Observation, ToolCallId: call.Id, PreserveFullText: preserveToolText));
+            _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call], ReasoningContent: reasoning, AgentStep: true));
+            _messages.Add(new OpenRouterMessage("tool", exchange.Observation, ToolCallId: call.Id, PreserveFullText: preserveToolText, AgentStep: true));
 
             if (!string.IsNullOrWhiteSpace(exchange.ImageDataUrl) && _service.SupportsImageInput(_modelId))
             {

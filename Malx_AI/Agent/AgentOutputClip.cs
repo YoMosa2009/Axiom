@@ -10,6 +10,16 @@ namespace Malx_AI.Agent
     /// </summary>
     public static class AgentOutputClip
     {
+        /// <summary>The most one tool result may put in front of a large model.</summary>
+        public const int MaxObservationChars = 24_000;
+
+        /// <summary>
+        /// How much of one tool result a model sees, from its window: <paramref name="baseChars"/>
+        /// for small windows, growing to <see cref="MaxObservationChars"/> for large ones.
+        /// </summary>
+        public static int ObservationBudget(int baseChars, int contextTokens) =>
+            Math.Max(baseChars, Math.Min(contextTokens / 6, MaxObservationChars));
+
         public static string HeadTail(string text, int maxChars, string omittedNote = "Use recall_context to read the full output.")
         {
             if (string.IsNullOrEmpty(text) || maxChars <= 0 || text.Length <= maxChars)

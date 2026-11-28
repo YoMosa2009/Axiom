@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
 namespace Malx_AI.Agent
@@ -16,6 +17,85 @@ namespace Malx_AI.Agent
 
         /// <summary>Runs commands automatically (still enforces hard safety blocks and project scope confinement).</summary>
         AutoApprove
+    }
+
+    /// <summary>
+    /// Remembers which processes the agent's shells started. Every shell joins one Windows job
+    /// object, which its children inherit and keep after the shell exits, so a program launched
+    /// with Start-Process is still known to be the agent's. The job sets no limits.
+    /// </summary>
+    public static class AgentProcessOwnership
+    {
+        private const uint ProcessQueryLimitedInformation = 0x1000;
+        private const int BasicLimitInformationClass = 2;
+        private const uint BreakawayAllowed = 0x800;
+        private static readonly IntPtr Job = CreateJob();
+
+        private static IntPtr CreateJob()
+        {
+            if (!OperatingSystem.IsWindows())
+                return IntPtr.Zero;
+            IntPtr job = CreateJobObjectW(IntPtr.Zero, null);
+            // A program that asks to leave its parent's job (some installers do) must still start.
+            var limits = new BasicLimits { LimitFlags = BreakawayAllowed };
+            if (job != IntPtr.Zero)
+                SetInformationJobObject(job, BasicLimitInformationClass, ref limits, (uint)Marshal.SizeOf<BasicLimits>());
+            return job;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BasicLimits
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [DllImport("kernel32.dll")]
+        private static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref BasicLimits info, uint length);
+
+        public static void Claim(System.Diagnostics.Process process)
+        {
+            if (Job == IntPtr.Zero)
+                return;
+            try { AssignProcessToJobObject(Job, process.Handle); }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // It already exited. An unclaimed process is simply not stoppable here.
+            }
+        }
+
+        public static bool IsOwned(int processId)
+        {
+            if (Job == IntPtr.Zero || processId <= 0 || processId == Environment.ProcessId)
+                return false;
+            IntPtr handle = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+            if (handle == IntPtr.Zero)
+                return false;
+            try { return IsProcessInJob(handle, Job, out bool inJob) && inJob; }
+            finally { CloseHandle(handle); }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr CreateJobObjectW(IntPtr attributes, string? name);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr OpenProcess(uint access, bool inheritHandle, int processId);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
     }
 
     /// <summary>
@@ -96,11 +176,57 @@ namespace Malx_AI.Agent
             @"c:\program files (x86)\"
         ];
 
+        /// <summary>
+        /// Ways of ending a process other than Stop-Process and taskkill. A logged run was refused
+        /// those two and then succeeded with Invoke-CimMethod, so they are reviewed alike.
+        /// </summary>
+        private static readonly Regex OtherProcessKillRegex = new(
+            @"\b(?:Invoke-CimMethod|Invoke-WmiMethod|icim|iwmi)\b[\s\S]*\bTerminate\b|\.(?:Kill|Terminate)\s*\(|\bwmic\b[\s\S]*\bprocess\b[\s\S]*\b(?:delete|terminate)\b|(?<![\w-])(?:spps|pskill|tskill)(?![\w-])|(?<![\w-])kill\s+(?:-\w+\s+)*\d",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        /// <summary>One whole statement that stops processes named only by literal id.</summary>
+        private static readonly Regex StopByIdStatementRegex = new(
+            @"^(?:Stop-Process(?:\s+-Id)?\s+(?<ids>\d+(?:\s*,\s*\d+)*)(?:\s+(?:-Force|-ErrorAction\s+\w+))*|taskkill(?:\.exe)?(?:\s+(?:/PID\s+(?<ids>\d+)|/T|/F))+)$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        internal const string StopOwnProcessAdvice =
+            " To stop a process this agent started, use stop_background_task, or send a command that only does "
+            + "Stop-Process -Id <id>[,<id>] -Force (or taskkill /PID <id> /T /F) with literal process ids.";
+
+        /// <summary>
+        /// True when every statement stops processes by literal id and every id belongs to a
+        /// process the agent started. Anything else in the command (a pipe, a variable, a name)
+        /// makes it false.
+        /// </summary>
+        internal static bool StopsOnlyOwnedProcesses(string command, Func<int, bool> isOwned)
+        {
+            string[] statements = (command ?? string.Empty).Split([';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (statements.Length == 0)
+                return false;
+            foreach (string statement in statements)
+            {
+                Match match = StopByIdStatementRegex.Match(statement);
+                if (!match.Success)
+                    return false;
+                foreach (Capture capture in match.Groups["ids"].Captures)
+                {
+                    foreach (string id in capture.Value.Split(',', StringSplitOptions.TrimEntries))
+                    {
+                        if (!int.TryParse(id, out int pid) || !isOwned(pid))
+                            return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
         public static AgentPermissionDecision Evaluate(
             AgentToolCall call,
             AgentScope scope,
             CommandReviewMode mode,
-            IReadOnlyCollection<string>? sessionAllowList = null)
+            IReadOnlyCollection<string>? sessionAllowList = null,
+            Func<int, bool>? isOwnedProcess = null)
         {
             ArgumentNullException.ThrowIfNull(call);
 
@@ -136,11 +262,15 @@ namespace Malx_AI.Agent
                 if (AgentPermissionPolicy.MatchesAllowList(command, sessionAllowList))
                     return new AgentPermissionDecision(AgentPermission.Allow, "Allowed for this session.");
 
+                if (StopsOnlyOwnedProcesses(command, isOwnedProcess ?? AgentProcessOwnership.IsOwned))
+                    return new AgentPermissionDecision(AgentPermission.Allow, "Auto-Review: stops only processes this agent started.");
+
                 if (EvaluateAutoReviewDangerReason(command, scope) is string denyReason)
                 {
                     return new AgentPermissionDecision(
                         AgentPermission.Deny,
-                        $"Auto-Review declined this command because it {denyReason}.");
+                        $"Auto-Review declined this command because it {denyReason}."
+                        + (denyReason.Contains("processes", StringComparison.Ordinal) ? StopOwnProcessAdvice : string.Empty));
                 }
 
                 return new AgentPermissionDecision(AgentPermission.Allow, "Auto-Review: approved safe project command.");
@@ -188,6 +318,9 @@ namespace Malx_AI.Agent
             RiskRule? alwaysDanger = AutoDenyCommandRules.FirstOrDefault(r => r.Pattern.IsMatch(command));
             if (alwaysDanger != null)
                 return alwaysDanger.Reason;
+
+            if (OtherProcessKillRegex.IsMatch(command))
+                return "modifies system processes, services, or execution policy";
 
             bool isUnscoped = scope.EntireComputer || string.IsNullOrWhiteSpace(scope.RootPath);
 

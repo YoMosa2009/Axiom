@@ -242,9 +242,10 @@ public sealed class EffortQualityGateTests : IDisposable
         };
         var model = new ScriptedAgentModel(
             AgentModelReply.Tool(Write("notes.txt", "one")),
-            AgentModelReply.Tool(Read("notes.txt")),
-            AgentModelReply.Tool(new AgentToolCall(AgentToolNames.ListDirectory, new Dictionary<string, string> { ["path"] = "." })),
-            AgentModelReply.Tool(new AgentToolCall(AgentToolNames.FindFiles, new Dictionary<string, string> { ["pattern"] = "*" })),
+            AgentModelReply.Tool(new AgentToolCall(AgentToolNames.SearchText, new Dictionary<string, string> { ["pattern"] = "absent-a" })),
+            AgentModelReply.Tool(new AgentToolCall(AgentToolNames.SearchText, new Dictionary<string, string> { ["pattern"] = "absent-b" })),
+            AgentModelReply.Tool(new AgentToolCall(AgentToolNames.SearchText, new Dictionary<string, string> { ["pattern"] = "absent-c" })),
+            AgentModelReply.Tool(new AgentToolCall(AgentToolNames.SearchText, new Dictionary<string, string> { ["pattern"] = "absent-d" })),
             AgentModelReply.Tool(Write("notes.txt", "one\ntwo")),
             AgentModelReply.Tool(Read("notes.txt")),
             AgentModelReply.Answer("Fixed."));

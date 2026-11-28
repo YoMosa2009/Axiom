@@ -54,7 +54,7 @@ namespace Malx_AI.Agent
     /// <summary>Runs the agent's tools against the real machine.</summary>
     public sealed class AgentToolExecutor
     {
-        private const int MaxOutputChars = 20000;
+        private const int MaxOutputChars = 32000;
         // Tool observations are capped at 6000 characters. Report the actual stopping line
         // here rather than silently losing most of a 60K read when it reaches the model.
         private readonly int _maxReadChars;
@@ -265,6 +265,7 @@ namespace Malx_AI.Agent
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+            PrepareShellEnvironment(startInfo);
 
             using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -280,6 +281,7 @@ namespace Malx_AI.Agent
             if (!process.Start())
                 return AgentToolResult.Fail("The command could not be started.");
 
+            AgentProcessOwnership.Claim(process);
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
@@ -957,7 +959,26 @@ namespace Malx_AI.Agent
         /// Progress output is silenced so PowerShell does not emit CLIXML progress records.
         /// </remarks>
         internal static string EncodeForPowerShell(string command) =>
-            Convert.ToBase64String(Encoding.Unicode.GetBytes("$ProgressPreference = 'SilentlyContinue'\n" + (command ?? string.Empty)));
+            Convert.ToBase64String(Encoding.Unicode.GetBytes(
+                "$ProgressPreference = 'SilentlyContinue'\n" + (command ?? string.Empty) + "\n" + ExitCodeTrailer));
+
+        /// <summary>
+        /// Runs after the command and settles the exit code. Windows PowerShell 5.1 turns any
+        /// stderr line of a native program under 2>&amp;1 into a NativeCommandError and exits 1,
+        /// even when the program returned 0 (git, pip and ssh write progress to stderr). Only
+        /// that case becomes success; any other error still fails, and a native program's own
+        /// exit code is passed through.
+        /// </summary>
+        private const string ExitCodeTrailer =
+            "if ($?) { exit 0 }\n"
+            + "$axOther = @($Error | Where-Object { \"$($_.FullyQualifiedErrorId)\" -notlike 'NativeCommandError*' })\n"
+            + "if ($Error.Count -gt 0 -and $axOther.Count -eq 0 -and $global:LASTEXITCODE -eq 0) { exit 0 }\n"
+            + "if ($global:LASTEXITCODE) { exit $global:LASTEXITCODE }\n"
+            + "exit 1";
+
+        /// <summary>wsl.exe writes UTF-16 unless asked otherwise, which reads as letters split by nulls.</summary>
+        internal static void PrepareShellEnvironment(ProcessStartInfo startInfo) =>
+            startInfo.Environment["WSL_UTF8"] = "1";
 
         private static readonly Regex ClixmlStringRegex = new(@"<S S=""(?:Error|Warning)"">(?<text>.*?)</S>", RegexOptions.Singleline | RegexOptions.Compiled);
 

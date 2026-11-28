@@ -29,6 +29,63 @@ namespace Malx_AI.Agent
         bool Cancelled,
         IReadOnlyList<AgentExchange>? Exchanges = null);
 
+    /// <summary>Which lines of one file this run has been shown.</summary>
+    internal sealed class AgentReadCoverage
+    {
+        private static readonly System.Text.RegularExpressions.Regex NumberedLine = new(
+            @"(?m)^(\d+)\t", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private readonly HashSet<int> _shown = new();
+        private int _last;
+        private bool _sawEnd;
+
+        /// <summary>Reads that showed no line for the first time.</summary>
+        public int Rereads { get; private set; }
+
+        public void Note(string output, string countArg)
+        {
+            bool added = false;
+            foreach (System.Text.RegularExpressions.Match match in NumberedLine.Matches(output ?? string.Empty))
+            {
+                if (!int.TryParse(match.Groups[1].Value, out int line))
+                    continue;
+                added |= _shown.Add(line);
+                _last = Math.Max(_last, line);
+            }
+
+            // The end was seen when the read was not cut short and either asked for everything or
+            // got fewer lines than it asked for.
+            bool bounded = int.TryParse(countArg, out int asked) && asked > 0;
+            if (!(output ?? string.Empty).Contains("[Read stopped before line", StringComparison.Ordinal)
+                && (!bounded || NumberedLine.Matches(output ?? string.Empty).Count < asked))
+                _sawEnd = true;
+            if (!added)
+                Rereads++;
+        }
+
+        /// <summary>True when the asked range holds nothing new.</summary>
+        public bool AlreadyShown(string startArg, string countArg)
+        {
+            int start = int.TryParse(startArg, out int s) && s > 0 ? s : 1;
+            bool bounded = int.TryParse(countArg, out int count) && count > 0;
+            // An open-ended read reaches the end of the file, which must have been seen.
+            if (!bounded && !_sawEnd)
+                return false;
+            int end = bounded ? (int)Math.Min((long)start + count - 1, int.MaxValue) : _last;
+            if (_sawEnd)
+                end = Math.Min(end, _last);
+            if (start > end)
+                return _sawEnd;
+            for (int line = start; line <= end; line++)
+            {
+                if (!_shown.Contains(line))
+                    return false;
+            }
+
+            return true;
+        }
+    }
+
     /// <summary>
     /// The agent loop: ask the model, run what it asks for, feed the result back, repeat.
     /// </summary>
@@ -172,9 +229,13 @@ namespace Malx_AI.Agent
             int screenshotsSinceLastMutation = 0;
             int totalScreenshots = 0;
             var callCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-            var fileReadCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var fileReads = new Dictionary<string, AgentReadCoverage>(StringComparer.OrdinalIgnoreCase);
             bool changedSomething = false;
+            // Two counts. Looking after a change only earns a reminder; steps that bring nothing
+            // new (the same result again) are what close a run.
             int stepsSinceLastChange = 0;
+            int stepsWithoutProgress = 0;
+            var seenResults = new HashSet<string>(StringComparer.Ordinal);
             int blockedInARow = 0;
             int recallsInARow = 0;
             int worldChanges = 0;
@@ -571,13 +632,14 @@ namespace Malx_AI.Agent
                     if (policy.LimitFileInspection && call.Tool.Equals(AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase))
                     {
                         string path = InspectionPath(call.Arg("path"));
-                        // Different line ranges are still reads of the same unchanged file.
-                        // Exact-call repetition guards alone let the logged run spend 18 turns
-                        // paging through one HTML file without attempting a fix.
-                        if (fileReadCounts.TryGetValue(path, out int reads) && reads >= 6)
+                        // Only going over lines already shown counts. Paging forward through a long
+                        // file is how it gets read at all: a logged run was told to read a 304-line
+                        // handoff and was refused before reaching the end.
+                        if (fileReads.TryGetValue(path, out AgentReadCoverage? coverage) && coverage.Rereads >= MaxRereads
+                            && coverage.AlreadyShown(call.Arg("start_line"), call.Arg("line_count")))
                         {
                             NoteBlocked(call, decision.Permission,
-                                "Blocked: this file has already been read six times without a change. Use search_text with a specific literal on the file path to find the relevant code, then make a targeted fix. Do not reread the file through run_command or invent a diagnosis from an inconclusive check.",
+                                "Blocked: these lines of this unchanged file have been shown several times already. Read a part you have not seen, or use search_text with a specific literal on the file path, then make a targeted fix. Do not reread the file through run_command or invent a diagnosis from an inconclusive check.",
                                 "repeated file inspection");
                             continue;
                         }
@@ -611,12 +673,12 @@ namespace Malx_AI.Agent
                         continue;
                     }
 
-                    // Once a run has built something, checking it is meant to be short. A logged
-                    // run built its project in 18 steps and then spent 42 more refocusing a window
-                    // and screenshotting it. After this many steps in a row without changing a
-                    // file, the run is asked for its summary instead of another look.
+                    // A run that built something and now keeps getting the same answers is circling.
+                    // After this many such steps it is asked for its summary. Commands that return
+                    // something new (SSH, builds, tests, git) are work and never count: counting
+                    // every step without a file change ended real investigations half way.
                     if (policy.VerificationBudget > 0 && changedSomething && !IsProgressTool(call.Tool)
-                        && stepsSinceLastChange >= policy.VerificationBudget)
+                        && stepsWithoutProgress >= policy.VerificationBudget)
                     {
                         // Ultra: a run that ends by running out of checking steps still gets its
                         // fresh review (a live run on 2026-11-24 ended this way and skipped it).
@@ -642,15 +704,16 @@ namespace Malx_AI.Agent
                             if (issues.Count > 0)
                             {
                                 stepsSinceLastChange = 0;
+                                stepsWithoutProgress = 0;
                                 AddStep(new AgentStep(call, decision.Permission, null, "review found problems"));
                                 history.Add(new AgentExchange(call, "Blocked: that call did not run. " + AgentQualityGates.ReviewFindingsMessage(issues)));
                                 continue;
                             }
                         }
 
-                        wrapUpReason = $"{stepsSinceLastChange} steps in a row changed nothing";
+                        wrapUpReason = $"{stepsWithoutProgress} steps brought nothing new";
                         NoteBlocked(call, decision.Permission,
-                            $"Blocked: {stepsSinceLastChange} steps in a row have changed nothing, so the checking phase is over. Do not call another tool.",
+                            $"Blocked: {stepsWithoutProgress} steps have brought nothing new, so the checking phase is over. Do not call another tool.",
                             "verification budget used up");
                         continue;
                     }
@@ -761,15 +824,18 @@ namespace Malx_AI.Agent
                     if (result.Succeeded && call.Tool.Equals(AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase))
                     {
                         string path = InspectionPath(call.Arg("path"));
-                        fileReadCounts[path] = fileReadCounts.GetValueOrDefault(path) + 1;
+                        if (!fileReads.TryGetValue(path, out AgentReadCoverage? coverage))
+                            fileReads[path] = coverage = new AgentReadCoverage();
+                        coverage.Note(result.Output, call.Arg("line_count"));
                     }
                     if (result.Succeeded && IsProgressTool(call.Tool))
                     {
                         changedSomething = true;
                         stepsSinceLastChange = 0;
+                        stepsWithoutProgress = 0;
                         if (!call.Tool.Equals(AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase))
                         {
-                            fileReadCounts.Remove(InspectionPath(call.Arg("path")));
+                            fileReads.Remove(InspectionPath(call.Arg("path")));
                             string changedPath = call.Arg("path");
                             if (changedPath.Length > 0 && !changedFiles.Contains(changedPath, StringComparer.OrdinalIgnoreCase))
                                 changedFiles.Add(changedPath);
@@ -781,6 +847,16 @@ namespace Malx_AI.Agent
                         stepsSinceLastChange++;
                         if (result.Succeeded && AgentQualityGates.IsCheckTool(call.Tool))
                             checkedSinceLastChange = true;
+
+                        // Something never seen before is progress; the same answer again is not.
+                        // A new error is neither. A screenshot or an archive search always differs
+                        // a little and changes nothing, so those never count as progress.
+                        bool isNew = seenResults.Add(call.Tool + "|" + ResultFingerprint(result));
+                        bool canBeProgress = call.Tool is not (AgentToolNames.TakeScreenshot or AgentToolNames.RecallContext);
+                        if (isNew && canBeProgress && result.Succeeded)
+                            stepsWithoutProgress = 0;
+                        else if (!isNew || !canBeProgress)
+                            stepsWithoutProgress++;
                     }
 
                     if (result.Succeeded)
@@ -798,7 +874,7 @@ namespace Malx_AI.Agent
                         }
                     }
 
-                    string observation = result.ToObservation();
+                    string observation = result.ToObservation(policy.ObservationChars);
                     if (consecutiveIdenticalCalls == 1)
                     {
                         observation += "\n[WARNING: You executed the identical tool call with the identical arguments twice in a row. Do not repeat this action again. If the desired folder or state already exists, proceed immediately to writing files using write_file.]";
@@ -810,9 +886,14 @@ namespace Malx_AI.Agent
                             : "\n[FINAL STEP WARNING: You have only 1 step left in your step budget. Do NOT call any more tools — reply on your next turn with your complete, structured Markdown summary of everything accomplished.]";
                     }
                     else if (policy.VerificationBudget > 0 && changedSomething && !IsProgressTool(call.Tool)
-                        && stepsSinceLastChange == Math.Max(2, policy.VerificationBudget - 3))
+                        && stepsWithoutProgress == Math.Max(2, policy.VerificationBudget - 3))
                     {
-                        observation += $"\n[WRAP-UP WARNING: {stepsSinceLastChange} steps in a row have changed nothing. If the work is verified, stop calling tools and write your final Markdown summary now. If something is actually broken, fix it with edit_file. Only {policy.VerificationBudget - stepsSinceLastChange} more checking steps are allowed.]";
+                        observation += $"\n[WRAP-UP WARNING: {stepsWithoutProgress} steps have brought nothing new. If the work is verified, stop calling tools and write your final Markdown summary now. If something is actually broken, fix it or try a different approach. Only {policy.VerificationBudget - stepsWithoutProgress} more such steps are allowed.]";
+                    }
+                    else if (policy.VerificationBudget > 0 && changedSomething && stepsSinceLastChange > 0
+                        && stepsSinceLastChange % (policy.VerificationBudget * 2) == 0)
+                    {
+                        observation += $"\n[CHECK-IN: {stepsSinceLastChange} steps since the last file change. If the work is finished and checked, give your final summary now; if work remains, carry on with it.]";
                     }
                     else if (policy.ExplorationBudget > 0 && !changedSomething && !explorationNudged
                         && steps.Count >= policy.ExplorationBudget)
@@ -884,6 +965,14 @@ namespace Malx_AI.Agent
 
         /// <summary>How many refused tool calls in a row end the tool-calling part of a run.</summary>
         private const int MaxBlockedCallsInARow = 3;
+
+        /// <summary>Reads that showed nothing new before a file's seen lines are refused.</summary>
+        private const int MaxRereads = 6;
+
+        /// <summary>A result with its timing removed, so an identical answer compares equal.</summary>
+        private static string ResultFingerprint(AgentToolResult result) =>
+            System.Text.RegularExpressions.Regex.Replace(
+                result.Succeeded ? result.Output : "ERROR: " + result.Error, @"Duration: \d+ms|\(\d+ms\)", string.Empty);
         internal const int MaxRecallsInARow = 3;
 
         /// <summary>The pseudo-tool name the closing-summary request is recorded under.</summary>

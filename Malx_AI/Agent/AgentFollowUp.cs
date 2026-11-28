@@ -63,6 +63,9 @@ namespace Malx_AI.Agent
         /// </summary>
         public Func<AgentReviewRequest, CancellationToken, Task<IReadOnlyList<string>>>? Reviewer { get; init; }
 
+        /// <summary>Longest tool result put in front of the model.</summary>
+        public int ObservationChars { get; init; } = 6000;
+
         /// <summary>Longest plan update_plan accepts. Small models get a short one.</summary>
         public int MaxPlanItems { get; init; } = AgentPlan.MaxItemsFull;
 
