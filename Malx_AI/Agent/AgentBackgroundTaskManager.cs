@@ -136,6 +136,7 @@ namespace Malx_AI.Agent
                 StandardErrorEncoding = Encoding.UTF8
             };
 
+            AgentToolExecutor.PrepareShellEnvironment(startInfo);
             var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             entry.Process = process;
 
@@ -174,6 +175,8 @@ namespace Malx_AI.Agent
                 process.Dispose();
                 throw new InvalidOperationException("Failed to start background PowerShell process.");
             }
+
+            AgentProcessOwnership.Claim(process);
 
             lock (_listGate)
             {

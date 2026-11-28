@@ -245,7 +245,8 @@ namespace Malx_AI.Agent
                     // stuck or overloaded, so stop and say so.
                     if (_consecutiveTimeouts >= MaxConsecutiveTimeouts)
                     {
-                        throw new AgentFatalException(
+                        _consecutiveTimeouts = 0;
+                        throw new AgentStalledException(
                             $"The model's last two steps each {reason}, so this run paused. "
                             + "Completed steps are kept and nothing half-written was saved. Send \"continue\" to pick up from here, "
                             + "or lower the effort level if your model or server is slow.");
@@ -270,7 +271,7 @@ namespace Malx_AI.Agent
                 // spending more of the key's daily free requests on a model that is busy.
                 if (_lastTurnWasRateLimited)
                 {
-                    throw new AgentFatalException(
+                    throw new AgentStalledException(
                         "The Workplace model is busy on OpenRouter's free tier right now (rate-limited). "
                         + "Anything already done is listed above - try again in a minute or two.");
                 }
@@ -599,8 +600,8 @@ namespace Malx_AI.Agent
             }
 
             bool preserveToolText = string.Equals(exchange.Call.Tool, AgentToolNames.ReadFile, StringComparison.OrdinalIgnoreCase);
-            _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call], ReasoningContent: reasoning));
-            _messages.Add(new OpenRouterMessage("tool", exchange.Observation, ToolCallId: call.Id, PreserveFullText: preserveToolText));
+            _messages.Add(new OpenRouterMessage("assistant", string.Empty, ToolCalls: [call], ReasoningContent: reasoning, AgentStep: true));
+            _messages.Add(new OpenRouterMessage("tool", exchange.Observation, ToolCallId: call.Id, PreserveFullText: preserveToolText, AgentStep: true));
 
             if (!string.IsNullOrWhiteSpace(exchange.ImageDataUrl) && _service.SupportsImageInput(_modelId))
             {

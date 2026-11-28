@@ -1,5 +1,35 @@
 # Changelog
 
+## [V1.17.0] - 2026-11-27
+
+Long tasks now get finished. The agent keeps working without you typing "continue", and remembers
+what it did.
+
+### Added
+
+- **The agent carries on by itself.** In Workplace, at Medium effort and above, it keeps going while
+  plan steps are open, gets more steps while the work is moving, changes approach when it goes in
+  circles, and waits and retries when an online or server model is busy. It stops when it needs
+  something from you (marked "NEEDS YOU:"), when an action needs your approval, or when you press
+  Stop. This can use several times more model requests per task; Light effort keeps the old behaviour.
+- **Longer chat replies.** Cloud and Hybrid chat can use up to 40 tool rounds in one reply (was 8),
+  and a reply cut off by the length limit resumes on its own.
+
+### Fixed
+
+- Workplace with a local model no longer fails after its first action.
+- A follow-up message now carries the earlier steps, with their commands and results, instead of a
+  short summary.
+- The task tracker marks failed and blocked steps instead of showing them as done, and stays out of
+  your project's git commits.
+- Long command output keeps its end, where errors are, and large models see more of it.
+- Long files can be read to the end.
+- A run is no longer ended just because its last steps changed no file.
+- Long runs on large models are compacted far less often and keep more recent work.
+- Commands that only wrote progress messages are no longer reported as failed.
+- The agent can stop programs it started itself, and the other ways of ending a process are now
+  reviewed like the usual ones.
+
 ## [V1.16.1] - 2026-11-26
 
 A tidier, much smaller message box in Chat.

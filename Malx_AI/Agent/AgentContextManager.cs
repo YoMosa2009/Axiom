@@ -97,6 +97,155 @@ namespace Malx_AI.Agent
             return compacted;
         }
 
+        private const int MaxCarriedExchanges = 400;
+        private const string AnswerTool = "(answer)";
+
+        /// <summary>
+        /// Adds one finished turn to the task's history: the request, the steps that ran, and the
+        /// reply. When the run compacted away the record it started from, its checkpoint already
+        /// covers the earlier turns and replaces them.
+        /// </summary>
+        public static List<AgentExchange> AppendTurn(
+            IReadOnlyList<AgentExchange> earlier,
+            IReadOnlyList<AgentExchange> run,
+            AgentExchange? carried,
+            string userRequest,
+            string finalMessage)
+        {
+            bool replaced = carried != null && run.Count > 0 && !run.Any(exchange => ReferenceEquals(exchange, carried));
+            var history = new List<AgentExchange>();
+            if (!replaced)
+                history.AddRange(earlier);
+            history.Add(Note(AgentSession.UserMessageTool, "USER ASKED: " + (userRequest ?? string.Empty).Trim()));
+            history.AddRange(run
+                .Where(exchange => !ReferenceEquals(exchange, carried)
+                    && (!exchange.Call.Tool.StartsWith('(')
+                        || exchange.Call.Tool is AgentSession.UserMessageTool or AgentRunCompactor.SummaryTool))
+                .Select(exchange => exchange with { ImageDataUrl = null }));
+            if (!string.IsNullOrWhiteSpace(finalMessage))
+                history.Add(Note(AnswerTool, "YOU REPLIED: " + finalMessage.Trim()));
+            if (history.Count > MaxCarriedExchanges)
+                history.RemoveRange(0, history.Count - MaxCarriedExchanges);
+            return history;
+
+            static AgentExchange Note(string tool, string text) =>
+                new(new AgentToolCall(tool, new Dictionary<string, string>()), text);
+        }
+
+        /// <summary>The steps of the latest turn in a task history.</summary>
+        public static List<AgentExchange> LastTurn(IReadOnlyList<AgentExchange> history)
+        {
+            int start = history.Count;
+            while (start > 0)
+            {
+                AgentExchange exchange = history[--start];
+                if (exchange.Call.Tool == AgentSession.UserMessageTool
+                    && exchange.Observation.StartsWith("USER ASKED: ", StringComparison.Ordinal))
+                    break;
+            }
+
+            return history.Skip(start).ToList();
+        }
+
+        /// <summary>
+        /// The earlier turns of a task as one history entry that every transport can send. A
+        /// follow-up used to start with only file names and the last four commands, so a model
+        /// re-guessed a server login it had used minutes before. Newest steps come with their
+        /// output, older ones as one line each, within <paramref name="budgetChars"/>.
+        /// </summary>
+        public static AgentExchange? BuildCarryOver(IReadOnlyList<AgentExchange> earlier, int budgetChars)
+        {
+            if (earlier == null || earlier.Count == 0 || budgetChars < 500)
+                return null;
+
+            var entries = new string?[earlier.Count];
+            int used = 0;
+            int detailLimit = budgetChars * 7 / 10;
+
+            // What the user asked is short and decides everything else, so it goes in first.
+            for (int i = earlier.Count - 1; i >= 0; i--)
+            {
+                if (earlier[i].Call.Tool != AgentSession.UserMessageTool)
+                    continue;
+                string text = Cut(earlier[i].Observation, 600);
+                if (used + text.Length > budgetChars / 4)
+                    break;
+                entries[i] = text;
+                used += text.Length;
+            }
+
+            int omitted = 0;
+            bool latestAnswer = true;
+            for (int i = earlier.Count - 1; i >= 0; i--)
+            {
+                if (entries[i] != null)
+                    continue;
+                AgentExchange exchange = earlier[i];
+                bool detailed = used < detailLimit;
+                string text;
+                if (exchange.Call.Tool == AgentRunCompactor.SummaryTool)
+                {
+                    text = AgentOutputClip.HeadTail(exchange.Observation, Math.Max(500, budgetChars / 3));
+                }
+                else if (exchange.Call.Tool == AnswerTool)
+                {
+                    text = Cut(exchange.Observation, latestAnswer ? 1500 : 400);
+                    latestAnswer = false;
+                }
+                else if (exchange.Call.Tool.StartsWith('('))
+                {
+                    text = Cut(exchange.Observation, 400);
+                }
+                else
+                {
+                    string observation = exchange.Observation ?? string.Empty;
+                    string status = observation.StartsWith("ERROR", StringComparison.Ordinal) ? "FAILED"
+                        : IsBlockedOutcome(observation) ? "BLOCKED" : "ok";
+                    text = detailed
+                        ? $"- [{status}] {exchange.Call.DescribeForModel(1200)}\n{AgentOutputClip.HeadTail(observation, Math.Min(2000, budgetChars / 5))}"
+                        : $"- [{status}] {exchange.Call.DescribeForModel(300)}" + (status == "ok" ? string.Empty : " -> " + Cut(FirstUsefulLine(observation), 160));
+                }
+
+                if (used + text.Length > budgetChars)
+                {
+                    omitted++;
+                    continue;
+                }
+
+                entries[i] = text;
+                used += text.Length;
+            }
+
+            var builder = new StringBuilder();
+            builder.AppendLine("[EARLIER TURNS OF THIS TASK - recorded by Axiom from what actually ran, oldest first]");
+            builder.AppendLine("Steps marked FAILED or BLOCKED did not happen. Reuse the commands, paths and connection details that are marked ok instead of guessing them again. recall_context returns any full result.");
+            if (omitted > 0)
+                builder.AppendLine($"({omitted} older entries left out for space)");
+            foreach (string? entry in entries)
+            {
+                if (entry != null)
+                    builder.AppendLine(entry);
+            }
+
+            builder.Append("[/EARLIER TURNS]");
+            return new AgentExchange(
+                new AgentToolCall(AgentRunCompactor.SummaryTool, new Dictionary<string, string>()),
+                builder.ToString());
+
+            static string Cut(string value, int max) => value.Length <= max ? value : value[..max] + "…";
+
+            static string FirstUsefulLine(string value) =>
+                value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault(line => !line.StartsWith("ERROR: [Exit code:", StringComparison.Ordinal) && line != "[stderr]")
+                ?? value;
+        }
+
+        private static bool IsBlockedOutcome(string observation) =>
+            observation.StartsWith("Refused:", StringComparison.OrdinalIgnoreCase)
+            || observation.StartsWith("Blocked:", StringComparison.OrdinalIgnoreCase)
+            || observation.StartsWith("Repetitive action blocked", StringComparison.OrdinalIgnoreCase)
+            || observation.StartsWith("The user declined", StringComparison.OrdinalIgnoreCase);
+
         /// <summary>The short record an older step is reduced to when a history is compacted.</summary>
         internal static string CompactObservationForHistory(AgentToolCall call, string observation, int maxChars)
             => CompactObservation(call, observation, maxChars);

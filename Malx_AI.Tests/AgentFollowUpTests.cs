@@ -38,6 +38,9 @@ namespace Malx_AI.Tests
 
         private static AgentToolCall List(string path) => Call(AgentToolNames.ListDirectory, ("path", path));
 
+        /// <summary>A look that answers "(no matches)" every time: a different call, nothing new.</summary>
+        private static AgentToolCall Nothing(int i) => Call(AgentToolNames.SearchText, ("pattern", "absent-" + i));
+
         private Task<AgentRunResult> Run(AgentSession session, IAgentModel model, AgentTurnPolicy? policy = null) =>
             session.RunAsync("goal", AgentApprovalMode.Auto, model, AlwaysApprove, _ => { }, CancellationToken.None, policy: policy);
 
@@ -239,14 +242,14 @@ namespace Malx_AI.Tests
         public async Task ARunThatOnlyKeepsCheckingAfterBuildingIsAskedForItsSummary()
         {
             var replies = new List<AgentModelReply> { AgentModelReply.Tool(Write("index.html")) };
-            replies.AddRange(Enumerable.Range(0, 12).Select(i => AgentModelReply.Tool(List("sub" + i))));
+            replies.AddRange(Enumerable.Range(0, 12).Select(i => AgentModelReply.Tool(Nothing(i))));
             var model = new ScriptedAgentModel(replies.Append(AgentModelReply.Answer("## Summary\nBuilt index.html and checked it.")).ToArray());
             var session = new AgentSession(AgentScope.Folder(_folder), maxSteps: 60);
 
             AgentRunResult result = await Run(session, model, new AgentTurnPolicy(VerificationBudget: 4));
 
-            // 1 write + 4 checks, then the fifth check is refused and the run is closed.
-            Assert.Equal(6, result.Steps.Count);
+            // 1 write, 1 look, 4 more that return the same answer, then the next is refused.
+            Assert.Equal(7, result.Steps.Count);
             Assert.False(result.StoppedOnStepLimit);
             Assert.Contains("checking phase is over", result.Steps[^1].Result!.Error);
             Assert.Equal(AgentSession.WrapUpTool, model.SeenHistories[^1][^1].Call.Tool);
@@ -257,7 +260,7 @@ namespace Malx_AI.Tests
         public async Task TheModelIsWarnedBeforeTheCheckingBudgetRunsOut()
         {
             var replies = new List<AgentModelReply> { AgentModelReply.Tool(Write("index.html")) };
-            replies.AddRange(Enumerable.Range(0, 3).Select(i => AgentModelReply.Tool(List("sub" + i))));
+            replies.AddRange(Enumerable.Range(0, 4).Select(i => AgentModelReply.Tool(Nothing(i))));
             replies.Add(AgentModelReply.Answer("Done and summarised."));
             var model = new ScriptedAgentModel(replies.ToArray());
             var session = new AgentSession(AgentScope.Folder(_folder), maxSteps: 60);
@@ -373,10 +376,12 @@ namespace Malx_AI.Tests
             File.WriteAllLines(Path.Combine(_folder, "index.html"), Enumerable.Range(1, 100).Select(i => "line " + i));
             var replies = Enumerable.Range(1, 9).Select(i => AgentModelReply.Tool(
                 Call(AgentToolNames.ReadFile, ("path", "index.html"), ("start_line", i.ToString()), ("line_count", "1")))).ToList();
+            replies.Insert(0, AgentModelReply.Tool(Call(AgentToolNames.ReadFile, ("path", "index.html"))));
             replies.Add(AgentModelReply.Answer("The animation remains unverified."));
             var result = await Run(new AgentSession(AgentScope.Folder(_folder), 60), new ScriptedAgentModel(replies.ToArray()));
 
-            Assert.Equal(6, result.Steps.Count(s => s.Result?.Succeeded == true));
+            // The whole file, then six slices of it again; after that they are refused.
+            Assert.Equal(7, result.Steps.Count(s => s.Result?.Succeeded == true));
             Assert.Equal(3, result.Steps.Count(s => s.Note == "repeated file inspection"));
             Assert.Contains("remains unverified", result.FinalMessage);
         }
@@ -402,9 +407,10 @@ namespace Malx_AI.Tests
             var replies = Enumerable.Range(1, 7).Select(i => AgentModelReply.Tool(
                 Call(AgentToolNames.ReadFile, ("path", i % 2 == 0 ? "./index.html" : "index.html"),
                     ("start_line", i.ToString()), ("line_count", "1")))).ToList();
+            replies.Insert(0, AgentModelReply.Tool(Call(AgentToolNames.ReadFile, ("path", "index.html"))));
             replies.Add(AgentModelReply.Answer("I need a targeted search to continue diagnosing."));
             var result = await Run(new AgentSession(AgentScope.Folder(_folder), 20), new ScriptedAgentModel(replies.ToArray()));
-            Assert.Equal(6, result.Steps.Count(s => s.Result?.Succeeded == true));
+            Assert.Equal(7, result.Steps.Count(s => s.Result?.Succeeded == true));
             Assert.Contains(result.Steps, s => s.Note == "repeated file inspection");
         }
 

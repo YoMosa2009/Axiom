@@ -825,8 +825,8 @@ namespace Malx_AI
             _cancellationTokenSource = new CancellationTokenSource();
             CancellationToken token = _cancellationTokenSource.Token;
 
-            // Context preservation: carry over project workspace context without replaying old
-            // completed tool calls after a new follow-up instruction.
+            // A follow-up gets the earlier turns' steps as a record (not as calls to repeat),
+            // plus the project workspace context.
             bool isContinuation = false;
             string effectiveGoal = userQuery;
             IReadOnlyList<AgentExchange>? initialHistory = null;
@@ -842,10 +842,9 @@ namespace Malx_AI
                 _activeAgentTaskState.FileBackup ??= CreateAgentFileBackup();
                 initialAllowList = _activeAgentTaskState.SessionAllowList;
                 string? carryStatus = _activeAgentTaskState.LastStatusMessage;
-                // The previous run's tool history is not replayed on a follow-up, so without this
-                // record the model knows nothing of what it did and has to rediscover all of it.
+                // A short summary of how the last turn ended, on top of the carried history.
                 string previousRunDigest = AgentFollowUp.BuildRunDigest(
-                        _activeAgentTaskState.AccumulatedExchanges,
+                        AgentContextManager.LastTurn(_activeAgentTaskState.AccumulatedExchanges),
                         _activeAgentTaskState.LastStatusMessage,
                         _activeAgentTaskState.StoppedOnStepLimit,
                         _backgroundTaskManager.ListTasks()
@@ -865,7 +864,6 @@ namespace Malx_AI
                     effectiveGoal += "\n\n[YOUR PLAN FROM THE LAST TURN]\n" + _activeAgentTaskState.Plan.Render()
                         + "\nKeep it, change it or clear it with update_plan so it fits the current request.";
                 }
-                initialHistory = null;
                 _activeAgentTaskState.LastTurnGoal = userQuery;
             }
             else
@@ -919,7 +917,8 @@ namespace Malx_AI
 
             UpdateStageIndicator(CouncilRole.Builder, false, false, false);
 
-            IAgentModel model = BuildAgentModel(tier, systemPrompt, _chatHistory);
+            int observationChars = AgentObservationBudget(tier, capability);
+            IAgentModel model = BuildAgentModel(tier, systemPrompt, _chatHistory, observationChars);
             if (!string.IsNullOrWhiteSpace(model.Unavailable))
             {
                 CompleteAgentRunCard(runCard, model.Unavailable!);
@@ -936,11 +935,37 @@ namespace Malx_AI
                 onManagedSubscription);
             AgentTurnPolicy turnPolicy = AgentTurnPolicy.For(followUpKind, tier).WithEffort(EffortPolicy.Current, tier);
             if (EffortPolicy.Current == EffortLevel.Ultra && tier == AgentTier.Full && !turnPolicy.AnswerOnly)
-                turnPolicy = turnPolicy with { Reviewer = (request, ct) => ReviewAgentWorkAsync(request, scope.WorkingDirectory, ct) };
+                turnPolicy = turnPolicy with
+                {
+                    Reviewer = (request, ct) => OnAgentUiThreadAsync(() => ReviewAgentWorkAsync(request, scope.WorkingDirectory, ct))
+                };
+            // Light effort, or "agent_autonomy" set to "off", keeps stopping for the user.
+            if (!turnPolicy.AnswerOnly && EffortPolicy.Current != EffortLevel.Light
+                && !string.Equals(AgentSettings.Read("agent_autonomy"), "off", StringComparison.OrdinalIgnoreCase))
+            {
+                AgentAutonomy autonomy = AgentAutonomy.For(tier, metered: onManagedSubscription);
+                // Waiting helps a busy server. A model running on this PC fails the same way again.
+                if (!_isCloudModeEnabled)
+                    autonomy = autonomy with { ModelRetries = 0 };
+                turnPolicy = turnPolicy with { Autonomy = autonomy };
+                systemPrompt += "\n\n" + AgentAutonomy.Instructions;
+            }
             if (turnPolicy.AnswerOnly)
                 maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);
             AgentCompactionPolicy compaction = BuildAgentCompactionPolicy(capability, systemPrompt);
-            turnPolicy = turnPolicy with { Compaction = compaction };
+            turnPolicy = turnPolicy with { Compaction = compaction, ObservationChars = observationChars };
+            // Built here because its size depends on the model's window. A small local window has
+            // no room for it beside the summary already in the request: a live 8K run failed on
+            // its follow-up (2026-11-27).
+            AgentExchange? carried = null;
+            if (isContinuation && tier != AgentTier.Micro && compaction.ContextTokens >= (_isCloudModeEnabled ? 8000 : 16000))
+            {
+                int freeTokens = compaction.ContextTokens - compaction.FixedPromptTokens - compaction.ReserveTokens;
+                carried = AgentContextManager.BuildCarryOver(
+                    _activeAgentTaskState!.AccumulatedExchanges, Math.Min(freeTokens * 7 / 8, 80_000));
+                if (carried != null)
+                    initialHistory = [carried];
+            }
             LogActivity($"Computer Agent: {tier} tier, {EffortPolicy.Current} effort ({maxSteps} steps), {_agentApprovalMode} approval, {followUpKind} turn, scope {scope.Describe()}.");
             RelayStatusBlock.Text = "Agent working…";
 
@@ -957,9 +982,10 @@ namespace Malx_AI
                         () => ComputerUseScreenCapture.CapturePrimaryScreenPng(maxWidth),
                         ct),
                     windowCaptureAsync: ComputerUseScreenCapture.CaptureForAgentAsync,
-                    readBudgetChars: ObservationBudgetFor(tier) - 256,
+                    readBudgetChars: observationChars - 256,
                     screenshotDirectory: Path.Combine(AppDataPaths.Root, "WorkplaceCaptures"),
-                    workplaceToolAsync: ExecuteAgentWorkplaceToolAsync));
+                    workplaceToolAsync: (call, ct) => OnAgentUiThreadAsync(() => ExecuteAgentWorkplaceToolAsync(call, ct))));
+            session.ModelFailed = reason => _ = BackendLogService.LogEventAsync("ComputerAgent.ModelError", reason);
             // A follow-up continues the plan the last run left; a new task starts without one.
             session.Plan = isContinuation ? _activeAgentTaskState!.Plan : AgentPlan.Empty;
             if (session.Plan.HasOpenItems)
@@ -1008,7 +1034,7 @@ namespace Malx_AI
                             });
                         }
                         RecordTrackedAgentFileStep(step, scope.WorkingDirectory);
-                        trackedSteps.Add(step.Call.DescribeShort());
+                        trackedSteps.Add(WorkplaceTaskTrackerFileService.StepLine(step));
                         EnsureSessionTrackerUpdated(userQuery, step.Call.DescribeShort(), trackedSteps);
                     },
                     inbox: _agentInbox,
@@ -1053,8 +1079,10 @@ namespace Malx_AI
                 _activeAgentTaskState.LastStatusMessage = result.FinalMessage;
                 if (result.Exchanges != null && result.Exchanges.Count > 0)
                 {
+                    List<AgentExchange> taskHistory = AgentContextManager.AppendTurn(
+                        _activeAgentTaskState.AccumulatedExchanges, result.Exchanges, carried, userQuery, result.FinalMessage);
                     _activeAgentTaskState.AccumulatedExchanges.Clear();
-                    _activeAgentTaskState.AccumulatedExchanges.AddRange(result.Exchanges);
+                    _activeAgentTaskState.AccumulatedExchanges.AddRange(taskHistory);
                     foreach (string file in AgentContextManager.ExtractTouchedFiles(result.Exchanges))
                         _activeAgentTaskState.TouchedFiles.Add(file);
                     foreach (string dep in AgentContextManager.ExtractVerifiedDependencies(result.Exchanges))
@@ -1086,7 +1114,7 @@ namespace Malx_AI
 
             string finalChatMessage = result.FinalMessage;
 
-            EnsureSessionTrackerUpdated(userQuery, result.FinalMessage, result.Steps.Select(s => s.Call.DescribeShort()));
+            EnsureSessionTrackerUpdated(userQuery, result.FinalMessage, result.Steps.Select(WorkplaceTaskTrackerFileService.StepLine));
             // Recorded after the tracker is written, so this turn shows as the latest summary now
             // and moves under "Earlier Turns" once the next one starts.
             _activeAgentTaskState?.Turns.Add(new AgentTurnRecord(
@@ -1118,7 +1146,7 @@ namespace Malx_AI
         /// path rewrites the system prompt with council role identity and advertises web_search /
         /// run_python instead, so the model concluded it had no machine access and refused.
         /// </remarks>
-        private IAgentModel BuildAgentModel(AgentTier tier, string systemPrompt, IReadOnlyList<(string Role, string Content)>? chatHistory = null)
+        private IAgentModel BuildAgentModel(AgentTier tier, string systemPrompt, IReadOnlyList<(string Role, string Content)>? chatHistory, int observationChars)
         {
             if (_isCloudModeEnabled)
             {
@@ -1176,7 +1204,7 @@ namespace Malx_AI
             if (agentSampling != null)
                 LogActivity($"Agent Access: model settings for {Path.GetFileName(builderModelPath)}: temperature {agentSampling.Temperature}, top_p {agentSampling.TopP?.ToString() ?? "default"}, top_k {agentSampling.TopK?.ToString() ?? "default"}.");
             return new TextProtocolAgentModel(
-                async (prompt, transcript, cancellation) =>
+                (prompt, transcript, cancellation) => OnAgentUiThreadAsync(async () =>
                 {
                     ReasoningParser.ParsedResponse response = await ExecuteCouncilRoleAsync(
                         CouncilRole.Builder,
@@ -1198,16 +1226,17 @@ namespace Malx_AI
                         internalInferenceStep: true,
                         samplingOverride: agentSampling);
                     return response.Answer ?? string.Empty;
-                },
+                }),
                 systemPrompt,
-                ObservationBudgetFor(tier),
+                observationChars,
                 chatHistory);
         }
 
         /// <summary>
         /// When the running agent compacts its history: the model's window, the output reserve,
-        /// and the fixed prompt. Cloud and Hybrid Local also stay under the message count the
-        /// request trimmer keeps; they and 10B+ local models get a model-written checkpoint.
+        /// and the fixed prompt. It goes by size only: the cloud request trimmer keeps agent
+        /// steps whatever their number. Cloud, Hybrid Local and 10B+ local models get a
+        /// model-written checkpoint.
         /// </summary>
         private AgentCompactionPolicy BuildAgentCompactionPolicy(LocalModelCapabilityProfile? capability, string systemPrompt)
         {
@@ -1223,8 +1252,7 @@ namespace Malx_AI
                     cloudOrHybrid: true,
                     LocalModelSizeClass.Unknown,
                     reserveTokens: _isHybridLocalCouncilSelected ? CloudAgentModel.HybridLocalTurnMaxTokens : CloudAgentModel.AgentTurnMaxTokens,
-                    fixedPromptTokens: fixedTokens,
-                    maxHistoryMessages: _openRouterChatService.GetConversationHistoryMessageLimit(modelId));
+                    fixedPromptTokens: fixedTokens);
             }
 
             return AgentCompactionPolicy.For(
@@ -1319,6 +1347,23 @@ namespace Malx_AI
                 _ = BackendLogService.LogEventAsync("ComputerAgent.Review", $"skipped: {ex.Message}");
                 return [];
             }
+        }
+
+        /// <summary>
+        /// Runs agent work that reads the view's controls on the UI thread. The session continues
+        /// on a pool thread after its first tool, so a local model's second turn failed with
+        /// "a different thread owns it" and the run ended after one action (live run, 2026-11-27).
+        /// </summary>
+        private Task<T> OnAgentUiThreadAsync<T>(Func<Task<T>> work) =>
+            Dispatcher.CheckAccess() ? work() : Dispatcher.InvokeAsync(work).Task.Unwrap();
+
+        /// <summary>How much of one tool result this run's model sees.</summary>
+        private int AgentObservationBudget(AgentTier tier, LocalModelCapabilityProfile? capability)
+        {
+            int baseChars = ObservationBudgetFor(tier);
+            return tier == AgentTier.Full
+                ? AgentOutputClip.ObservationBudget(baseChars, BuildAgentCompactionPolicy(capability, string.Empty).ContextTokens)
+                : baseChars;
         }
 
         private static int ObservationBudgetFor(AgentTier tier) => tier switch

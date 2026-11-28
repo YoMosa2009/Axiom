@@ -263,9 +263,9 @@ namespace Malx_AI.Agent
             string body = Succeeded ? Output : "ERROR: " + (Error ?? "the tool failed.");
             if (string.IsNullOrWhiteSpace(body))
                 body = Succeeded ? "(no output)" : "ERROR: the tool failed.";
-            return body.Length <= maxChars
-                ? body
-                : body[..maxChars] + $"\n… output truncated at {maxChars} characters.";
+            // Head and tail: build errors and test totals are at the end, and the head-only cut
+            // used here undid the executor's own head-and-tail clip.
+            return AgentOutputClip.HeadTail(body, maxChars);
         }
     }
 }

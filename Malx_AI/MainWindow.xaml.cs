@@ -276,8 +276,11 @@ namespace Malx_AI
         private bool _isTestingCustomEndpoint;
         private const int CloudHistoryTokenBudget = 6000;
         private const int CloudToolResultCharacterLimit = 6000;
-        // Higher budget: full Gmail/Drive tool chains often need search → read → act.
-        private const int CloudToolLoopIterationLimit = 8;
+        // Room for a whole task in one reply. At 8, tool chains ended part way and the user had to
+        // ask the chat to continue; repeating calls are stopped separately.
+        private const int CloudToolLoopIterationLimit = 40;
+        // Replies cut off by the output limit are resumed this many times.
+        private const int CloudCutOffContinuations = 4;
         private const int CloudContextNoticeThresholdPercent = 80;
         private const int CloudContextCriticalThresholdPercent = 92;
         private const string OpenRouterModelSettingKey = "openrouter_model_id";

@@ -34,13 +34,18 @@ namespace Malx_AI
         // The model's own reasoning for an assistant tool-call turn, sent back on the next
         // request. DeepSeek's thinking mode expects reasoning_content to round-trip within one
         // tool loop; dropping it degrades the next step or is rejected outright.
-        string? ReasoningContent = null);
+        string? ReasoningContent = null,
+        // A step of a running agent: not cut per message and not dropped for the message count.
+        // The agent compacts its own history by size; the size budgets here still apply.
+        bool AgentStep = false);
 
     public sealed record OpenRouterChatResponse(
         string Text,
         string Reasoning,
         IReadOnlyList<OpenRouterToolCall> ToolCalls,
-        OpenRouterTokenUsage? Usage = null);
+        OpenRouterTokenUsage? Usage = null,
+        // The reply stopped because it reached the output limit.
+        bool CutOffByLimit = false);
 
     /// <param name="IsEstimated">True when the server reported no usage and Axiom estimated it
     /// from the prompt estimate and the streamed characters (about 4 per token).</param>
@@ -1774,6 +1779,7 @@ namespace Malx_AI
             bool nonRetryableCustomStreamError = false;
             string firstStreamLineSample = string.Empty;
             OpenRouterTokenUsage? usage = null;
+            bool cutOffByLimit = false;
 
             try
             {
@@ -1918,6 +1924,9 @@ namespace Malx_AI
                     }
 
                     JsonElement firstChoice = choices[0];
+                    cutOffByLimit |= firstChoice.TryGetProperty("finish_reason", out JsonElement stopElement)
+                        && stopElement.ValueKind == JsonValueKind.String
+                        && string.Equals(stopElement.GetString(), "length", StringComparison.OrdinalIgnoreCase);
                     if (firstChoice.TryGetProperty("finish_reason", out JsonElement finishReasonElement)
                         && finishReasonElement.ValueKind == JsonValueKind.String
                         && string.Equals(finishReasonElement.GetString(), "error", StringComparison.OrdinalIgnoreCase))
@@ -2111,7 +2120,8 @@ namespace Malx_AI
                     textBuilder.ToString(),
                     reasoningBuilder.ToString(),
                     BuildStreamingToolCalls(toolCallAccumulators),
-                    usage);
+                    usage,
+                    cutOffByLimit);
             }
             catch (Exception ex)
             {
@@ -2648,7 +2658,7 @@ namespace Malx_AI
 
             int startIndex = Math.Max(0, allMessages.Count - Math.Max(1, maxMessages));
             var candidates = allMessages
-                .Where((message, index) => index >= startIndex || message.PreserveFullText)
+                .Where((message, index) => index >= startIndex || message.PreserveFullText || message.AgentStep)
                 .ToList();
 
             var selectedReversed = new List<OpenRouterMessage>();
@@ -2662,7 +2672,7 @@ namespace Malx_AI
                 bool preserveWhole = isFinalMessage || message.PreserveFullText;
 
                 string text = (message.Text ?? string.Empty).Trim();
-                if (!preserveWhole && text.Length > PerHistoryMessageCharacterLimit)
+                if (!preserveWhole && !message.AgentStep && text.Length > PerHistoryMessageCharacterLimit)
                     text = text[..PerHistoryMessageCharacterLimit];
 
                 OpenRouterMessage normalizedMessage = message with { Text = text };
