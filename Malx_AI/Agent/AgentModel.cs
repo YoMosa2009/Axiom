@@ -10,6 +10,14 @@ namespace Malx_AI.Agent
     public sealed record AgentExchange(AgentToolCall Call, string Observation, string? ImageDataUrl = null);
 
     /// <summary>
+    /// A model that is slow or busy right now. It ends the turn unless the run may wait and ask again.
+    /// </summary>
+    public sealed class AgentStalledException : Exception
+    {
+        public AgentStalledException(string message) : base(message) { }
+    }
+
+    /// <summary>
     /// A model failure no retry can fix (e.g. the API key's quota is used up). The session stops
     /// at once and shows the message, instead of treating it as a flaky connection.
     /// </summary>

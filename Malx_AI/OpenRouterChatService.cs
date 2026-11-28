@@ -43,7 +43,9 @@ namespace Malx_AI
         string Text,
         string Reasoning,
         IReadOnlyList<OpenRouterToolCall> ToolCalls,
-        OpenRouterTokenUsage? Usage = null);
+        OpenRouterTokenUsage? Usage = null,
+        // The reply stopped because it reached the output limit.
+        bool CutOffByLimit = false);
 
     /// <param name="IsEstimated">True when the server reported no usage and Axiom estimated it
     /// from the prompt estimate and the streamed characters (about 4 per token).</param>
@@ -1777,6 +1779,7 @@ namespace Malx_AI
             bool nonRetryableCustomStreamError = false;
             string firstStreamLineSample = string.Empty;
             OpenRouterTokenUsage? usage = null;
+            bool cutOffByLimit = false;
 
             try
             {
@@ -1921,6 +1924,9 @@ namespace Malx_AI
                     }
 
                     JsonElement firstChoice = choices[0];
+                    cutOffByLimit |= firstChoice.TryGetProperty("finish_reason", out JsonElement stopElement)
+                        && stopElement.ValueKind == JsonValueKind.String
+                        && string.Equals(stopElement.GetString(), "length", StringComparison.OrdinalIgnoreCase);
                     if (firstChoice.TryGetProperty("finish_reason", out JsonElement finishReasonElement)
                         && finishReasonElement.ValueKind == JsonValueKind.String
                         && string.Equals(finishReasonElement.GetString(), "error", StringComparison.OrdinalIgnoreCase))
@@ -2114,7 +2120,8 @@ namespace Malx_AI
                     textBuilder.ToString(),
                     reasoningBuilder.ToString(),
                     BuildStreamingToolCalls(toolCallAccumulators),
-                    usage);
+                    usage,
+                    cutOffByLimit);
             }
             catch (Exception ex)
             {

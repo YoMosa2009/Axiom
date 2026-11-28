@@ -63,6 +63,9 @@ namespace Malx_AI.Agent
         /// </summary>
         public Func<AgentReviewRequest, CancellationToken, Task<IReadOnlyList<string>>>? Reviewer { get; init; }
 
+        /// <summary>How far a run carries on by itself. Null: it ends where it used to and waits for the user.</summary>
+        public AgentAutonomy? Autonomy { get; init; }
+
         /// <summary>Longest tool result put in front of the model.</summary>
         public int ObservationChars { get; init; } = 6000;
 
@@ -113,6 +116,61 @@ namespace Malx_AI.Agent
         {
             MaxPlanItems = tier == AgentTier.Full ? AgentPlan.MaxItemsFull : AgentPlan.MaxItemsCompact,
         };
+    }
+
+    /// <summary>
+    /// What a run may do instead of stopping and waiting for "continue".
+    /// </summary>
+    /// <param name="MaxContinues">Times an unfinished answer is sent back to carry on.</param>
+    /// <param name="BudgetExtensions">Extra step budgets, each as large as the first, while work is advancing.</param>
+    /// <param name="Recoveries">Times a run that is going round in circles is told to change approach instead of closed.</param>
+    /// <param name="ModelRetries">Times a failing or silent model is waited for and asked again.</param>
+    public sealed record AgentAutonomy(int MaxContinues, int BudgetExtensions, int Recoveries, int ModelRetries)
+    {
+        /// <summary>No further extension or send-back starts after a run has lasted this long.</summary>
+        public TimeSpan MaxDuration { get; init; } = TimeSpan.FromHours(4);
+
+        /// <summary>How the run waits before retrying a model; replaced in tests.</summary>
+        public Func<TimeSpan, System.Threading.CancellationToken, System.Threading.Tasks.Task> Wait { get; init; } =
+            System.Threading.Tasks.Task.Delay;
+
+        /// <summary>Marks an ending that really does need the user.</summary>
+        public const string NeedsUserMarker = "NEEDS YOU:";
+
+        public const string Instructions =
+            "[WORK TO COMPLETION]\n"
+            + "You are expected to finish the whole request in this run without the user prompting you again. "
+            + "Do not stop to report progress, to ask whether to continue, or to announce what you will do next: do it. "
+            + "For work of 3 or more steps keep a plan with update_plan, and keep going until every item is done and checked, "
+            + "or closed with the reason it cannot be done. Choose sensible defaults for small decisions and say which you chose. "
+            + "Stop for the user only when you need information or credentials only they have, when the next step is destructive "
+            + "or hard to undo and they have not approved it, or when they or their instructions told you to wait. Then finish "
+            + "everything else first and end your reply with a line that starts \"" + NeedsUserMarker + "\" followed by the one question.\n"
+            + "[/WORK TO COMPLETION]";
+
+        /// <summary>Small models loop, so they get a little rope; capable ones get a lot.</summary>
+        public static AgentAutonomy For(AgentTier tier, bool metered) => tier == AgentTier.Full
+            ? new AgentAutonomy(MaxContinues: 25, BudgetExtensions: metered ? 1 : 3, Recoveries: 2, ModelRetries: 3)
+            : new AgentAutonomy(MaxContinues: 3, BudgetExtensions: 1, Recoveries: 1, ModelRetries: 2);
+
+        private static readonly Regex AsksToContinueRegex = new(
+            @"\b(?:(?:shall|should|may|can)\s+i\s+(?:continue|proceed|go\s+ahead|carry\s+on|start|move\s+on)"
+            + @"|(?:do\s+you\s+want|would\s+you\s+like)\s+(?:me\s+to|to\s+have\s+me)\s+(?:continue|proceed|go\s+ahead|carry\s+on|start|move\s+on)"
+            + @"|(?:say|send|reply|type)\s+[\*""'`]*(?:continue|go|proceed)\b"
+            + @"|let\s+me\s+know\s+(?:if|when|whether)\s+(?:you(?:'d|\s+would)?\s+(?:like|want)\s+me\s+to|i\s+should)\s+(?:continue|proceed|go\s+ahead|carry\s+on)"
+            + @"|i\s+(?:will|'ll)\s+(?:continue|proceed)\s+(?:in|with)\s+the\s+next\s+(?:turn|reply|message))",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        /// <summary>True when an answer ends by waiting to be told to carry on.</summary>
+        public static bool AsksToContinue(string? answer)
+        {
+            string text = (answer ?? string.Empty).Trim();
+            // Only the ending counts: a report may quote such words earlier on.
+            return AsksToContinueRegex.IsMatch(text.Length <= 600 ? text : text[^600..]);
+        }
+
+        public static bool NeedsUser(string? answer) =>
+            (answer ?? string.Empty).Contains(NeedsUserMarker, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

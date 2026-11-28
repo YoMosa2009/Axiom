@@ -936,6 +936,13 @@ namespace Malx_AI
             AgentTurnPolicy turnPolicy = AgentTurnPolicy.For(followUpKind, tier).WithEffort(EffortPolicy.Current, tier);
             if (EffortPolicy.Current == EffortLevel.Ultra && tier == AgentTier.Full && !turnPolicy.AnswerOnly)
                 turnPolicy = turnPolicy with { Reviewer = (request, ct) => ReviewAgentWorkAsync(request, scope.WorkingDirectory, ct) };
+            // Light effort, or "agent_autonomy" set to "off", keeps stopping for the user.
+            if (!turnPolicy.AnswerOnly && EffortPolicy.Current != EffortLevel.Light
+                && !string.Equals(AgentSettings.Read("agent_autonomy"), "off", StringComparison.OrdinalIgnoreCase))
+            {
+                turnPolicy = turnPolicy with { Autonomy = AgentAutonomy.For(tier, metered: onManagedSubscription) };
+                systemPrompt += "\n\n" + AgentAutonomy.Instructions;
+            }
             if (turnPolicy.AnswerOnly)
                 maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);
             AgentCompactionPolicy compaction = BuildAgentCompactionPolicy(capability, systemPrompt);

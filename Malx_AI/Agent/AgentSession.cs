@@ -255,6 +255,20 @@ namespace Malx_AI.Agent
             bool planGateUsed = false;
             var compactor = policy.Compaction == null ? null : new AgentRunCompactor(policy.Compaction);
 
+            AgentAutonomy? autonomy = policy.AnswerOnly ? null : policy.Autonomy;
+            var runClock = System.Diagnostics.Stopwatch.StartNew();
+            int stepLimit = _maxSteps;
+            int extensions = 0;
+            int continues = 0;
+            int idleContinues = 0;
+            int advances = 0;
+            int advancesAtLastContinue = -1;
+            int advancesAtLastExtension = 0;
+            int recoveries = 0;
+            int modelRetries = 0;
+
+            bool HasTimeLeft() => autonomy != null && runClock.Elapsed < autonomy.MaxDuration;
+
             void SendBack(string activity, string message)
             {
                 reportActivity?.Invoke(activity);
@@ -285,8 +299,32 @@ namespace Malx_AI.Agent
                 // A plan this run wrote that still has open steps: sent back once, like the
                 // check gate below. Soft on purpose (the research found no harness that hard-
                 // blocks on it): the model may close steps it dropped and say why.
-                if (planUpdatedThisRun && !planGateUsed && !policy.AnswerOnly && Plan.HasOpenItems
-                    && currentStep < _maxSteps - 2)
+                // Carrying on by itself: an answer that leaves plan items open, or that waits to
+                // be told to continue, goes straight back. Two send-backs that achieved nothing
+                // end it, as does a stated need for the user.
+                if (autonomy != null && !AgentAutonomy.NeedsUser(answer))
+                {
+                    bool planOpen = planUpdatedThisRun && Plan.HasOpenItems;
+                    bool waiting = steps.Count > 0 && AgentAutonomy.AsksToContinue(answer);
+                    if ((planOpen || waiting) && continues < autonomy.MaxContinues && HasTimeLeft()
+                        && (currentStep < stepLimit - 2 || extensions < autonomy.BudgetExtensions))
+                    {
+                        idleContinues = advances == advancesAtLastContinue ? idleContinues + 1 : 0;
+                        if (idleContinues < 2)
+                        {
+                            continues++;
+                            advancesAtLastContinue = advances;
+                            SendBack("Carrying on", (planOpen ? Plan.OpenItemsAtFinishMessage() + "\n" : string.Empty)
+                                + "Continue now without waiting for the user. Do the remaining work with your tools. "
+                                + "If an item cannot be done, close it and say why. Only if you truly need the user, end your reply with a line starting \""
+                                + AgentAutonomy.NeedsUserMarker + "\".");
+                            return true;
+                        }
+                    }
+                }
+
+                if (autonomy == null && planUpdatedThisRun && !planGateUsed && !policy.AnswerOnly && Plan.HasOpenItems
+                    && currentStep < stepLimit - 2)
                 {
                     planGateUsed = true;
                     SendBack("Checking the plan", Plan.OpenItemsAtFinishMessage());
@@ -294,14 +332,14 @@ namespace Malx_AI.Agent
                 }
 
                 if (policy.RequireCheckedFinish && changedSomething && !checkedSinceLastChange && !checkGateUsed
-                    && currentStep < _maxSteps - 2)
+                    && currentStep < stepLimit - 2)
                 {
                     checkGateUsed = true;
                     SendBack("Checking the work", AgentQualityGates.CheckBeforeFinishMessage(changedFiles));
                     return true;
                 }
 
-                if (policy.Reviewer != null && changedSomething && reviewPasses == 0 && currentStep < _maxSteps - 4)
+                if (policy.Reviewer != null && changedSomething && reviewPasses == 0 && currentStep < stepLimit - 4)
                 {
                     reviewPasses++;
                     reportActivity?.Invoke("Reviewing the work with fresh eyes");
@@ -374,13 +412,54 @@ namespace Malx_AI.Agent
                 return true;
             }
 
+            // A run going round in circles is told to change approach, a few times, before closing.
+            bool TryRecover(string reason)
+            {
+                if (autonomy == null || recoveries >= autonomy.Recoveries || !HasTimeLeft())
+                    return false;
+                recoveries++;
+                wrapUpReason = null;
+                blockedInARow = 0;
+                stepsWithoutProgress = 0;
+                consecutiveIdenticalCalls = 0;
+                lastToolCall = null;
+                SendBack("Trying another approach",
+                    $"You are going round in circles ({reason}). Do not repeat those calls. Work out why they achieve nothing, "
+                    + "then take a different approach, or move on to the next part of the task. If nothing else is possible without the user, "
+                    + "finish and end with a line starting \"" + AgentAutonomy.NeedsUserMarker + "\".");
+                return true;
+            }
+
+            // A busy, slow or unreachable model is waited for rather than handed back to the user.
+            async Task<bool> TryWaitForModelAsync()
+            {
+                if (autonomy == null || modelRetries >= autonomy.ModelRetries || !HasTimeLeft())
+                    return false;
+                int seconds = modelRetries == 0 ? 20 : modelRetries == 1 ? 60 : 180;
+                modelRetries++;
+                reportActivity?.Invoke($"The model is not answering; trying again in {seconds}s");
+                await autonomy.Wait(TimeSpan.FromSeconds(seconds), token).ConfigureAwait(false);
+                return true;
+            }
+
             try
             {
-                for (int step = 0; step < _maxSteps; step++, currentStep = step)
+                for (int step = 0; ; step++, currentStep = step)
                 {
                     token.ThrowIfCancellationRequested();
-                    if (wrapUpReason != null)
+                    if (wrapUpReason != null && !TryRecover(wrapUpReason))
                         break;
+                    if (step >= stepLimit)
+                    {
+                        // Another budget only while the work is still moving.
+                        if (autonomy == null || extensions >= autonomy.BudgetExtensions || !HasTimeLeft()
+                            || advances - advancesAtLastExtension < Math.Max(1, _maxSteps / 10))
+                            break;
+                        extensions++;
+                        advancesAtLastExtension = advances;
+                        stepLimit += _maxSteps;
+                        SendBack("Carrying on", $"The step budget was extended by {_maxSteps}. Continue the task from where it is.");
+                    }
                     DeliverUserMessages();
                     DeliverBackgroundWakeups();
 
@@ -428,6 +507,13 @@ namespace Malx_AI.Agent
                             step--;
                         continue;
                     }
+                    catch (AgentStalledException stalled)
+                    {
+                        if (!await TryWaitForModelAsync().ConfigureAwait(false))
+                            return new AgentRunResult(stalled.Message, steps, false, false, history);
+                        step--;
+                        continue;
+                    }
                     catch (AgentFatalException fatal)
                     {
                         return new AgentRunResult(fatal.Message, steps, false, false, history);
@@ -439,6 +525,12 @@ namespace Malx_AI.Agent
                         // single hiccup must not leave the machine half-changed with no summary.
                         if (++consecutiveProtocolErrors >= MaxConsecutiveProtocolErrors)
                         {
+                            if (await TryWaitForModelAsync().ConfigureAwait(false))
+                            {
+                                consecutiveProtocolErrors = 0;
+                                continue;
+                            }
+
                             return new AgentRunResult(
                                 $"The connection to the model kept failing ({ex.Message}). "
                                 + "Anything already done is listed above; try again when the provider settles.",
@@ -467,6 +559,12 @@ namespace Malx_AI.Agent
                         // instead of burning every step and claiming success.
                         if (++consecutiveProtocolErrors >= MaxConsecutiveProtocolErrors)
                         {
+                            if (await TryWaitForModelAsync().ConfigureAwait(false))
+                            {
+                                consecutiveProtocolErrors = 0;
+                                continue;
+                            }
+
                             return new AgentRunResult(
                                 "The model did not return anything usable after several attempts. "
                                 + "That is usually a transient problem with the provider - try again, "
@@ -599,6 +697,9 @@ namespace Malx_AI.Agent
 
                     if (consecutiveIdenticalCalls >= 3)
                     {
+                        if (TryRecover($"{call.Tool} was sent again and again"))
+                            continue;
+
                         return new AgentRunResult(
                             $"The agent was stopped because it repeatedly attempted the identical action ({call.DescribeShort()}) without making progress. If the desired files or folders already exist, review them or provide a refined instruction.",
                             steps,
@@ -683,7 +784,7 @@ namespace Malx_AI.Agent
                         // Ultra: a run that ends by running out of checking steps still gets its
                         // fresh review (a live run on 2026-11-24 ended this way and skipped it).
                         // Real findings reopen the run for fixing instead of closing it.
-                        if (policy.Reviewer != null && reviewPasses == 0 && currentStep < _maxSteps - 6)
+                        if (policy.Reviewer != null && reviewPasses == 0 && currentStep < stepLimit - 6)
                         {
                             reviewPasses++;
                             reportActivity?.Invoke("Reviewing the work with fresh eyes");
@@ -754,6 +855,9 @@ namespace Malx_AI.Agent
                     int allowed = AgentToolNames.IsReadOnly(call.Tool) || IsStateObservation(call) ? MaxIdenticalCallsPerRun + 2 : MaxIdenticalCallsPerRun;
                     if (seen >= allowed + 2)
                     {
+                        if (TryRecover($"{call.Tool} was sent again and again"))
+                            continue;
+
                         return new AgentRunResult(
                             $"The agent was stopped because it kept repeating the same action ({call.DescribeShort()}) without making progress. "
                             + "Anything already done is listed above; a more specific instruction usually gets it unstuck.",
@@ -833,6 +937,7 @@ namespace Malx_AI.Agent
                         changedSomething = true;
                         stepsSinceLastChange = 0;
                         stepsWithoutProgress = 0;
+                        advances++;
                         if (!call.Tool.Equals(AgentToolNames.StartBackgroundTask, StringComparison.OrdinalIgnoreCase))
                         {
                             fileReads.Remove(InspectionPath(call.Arg("path")));
@@ -854,7 +959,10 @@ namespace Malx_AI.Agent
                         bool isNew = seenResults.Add(call.Tool + "|" + ResultFingerprint(result));
                         bool canBeProgress = call.Tool is not (AgentToolNames.TakeScreenshot or AgentToolNames.RecallContext);
                         if (isNew && canBeProgress && result.Succeeded)
+                        {
                             stepsWithoutProgress = 0;
+                            advances++;
+                        }
                         else if (!isNew || !canBeProgress)
                             stepsWithoutProgress++;
                     }
@@ -879,7 +987,8 @@ namespace Malx_AI.Agent
                     {
                         observation += "\n[WARNING: You executed the identical tool call with the identical arguments twice in a row. Do not repeat this action again. If the desired folder or state already exists, proceed immediately to writing files using write_file.]";
                     }
-                    if (_maxSteps >= 3 && step == _maxSteps - 2)
+                    if (_maxSteps >= 3 && step == stepLimit - 2
+                        && (autonomy == null || extensions >= autonomy.BudgetExtensions))
                     {
                         observation += policy.AnswerOnly
                             ? "\n[LAST CHECK USED: Do NOT call any more tools. Answer the user's question now, in words.]"
@@ -920,19 +1029,19 @@ namespace Malx_AI.Agent
             bool hitStepLimit = wrapUpReason == null;
             string? closing = await RequestClosingSummaryAsync(
                 goal, model, history, reportActivity, token, policy,
-                hitStepLimit ? $"You have used all {_maxSteps} steps available for this turn" : $"This turn is being closed because {wrapUpReason}")
+                hitStepLimit ? $"You have used all {stepLimit} steps available for this turn" : $"This turn is being closed because {wrapUpReason}")
                 .ConfigureAwait(false);
             if (closing == CancelledMarker)
                 return new AgentRunResult("Stopped.", steps, false, true, history);
 
             reportActivity?.Invoke(null);
-            string fallback = AgentFollowUp.BuildStepLimitSummary(steps, _maxSteps);
+            string fallback = AgentFollowUp.BuildStepLimitSummary(steps, stepLimit);
             if (!hitStepLimit)
             {
                 // Not a ceiling: the work is most likely done and the model was only circling.
                 return new AgentRunResult(
                     string.IsNullOrWhiteSpace(closing)
-                        ? fallback.Replace($"I reached the {_maxSteps}-step limit for this model before finishing. Ask me to continue if the work so far looks right.",
+                        ? fallback.Replace($"I reached the {stepLimit}-step limit for this model before finishing. Ask me to continue if the work so far looks right.",
                             $"I stopped here because {wrapUpReason}. This is what the run did:", StringComparison.Ordinal)
                         : closing!,
                     steps,
@@ -944,7 +1053,7 @@ namespace Malx_AI.Agent
             return new AgentRunResult(
                 string.IsNullOrWhiteSpace(closing)
                     ? fallback
-                    : $"I reached the {_maxSteps}-step limit for this model before finishing. Ask me to continue if the work so far looks right.\n\n{closing}",
+                    : $"I reached the {stepLimit}-step limit for this model before finishing. Ask me to continue if the work so far looks right.\n\n{closing}",
                 steps,
                 true,
                 false,

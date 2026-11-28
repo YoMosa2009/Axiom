@@ -1138,6 +1138,11 @@ namespace Malx_AI
             bool pythonSessionStarted = false;
             bool forceNoToolsSynthesis = false;
             var executedToolSignatures = new HashSet<string>(StringComparer.Ordinal);
+            var cutOffText = new StringBuilder();
+            int cutOffContinuations = 0;
+            int repeatOnlyRounds = 0;
+            if (tools.Count > 0)
+                systemPrompt += "\n\n" + CloudFinishInOneReplyRule;
 
             int toolLoopLimit = EffortPolicy.ScaleToolBudget(CloudToolLoopIterationLimit, capability: null);
             try
@@ -1159,9 +1164,23 @@ namespace Malx_AI
 
                     if (response.ToolCalls == null || response.ToolCalls.Count == 0)
                     {
+                        // Cut off by the output limit: resume it instead of waiting for "continue".
+                        if (response.CutOffByLimit && !string.IsNullOrEmpty(response.Text)
+                            && cutOffContinuations < CloudCutOffContinuations)
+                        {
+                            cutOffContinuations++;
+                            cutOffText.Append(response.Text);
+                            messages.Add(new OpenRouterMessage("assistant", response.Text, PreserveFullText: true));
+                            messages.Add(new OpenRouterMessage("user",
+                                "Your reply was cut off by the length limit. Continue from exactly where it stopped. Do not repeat anything or add an introduction.",
+                                PreserveFullText: true));
+                            iteration--;
+                            continue;
+                        }
+
                         return new CloudToolCallLoopResult
                         {
-                            ResponseText = response.Text,
+                            ResponseText = cutOffText + response.Text,
                             ReasoningText = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal)),
                             ToolCallCount = toolCallCount,
                             Usage = response.Usage
@@ -1169,7 +1188,8 @@ namespace Malx_AI
                     }
 
                     toolCallCount += response.ToolCalls.Count;
-                    messages.Add(new OpenRouterMessage("assistant", response.Text ?? string.Empty, null, response.ToolCalls));
+                    messages.Add(new OpenRouterMessage("assistant", response.Text ?? string.Empty, null, response.ToolCalls, AgentStep: true));
+                    bool ranSomethingNew = false;
                     ShowChatNarration(AgentNarration.FromModelText(response.Text)
                         ?? AgentNarration.FromReasoning(response.Reasoning)
                         ?? AgentNarration.FromChatTool(response.ToolCalls[0]?.Name, response.ToolCalls[0]?.ArgumentsJson));
@@ -1182,10 +1202,11 @@ namespace Malx_AI
                             messages.Add(new OpenRouterMessage(
                                 "tool",
                                 "Duplicate tool call suppressed. Use the earlier result and continue to the final answer.",
-                                toolCall?.Id));
+                                toolCall?.Id, AgentStep: true));
                             continue;
                         }
 
+                        ranSomethingNew = true;
                         if (IsCloudSandboxToolCall(toolCall))
                             sandboxExecutionCount++;
 
@@ -1197,8 +1218,12 @@ namespace Malx_AI
 
                         CloudToolExecutionResult executionResult = await ExecuteCloudToolCallAsync(toolCall, userMsg, messages, token);
                         string boundedToolResult = BuildCloudToolResultMessage(executionResult.Result, toolCall.Name);
-                        messages.Add(new OpenRouterMessage("tool", boundedToolResult, toolCall.Id));
+                        messages.Add(new OpenRouterMessage("tool", boundedToolResult, toolCall.Id, AgentStep: true));
                     }
+
+                    repeatOnlyRounds = ranSomethingNew ? 0 : repeatOnlyRounds + 1;
+                    if (repeatOnlyRounds >= 2)
+                        forceNoToolsSynthesis = true;
 
                     // A deliverable turn (Skill / @ProjectCanvas) only needs tools to ground numbers
                     // before writing the artifact. Models otherwise keep "building" the artifact
@@ -1240,7 +1265,7 @@ namespace Malx_AI
 
                 return new CloudToolCallLoopResult
                 {
-                    ResponseText = finalResponse.Text,
+                    ResponseText = cutOffText + finalResponse.Text,
                     ReasoningText = string.Join("\n\n", reasoningParts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.Ordinal)),
                     ToolCallCount = toolCallCount,
                     Usage = finalResponse.Usage
@@ -1253,7 +1278,11 @@ namespace Malx_AI
             }
         }
 
-        private const int CloudSandboxExecutionSoftLimit = 3;
+        private const int CloudSandboxExecutionSoftLimit = 12;
+
+        private const string CloudFinishInOneReplyRule =
+            "Finish the whole request in this reply. Use tools as many times as the work needs, and do not stop to ask whether you should continue. "
+            + "Ask the user only for information you cannot get yourself, or before something destructive.";
 
         private static bool IsCloudSandboxToolCall(OpenRouterToolCall? toolCall)
         {
@@ -1308,8 +1337,8 @@ namespace Malx_AI
                 return normalized;
 
             string displayName = string.IsNullOrWhiteSpace(toolName) ? "tool" : toolName.Trim();
-            string truncated = normalized[..CloudToolResultCharacterLimit].TrimEnd();
-            return truncated + $"\n\n[TOOL RESULT TRUNCATED] The {displayName} output exceeded {CloudToolResultCharacterLimit} characters. Use the retained portion above as the primary evidence and synthesize from it instead of asking the tool to repeat the same large output unless a narrower follow-up query is required.";
+            string truncated = AgentOutputClip.HeadTail(normalized, CloudToolResultCharacterLimit, "The middle is left out.");
+            return truncated + $"\n\n[TOOL RESULT TRUNCATED] The {displayName} output exceeded {CloudToolResultCharacterLimit} characters. Use the retained portions above as the primary evidence and synthesize from it instead of asking the tool to repeat the same large output unless a narrower follow-up query is required.";
         }
 
         /// <summary>Shows the model's "doing now" sentence on the reply that is being generated.</summary>
