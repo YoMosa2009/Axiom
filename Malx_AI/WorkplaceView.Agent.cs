@@ -935,7 +935,10 @@ namespace Malx_AI
                 onManagedSubscription);
             AgentTurnPolicy turnPolicy = AgentTurnPolicy.For(followUpKind, tier).WithEffort(EffortPolicy.Current, tier);
             if (EffortPolicy.Current == EffortLevel.Ultra && tier == AgentTier.Full && !turnPolicy.AnswerOnly)
-                turnPolicy = turnPolicy with { Reviewer = (request, ct) => ReviewAgentWorkAsync(request, scope.WorkingDirectory, ct) };
+                turnPolicy = turnPolicy with
+                {
+                    Reviewer = (request, ct) => OnAgentUiThreadAsync(() => ReviewAgentWorkAsync(request, scope.WorkingDirectory, ct))
+                };
             // Light effort, or "agent_autonomy" set to "off", keeps stopping for the user.
             if (!turnPolicy.AnswerOnly && EffortPolicy.Current != EffortLevel.Light
                 && !string.Equals(AgentSettings.Read("agent_autonomy"), "off", StringComparison.OrdinalIgnoreCase))
@@ -981,7 +984,7 @@ namespace Malx_AI
                     windowCaptureAsync: ComputerUseScreenCapture.CaptureForAgentAsync,
                     readBudgetChars: observationChars - 256,
                     screenshotDirectory: Path.Combine(AppDataPaths.Root, "WorkplaceCaptures"),
-                    workplaceToolAsync: ExecuteAgentWorkplaceToolAsync));
+                    workplaceToolAsync: (call, ct) => OnAgentUiThreadAsync(() => ExecuteAgentWorkplaceToolAsync(call, ct))));
             session.ModelFailed = reason => _ = BackendLogService.LogEventAsync("ComputerAgent.ModelError", reason);
             // A follow-up continues the plan the last run left; a new task starts without one.
             session.Plan = isContinuation ? _activeAgentTaskState!.Plan : AgentPlan.Empty;
@@ -1201,7 +1204,7 @@ namespace Malx_AI
             if (agentSampling != null)
                 LogActivity($"Agent Access: model settings for {Path.GetFileName(builderModelPath)}: temperature {agentSampling.Temperature}, top_p {agentSampling.TopP?.ToString() ?? "default"}, top_k {agentSampling.TopK?.ToString() ?? "default"}.");
             return new TextProtocolAgentModel(
-                async (prompt, transcript, cancellation) =>
+                (prompt, transcript, cancellation) => OnAgentUiThreadAsync(async () =>
                 {
                     ReasoningParser.ParsedResponse response = await ExecuteCouncilRoleAsync(
                         CouncilRole.Builder,
@@ -1223,7 +1226,7 @@ namespace Malx_AI
                         internalInferenceStep: true,
                         samplingOverride: agentSampling);
                     return response.Answer ?? string.Empty;
-                },
+                }),
                 systemPrompt,
                 observationChars,
                 chatHistory);
@@ -1345,6 +1348,14 @@ namespace Malx_AI
                 return [];
             }
         }
+
+        /// <summary>
+        /// Runs agent work that reads the view's controls on the UI thread. The session continues
+        /// on a pool thread after its first tool, so a local model's second turn failed with
+        /// "a different thread owns it" and the run ended after one action (live run, 2026-11-27).
+        /// </summary>
+        private Task<T> OnAgentUiThreadAsync<T>(Func<Task<T>> work) =>
+            Dispatcher.CheckAccess() ? work() : Dispatcher.InvokeAsync(work).Task.Unwrap();
 
         /// <summary>How much of one tool result this run's model sees.</summary>
         private int AgentObservationBudget(AgentTier tier, LocalModelCapabilityProfile? capability)
