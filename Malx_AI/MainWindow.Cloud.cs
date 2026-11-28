@@ -1207,7 +1207,10 @@ namespace Malx_AI
                         }
 
                         ranSomethingNew = true;
-                        if (IsCloudSandboxToolCall(toolCall))
+                        // The limit is for models that keep building an artifact in code. Sums
+                        // from the calculator are not that, and count only against the round limit.
+                        if (IsCloudSandboxToolCall(toolCall)
+                            && !string.Equals(toolCall?.Name?.Trim(), "calculate", StringComparison.OrdinalIgnoreCase))
                             sandboxExecutionCount++;
 
                         if (string.Equals(toolCall?.Name, "run_python", StringComparison.OrdinalIgnoreCase) && !pythonSessionStarted)

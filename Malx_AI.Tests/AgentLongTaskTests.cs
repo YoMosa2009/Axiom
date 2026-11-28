@@ -100,6 +100,19 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public void TheTrackerStaysOutOfGit()
+        {
+            Directory.CreateDirectory(Path.Combine(_folder, ".git", "info"));
+            string path = Path.Combine(_folder, "AXIOM_TASK_TRACKER.md");
+
+            WorkplaceTaskTrackerFileService.InitializeOrUpdateTracker(path, "t", "g");
+            WorkplaceTaskTrackerFileService.InitializeOrUpdateTracker(path, "t", "g");
+
+            Assert.Equal(["AXIOM_TASK_TRACKER.md*"],
+                File.ReadAllLines(Path.Combine(_folder, ".git", "info", "exclude")));
+        }
+
+        [Fact]
         public void AFollowUpIsToldTheCommandThatWorkedAndTheOneThatFailed()
         {
             const string worked = "wsl.exe -d Debian -u root --exec bash -lc \"ssh -i /root/.ssh/deploy_key ubuntu@10.0.0.9 uptime\"";
@@ -178,6 +191,8 @@ namespace Malx_AI.Tests
 
             Assert.Equal(AgentPermission.Allow, Review("Stop-Process -Id 100,200 -Force"));
             Assert.Equal(AgentPermission.Allow, Review("taskkill /PID 100 /T /F; taskkill /PID 200 /F"));
+            Assert.Equal(AgentPermission.Allow, Review("Stop-Process -Id 100 -Force; Start-Sleep -Seconds 1; Get-Process -Id 100 -ErrorAction SilentlyContinue"));
+            Assert.Equal(AgentPermission.Deny, Review("Stop-Process -Id 100; Remove-Item C:/data -Recurse"));
             Assert.Equal(AgentPermission.Deny, Review("Stop-Process -Id 100,999 -Force"));
             Assert.Equal(AgentPermission.Deny, Review("Stop-Process -Name notepad"));
             Assert.Equal(AgentPermission.Deny, Review("Get-Process chrome | Stop-Process; Stop-Process -Id 100"));

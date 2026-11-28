@@ -201,13 +201,16 @@ namespace Malx_AI.Agent
         internal static bool StopsOnlyOwnedProcesses(string command, Func<int, bool> isOwned)
         {
             string[] statements = (command ?? string.Empty).Split([';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (statements.Length == 0)
-                return false;
+            bool stops = false;
             foreach (string statement in statements)
             {
+                // Waiting a moment and looking the process up again changes nothing.
+                if (HarmlessFollowUpRegex.IsMatch(statement))
+                    continue;
                 Match match = StopByIdStatementRegex.Match(statement);
                 if (!match.Success)
                     return false;
+                stops = true;
                 foreach (Capture capture in match.Groups["ids"].Captures)
                 {
                     foreach (string id in capture.Value.Split(',', StringSplitOptions.TrimEntries))
@@ -218,8 +221,12 @@ namespace Malx_AI.Agent
                 }
             }
 
-            return true;
+            return stops;
         }
+
+        private static readonly Regex HarmlessFollowUpRegex = new(
+            @"^(?:Start-Sleep(?:\s+-(?:Seconds|Milliseconds|s))?\s+\d+|Get-Process\s+-Id\s+\d+(?:\s*,\s*\d+)*(?:\s+-ErrorAction\s+\w+)?)$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public static AgentPermissionDecision Evaluate(
             AgentToolCall call,

@@ -34,6 +34,32 @@ namespace Malx_AI.Agent
             return Path.Combine(baseDir, $"workplace_{Math.Max(1, workplaceSessionId)}_tracker.md");
         }
 
+        /// <summary>
+        /// Keeps the tracker out of the user's commits when its folder is a git repository, through
+        /// .git/info/exclude, which is local and never committed. A live run (2026-11-27) put the
+        /// tracker and its backup into the project's first commit.
+        /// </summary>
+        private static void ExcludeFromGit(string? folder)
+        {
+            const string pattern = DefaultProjectTrackerFileName + "*";
+            try
+            {
+                if (string.IsNullOrEmpty(folder))
+                    return;
+                string info = Path.Combine(folder, ".git", "info");
+                if (!Directory.Exists(info))
+                    return;
+                string exclude = Path.Combine(info, "exclude");
+                string current = File.Exists(exclude) ? File.ReadAllText(exclude) : string.Empty;
+                if (!current.Split('\n').Any(line => line.Trim() == pattern))
+                    File.AppendAllText(exclude, (current.Length == 0 || current.EndsWith('\n') ? string.Empty : "\n") + pattern + "\n");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The tracker still works; it is only visible to git.
+            }
+        }
+
         private const string FailedMark = "[FAILED]";
         private const string BlockedMark = "[BLOCKED]";
 
@@ -82,6 +108,7 @@ namespace Malx_AI.Agent
             string? dir = Path.GetDirectoryName(trackerPath);
             if (!string.IsNullOrEmpty(dir))
                 Directory.CreateDirectory(dir);
+            ExcludeFromGit(dir);
 
             var sb = new StringBuilder();
             string cleanTitle = string.IsNullOrWhiteSpace(sessionTitle) ? "Workplace Session" : sessionTitle.Trim();
