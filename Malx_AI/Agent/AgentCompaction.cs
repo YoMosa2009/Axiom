@@ -74,7 +74,9 @@ namespace Malx_AI.Agent
             {
                 MaxExchanges = maxExchanges,
                 KeepRecentExchanges = sizeClass is LocalModelSizeClass.SubOneB or LocalModelSizeClass.OneToFourB && !cloudOrHybrid ? 3 : 4,
-                RecentObservationMaxChars = cloudOrHybrid ? 8000 : 4000,
+                // Smaller on a small window: four results at the full size left a 16K model
+                // over its limit after compacting, which turned compaction off (live run, 2026-11-27).
+                RecentObservationMaxChars = Math.Min(cloudOrHybrid ? 8000 : 4000, Math.Max(1500, contextTokens / 4)),
                 MaxTriggerTokens = cloudOrHybrid ? CloudMaxTriggerTokens : int.MaxValue,
                 // A share of the window, so a large model keeps its last stretch of work and a
                 // small one stays at the fixed few steps.

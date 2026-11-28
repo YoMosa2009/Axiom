@@ -940,17 +940,22 @@ namespace Malx_AI
             if (!turnPolicy.AnswerOnly && EffortPolicy.Current != EffortLevel.Light
                 && !string.Equals(AgentSettings.Read("agent_autonomy"), "off", StringComparison.OrdinalIgnoreCase))
             {
-                turnPolicy = turnPolicy with { Autonomy = AgentAutonomy.For(tier, metered: onManagedSubscription) };
+                AgentAutonomy autonomy = AgentAutonomy.For(tier, metered: onManagedSubscription);
+                // Waiting helps a busy server. A model running on this PC fails the same way again.
+                if (!_isCloudModeEnabled)
+                    autonomy = autonomy with { ModelRetries = 0 };
+                turnPolicy = turnPolicy with { Autonomy = autonomy };
                 systemPrompt += "\n\n" + AgentAutonomy.Instructions;
             }
             if (turnPolicy.AnswerOnly)
                 maxSteps = Math.Min(maxSteps, AgentTurnPolicy.QuestionTurnSteps);
             AgentCompactionPolicy compaction = BuildAgentCompactionPolicy(capability, systemPrompt);
             turnPolicy = turnPolicy with { Compaction = compaction, ObservationChars = observationChars };
-            // Built here because its size depends on the model's window. Under about 8K tokens
-            // there is no room for it beside the summary already in the request.
+            // Built here because its size depends on the model's window. A small local window has
+            // no room for it beside the summary already in the request: a live 8K run failed on
+            // its follow-up (2026-11-27).
             AgentExchange? carried = null;
-            if (isContinuation && tier != AgentTier.Micro && compaction.ContextTokens >= 8000)
+            if (isContinuation && tier != AgentTier.Micro && compaction.ContextTokens >= (_isCloudModeEnabled ? 8000 : 16000))
             {
                 int freeTokens = compaction.ContextTokens - compaction.FixedPromptTokens - compaction.ReserveTokens;
                 carried = AgentContextManager.BuildCarryOver(
@@ -977,6 +982,7 @@ namespace Malx_AI
                     readBudgetChars: observationChars - 256,
                     screenshotDirectory: Path.Combine(AppDataPaths.Root, "WorkplaceCaptures"),
                     workplaceToolAsync: ExecuteAgentWorkplaceToolAsync));
+            session.ModelFailed = reason => _ = BackendLogService.LogEventAsync("ComputerAgent.ModelError", reason);
             // A follow-up continues the plan the last run left; a new task starts without one.
             session.Plan = isContinuation ? _activeAgentTaskState!.Plan : AgentPlan.Empty;
             if (session.Plan.HasOpenItems)

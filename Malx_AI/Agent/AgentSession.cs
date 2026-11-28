@@ -148,6 +148,15 @@ namespace Malx_AI.Agent
         /// <summary>Called after the run's history is compacted, with a one-line description for logs.</summary>
         public Action<string>? Compacted { get; set; }
 
+        /// <summary>Called with why a model turn failed, for logs.</summary>
+        public Action<string>? ModelFailed { get; set; }
+
+        private void ReportModelFailure(string reason)
+        {
+            try { ModelFailed?.Invoke(reason); }
+            catch { /* logging only */ }
+        }
+
         /// <summary>update_plan calls in a row before the next one is refused.</summary>
         private const int MaxPlanUpdatesInARow = 2;
 
@@ -305,7 +314,8 @@ namespace Malx_AI.Agent
                 if (autonomy != null && !AgentAutonomy.NeedsUser(answer))
                 {
                     bool planOpen = planUpdatedThisRun && Plan.HasOpenItems;
-                    bool waiting = steps.Count > 0 && AgentAutonomy.AsksToContinue(answer);
+                    bool waiting = (steps.Count > 0 && AgentAutonomy.AsksToContinue(answer))
+                        || AgentAutonomy.OnlyAnnounces(answer);
                     if ((planOpen || waiting) && continues < autonomy.MaxContinues && HasTimeLeft()
                         && (currentStep < stepLimit - 2 || extensions < autonomy.BudgetExtensions))
                     {
@@ -523,6 +533,7 @@ namespace Malx_AI.Agent
                         // A dropped connection mid-run is not a reason to abandon work already
                         // done. Free-tier providers drop bodies and time out often enough that a
                         // single hiccup must not leave the machine half-changed with no summary.
+                        ReportModelFailure(ex.GetType().Name + ": " + ex.Message);
                         if (++consecutiveProtocolErrors >= MaxConsecutiveProtocolErrors)
                         {
                             if (await TryWaitForModelAsync().ConfigureAwait(false))
@@ -554,6 +565,7 @@ namespace Malx_AI.Agent
 
                     if (reply.ProtocolError != null)
                     {
+                        ReportModelFailure(reply.ProtocolError);
                         // Recoverable: tell the model what was wrong and let it try again. Bounded,
                         // so a model that keeps returning nothing usable reports that honestly
                         // instead of burning every step and claiming success.

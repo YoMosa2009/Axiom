@@ -169,6 +169,21 @@ namespace Malx_AI.Agent
             return AsksToContinueRegex.IsMatch(text.Length <= 600 ? text : text[^600..]);
         }
 
+        private static readonly Regex AnnouncementRegex = new(
+            @"^(?:(?:sure|okay|ok|alright|great)\b[,.!:]*\s*)?(?:now\s+)?(?:i(?:'ll|\s+will|'m\s+going\s+to|\s+am\s+going\s+to)\b|let\s+me\b(?!\s+know)|(?:creating|writing|running|reading|checking|starting|building|installing|updating)\b)",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        /// <summary>
+        /// True for a short reply that only says what is about to happen. A local 7B model answered
+        /// "Creating hello.py ... and running it" and ended the run without doing either.
+        /// </summary>
+        public static bool OnlyAnnounces(string? answer)
+        {
+            string text = (answer ?? string.Empty).Trim();
+            return text.Length is > 0 and <= 300 && !text.Contains('?') && !text.Contains("```", StringComparison.Ordinal)
+                && AnnouncementRegex.IsMatch(text);
+        }
+
         public static bool NeedsUser(string? answer) =>
             (answer ?? string.Empty).Contains(NeedsUserMarker, StringComparison.OrdinalIgnoreCase);
     }

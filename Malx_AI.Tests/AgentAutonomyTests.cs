@@ -71,6 +71,27 @@ namespace Malx_AI.Tests
         }
 
         [Fact]
+        public async Task AReplyThatOnlyAnnouncesTheWorkIsSentBackToDoIt()
+        {
+            var model = new ScriptedAgentModel(
+                AgentModelReply.Answer("Creating hello.py and running it with python hello.py."),
+                Write("hello.py"), AgentModelReply.Answer("hello.py is written."));
+
+            AgentRunResult result = await Run(model, Autonomous());
+
+            Assert.Equal("hello.py is written.", result.FinalMessage);
+        }
+
+        [Theory]
+        [InlineData("I'll start by reading the file.", true)]
+        [InlineData("Let me check the folder first.", true)]
+        [InlineData("Created hello.py; it prints 1 to 5.", false)]
+        [InlineData("Let me know if you want changes.", false)]
+        [InlineData("Running it needs Python installed. Do you have it?", false)]
+        public void OnlyABareAnnouncementCounts(string answer, bool expected) =>
+            Assert.Equal(expected, AgentAutonomy.OnlyAnnounces(answer));
+
+        [Fact]
         public async Task AStatedNeedForTheUserEndsTheRun()
         {
             var model = new ScriptedAgentModel(
